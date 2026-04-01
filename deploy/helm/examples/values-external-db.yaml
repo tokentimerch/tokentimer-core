@@ -1,0 +1,61 @@
+# External PostgreSQL database with ingress and monitoring.
+#
+# helm install tokentimer ./deploy/helm -f deploy/helm/examples/values-external-db.yaml \
+#   --namespace tokentimer --create-namespace \
+#   --set config.adminEmail=admin@example.com \
+#   --set postgresql.external.password=<db-password>
+postgresql:
+  cloudnative:
+    enabled: false
+  external:
+    enabled: true
+    host: "db.example.com"
+    port: 5432
+    database: tokentimer
+    username: tokentimer
+    sslMode: require
+
+config:
+  baseUrl: "https://tokentimer.example.com"
+  apiUrl: "https://tokentimer.example.com/api"
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: tokentimer.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: dashboard
+        - path: /api
+          pathType: Prefix
+          service: api
+        - path: /auth
+          pathType: Prefix
+          service: api
+        - path: /metrics
+          pathType: Prefix
+          service: api
+  tls:
+    - secretName: tokentimer-tls
+      hosts:
+        - tokentimer.example.com
+
+smtp:
+  host: "smtp.example.com"
+  port: "465"
+  user: "noreply@example.com"
+  fromEmail: "noreply@example.com"
+  fromName: "TokenTimer"
+
+monitoring:
+  metrics:
+    enabled: true
+    pushgatewayUrl: "http://pushgateway.monitoring.svc:9091"
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack

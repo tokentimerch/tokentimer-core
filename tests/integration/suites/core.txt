@@ -1,0 +1,105 @@
+# Public OSS integration suite
+
+# Auth and account
+tests/integration/auth.test.js
+tests/integration/auth-invite-reset.integration.test.js
+tests/integration/account.test.js
+tests/integration/account-settings-display.test.js
+tests/integration/two-factor-disable.test.js
+
+# Tokens CRUD and validation
+tests/integration/tokens.test.js
+tests/integration/token-validation.test.js
+tests/integration/token-update-validation.test.js
+tests/integration/token-categories.test.js
+tests/integration/tokens-extended.test.js
+tests/integration/token-deletion-cleans-alert-queue.test.js
+tests/integration/token-renewal-audit.test.js
+
+# Workspaces and contacts
+tests/integration/contacts-crud.test.js
+tests/integration/contact-groups-settings.test.js
+tests/integration/workspaces-lifecycle.integration.test.js
+tests/integration/workspace-transfer-tokens.test.js
+tests/integration/contact-group-reassignment.test.js
+
+# Alert system
+tests/integration/alert-queue.test.js
+tests/integration/alert-notifications.test.js
+tests/integration/alert-settings.test.js
+tests/integration/alert-bug-fixes.test.js
+tests/integration/alert-delivery-email-routing.test.js
+tests/integration/alert-stats-whatsapp-channel.test.js
+tests/integration/backoff-and-cooldown.test.js
+tests/integration/cooldown-and-retry-ui.test.js
+tests/integration/contact-group-default-fallback.test.js
+tests/integration/channel-selection.test.js
+tests/integration/no-eligible-channels.test.js
+tests/integration/concurrent-delivery-workers.test.js
+tests/integration/alert-queue-retry-requeue.test.js
+tests/integration/delivery-window-deferral.test.js
+
+# WhatsApp
+tests/integration/whatsapp-webhook-status.test.js
+tests/integration/api-test-whatsapp.test.js
+tests/integration/whatsapp-helper.unit.test.js
+
+# Webhooks
+tests/integration/webhook-test-endpoint.test.js
+tests/integration/webhooks-settings.test.js
+tests/integration/webhooks-delivery.test.js
+tests/integration/pagerduty-validation.test.js
+tests/integration/webhook-ssrf-protection.test.js
+
+# Endpoint monitoring
+tests/integration/endpoint-monitor.test.js
+tests/integration/endpoint-health-alerts.test.js
+tests/integration/endpoint-check-worker.integration.test.js
+
+# Integrations
+tests/integration/github.integration.test.js
+tests/integration/gitlab.integration.test.js
+tests/integration/integration-import.test.js
+tests/integration/integrations-route-matrix.test.js
+
+# Auto-sync worker
+tests/integration/auto-sync.test.js
+tests/integration/auto-sync-worker.integration.test.js
+tests/integration/weekly-digest-worker.integration.test.js
+
+# Audit
+tests/integration/audit-filtering.test.js
+
+# Schema and utilities
+tests/integration/database-schema.test.js
+tests/integration/frontend-integration.test.js
+tests/integration/email-content-formatting.test.js
+tests/integration/vault.parsing.unit.test.js
+tests/integration/vault-parsing-extended.unit.test.js
+tests/integration/integration-utils.unit.test.js
+tests/integration/provider-services.unit.test.js
+tests/integration/provider-services-extended.unit.test.js
+tests/integration/gitlab-integration-extended.unit.test.js
+tests/integration/email-service.unit.test.js
+tests/integration/core-services.unit.test.js
+tests/integration/config-package.unit.test.js
+tests/integration/multi-smtp-config.unit.test.js
+tests/integration/config-env-db-fallback.test.js
+tests/integration/stale-import-threshold.test.js
+tests/integration/worker-notify-utils.unit.test.js
+tests/integration/worker-notify-extended.unit.test.js
+tests/integration/utc-month-usage-boundary.test.js
+tests/integration/pagination.test.js
+
+# Comprehensive / strategic tests
+tests/integration/multi-dataset.test.js
+tests/integration/strategic-token-combinations.test.js
+tests/integration/comprehensive-strategic-testing.test.js
+
+# Admin settings (core-only: cloud overrides API entry point)
+tests/integration/admin-system-settings.test.js
+
+# Security (run last to avoid rate-limit interference)
+tests/integration/security.test.js
+tests/integration/rate-limit-security.test.js
+tests/integration/csrf-and-rate-limit.test.js

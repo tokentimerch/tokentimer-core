@@ -1,0 +1,23 @@
+apiVersion: v2
+name: tokentimer
+description: Token, certificate, and secret expiration management for teams
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+keywords:
+  - token
+  - certificate
+  - secret
+  - expiration
+  - monitoring
+  - self-hosted
+  - alerting
+home: https://tokentimer.ch
+sources:
+  - https://github.com/tokentimerch/tokentimer-core
+icon: https://tokentimer.ch/icon.png
+maintainers:
+  - name: TokenTimer
+    email: support@tokentimer.ch
+    url: https://tokentimer.ch

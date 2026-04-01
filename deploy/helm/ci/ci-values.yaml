@@ -1,0 +1,11 @@
+# Minimal values for CI validation (helm lint / helm template).
+# Satisfies required() checks without real credentials.
+config:
+  adminEmail: "ci@test.local"
+
+postgresql:
+  cloudnative:
+    enabled: false
+  external:
+    enabled: true
+    host: "ci-db"

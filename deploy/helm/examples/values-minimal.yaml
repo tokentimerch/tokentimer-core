@@ -1,0 +1,24 @@
+# Minimal install: CloudNativePG in-cluster, no ingress, no monitoring.
+# Requires: CloudNativePG operator pre-installed.
+#
+# helm install tokentimer ./deploy/helm -f deploy/helm/examples/values-minimal.yaml \
+#   --namespace tokentimer --create-namespace \
+#   --set config.adminEmail=admin@example.com
+
+config:
+  baseUrl: "http://localhost:8080"
+  apiUrl: "http://localhost:4000"
+  adminName: "Admin"
+
+postgresql:
+  cloudnative:
+    enabled: true
+    instances: 1
+    storage:
+      size: 5Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        memory: 512Mi

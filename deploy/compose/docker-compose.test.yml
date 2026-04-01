@@ -1,0 +1,190 @@
+# =============================================================
+# TokenTimer Core - Integration Test Environment
+# Started automatically by: pnpm test  (via scripts/run-tests.sh)
+# =============================================================
+
+networks:
+  tokentimer-test:
+    driver: bridge
+
+services:
+  # ---- PostgreSQL -------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: tokentimer-core-postgres-test
+    environment:
+      POSTGRES_DB: tokentimer
+      POSTGRES_USER: tokentimer
+      POSTGRES_PASSWORD: password
+    ports:
+      - "${TT_TEST_DB_PORT:-5432}:5432"
+    networks:
+      - tokentimer-test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokentimer -d tokentimer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data # RAM-backed for speed
+
+  # ---- API (backend) ----------------------------------------
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile.dev
+    container_name: tokentimer-core-api-test
+    ports:
+      - "${TT_TEST_API_PORT:-4000}:4000"
+    environment:
+      - NODE_ENV=test
+      - PORT=4000
+      # Database
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      # URLs
+      - APP_URL=http://localhost:5173
+      - API_URL=http://localhost:4000
+      # Auth
+      - SESSION_SECRET=test-session-secret-key
+      # SMTP (MailHog)
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - SMTP_USER=test@example.com
+      - SMTP_PASS=test-password
+      - FROM_EMAIL=noreply@tokentimer-test.local
+      - FROM_EMAIL_NAME=TokenTimer Test
+      - TWILIO_ACCOUNT_SID=test-account-sid
+      - TWILIO_AUTH_TOKEN=test-auth-token
+      # Admin bootstrap
+      - ADMIN_EMAIL=admin@localhost.local
+      - ADMIN_PASSWORD=SecureTest123!@#
+      - ADMIN_NAME=Test Admin
+      # Delivery windows (wide open for tests)
+      - DELIVERY_WINDOW_DEFAULT_START=00:00
+      - DELIVERY_WINDOW_DEFAULT_END=23:59
+      - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
+      - NODE_OPTIONS=${NODE_V8_COVERAGE:+--require=/app/coverage-flush-hook.cjs}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tokentimer-test
+    restart: "no"
+    volumes:
+      - ../../apps/api:/app
+      - /app/node_modules
+      - ../../.coverage/v8-api:/tmp/v8-coverage
+    command: ["node", "coverage-bootstrap.cjs"]
+
+  # ---- Worker: endpoint (SSL) checks -----------------------
+  worker-endpoint-check:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+    container_name: tokentimer-core-worker-endpoint-check-test
+    environment:
+      - NODE_ENV=test
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tokentimer-test
+    restart: "no"
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+      - ../../.coverage/v8-worker-endpoint:/tmp/v8-coverage
+    command: ["node", "src/endpoint-check-worker.js"]
+
+  # ---- Worker: auto-sync ------------------------------------
+  worker-auto-sync:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+    container_name: tokentimer-core-worker-auto-sync-test
+    environment:
+      - NODE_ENV=test
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - SESSION_SECRET=test-session-secret-key
+      - API_URL=http://api:4000
+      - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - tokentimer-test
+    restart: "no"
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+      - ../../.coverage/v8-worker-sync:/tmp/v8-coverage
+    command: ["node", "src/auto-sync-worker.js"]
+
+  # ---- Worker: alert delivery --------------------------------
+  worker-delivery:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+    container_name: tokentimer-core-worker-delivery-test
+    environment:
+      - NODE_ENV=test
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - APP_URL=http://localhost:5173
+      - SESSION_SECRET=test-session-secret-key
+      # SMTP (MailHog)
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - SMTP_USER=test@example.com
+      - SMTP_PASS=test-password
+      - FROM_EMAIL=noreply@tokentimer-test.local
+      - FROM_EMAIL_NAME=TokenTimer Test
+      - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - tokentimer-test
+    restart: "no"
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+      - ../../.coverage/v8-worker-delivery:/tmp/v8-coverage
+    command: ["node", "src/delivery-worker.js"]
+
+  # ---- MailHog (captures all outgoing email) -----------------
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: tokentimer-core-mailhog-test
+    ports:
+      - "${TT_TEST_MAILHOG_SMTP_PORT:-1025}:1025" # SMTP
+      - "${TT_TEST_MAILHOG_UI_PORT:-8025}:8025" # Web UI (optional, handy for debugging)
+    environment:
+      - MH_STORAGE=memory
+    networks:
+      - tokentimer-test
+    restart: "no"

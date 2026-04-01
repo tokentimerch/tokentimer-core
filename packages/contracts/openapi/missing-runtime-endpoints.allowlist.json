@@ -1,0 +1,4 @@
+{
+  "description": "Known runtime endpoints not yet documented in OpenAPI. CI fails when new uncovered endpoints are introduced.",
+  "endpoints": []
+}

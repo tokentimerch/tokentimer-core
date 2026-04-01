@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+# Keep .env.test (contains only local Docker test values, no secrets)
+!.env.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+.coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker
+.docker/
+
+# Secrets (never commit)
+*.key
+*.pem
+*.p12
+credentials.json
+secrets.yaml
+license.key
+
+# Database
+*.sqlite
+*.db
+
+# Package manager locks (keep pnpm-lock.yaml)
+yarn.lock
+package-lock.json
+
+# Misc
+.cache/
+.parcel-cache/
+.grepai/
+
+# Reports
+reports/

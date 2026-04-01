@@ -1,0 +1,16 @@
+<svg width="133" height="96" viewBox="0 0 133 96" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    @media (prefers-color-scheme: dark)  { svg { fill: #ffffff; } }
+    @media (prefers-color-scheme: light) { svg { fill: #171717; } }
+  </style>
+  <!-- Terminal window with prompt -->
+  <path d="M116.5 8H16.5C11.0 8 6.5 12.5 6.5 18v60c0 5.5 4.5 10 10 10h100c5.5 0 10-4.5 10-10V18c0-5.5-4.5-10-10-10zm6 70c0 3.3-2.7 6-6 6h-100c-3.3 0-6-2.7-6-6V30h112v48zm0-52h-112v-8c0-3.3 2.7-6 6-6h100c3.3 0 6 2.7 6 6v8z"/>
+  <!-- Window dots -->
+  <circle cx="22.5" cy="19" r="3"/>
+  <circle cx="34.5" cy="19" r="3"/>
+  <circle cx="46.5" cy="19" r="3"/>
+  <!-- Prompt chevron -->
+  <path d="M20 51l10-10-10-10-4 4 6 6-6 6 4 4z"/>
+  <!-- Cursor bar -->
+  <rect x="32" y="37" width="18" height="8" rx="1"/>
+</svg>

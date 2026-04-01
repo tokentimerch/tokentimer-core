@@ -1,0 +1,62 @@
+{{- $fullname := include "tokentimer.fullname" . -}}
+
+TokenTimer has been deployed.
+
+{{- if .Values.ingress.enabled }}
+
+Access the application:
+{{- range .Values.ingress.hosts }}
+  Dashboard: http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+  API:       http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}/api
+{{- end }}
+
+{{- else }}
+
+Get the application URLs by running:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ $fullname }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }} &
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ $fullname }}-dashboard 8080:{{ .Values.dashboard.service.port }} &
+
+{{- end }}
+
+{{- if .Values.postgresql.cloudnative.enabled }}
+
+PostgreSQL (CloudNativePG):
+  Cluster:  {{ $fullname }}-pg ({{ .Values.postgresql.cloudnative.instances }} instances)
+  Service:  {{ $fullname }}-pg-rw:5432
+  Database: {{ .Values.postgresql.auth.database }}
+
+  NOTE: The CloudNativePG operator must be installed on the cluster
+  for this Cluster to be reconciled. See the chart README for details.
+{{- end }}
+
+Worker CronJobs:
+{{- if .Values.worker.cronjobs.discovery.enabled }}
+  Alert Discovery:  {{ .Values.worker.cronjobs.discovery.schedule }}
+{{- end }}
+{{- if .Values.worker.cronjobs.delivery.enabled }}
+  Alert Delivery:   {{ .Values.worker.cronjobs.delivery.schedule }}
+{{- end }}
+{{- if .Values.worker.cronjobs.weeklyDigest.enabled }}
+  Weekly Digest:    {{ .Values.worker.cronjobs.weeklyDigest.schedule }}
+{{- end }}
+{{- if .Values.worker.cronjobs.endpointCheck.enabled }}
+  Endpoint Check:   {{ .Values.worker.cronjobs.endpointCheck.schedule }}
+{{- end }}
+{{- if .Values.worker.cronjobs.autoSync.enabled }}
+  Auto Sync:        {{ .Values.worker.cronjobs.autoSync.schedule }}
+{{- end }}
+
+{{- if and .Values.config.adminEmail (not .Values.config.adminPassword) (not .Values.config.existingSecret) }}
+
+Admin credentials:
+  Email: {{ .Values.config.adminEmail }}
+  Password was auto-generated. Retrieve it with:
+    kubectl get secret -n {{ .Release.Namespace }} {{ $fullname }}-secrets -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+{{- end }}
+
+{{- if not .Values.smtp.host }}
+
+NOTE: SMTP is not configured. Configure it in values.yaml or via the
+      System Settings UI after first login.
+{{- end }}

@@ -1,0 +1,484 @@
+# TokenTimer Helm Chart - values.yaml
+# https://tokentimer.ch
+#
+# All resources deploy into the Helm release namespace (--namespace <ns>).
+# Only ServiceMonitor/PrometheusRule support a separate namespace override.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imageRegistry: "ghcr.io/tokentimerch"
+  imagePullSecrets: []
+
+# -- API Server ---------------------------------------------------------------
+api:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    registry: ""
+    repository: tokentimer-core-api
+    tag: "0.1.0"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""    # takes precedence over tag
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 4000
+    nodePort: null
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: null
+
+  # maxUnavailable takes precedence over minAvailable; set only one.
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: null
+
+  # /health checks DB connectivity: returns 200 when the database is reachable,
+  # 503 otherwise. The API process exits on connection-level DB errors, so
+  # liveness failures typically mean the process is already terminating.
+  # Set any probe to {} to disable it.
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # The startup probe gates liveness and readiness until the app is initialized.
+  # On first install the API waits up to 3 minutes for the CloudNativePG cluster
+  # to become reachable (waitForDatabase: 90 attempts x 2s), then runs migrations
+  # and admin bootstrap before listening. The budget here (10s + 40 x 5s = 210s)
+  # covers that full sequence. On subsequent restarts the DB responds immediately
+  # and the startup probe succeeds in seconds.
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 40
+
+  env: {}
+  envFrom: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+
+# -- Dashboard (frontend) -----------------------------------------------------
+dashboard:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    registry: ""
+    repository: tokentimer-core-dashboard
+    tag: "0.1.0"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+    nodePort: null
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  env:
+    VITE_API_URL: ""
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- Worker CronJobs ----------------------------------------------------------
+worker:
+  image:
+    registry: ""
+    repository: tokentimer-core-worker
+    tag: "0.1.0"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # Extra env/volumes for all CronJobs.
+  # Precedence: workspace DB settings > env vars here > code defaults.
+  env: {}
+  envFrom: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  cronjobs:
+    # Alert Discovery -- scans tokens and queues expiry alerts
+    discovery:
+      enabled: true
+      schedule: "*/5 * * * *" # Every 5 minutes
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Alert Delivery -- processes alert queue and sends notifications
+    delivery:
+      enabled: true
+      schedule: "*/5 * * * *" # Every 5 minutes
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Weekly Digest -- sends weekly token-expiry summaries
+    weeklyDigest:
+      enabled: true
+      schedule: "0 9 * * 1"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 5
+      failedJobsHistoryLimit: 5
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Endpoint Check -- SSL certificate and health monitoring
+    endpointCheck:
+      enabled: true
+      schedule: "*/1 * * * *" # Every minute
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Auto Sync -- scheduled integration scans
+    autoSync:
+      enabled: true
+      schedule: "0 * * * *"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+
+# -- Ingress -------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: tokentimer.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: api
+        - path: /auth
+          pathType: Prefix
+          service: api
+        - path: /metrics
+          pathType: Prefix
+          service: api
+        - path: /
+          pathType: Prefix
+          service: dashboard
+  tls: []
+    # - secretName: tokentimer-tls
+    #   hosts:
+    #     - tokentimer.local
+
+# -- PostgreSQL ----------------------------------------------------------------
+postgresql:
+  cloudnative:
+    # Create a CloudNativePG Cluster CR in the release namespace.
+    enabled: true
+    instances: 3
+    imageName: "ghcr.io/cloudnative-pg/postgresql:17"
+    primaryUpdateStrategy: unsupervised  # unsupervised or supervised
+    enableSuperuserAccess: false
+
+    storage:
+      size: 10Gi
+      storageClass: "" # uses default storage class
+
+    # Separate WAL storage (optional, improves I/O performance)
+    walStorage: {}
+      # size: 2Gi
+      # storageClass: ""
+
+    # PostgreSQL parameters
+    maxConnections: "200"
+    sharedBuffers: "256MB"
+    workMem: "8MB"
+    maintenanceWorkMem: "128MB"
+    extraParameters:
+      ssl_min_protocol_version: "TLSv1.3"
+      ssl_ciphers: "HIGH:!aNULL:!MD5"
+      # pg_stat_statements.max: "10000"
+      # pg_stat_statements.track: all
+
+    # pg_hba rules -- enforce SSL connections and reject plaintext
+    pgHba:
+      - hostssl all all 0.0.0.0/0 md5
+      - hostnossl all all 0.0.0.0/0 reject
+
+    # Barman backup (optional)
+    backup:
+      enabled: false
+      destinationPath: ""   # s3://bucket/path
+      retentionPolicy: "30d"
+      s3:
+        credentialsSecret: ""
+        region: ""
+
+    monitoring:
+      podMonitorEnabled: false
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+    # CNPG affinity (not standard K8s affinity -- see CNPG docs)
+    affinity: {}
+      # enablePodAntiAffinity: true
+      # topologyKey: topology.kubernetes.io/zone
+    tolerations: []
+
+  # Credentials for CloudNativePG bootstrap and the app secret.
+  # Auto-generated if password is empty and no existingSecret is set.
+  # existingSecret must be type kubernetes.io/basic-auth (keys: username, password).
+  # When using existingSecret, also provide DB_PASSWORD to the app via config.existingSecret.
+  auth:
+    username: tokentimer
+    password: ""          # auto-generated if empty
+    database: tokentimer
+    existingSecret: ""
+
+  # External PostgreSQL (when cloudnative.enabled = false).
+  # existingSecret replaces all DB keys; must contain:
+  #   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSL
+  external:
+    enabled: false
+    host: ""
+    port: 5432
+    database: tokentimer
+    username: tokentimer
+    password: ""
+    existingSecret: ""
+    sslMode: prefer
+
+# -- Application Configuration ------------------------------------------------
+config:
+  # Session signing key. Auto-generated on first install if left empty.
+  sessionSecret: ""
+
+  # Replaces the chart-generated secret entirely.
+  # Must contain SESSION_SECRET; optionally DB_PASSWORD, ADMIN_PASSWORD, etc.
+  existingSecret: ""
+
+  # Admin Bootstrap (required for first startup)
+  adminEmail: ""          # required (unless existingSecret is set)
+  adminPassword: ""       # auto-generated if empty
+  adminName: "Administrator"
+  nodeEnv: "production"        # set to "development" for debug/testing
+  baseUrl: "http://localhost:8080"
+  apiUrl: "http://localhost:4000"
+
+  # Fallback when workspace has no custom thresholds (workspace DB > env > code).
+  alertThresholds: "30,14,7,1,0"
+
+# -- SMTP (optional) ----------------------------------------------------------
+# Can also be configured after deployment via the admin System Settings UI.
+# Precedence: System Settings DB (admin UI) > env vars here > code defaults.
+# existingSecret replaces all SMTP keys; must contain:
+#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, FROM_EMAIL, FROM_EMAIL_NAME
+smtp:
+  host: ""
+  port: ""
+  user: ""
+  password: ""
+  existingSecret: ""
+  fromEmail: ""
+  fromName: ""
+
+# -- Twilio WhatsApp (optional) -----------------------------------------------
+# Can also be configured after deployment via the admin System Settings UI.
+# Precedence: System Settings DB (admin UI) > env vars here > disabled.
+# existingSecret replaces all Twilio keys; must contain all TWILIO_* keys.
+twilio:
+  accountSid: ""
+  authToken: ""
+  existingSecret: ""
+  whatsappFrom: ""
+  testContentSid: ""
+  alertContentSidExpires: ""
+  alertContentSidExpired: ""
+  alertContentSidEndpointDown: ""
+  alertContentSidEndpointRecovered: ""
+  weeklyDigestContentSid: ""
+
+# -- Monitoring ----------------------------------------------------------------
+monitoring:
+  metrics:
+    enabled: false
+    pushgatewayUrl: ""
+
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: "30s"
+    scrapeTimeout: "10s"
+    labels: {}
+    metricRelabelings: []
+      # - action: replace
+      #   targetLabel: env
+      #   replacement: production
+      #   sourceLabels: ["namespace"]
+      #   regex: production
+
+  prometheusRules:
+    enabled: false
+    namespace: ""
+    labels: {}
+    groups: []
+    #   - name: tokentimer.rules
+    #     rules:
+    #       - alert: TokenTimerZeroSends72h
+    #         expr: sum(increase(alerts_delivery_total{status="success"}[72h])) == 0
+    #         for: 1h
+    #         labels:
+    #           severity: warning
+    #         annotations:
+    #           summary: No successful sends in 72h
+    #       - alert: AppErrorsRecent
+    #         expr: sum(increase(app_log_errors_total[5m])) > 0
+    #         for: 0m
+    #         labels:
+    #           severity: warning
+    #         annotations:
+    #           summary: Application errors detected
+
+# -- ServiceAccount ------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+# -- Network Policy ------------------------------------------------------------
+# Creates per-component policies (default-deny, api, dashboard, worker).
+# Set namespace names to allow inbound traffic from ingress controller and
+# Prometheus scraping; leave empty to skip those rules.
+networkPolicy:
+  enabled: false
+  ingressNamespace: ""      # e.g. "ingress-nginx"
+  monitoringNamespace: ""   # e.g. "monitoring"
+
+# -- Pod Security (shared defaults) --------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

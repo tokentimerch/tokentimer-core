@@ -1,0 +1,48 @@
+{
+  "contractName": "api.auth-route-compat",
+  "version": "0.1.0",
+  "description": "Canonical auth route compatibility guarantees across core and consumers.",
+  "guarantees": {
+    "stableRoutes": [
+      {
+        "path": "/auth/login",
+        "method": "POST"
+      },
+      {
+        "path": "/auth/verify-2fa",
+        "method": "POST"
+      },
+      {
+        "path": "/auth/resend-verification",
+        "method": "POST"
+      },
+      {
+        "path": "/auth/request-password-reset",
+        "method": "POST"
+      },
+      {
+        "path": "/auth/reset-password",
+        "method": "POST"
+      },
+      {
+        "path": "/api/auth/features",
+        "method": "GET"
+      },
+      {
+        "path": "/api/session",
+        "method": "GET"
+      },
+      {
+        "path": "/api/csrf-token",
+        "method": "GET"
+      }
+    ],
+    "aliasPolicy": {
+      "allowLegacyApiPrefix": true,
+      "notes": [
+        "/auth/* is canonical for auth operations.",
+        "/api/auth/* aliases may exist for backward compatibility in consumers."
+      ]
+    }
+  }
+}

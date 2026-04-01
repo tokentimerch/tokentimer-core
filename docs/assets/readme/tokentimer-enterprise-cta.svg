@@ -1,0 +1,21 @@
+<svg width="230" height="68" viewBox="0 0 230 68" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .bg   { fill: #0d1117; }
+    .ic   { fill: #e6edf3; }
+    .ttl  { fill: #e6edf3; font-family: -apple-system, "Segoe UI", Arial, sans-serif; font-size: 14px; font-weight: 700; }
+    .desc { fill: #8b949e; font-family: -apple-system, "Segoe UI", Arial, sans-serif; font-size: 11.5px; }
+    @media (prefers-color-scheme: light) {
+      .bg   { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+      .ic   { fill: #1f2328; }
+      .ttl  { fill: #1f2328; }
+      .desc { fill: #656d76; }
+    }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="229" height="67" rx="10"/>
+  <g class="ic" transform="translate(12, 16) scale(1.5)">
+    <path d="M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z"/>
+  </g>
+  <text class="ttl" x="56" y="24">TokenTimer Enterprise</text>
+  <text class="desc" x="56" y="40">Premium self-hosted edition</text>
+  <text class="desc" x="56" y="54">with priority support.</text>
+</svg>

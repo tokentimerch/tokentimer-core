@@ -1,0 +1,128 @@
+# This file is used to configure Dependabot for the tokentimer-core repository.
+# It is used to automatically update the dependencies in the repository.
+# It is used to ensure that the dependencies are always up to date and secure.
+# It is used to ensure that the dependencies are always up to date and secure.
+# Disabled for now until we have a proper dependency management system in place.
+# version: 2
+# updates:
+#   # Root project npm dependencies
+#   - package-ecosystem: "npm"
+#     directory: "/"
+#     schedule:
+#       interval: "weekly"
+#       day: "monday"
+#       time: "09:00"
+#     open-pull-requests-limit: 10
+#     commit-message:
+#       prefix: "chore"
+#       prefix-development: "chore"
+#       include: "scope"
+#     labels:
+#       - "dependencies"
+#       - "npm"
+#     ignore:
+#       # Ignore major version updates for critical dependencies
+#       - dependency-name: "express"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "passport"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "react"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "react-dom"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "@chakra-ui/react"
+#         update-types: ["version-update:semver-major"]
+
+#   # API dependencies
+#   - package-ecosystem: "npm"
+#     directory: "/apps/api"
+#     schedule:
+#       interval: "weekly"
+#       day: "monday"
+#       time: "09:00"
+#     open-pull-requests-limit: 10
+#     commit-message:
+#       prefix: "chore"
+#       prefix-development: "chore"
+#       include: "scope"
+#     labels:
+#       - "dependencies"
+#       - "npm"
+#       - "backend"
+#     ignore:
+#       # Ignore major version updates for critical security dependencies
+#       - dependency-name: "express"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "passport"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "helmet"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "bcrypt"
+#         update-types: ["version-update:semver-major"]
+
+#   # Frontend npm dependencies
+#   - package-ecosystem: "npm"
+#     directory: "/frontend"
+#     schedule:
+#       interval: "weekly"
+#       day: "monday"
+#       time: "09:00"
+#     open-pull-requests-limit: 10
+#     commit-message:
+#       prefix: "chore"
+#       prefix-development: "chore"
+#       include: "scope"
+#     labels:
+#       - "dependencies"
+#       - "npm"
+#       - "frontend"
+#     ignore:
+#       # Ignore major version updates for critical React dependencies
+#       - dependency-name: "react"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "react-dom"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "@chakra-ui/react"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "vite"
+#         update-types: ["version-update:semver-major"]
+
+#   # Docker dependencies
+#   - package-ecosystem: "docker"
+#     directory: "/"
+#     schedule:
+#       interval: "weekly"
+#       day: "monday"
+#       time: "09:00"
+#     open-pull-requests-limit: 5
+#     commit-message:
+#       prefix: "chore"
+#       prefix-development: "chore"
+#       include: "scope"
+#     labels:
+#       - "dependencies"
+#       - "docker"
+#     ignore:
+#       # Ignore major version updates for base images
+#       - dependency-name: "node"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "nginx"
+#         update-types: ["version-update:semver-major"]
+#       - dependency-name: "postgres"
+#         update-types: ["version-update:semver-major"]
+
+#   # GitHub Actions
+#   - package-ecosystem: "github-actions"
+#     directory: "/"
+#     schedule:
+#       interval: "weekly"
+#       day: "monday"
+#       time: "09:00"
+#     open-pull-requests-limit: 5
+#     commit-message:
+#       prefix: "chore"
+#       prefix-development: "chore"
+#       include: "scope"
+#     labels:
+#       - "dependencies"
+#       - "github-actions"

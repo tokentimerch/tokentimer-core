@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Weekly Digest Message",
+  "description": "Message to trigger weekly digest generation for a workspace",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "weekly-digest"
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "channels": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["email", "webhook", "whatsapp"] }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": ["type", "workspaceId", "timestamp"]
+}

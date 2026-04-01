@@ -1,0 +1,21 @@
+<svg width="210" height="68" viewBox="0 0 210 68" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .bg   { fill: #0d1117; }
+    .ic   { fill: #e6edf3; }
+    .ttl  { fill: #e6edf3; font-family: -apple-system, "Segoe UI", Arial, sans-serif; font-size: 14px; font-weight: 700; }
+    .desc { fill: #8b949e; font-family: -apple-system, "Segoe UI", Arial, sans-serif; font-size: 11.5px; }
+    @media (prefers-color-scheme: light) {
+      .bg   { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+      .ic   { fill: #1f2328; }
+      .ttl  { fill: #1f2328; }
+      .desc { fill: #656d76; }
+    }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="209" height="67" rx="10"/>
+  <g class="ic" transform="translate(12, 16) scale(1.5)">
+    <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
+  </g>
+  <text class="ttl" x="56" y="24">TokenTimer Cloud</text>
+  <text class="desc" x="56" y="40">Fully managed SaaS.</text>
+  <text class="desc" x="56" y="54">Always up to date.</text>
+</svg>

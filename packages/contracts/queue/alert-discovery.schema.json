@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Alert Discovery Message",
+  "description": "Message to trigger alert discovery for a workspace",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "alert-discovery"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "force": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": ["type", "timestamp", "workspaceId"]
+}

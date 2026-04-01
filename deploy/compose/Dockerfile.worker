@@ -1,0 +1,32 @@
+# TokenTimer Worker Dockerfile
+FROM node:22-alpine
+
+# Enable pnpm via corepack
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+# Create non-root user (UID/GID 1000 is taken by the built-in node user)
+RUN addgroup -g 1001 -S tokentimer && adduser -u 1001 -S tokentimer -G tokentimer
+
+WORKDIR /app
+
+# Copy workspace config, root package.json, and lockfile
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+
+# Copy workspace packages and the worker app
+COPY packages ./packages
+COPY apps/worker ./apps/worker
+
+# Install production dependencies for the worker and its workspace deps
+RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...
+
+# Own the app directory
+RUN chown -R tokentimer:tokentimer /app
+
+# Set environment
+ENV NODE_ENV=production
+
+# Switch to non-root user
+USER tokentimer
+
+# Default command (can be overridden in docker-compose)
+CMD ["node", "apps/worker/src/queue-manager.js"]

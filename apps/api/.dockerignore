@@ -1,0 +1,27 @@
+# Exclude dependencies and dev artifacts from build context
+node_modules
+**/node_modules
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+
+# VCS
+.git
+.gitignore
+
+# Env and local config
+.env
+.env.*
+
+# Editor/OS
+.vscode
+.idea
+.DS_Store
+
+# Tests and docs
+coverage
+**/*.test.js
+**/*.spec.js
+**/__tests__/**
+**/__mocks__/**
+README.md

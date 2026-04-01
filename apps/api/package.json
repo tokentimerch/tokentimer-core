@@ -1,0 +1,54 @@
+{
+  "name": "@tokentimer/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TokenTimer API Service",
+  "license": "BUSL-1.1",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "migrate": "node migrations/migrate.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "dependencies": {
+    "@aws-sdk/client-acm": "3.990.0",
+    "@aws-sdk/client-iam": "3.990.0",
+    "@aws-sdk/client-secrets-manager": "3.990.0",
+    "@aws-sdk/client-sts": "3.990.0",
+    "axios": "1.13.5",
+    "bcryptjs": "3.0.3",
+    "connect-pg-simple": "10.0.0",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.6",
+    "csrf-csrf": "3.2.2",
+    "dotenv": "16.6.1",
+    "express": "5.2.1",
+    "express-rate-limit": "8.3.1",
+    "express-session": "1.19.0",
+    "express-slow-down": "3.0.1",
+    "express-validator": "7.3.1",
+    "helmet": "8.1.0",
+    "jsonwebtoken": "9.0.3",
+    "nodemailer": "8.0.4",
+    "otplib": "13.3.0",
+    "passport": "0.7.0",
+    "passport-local": "1.0.0",
+    "pg": "8.18.0",
+    "prom-client": "15.1.3",
+    "qrcode": "1.5.4",
+    "swagger-jsdoc": "6.2.8",
+    "swagger-ui-express": "5.0.1",
+    "uuid": "11.1.0",
+    "winston": "3.19.0"
+  },
+  "devDependencies": {
+    "eslint": "9.39.2",
+    "eslint-config-prettier": "9.1.2",
+    "nodemon": "3.1.11"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

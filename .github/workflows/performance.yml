@@ -1,0 +1,113 @@
+name: Performance Tests (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      warmup_duration:
+        description: "Warm-up duration (seconds)"
+        required: false
+        type: number
+        default: 30
+      sustained_duration:
+        description: "Sustained duration (seconds)"
+        required: false
+        type: number
+        default: 60
+      arrival_rate:
+        description: "Requests per second during sustained phase"
+        required: false
+        type: number
+        default: 10
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  performance_test:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start test environment
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then
+              echo "Backend is up"; exit 0; fi; sleep 2; done
+          echo "Backend did not become ready"; exit 1
+
+      - name: Run load tests
+        env:
+          WARMUP: ${{ inputs.warmup_duration }}
+          SUSTAINED: ${{ inputs.sustained_duration }}
+          RATE: ${{ inputs.arrival_rate }}
+        run: |
+          pnpm add -g artillery
+          cat > load-test.yml << EOF
+          config:
+            target: 'http://localhost:4000'
+            phases:
+              - duration: ${WARMUP}
+                arrivalRate: 5
+                name: "Warm up"
+              - duration: ${SUSTAINED}
+                arrivalRate: ${RATE}
+                name: "Sustained load"
+          scenarios:
+            - name: "API Health Check"
+              flow:
+                - get:
+                    url: "/"
+            - name: "Registration Endpoint"
+              flow:
+                - post:
+                    url: "/auth/register"
+                    json:
+                      email: "test{{ $randomNumber }}@example.com"
+                      password: "password123"
+                      name: "Test User"
+          EOF
+          artillery run load-test.yml --output artillery-report.json
+
+      - name: Generate performance report
+        run: |
+          if [ -f artillery-report.json ]; then
+            echo "=== Performance Test Results ==="
+            cat artillery-report.json | jq '.aggregate.counters' || echo "No performance data available"
+          fi
+
+      - name: Upload performance results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: performance-results
+          path: artillery-report.json
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans || true

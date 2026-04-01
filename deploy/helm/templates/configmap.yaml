@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tokentimer.fullname" . }}-config
+  labels:
+    {{- include "tokentimer.labels" . | nindent 4 }}
+data:
+  NODE_ENV: {{ .Values.config.nodeEnv | default "production" | quote }}
+
+  # URLs
+  APP_URL: {{ .Values.config.baseUrl | quote }}
+  API_URL: {{ .Values.config.apiUrl | quote }}
+
+  # Database -- when using an external DB with existingSecret, skip all DB keys
+  # so the secret is the sole source of truth. CloudNativePG always renders them.
+  {{- if or .Values.postgresql.cloudnative.enabled (not .Values.postgresql.external.existingSecret) }}
+  DB_HOST: {{ include "tokentimer.databaseHost" . | quote }}
+  DB_PORT: {{ include "tokentimer.databasePort" . | quote }}
+  DB_NAME: {{ include "tokentimer.databaseName" . | quote }}
+  DB_USER: {{ include "tokentimer.databaseUser" . | quote }}
+  {{- if and .Values.postgresql.external.enabled .Values.postgresql.external.sslMode }}
+  DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
+  {{- end }}
+  {{- end }}
+
+  # Alert thresholds
+  {{- if .Values.config.alertThresholds }}
+  ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
+  {{- end }}
+
+  # Admin bootstrap -- skipped when existingSecret owns these keys
+  {{- if not .Values.config.existingSecret }}
+  ADMIN_EMAIL: {{ .Values.config.adminEmail | required "config.adminEmail is required for initial admin setup (or use config.existingSecret)" | quote }}
+  ADMIN_NAME: {{ .Values.config.adminName | default "Administrator" | quote }}
+  {{- end }}
+
+  # Metrics
+  {{- if .Values.monitoring.metrics.enabled }}
+  ENABLE_METRICS: "true"
+  {{- end }}
+  {{- if .Values.monitoring.metrics.pushgatewayUrl }}
+  PUSHGATEWAY_URL: {{ .Values.monitoring.metrics.pushgatewayUrl | quote }}
+  {{- end }}
+
+  # SMTP -- skipped entirely when existingSecret is set (the secret owns all keys)
+  {{- if not .Values.smtp.existingSecret }}
+  {{- if .Values.smtp.host }}
+  SMTP_HOST: {{ .Values.smtp.host | quote }}
+  {{- end }}
+  {{- if .Values.smtp.port }}
+  SMTP_PORT: {{ .Values.smtp.port | quote }}
+  {{- end }}
+  {{- if .Values.smtp.user }}
+  SMTP_USER: {{ .Values.smtp.user | quote }}
+  {{- end }}
+  {{- if .Values.smtp.fromEmail }}
+  FROM_EMAIL: {{ .Values.smtp.fromEmail | quote }}
+  {{- end }}
+  {{- if .Values.smtp.fromName }}
+  FROM_EMAIL_NAME: {{ .Values.smtp.fromName | quote }}
+  {{- end }}
+  {{- end }}
+
+  # Twilio WhatsApp -- skipped entirely when existingSecret is set
+  {{- if not .Values.twilio.existingSecret }}
+  {{- if .Values.twilio.accountSid }}
+  TWILIO_ACCOUNT_SID: {{ .Values.twilio.accountSid | quote }}
+  {{- end }}
+  {{- if .Values.twilio.whatsappFrom }}
+  TWILIO_WHATSAPP_FROM: {{ .Values.twilio.whatsappFrom | quote }}
+  {{- end }}
+  {{- if .Values.twilio.testContentSid }}
+  TWILIO_WHATSAPP_TEST_CONTENT_SID: {{ .Values.twilio.testContentSid | quote }}
+  {{- end }}
+  {{- if .Values.twilio.alertContentSidExpires }}
+  TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES: {{ .Values.twilio.alertContentSidExpires | quote }}
+  {{- end }}
+  {{- if .Values.twilio.alertContentSidExpired }}
+  TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: {{ .Values.twilio.alertContentSidExpired | quote }}
+  {{- end }}
+  {{- if .Values.twilio.alertContentSidEndpointDown }}
+  TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: {{ .Values.twilio.alertContentSidEndpointDown | quote }}
+  {{- end }}
+  {{- if .Values.twilio.alertContentSidEndpointRecovered }}
+  TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: {{ .Values.twilio.alertContentSidEndpointRecovered | quote }}
+  {{- end }}
+  {{- if .Values.twilio.weeklyDigestContentSid }}
+  TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: {{ .Values.twilio.weeklyDigestContentSid | quote }}
+  {{- end }}
+  {{- end }}

@@ -1,0 +1,2727 @@
+openapi: 3.0.3
+info:
+  title: TokenTimer Core API Contract
+  version: 0.1.0
+  description: |
+    TokenTimer Core API for authentication, workspaces, token lifecycle management,
+    alerts, audit, and integration import/scan workflows.
+    This contract is also used as a compatibility baseline across core, cloud, and enterprise variants.
+servers:
+  - url: http://localhost:4000
+    description: Local development backend
+tags:
+  - name: Health
+    description: Service health and readiness endpoints.
+  - name: Auth
+    description: Authentication and account verification flows.
+  - name: Session
+    description: Session and CSRF token endpoints.
+  - name: Workspaces
+    description: Workspace CRUD, membership, domains, and workspace-level settings.
+  - name: Tokens
+    description: Token CRUD, lifecycle actions, and duplicate/bulk handling.
+  - name: Account
+    description: User account profile, security, plan, and usage endpoints.
+  - name: Audit
+    description: Audit trail queries and activity reporting.
+  - name: Alerts
+    description: Alert rules, destinations, queue visibility, and preferences.
+  - name: Integrations
+    description: Integration scans, discovery, and import operations.
+security:
+  - cookieAuth: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health endpoint
+      responses:
+        "200":
+          description: Service health payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                  uptime:
+                    type: number
+                    format: double
+                  memory:
+                    type: object
+                    additionalProperties: true
+                  environment:
+                    type: string
+  /api/auth/features:
+    get:
+      tags: [Auth]
+      summary: Auth feature availability flags
+      responses:
+        "200":
+          description: Feature flags for auth providers
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - saml
+                  - oidc
+                properties:
+                  saml:
+                    type: boolean
+                  oidc:
+                    type: boolean
+  /api/session:
+    get:
+      tags: [Session]
+      summary: Get current authenticated session
+      operationId: getSession
+      description: Returns session state and user profile when the request is authenticated.
+      security: []
+      responses:
+        "200":
+          description: Session state payload
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [loggedIn]
+                    properties:
+                      loggedIn:
+                        type: boolean
+                        enum: [false]
+                  - type: object
+                    required: [loggedIn, user]
+                    properties:
+                      loggedIn:
+                        type: boolean
+                        enum: [true]
+                      user:
+                        $ref: "#/components/schemas/SessionUser"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/csrf-token:
+    get:
+      tags: [Session]
+      summary: Issue CSRF token
+      operationId: getCsrfToken
+      description: Issues a CSRF token that must be sent on state-changing requests.
+      security: []
+      responses:
+        "200":
+          description: CSRF token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [csrfToken]
+                properties:
+                  csrfToken:
+                    type: string
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      operationId: loginWithPassword
+      description: Authenticates a user and returns either a session payload or a 2FA challenge.
+      security: []
+      requestBody:
+        description: Credentials used for password authentication.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login success or 2FA challenge
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LoginSuccessResponse"
+                  - $ref: "#/components/schemas/LoginNeeds2FAResponse"
+        "401":
+          description: Invalid credentials or unverified account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/verify-2fa:
+    post:
+      tags: [Auth]
+      summary: Verify 2FA token and finalize login
+      operationId: verifyTwoFactorLogin
+      description: Completes login for a user that has two-factor authentication enabled.
+      security: []
+      requestBody:
+        description: One-time code generated by the configured authenticator app.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: 2FA verification success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/verify-email/{token}:
+    get:
+      tags: [Auth]
+      summary: Verify account email token
+      operationId: verifyEmailToken
+      description: Validates an email verification token and redirects to the frontend.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/tokenParam"
+      responses:
+        "302":
+          description: Redirects to frontend login page with verification outcome
+  /auth/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Resend verification email
+      operationId: resendVerificationEmail
+      description: Sends a new account verification email for the authenticated or provided user.
+      security: []
+      requestBody:
+        description: Optional target email. If omitted, the current session user is used.
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Resend result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  emailSent:
+                    type: boolean
+                  error:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/request-password-reset:
+    post:
+      tags: [Auth]
+      summary: Request password reset email
+      operationId: requestPasswordReset
+      description: Starts the password reset flow by sending a reset link to the user email.
+      security: []
+      requestBody:
+        description: Email address for the account that should receive the reset link.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Reset request accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password using token
+      operationId: resetPasswordWithToken
+      description: Applies a new password using a previously issued password reset token.
+      security: []
+      requestBody:
+        description: Reset token and replacement password.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 12
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current session
+      operationId: logoutCurrentSession
+      description: Invalidates the current session cookie.
+      responses:
+        "200":
+          description: Logout success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Compatibility logout endpoint
+      operationId: logoutCompatibility
+      description: Legacy alias retained for client compatibility. Prefer `/api/logout` for new integrations.
+      security: []
+      responses:
+        "200":
+          description: Logout success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/account/2fa/setup:
+    post:
+      tags: [Account]
+      summary: Begin 2FA setup
+      responses:
+        "200":
+          description: 2FA seed generated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauth]
+                properties:
+                  secret:
+                    type: string
+                  otpauth:
+                    type: string
+                  qr:
+                    type: string
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/2fa/enable:
+    post:
+      tags: [Account]
+      summary: Enable 2FA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: 2FA enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/2fa/disable:
+    post:
+      tags: [Account]
+      summary: Disable 2FA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword]
+              properties:
+                currentPassword:
+                  type: string
+      responses:
+        "200":
+          description: 2FA disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/change-password:
+    post:
+      tags: [Account]
+      summary: Change account password
+      operationId: changeAccountPassword
+      description: Changes the password for the currently authenticated account.
+      requestBody:
+        description: Current password and new password (minimum 12 characters).
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 12
+      responses:
+        "200":
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces:
+    get:
+      tags: [Workspaces]
+      summary: List workspaces for current user
+      operationId: listWorkspaces
+      description: Returns workspaces visible to the authenticated user with pagination metadata.
+      parameters:
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Workspace"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Workspaces]
+      summary: Create workspace
+      operationId: createWorkspace
+      description: Creates a new workspace and assigns the creator as an administrator.
+      requestBody:
+        description: Workspace display name.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceCreateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}:
+    get:
+      tags: [Workspaces]
+      summary: Get workspace by id
+      operationId: getWorkspaceById
+      description: Returns details for a single workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Workspaces]
+      summary: Update workspace
+      operationId: updateWorkspace
+      description: Updates mutable workspace fields.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        description: Workspace fields to update.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Workspace updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Workspaces]
+      summary: Delete workspace
+      operationId: deleteWorkspace
+      description: Deletes a workspace if the caller has sufficient permissions.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "204":
+          description: Workspace deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/members:
+    get:
+      tags: [Workspaces]
+      summary: List workspace members
+      operationId: listWorkspaceMembers
+      description: Lists members and invitation-backed members for the workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WorkspaceMember"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+    post:
+      tags: [Workspaces]
+      summary: Add or invite workspace member
+      operationId: addWorkspaceMember
+      description: Adds an existing user or creates/updates an invitation for the provided email.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        description: Target member email and role assignment.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [viewer, workspace_manager]
+      responses:
+        "201":
+          description: Member created or invitation updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                    nullable: true
+                  role:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Plan limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/members/{userId}:
+    patch:
+      tags: [Workspaces]
+      summary: Update member role
+      operationId: updateWorkspaceMemberRole
+      description: Changes the role of an existing workspace member.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/userIdParam"
+      requestBody:
+        description: New role for the specified member.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [viewer, workspace_manager]
+      responses:
+        "200":
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  role:
+                    type: string
+    delete:
+      tags: [Workspaces]
+      summary: Remove workspace member
+      operationId: removeWorkspaceMember
+      description: Removes a user from the workspace membership list.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/userIdParam"
+      responses:
+        "204":
+          description: Member removed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/transfer-tokens:
+    post:
+      tags: [Workspaces]
+      summary: Transfer token ownership between workspaces
+      operationId: transferWorkspaceTokens
+      description: Moves tokens from one workspace to another workspace within the same account scope.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        description: Source workspace and token ids to move into the target workspace.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_workspace_id, token_ids]
+              properties:
+                from_workspace_id:
+                  type: string
+                  format: uuid
+                token_ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        "200":
+          description: Transfer result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moved:
+                    type: integer
+                  targetWorkspaceId:
+                    type: string
+                    format: uuid
+                  fromWorkspaceId:
+                    type: string
+                    format: uuid
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          description: Transfer exceeds plan limits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/tokens:
+    get:
+      tags: [Tokens]
+      summary: List tokens
+      operationId: listTokens
+      description: Lists tokens with optional workspace and text filtering.
+      parameters:
+        - in: query
+          name: workspace_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: q
+          schema:
+            type: string
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Token"
+                  total:
+                    type: integer
+                  facets:
+                    type: object
+                    additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Tokens]
+      summary: Create token
+      operationId: createToken
+      description: Creates a token record. Can also resolve duplicate flows when confirmation flags are used.
+      requestBody:
+        description: Token payload including workspace id, token name, type, and optional metadata.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenCreateRequest"
+      responses:
+        "201":
+          description: Token created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token"
+        "200":
+          description: Duplicate confirm path updated existing token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "402":
+          description: Plan token limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Duplicate token candidate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/tokens/{id}:
+    get:
+      tags: [Tokens]
+      summary: Get token by id
+      operationId: getTokenById
+      description: Fetches a single token by identifier.
+      parameters:
+        - $ref: "#/components/parameters/tokenIdParam"
+      responses:
+        "200":
+          description: Token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Tokens]
+      summary: Update token by id
+      operationId: updateTokenById
+      description: Updates mutable fields of an existing token.
+      parameters:
+        - $ref: "#/components/parameters/tokenIdParam"
+      requestBody:
+        description: Partial token fields to update.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Tokens]
+      summary: Delete token by id
+      operationId: deleteTokenById
+      description: Deletes a token record.
+      parameters:
+        - $ref: "#/components/parameters/tokenIdParam"
+      responses:
+        "200":
+          description: Token deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/tokens/bulk:
+    delete:
+      tags: [Tokens]
+      summary: Bulk delete tokens
+      operationId: bulkDeleteTokens
+      description: Deletes multiple tokens in one request and returns per-item processing details.
+      requestBody:
+        description: List of token ids to delete.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        "200":
+          description: Bulk delete result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  successCount:
+                    type: integer
+                  failedCount:
+                    type: integer
+                  results:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/export:
+    get:
+      tags: [Account]
+      summary: Export account and workspace data
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [user, workspace, organization]
+        - in: query
+          name: workspace_id
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: JSON export attachment
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/export-audit:
+    get:
+      tags: [Audit]
+      summary: Export audit events
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [user, workspace, organization]
+        - in: query
+          name: workspace_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [json, csv]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Audit export payload or CSV
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/csv:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/plan:
+    get:
+      tags: [Account]
+      summary: Account and plan usage counters
+      parameters:
+        - in: query
+          name: workspace_id
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Usage counters and limits
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [
+                    plan,
+                    tokenCount,
+                    tokenLimit,
+                    alertUsageMonth,
+                    alertLimitMonth,
+                  ]
+                properties:
+                  plan:
+                    type: string
+                  tokenCount:
+                    type: integer
+                  tokenLimit:
+                    oneOf:
+                      - type: integer
+                      - type: number
+                  alertUsageMonth:
+                    type: integer
+                  alertLimitMonth:
+                    oneOf:
+                      - type: integer
+                      - type: number
+                  memberCount:
+                    type: integer
+                  memberLimit:
+                    oneOf:
+                      - type: integer
+                      - type: number
+                  workspaceCount:
+                    type: integer
+                  workspaceLimit:
+                    oneOf:
+                      - type: integer
+                      - type: number
+                  integrationScansUsed:
+                    type: integer
+                    nullable: true
+                  integrationScansLimit:
+                    type: integer
+                    nullable: true
+                  integrationScansRemaining:
+                    type: integer
+                    nullable: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/organization/usage:
+    get:
+      tags: [Account]
+      summary: Organization usage summary
+      responses:
+        "200":
+          description: Current month usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  monthUsage:
+                    type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/audit-events:
+    get:
+      tags: [Audit]
+      summary: List audit events
+      parameters:
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [organization]
+        - in: query
+          name: action
+          schema:
+            type: string
+        - in: query
+          name: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Audit event list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/audit-events:
+    get:
+      tags: [Audit]
+      summary: List workspace scoped audit events
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Workspace audit event list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/audit:
+    get:
+      tags: [Audit]
+      summary: Legacy workspace audit feed
+      parameters:
+        - in: query
+          name: workspace_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: event_type
+          schema:
+            type: string
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Audit list and pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEvent"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/alert-queue/requeue:
+    post:
+      tags: [Alerts]
+      summary: Bulk requeue pending alerts
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Requeue result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/alert-queue/{id}/retry:
+    post:
+      tags: [Alerts]
+      summary: Retry a specific alert delivery
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+      responses:
+        "200":
+          description: Retry queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Retry cooldown active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/alert-queue:
+    get:
+      tags: [Alerts]
+      summary: List alert queue entries
+      responses:
+        "200":
+          description: Alert queue list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/alert-stats:
+    get:
+      tags: [Alerts]
+      summary: Get alert queue statistics
+      responses:
+        "200":
+          description: Alert stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/vault/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan Vault for importable credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VaultScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/vault/mounts:
+    post:
+      tags: [Integrations]
+      summary: List available Vault mounts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VaultMountsRequest"
+      responses:
+        "200":
+          description: Vault mount list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mounts]
+                properties:
+                  mounts:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/vault/import:
+    post:
+      tags: [Integrations]
+      summary: Import selected Vault findings as tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationImportRequest"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationImportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/gitlab/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan GitLab credentials and expirations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/github/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan GitHub credentials and expirations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/aws/detect-regions:
+    post:
+      tags: [Integrations]
+      summary: Detect AWS regions from credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Region detection result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [regions]
+                properties:
+                  regions:
+                    type: array
+                    items:
+                      type: string
+  /api/v1/integrations/aws/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan AWS resources for token-like credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/azure/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan Azure resources for credentials and expirations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/gcp/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan GCP resources for credentials and expirations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/azure-ad/scan:
+    post:
+      tags: [Integrations]
+      summary: Scan Azure AD apps and credentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderScanRequest"
+      responses:
+        "200":
+          description: Integration scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationScanResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/integrations/check-duplicates:
+    post:
+      tags: [Integrations]
+      summary: Check duplicate candidates before import
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+      responses:
+        "200":
+          description: Duplicate analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /api/v1/integrations/import:
+    post:
+      tags: [Integrations]
+      summary: Generic import endpoint for integration findings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationImportRequest"
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationImportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account:
+    delete:
+      tags: [Account]
+      summary: Delete authenticated account
+      operationId: deleteAccount
+      description: Deletes or anonymizes the authenticated account, with ownership safety checks.
+      parameters:
+        - in: query
+          name: force
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Account deletion completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "409":
+          description: Deletion blocked because user is sole admin in one or more workspaces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/system-settings:
+    get:
+      tags: [Account]
+      summary: Get system settings
+      operationId: getSystemSettings
+      description: Returns SMTP and WhatsApp system settings for admin users.
+      responses:
+        "200":
+          description: System settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Account]
+      summary: Update system settings
+      operationId: updateSystemSettings
+      description: Updates SMTP and WhatsApp configuration values for admin users.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated system settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/test-smtp:
+    post:
+      tags: [Account]
+      summary: Send SMTP test email
+      operationId: testSmtpConfiguration
+      description: Sends a test email using current SMTP settings.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: SMTP test result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/admin/test-whatsapp:
+    post:
+      tags: [Account]
+      summary: Send WhatsApp test message as admin
+      operationId: testAdminWhatsAppConfiguration
+      description: Sends a test WhatsApp message using current system settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone:
+                  type: string
+      responses:
+        "200":
+          description: WhatsApp test result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/test-webhook:
+    post:
+      tags: [Alerts]
+      summary: Send test webhook
+      operationId: sendTestWebhook
+      description: Sends a test webhook payload to validate destination settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Webhook test result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/test-whatsapp:
+    post:
+      tags: [Alerts]
+      summary: Send workspace WhatsApp test message
+      operationId: sendWorkspaceWhatsAppTest
+      description: Sends a workspace-scoped WhatsApp test message with cooldown and validation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                phone_e164:
+                  type: string
+      responses:
+        "200":
+          description: WhatsApp test result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          description: Cooldown active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /webhooks/twilio/whatsapp/status:
+    post:
+      tags: [Alerts]
+      summary: Twilio WhatsApp delivery status webhook
+      operationId: twilioWhatsAppStatusWebhook
+      description: Receives Twilio status callbacks and updates WhatsApp delivery metadata.
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Webhook processed
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register user from invitation
+      operationId: registerFromInvitation
+      description: Creates a user account using a valid invitation token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, email, password]
+              properties:
+                token:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+      responses:
+        "200":
+          description: Registration success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Invitation or account conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/verify-email:
+    get:
+      tags: [Auth]
+      summary: Verify email endpoint without token
+      operationId: verifyEmailMissingToken
+      description: Compatibility route returning an explicit error when token is missing.
+      security: []
+      responses:
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/workspaces/{id}/auto-sync:
+    get:
+      tags: [Workspaces]
+      summary: List auto-sync configs
+      operationId: listAutoSyncConfigs
+      description: Lists auto-sync configurations for a workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Auto-sync config list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Workspaces]
+      summary: Create auto-sync config
+      operationId: createAutoSyncConfig
+      description: Creates a new provider auto-sync configuration for a workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, credentials]
+              properties:
+                provider:
+                  type: string
+                credentials:
+                  type: object
+                  additionalProperties: true
+                scan_params:
+                  type: object
+                  additionalProperties: true
+                frequency:
+                  type: string
+                schedule_time:
+                  type: string
+                schedule_tz:
+                  type: string
+      responses:
+        "201":
+          description: Auto-sync config created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Config already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/auto-sync/{configId}:
+    put:
+      tags: [Workspaces]
+      summary: Update auto-sync config
+      operationId: updateAutoSyncConfig
+      description: Updates an existing auto-sync configuration.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: configId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated auto-sync config
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Workspaces]
+      summary: Delete auto-sync config
+      operationId: deleteAutoSyncConfig
+      description: Deletes an auto-sync configuration from a workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: configId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Auto-sync config deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/auto-sync/{configId}/run:
+    post:
+      tags: [Workspaces]
+      summary: Trigger auto-sync run
+      operationId: triggerAutoSyncRun
+      description: Queues an immediate run for an enabled auto-sync configuration.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: configId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sync queued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/contacts:
+    get:
+      tags: [Workspaces]
+      summary: List workspace contacts
+      operationId: listWorkspaceContacts
+      description: Returns contact records for the workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Contact list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Workspaces]
+      summary: Create workspace contact
+      operationId: createWorkspaceContact
+      description: Creates a workspace contact with email and/or phone details.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name]
+              properties:
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+                phone_e164:
+                  type: string
+                details:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Contact created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/contacts/{contactId}:
+    put:
+      tags: [Workspaces]
+      summary: Update workspace contact
+      operationId: updateWorkspaceContact
+      description: Updates mutable fields of a workspace contact.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: contactId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Contact updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Workspaces]
+      summary: Delete workspace contact
+      operationId: deleteWorkspaceContact
+      description: Deletes a contact from the workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: contactId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Contact deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/domains:
+    get:
+      tags: [Workspaces]
+      summary: List endpoint monitors
+      operationId: listWorkspaceDomainMonitors
+      description: Lists endpoint monitoring configurations for a workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Endpoint monitor list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Workspaces]
+      summary: Create endpoint monitor
+      operationId: createWorkspaceDomainMonitor
+      description: Creates a domain monitor and optionally links an auto-created token.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                health_check_enabled:
+                  type: boolean
+                check_interval:
+                  type: string
+                alert_after_failures:
+                  type: integer
+                contact_group_id:
+                  type: string
+      responses:
+        "201":
+          description: Endpoint monitor created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/domains/{domainId}:
+    put:
+      tags: [Workspaces]
+      summary: Update endpoint monitor
+      operationId: updateWorkspaceDomainMonitor
+      description: Updates endpoint monitor settings such as check interval and enablement.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: domainId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Endpoint monitor updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Workspaces]
+      summary: Delete endpoint monitor
+      operationId: deleteWorkspaceDomainMonitor
+      description: Removes a domain monitor from the workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: domainId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Endpoint monitor deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/domains/{domainId}/check:
+    post:
+      tags: [Workspaces]
+      summary: Run endpoint health check now
+      operationId: runWorkspaceDomainMonitorCheck
+      description: Executes an immediate health check for a monitored endpoint.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: domainId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/tokens/reassign-contact-group:
+    post:
+      tags: [Workspaces]
+      summary: Reassign tokens between contact groups
+      operationId: reassignTokenContactGroup
+      description: Moves token contact_group_id values from one group to another in the workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_group_id, to_group_id]
+              properties:
+                from_group_id:
+                  type: string
+                to_group_id:
+                  type: string
+      responses:
+        "200":
+          description: Reassignment result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/alert-settings:
+    put:
+      tags: [Alerts]
+      summary: Update workspace alert settings
+      operationId: updateWorkspaceAlertSettings
+      description: Updates workspace-level alert thresholds, channels, windows, and contact groups.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Alert settings update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/account/alert-settings:
+    put:
+      tags: [Alerts]
+      summary: Update user alert settings
+      operationId: updateUserAlertSettings
+      description: Updates authenticated user alert thresholds and channel preferences.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Alert settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionId
+      description: Session cookie authentication used by authenticated API routes.
+  parameters:
+    workspaceIdParam:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    tokenIdParam:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: integer
+    userIdParam:
+      in: path
+      name: userId
+      required: true
+      schema:
+        type: integer
+    tokenParam:
+      in: path
+      name: token
+      required: true
+      schema:
+        type: string
+    limitParam:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        minimum: 1
+    offsetParam:
+      in: query
+      name: offset
+      schema:
+        type: integer
+        minimum: 0
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        details:
+          oneOf:
+            - type: array
+              items:
+                type: string
+            - type: object
+              additionalProperties: true
+            - type: string
+      example:
+        error: Invalid request payload
+        code: VALIDATION_ERROR
+        details:
+          - email is required
+    SessionUser:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        plan:
+          type: string
+        authMethod:
+          type: string
+        loginMethod:
+          type: string
+        emailVerified:
+          type: boolean
+        needsVerification:
+          type: boolean
+        twoFactorEnabled:
+          type: boolean
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@localhost.local
+        password:
+          type: string
+          example: AdminPassword123!
+    LoginSuccessResponse:
+      type: object
+      required: [message, user]
+      properties:
+        message:
+          type: string
+        user:
+          type: object
+          properties:
+            id:
+              type: integer
+            email:
+              type: string
+            displayName:
+              type: string
+    LoginNeeds2FAResponse:
+      type: object
+      required: [requires2FA]
+      properties:
+        requires2FA:
+          type: boolean
+        authMethod:
+          type: string
+    Workspace:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        plan:
+          type: string
+        role:
+          type: string
+          enum: [admin, workspace_manager, viewer]
+        created_by:
+          type: integer
+        is_personal:
+          type: boolean
+        is_personal_default:
+          type: boolean
+    WorkspaceCreateResponse:
+      type: object
+      required: [id, name, plan, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        plan:
+          type: string
+        role:
+          type: string
+      example:
+        id: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
+        name: "Production Workspace"
+        plan: "oss"
+        role: "admin"
+    WorkspaceMember:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        role:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+    TokenCreateRequest:
+      type: object
+      required: [workspace_id, name, type]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          example: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
+        name:
+          type: string
+          example: "Stripe Production API Key"
+        type:
+          type: string
+          example: "api_key"
+        category:
+          type: string
+          example: "payment"
+        expiresAt:
+          type: string
+          format: date
+          example: "2027-12-31"
+        confirm_duplicate:
+          type: boolean
+          example: false
+        contact_group_id:
+          type: string
+          example: "d7c5f1be-15f4-4b5b-9b49-f80f0d48d085"
+        description:
+          type: string
+          example: "Rotated quarterly by platform team"
+        notes:
+          type: string
+          example: "Owner: Platform - escalate before expiration"
+    Token:
+      type: object
+      required: [id, name, type]
+      properties:
+        id:
+          type: integer
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+        category:
+          type: string
+        expiration:
+          type: string
+          format: date
+        expiresAt:
+          type: string
+          format: date
+        location:
+          type: string
+        issuer:
+          type: string
+        serial_number:
+          type: string
+        subject:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      example:
+        id: 142
+        workspace_id: "8d13ecfe-9436-4f09-b8ba-0248c5b4e8ef"
+        name: "Stripe Production API Key"
+        type: "api_key"
+        category: "payment"
+        expiresAt: "2027-12-31"
+        created_at: "2026-03-13T18:00:00.000Z"
+        updated_at: "2026-03-13T18:00:00.000Z"
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        occurred_at:
+          type: string
+          format: date-time
+        actor_user_id:
+          type: integer
+        actor_display_name:
+          type: string
+        subject_user_id:
+          type: integer
+        action:
+          type: string
+        target_type:
+          type: string
+        target_id:
+          oneOf:
+            - type: integer
+            - type: string
+        channel:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        workspace_id:
+          type: string
+          format: uuid
+          nullable: true
+        workspace_name:
+          type: string
+    ProviderScanRequest:
+      type: object
+      additionalProperties: true
+      properties:
+        provider:
+          type: string
+        credentials:
+          type: object
+          additionalProperties: true
+    VaultScanRequest:
+      type: object
+      required: [address, token]
+      properties:
+        address:
+          type: string
+          format: uri
+        token:
+          type: string
+        include:
+          type: object
+          additionalProperties: true
+        mounts:
+          type: array
+          items:
+            type: string
+    VaultMountsRequest:
+      type: object
+      required: [address, token]
+      properties:
+        address:
+          type: string
+          format: uri
+        token:
+          type: string
+    IntegrationScanResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        quota:
+          type: object
+          additionalProperties: true
+    IntegrationImportRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: true
+        workspace_id:
+          type: string
+          format: uuid
+        default_category:
+          type: string
+        default_type:
+          type: string
+    IntegrationImportResponse:
+      type: object
+      properties:
+        created:
+          type: integer
+        updated:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true

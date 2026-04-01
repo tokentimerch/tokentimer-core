@@ -1,0 +1,34 @@
+{
+  "short_name": "TokenTimer",
+  "name": "TokenTimer",
+  "icons": [
+    {
+      "src": "Branding/app-icon.svg?v=4",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "Branding/logo.svg?v=4",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "Branding/favicon.svg?v=4",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "Branding/app-icon.png?v=4",
+      "sizes": "180x180 192x192 256x256 512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f6f7ff",
+  "theme_color": "#3366d3"
+}

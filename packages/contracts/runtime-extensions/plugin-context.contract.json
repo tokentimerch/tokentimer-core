@@ -1,0 +1,21 @@
+{
+  "contractName": "runtime-extensions.plugin-context",
+  "version": "0.1.0",
+  "description": "Expected plugin context hooks exposed by core to runtime extensions.",
+  "hooks": {
+    "setAuthFeaturesProvider": {
+      "signature": "(handler: (req, res) => void) => void",
+      "lifecycle": "called during plugin setup before auth feature route evaluation",
+      "fallback": "if unset, core route returns static defaults"
+    },
+    "setAutoSyncProviders": {
+      "signature": "(providers: string[]) => void",
+      "lifecycle": "called during plugin setup before import/sync provider policy is applied",
+      "fallback": "if unset, core default provider allowlist remains active"
+    }
+  },
+  "notes": [
+    "This artifact defines expected contract shape regardless of current wiring maturity.",
+    "Consumers should feature-detect hook availability before invoking."
+  ]
+}

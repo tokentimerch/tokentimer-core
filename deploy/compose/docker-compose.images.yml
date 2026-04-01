@@ -1,0 +1,32 @@
+services:
+  migrations:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-api:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  api:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-api:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  worker-discovery:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-worker:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  worker-delivery:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-worker:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  worker-weekly-digest:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-worker:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  worker-auto-sync:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-worker:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  worker-endpoint-check:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-worker:${TT_IMAGE_TAG:-latest}
+    pull_policy: always
+
+  dashboard:
+    image: ${TT_IMAGE_REGISTRY:-ghcr.io}/${TT_IMAGE_OWNER:-tokentimerch}/tokentimer-core-dashboard:${TT_IMAGE_TAG:-latest}
+    pull_policy: always

@@ -1,0 +1,164 @@
+{
+  "manifestVersion": 1,
+  "repo": "tokentimer-core",
+  "contractsPackage": "@tokentimer/contracts",
+  "version": "0.1.0",
+  "namespaces": [
+    {
+      "name": "queue",
+      "entries": [
+        {
+          "id": "alert-discovery",
+          "kind": "schema",
+          "path": "packages/contracts/queue/alert-discovery.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "alert-delivery",
+          "kind": "schema",
+          "path": "packages/contracts/queue/alert-delivery.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "weekly-digest",
+          "kind": "schema",
+          "path": "packages/contracts/queue/weekly-digest.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "queue-schemas-test",
+          "kind": "test",
+          "path": "tests/contract/queue-schemas.test.js",
+          "status": "existing"
+        },
+        {
+          "id": "queue-schemas-ajv-test",
+          "kind": "test",
+          "path": "tests/contract/queue-schemas-ajv.test.js",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "name": "api",
+      "entries": [
+        {
+          "id": "contract-tests",
+          "kind": "test",
+          "path": "tests/contract/api-endpoints.test.js",
+          "status": "existing"
+        },
+        {
+          "id": "api-openapi-conformance-test",
+          "kind": "test",
+          "path": "tests/contract/api-openapi-conformance.test.js",
+          "status": "existing"
+        },
+        {
+          "id": "swagger-runtime-source",
+          "kind": "runtime",
+          "path": "apps/api/index.js",
+          "status": "existing"
+        },
+        {
+          "id": "openapi-static",
+          "kind": "spec",
+          "path": "packages/contracts/openapi/openapi.yaml",
+          "status": "existing"
+        },
+        {
+          "id": "integration-openapi-spec",
+          "kind": "spec",
+          "path": "packages/contracts/openapi/openapi.yaml",
+          "status": "existing"
+        },
+        {
+          "id": "auth-route-compat-contract",
+          "kind": "spec",
+          "path": "packages/contracts/api/auth-route-compat.contract.json",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "name": "runtime-extensions",
+      "entries": [
+        {
+          "id": "auth-features-defaults-test",
+          "kind": "test",
+          "path": "tests/contract/auth-features-defaults.test.js",
+          "status": "existing"
+        },
+        {
+          "id": "auth-features-route",
+          "kind": "runtime",
+          "path": "apps/api/routes/health.js",
+          "status": "existing"
+        },
+        {
+          "id": "plugin-context-hooks-contract",
+          "kind": "spec",
+          "path": "packages/contracts/runtime-extensions/plugin-context.contract.json",
+          "status": "existing"
+        },
+        {
+          "id": "plugin-context-hooks-schema",
+          "kind": "spec",
+          "path": "packages/contracts/runtime-extensions/plugin-context.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "plugin-context-hooks-example",
+          "kind": "spec",
+          "path": "packages/contracts/runtime-extensions/plugin-context.example.json",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "name": "limits-policy",
+      "entries": [
+        {
+          "id": "limits-policy-test",
+          "kind": "test",
+          "path": "tests/contract/limits-policy.test.js",
+          "status": "existing"
+        },
+        {
+          "id": "plan-limits-service",
+          "kind": "runtime",
+          "path": "apps/api/services/planLimits.js",
+          "status": "existing"
+        },
+        {
+          "id": "limits-constants",
+          "kind": "runtime",
+          "path": "apps/api/config/constants.js",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "name": "db-baseline",
+      "entries": [
+        {
+          "id": "baseline-minimum-db-shape",
+          "kind": "schema",
+          "path": "packages/contracts/db/baseline-minimum.schema.json",
+          "status": "existing"
+        }
+      ]
+    },
+    {
+      "name": "image-composition",
+      "entries": [
+        {
+          "id": "variant-image-composition-manifest",
+          "kind": "schema",
+          "path": "packages/contracts/image-composition/manifest.schema.json",
+          "status": "existing"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,324 @@
+# TokenTimer Self-Host Docker Compose
+# Usage: docker compose up -d
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: tokentimer-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-tokentimer}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-tokentimer}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-tokentimer} -d ${DB_NAME:-tokentimer}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Database Migrations (run once)
+  migrations:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.api
+    container_name: tokentimer-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "apps/api/migrations/migrate.js"]
+    restart: "no"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+
+  # API Service
+  api:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.api
+    container_name: tokentimer-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+
+      # URLs
+      APP_URL: ${APP_URL:-http://localhost:5173}
+      API_URL: ${API_URL:-http://localhost:4000}
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+
+      # Auth
+      SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}
+
+      # Admin Bootstrap
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+
+      # SMTP (optional - configure here or via System Settings UI)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
+
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_WHATSAPP_TEST_CONTENT_SID: ${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: ${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+
+    volumes: []
+    ports:
+      - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Worker Service - Alert Discovery
+  worker-discovery:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-discovery
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/queue-manager.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+
+      # URLs
+      APP_URL: ${APP_URL:-http://localhost:5173}
+
+      # Session secret (needed for decrypting DB-stored secrets)
+      SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+
+      # SMTP (optional - configure here or via System Settings UI)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
+
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_WHATSAPP_TEST_CONTENT_SID: ${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: ${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+
+    volumes: []
+
+  # Worker Service - Alert Delivery
+  worker-delivery:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-delivery
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/delivery-worker.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+
+      # URLs
+      APP_URL: ${APP_URL:-http://localhost:5173}
+
+      # Session secret (needed for decrypting DB-stored secrets)
+      SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+
+      # SMTP (optional - configure here or via System Settings UI)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
+
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_WHATSAPP_TEST_CONTENT_SID: ${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: ${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+
+    volumes: []
+
+  # Worker Service - Weekly Digest
+  worker-weekly-digest:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-weekly-digest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/weekly-digest-runner.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+
+      # URLs
+      APP_URL: ${APP_URL:-http://localhost:5173}
+
+      # Session secret (needed for decrypting DB-stored secrets)
+      SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+
+      # SMTP (optional - configure here or via System Settings UI)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
+
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_WHATSAPP_TEST_CONTENT_SID: ${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: ${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: ${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+
+    volumes: []
+
+  # Worker Service - Auto Sync
+  worker-auto-sync:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-auto-sync
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/auto-sync-worker.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+      SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      API_URL: ${API_URL:-http://api:4000}
+    volumes: []
+
+  # Worker Service - Endpoint (SSL) Check
+  worker-endpoint-check:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-endpoint-check
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/endpoint-check-worker.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+
+  # Dashboard (Frontend)
+  dashboard:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.dashboard
+      args:
+        VITE_API_URL: ${API_URL:-http://localhost:4000}
+    container_name: tokentimer-dashboard
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${DASHBOARD_PORT:-5173}:80"
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: tokentimer-network

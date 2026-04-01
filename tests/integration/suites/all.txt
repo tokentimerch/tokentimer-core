@@ -1,0 +1,2 @@
+# Internal/full suite for maintainers
+tests/integration/**/*.test.js

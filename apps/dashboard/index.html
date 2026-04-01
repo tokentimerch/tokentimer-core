@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>TokenTimer</title>
+    <meta
+      name="description"
+      content="Track expiring certificates, API keys, tokens, and licenses with automated reminders."
+    />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/Branding/favicon.svg?v=4" />
+    <!-- PNG fallback for browsers that don't support SVG favicons well -->
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href="/Branding/favicon.png?v=4"
+    />
+    <link
+      rel="shortcut icon"
+      type="image/png"
+      href="/Branding/app-icon.png?v=4"
+    />
+    <link rel="mask-icon" href="/Branding/favicon.svg?v=4" color="#2563eb" />
+    <!-- iOS uses PNG for Home Screen icons -->
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="/Branding/app-icon.png?v=4"
+    />
+    <link rel="manifest" href="/manifest.json" />
+    <style>
+      :root {
+        --tt-blue: #2563eb;
+        --tt-navy: #1e40af;
+        --tt-google-blue: #3b82f6;
+        --tt-green: #16a34a;
+        --tt-orange: #f97316;
+        --tt-red: #dc2626;
+        --tt-grey: #64748b;
+        --tt-bg: #f8fafc;
+        --tt-neutral: #f1f5f9;
+        --font-ui: 'Montserrat', system-ui, sans-serif;
+        --font-mono: 'Roboto Mono', Menlo, monospace;
+      }
+      body {
+        font-family:
+          'Montserrat',
+          'Montserrat Fallback',
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: 'Archivo Black', 'Archivo Black Fallback', system-ui,
+          sans-serif;
+        font-weight: 400;
+      }
+      .token-value,
+      .expiry-pill {
+        font-family: var(--font-mono);
+        font-size: 1em;
+      }
+      .expiry-pill {
+        border-radius: 8px;
+        padding: 2px 15px;
+        font-weight: 600;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        display: inline-block;
+      }
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+      #root {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Prevent theme class swap CLS */
+      body.chakra-ui-light,
+      body.chakra-ui-dark {
+        transition: none !important;
+      }
+      /* Reserve footer space to prevent CLS during hydration */
+      footer,
+      [data-footer-placeholder] {
+        min-height: 110px;
+        contain: layout paint;
+      }
+      @media (max-width: 768px) {
+        footer,
+        [data-footer-placeholder] {
+          min-height: 250px;
+        }
+      }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@600;700&family=Montserrat:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap"
+      onload="this.rel = 'stylesheet'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@600;700&family=Montserrat:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap"
+      />
+    </noscript>
+    <style>
+      /* Prevent font swap shifting: use fallback metrics */
+      @font-face {
+        font-family: 'Montserrat Fallback';
+        src: local('Arial');
+        ascent-override: 90%;
+        descent-override: 22%;
+        line-gap-override: 0%;
+        size-adjust: 110%;
+      }
+      @font-face {
+        font-family: 'Archivo Black Fallback';
+        src: local('Arial Black');
+        ascent-override: 95%;
+        descent-override: 25%;
+        line-gap-override: 0%;
+        size-adjust: 105%;
+      }
+      @font-face {
+        font-family: 'Roboto Mono Fallback';
+        src: local('Courier New');
+        ascent-override: 85%;
+        descent-override: 20%;
+        line-gap-override: 0%;
+        size-adjust: 100%;
+      }
+      /* Apply fallbacks with system fonts */
+      body {
+        font-family:
+          'Montserrat',
+          'Montserrat Fallback',
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: 'Archivo Black', 'Archivo Black Fallback', system-ui,
+          sans-serif;
+      }
+    </style>
+    <script>
+      // Set initial color mode early to avoid flash (matches Chakra config)
+      (function () {
+        try {
+          var m = localStorage.getItem('chakra-ui-color-mode');
+          var prefersDark = window.matchMedia(
+            '(prefers-color-scheme: dark)'
+          ).matches;
+          var mode = m || (prefersDark ? 'dark' : 'light');
+          document.documentElement.style.colorScheme = mode;
+          // Scope theme at the root to prevent stale dark scoping on body
+          document.documentElement.setAttribute('data-theme', mode);
+          var applyToBody = function () {
+            try {
+              var b = document.body;
+              if (!b) return;
+              // Ensure body does not carry data-theme that could override root
+              b.removeAttribute('data-theme');
+              b.classList.remove('chakra-ui-light', 'chakra-ui-dark');
+              b.classList.add(
+                mode === 'dark' ? 'chakra-ui-dark' : 'chakra-ui-light'
+              );
+            } catch (e) {}
+          };
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', applyToBody);
+          } else {
+            applyToBody();
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Runtime env variables (tiny ~100 bytes, cached) - must load before module -->
+    <script src="/env.js"></script>
+    <script type="module" src="/src/main.jsx"></script>
+    <noscript>
+      <div
+        style="
+          padding: 16px;
+          font-family:
+            system-ui,
+            Segoe UI,
+            Roboto,
+            Helvetica,
+            Arial,
+            sans-serif;
+        "
+      >
+        <h2>
+          TokenTimer — Token expiration monitoring and certificate expiry alerts
+        </h2>
+        <p>
+          TokenTimer helps teams track secrets, API keys, and certificates with
+          proactive notifications and audit logs.
+        </p>
+        <ul>
+          <li><a href="/pricing">Pricing</a></li>
+          <li><a href="/help">Help</a></li>
+          <li><a href="/privacy-policy">Privacy Policy</a></li>
+          <li><a href="/terms-of-service">Terms of Service</a></li>
+        </ul>
+      </div>
+    </noscript>
+  </body>
+</html>

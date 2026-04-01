@@ -1,0 +1,70 @@
+:root {
+  /* Brand Colors - aligned with design token system */
+  --tt-blue: #2563eb; /* Brand Blue, primary accent */
+  --tt-navy: #1e40af; /* Deep Navy, logo gradient dark */
+  --tt-google-blue: #3b82f6; /* Google Blue, highlight/border */
+  --tt-green: #16a34a; /* Healthy expiry chip (≥30 days) */
+  --tt-orange: #f97316; /* Warning expiry chip (8-29 days) */
+  --tt-red: #dc2626; /* Critical expiry chip, errors */
+  --tt-grey: #64748b; /* Neutral/muted */
+  --tt-bg: #f8fafc; /* App background, cards */
+  --tt-neutral: #f1f5f9; /* Table headers, surfaces */
+
+  /* Font Families */
+  --font-ui: 'Montserrat', 'Montserrat Fallback', system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', Menlo, monospace;
+}
+
+/* Typography */
+body {
+  font-family: var(--font-ui);
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Archivo Black', Archivo-Black, system-ui, sans-serif;
+  font-weight: 400;
+}
+
+.token-value,
+.expiry-pill {
+  font-family: var(--font-mono);
+  font-size: 1em;
+}
+
+/* Expiry pill styling */
+.expiry-pill {
+  border-radius: 8px;
+  padding: 2px 15px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  display: inline-block;
+}
+
+/* Layout: ensure footer sticks to bottom across all pages */
+html,
+body,
+#root {
+  height: 100%;
+  overflow-x: hidden; /* Prevent horizontal scrolling */
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  flex-direction: column;
+}
+
+/* Fix Select dropdown option backgrounds - native select options can only be styled with CSS */
+.chakra-ui-light select option {
+  background-color: #f7fafc !important; /* gray.100 */
+  color: #1a202c !important; /* gray.800 */
+}
+
+.chakra-ui-dark select option {
+  background-color: #1a202c !important; /* gray.800 */
+  color: #f7fafc !important; /* gray.100 */
+}

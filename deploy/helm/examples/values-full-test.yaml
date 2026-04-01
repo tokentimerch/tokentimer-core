@@ -1,0 +1,445 @@
+# Full feature test: enables every optional resource in the chart.
+# Use with Minikube + CNPG operator + kube-prometheus-stack + ingress addon.
+#
+# Prerequisites:
+#   minikube addons enable ingress
+#   helm install kube-prom-stack prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false
+#   helm install cnpg-operator cnpg/cloudnative-pg --namespace cnpg-system --create-namespace --version 0.23.0 --wait
+#
+# Install:
+#   helm install tokentimer oci://ghcr.io/tokentimerch/charts/tokentimer \
+#     --version "$TT_VERSION" --namespace tokentimer --create-namespace \
+#     -f deploy/helm/examples/values-full-test.yaml \
+#     --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
+#     --set api.env.NODE_ENV=development
+
+config:
+  adminEmail: "admin@tokentimer.local"
+  adminName: "Test Admin"
+  baseUrl: "http://tokentimer.local"
+  apiUrl: "http://tokentimer.local/api"
+  alertThresholds: "30,14,7,1,0"
+
+# -- API: HPA + PDB + custom labels/annotations
+api:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 85
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  podAnnotations:
+    test.tokentimer.ch/component: api
+  podLabels:
+    test.tokentimer.ch/tier: backend
+  env:
+    ENABLE_METRICS: "true"
+    ENABLE_API_DOCS: "true"
+
+# -- Dashboard: custom labels/annotations
+dashboard:
+  replicaCount: 1
+  podAnnotations:
+    test.tokentimer.ch/component: dashboard
+  podLabels:
+    test.tokentimer.ch/tier: frontend
+
+# -- Workers: custom env, labels
+worker:
+  podAnnotations:
+    test.tokentimer.ch/component: worker
+  podLabels:
+    test.tokentimer.ch/tier: background
+  env:
+    DELIVERY_WINDOW_DEFAULT_START: "08:00"
+    DELIVERY_WINDOW_DEFAULT_END: "18:00"
+    DELIVERY_WINDOW_DEFAULT_TZ: "Europe/Zurich"
+  cronjobs:
+    discovery:
+      enabled: true
+      schedule: "*/5 * * * *"
+    delivery:
+      enabled: true
+      schedule: "*/5 * * * *"
+    weeklyDigest:
+      enabled: true
+      schedule: "0 9 * * 1"
+    endpointCheck:
+      enabled: true
+      schedule: "*/1 * * * *"
+    autoSync:
+      enabled: true
+      schedule: "0 * * * *"
+
+# -- Ingress (Minikube nginx ingress)
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  hosts:
+    - host: tokentimer.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: api
+        - path: /auth
+          pathType: Prefix
+          service: api
+        - path: /metrics
+          pathType: Prefix
+          service: api
+        - path: /
+          pathType: Prefix
+          service: dashboard
+  tls: []
+
+# -- PostgreSQL (single instance for Minikube)
+postgresql:
+  cloudnative:
+    enabled: true
+    instances: 1
+    storage:
+      size: 10Gi
+    monitoring:
+      podMonitorEnabled: true
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi
+
+# -- SMTP (fake values to validate template rendering)
+smtp:
+  host: "smtp.test.local"
+  port: "587"
+  user: "test@tokentimer.local"
+  password: "test-smtp-password"
+  fromEmail: "noreply@tokentimer.local"
+  fromName: "TokenTimer Test"
+
+# -- Twilio (fake values to validate template rendering)
+twilio:
+  accountSid: "ACtest000000000000000000000000test"
+  authToken: "test-twilio-auth-token"
+  whatsappFrom: "whatsapp:+15551234567"
+  testContentSid: "HXtest0000000000000000000000test"
+  alertContentSidExpires: "HXtest0000000000000000000001test"
+  alertContentSidExpired: "HXtest0000000000000000000002test"
+  alertContentSidEndpointDown: "HXtest0000000000000000000003test"
+  alertContentSidEndpointRecovered: "HXtest0000000000000000000004test"
+  weeklyDigestContentSid: "HXtest0000000000000000000005test"
+
+# -- Monitoring: metrics + ServiceMonitor + PrometheusRules
+monitoring:
+  metrics:
+    enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: "15s"
+    scrapeTimeout: "5s"
+    labels:
+      release: kube-prom-stack
+  prometheusRules:
+    enabled: true
+    labels:
+      release: kube-prom-stack
+    groups:
+      # ── Delivery pipeline ─────────────────────────────────────────────────
+      - name: tokentimer.delivery
+        rules:
+          - alert: TokenTimerAPIDown
+            expr: up{job="tokentimer-api"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "TokenTimer API is down"
+          - alert: TokenTimerZeroSends48h
+            expr: sum(increase(alerts_delivery_total{status="success"}[48h])) == 0
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "No successful sends in 48h"
+              description: >-
+                No successful deliveries observed over the last 48 hours,
+                indicating potential delivery system issues
+          - alert: TokenTimerHighFailureRate
+            expr: >-
+              (sum(increase(alerts_delivery_total{status="failed"}[1h])) /
+              sum(increase(alerts_delivery_total[1h]))) > 0.05
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "High delivery failure rate"
+              description: ">5% delivery failures in the last hour"
+          - alert: TokenTimerProviderFailuresSpike
+            expr: >-
+              sum by (provider)
+              (increase(alerts_delivery_total{status="failed"}[10m])) > 5
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Provider failures spike"
+              description: >-
+                More than 5 failed deliveries in 10m for provider {{
+                $labels.provider }}
+          - alert: TokenTimerLatencyP90High
+            expr: >-
+              histogram_quantile(0.9, sum by (le)
+              (rate(alerts_delivery_latency_seconds_bucket[5m]))) > 2
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High delivery latency (p90)"
+              description: >-
+                90th percentile delivery latency exceeds 2s over the last
+                10 minutes
+          - alert: TokenTimerHighDeliveryVolume24h
+            expr: sum(increase(alerts_delivery_total{status="success"}[24h])) > 100
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High delivery volume in 24h"
+              description: "More than 100 successful deliveries in the last 24 hours"
+      # ── Queue health ──────────────────────────────────────────────────────
+      - name: tokentimer.queue
+        rules:
+          - alert: TokenTimerQueueBacklog
+            expr: max_over_time(alerts_queue_due_now{worker="delivery-worker"}[25m]) > 0
+            for: 20m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Queue backlog present (delivery-worker view)"
+              description: >-
+                Delivery worker still reports alerts due now for an extended
+                period
+          - alert: TokenTimerFailedQueueDepth
+            expr: max_over_time(alerts_queue_depth{status="failed"}[5m]) > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Failed queue items present"
+              description: "One or more alerts are stuck in failed status for at least 5m"
+          - alert: TokenTimerHighRetries15m
+            expr: sum(increase(alerts_retry_total[15m])) > 20
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High retry activity"
+              description: "More than 20 retries occurred in the last 15 minutes"
+      # ── Limits / allowlists ───────────────────────────────────────────────
+      - name: tokentimer.limits
+        rules:
+          - alert: TokenTimerAllowlistDenialsSpike
+            expr: sum(increase(alerts_webhook_denied_host_total[30s])) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Webhook allowlist denials spike"
+              description: "One or more webhook allowlist denials"
+          - alert: TokenTimerLimitWarningsSpike
+            expr: sum(increase(alerts_limit_warning_total[6h])) > 20
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Limit warning spike"
+              description: "More than 20 limit warnings sent in last 6h"
+          - alert: TokenTimerLimitBlocked
+            expr: sum(increase(alerts_limit_blocked_total[10m])) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Alerts blocked by plan limits"
+              description: "At least one alert was blocked due to plan limits in the last 10 minutes"
+          - alert: TokenTimerLimitUtilizationP90High
+            expr: >-
+              histogram_quantile(0.9, sum by (le, plan)
+              (rate(alerts_limit_utilization_ratio_bucket[30m]))) > 0.95
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High plan utilization (p90 > 95%)"
+              description: >-
+                90th percentile limit utilization ratio over 30m exceeds 95%
+                (plan={{ $labels.plan }})
+      # ── Worker heartbeats ─────────────────────────────────────────────────
+      - name: tokentimer.workers
+        rules:
+          - alert: TokenTimerQueueManagerNoPush30m
+            expr: absent(max_over_time(runner_up{component="queue-manager"}[30m]))
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "No queue-manager metrics in 30m"
+              description: >-
+                No runner heartbeat observed for queue-manager in the last
+                30 minutes
+          - alert: TokenTimerDeliveryWorkerNoPush30m
+            expr: absent(max_over_time(runner_up{component="delivery-worker"}[30m]))
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "No delivery-worker metrics in 30m"
+              description: >-
+                No runner heartbeat observed for delivery-worker in the
+                last 30 minutes
+          - alert: TokenTimerWeeklyDigestNoPush3h
+            expr: absent(max_over_time(runner_up{component="weekly-digest"}[3h]))
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "No weekly-digest metrics in 3h"
+              description: >-
+                No runner heartbeat observed for weekly-digest in the last
+                3 hours (expected to run every hour)
+          - alert: TokenTimerWeeklyDigestLastRunStale
+            expr: (time() - weekly_digest_last_run_timestamp{worker="weekly-digest"}) > 10800
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Weekly digest last run is stale"
+              description: >-
+                Weekly digest last run timestamp is older than 3 hours
+                (job should run every hour at :02)
+          - alert: TokenTimerWeeklyDigestLastRunFailed
+            expr: weekly_digest_last_run_success{worker="weekly-digest"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Weekly digest run failed"
+              description: "Weekly digest last run failed (success metric = 0)"
+      # ── Application errors ────────────────────────────────────────────────
+      - name: tokentimer.application
+        rules:
+          - alert: AppErrorsAny5m
+            expr: sum(increase(app_log_errors_total[5m])) > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Application errors detected"
+              description: "At least 1 error-level log line in the last 5 minutes"
+      # ── Database ──────────────────────────────────────────────────────────
+      - name: tokentimer.db
+        rules:
+          - alert: TokenTimerDBWaitingConnections
+            expr: tokentimer_db_connections_waiting > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "DB pool saturation (waiting clients)"
+              description: >-
+                There are waiting clients for a DB connection for more than
+                5 minutes
+          - alert: TokenTimerDBActiveConnectionsHigh
+            expr: tokentimer_db_connections_active > 8
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "DB active connections high"
+              description: "Active DB connections > 8 for 10 minutes (pool max is ~10)"
+          - alert: TokenTimerDBErrorsSpike
+            expr: sum(increase(tokentimer_db_errors_total[10m])) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Database errors observed"
+              description: "One or more database errors occurred in the last 10 minutes"
+          - alert: TokenTimerDBLatencyP95High
+            expr: >-
+              histogram_quantile(0.95, sum by (le)
+              (rate(tokentimer_db_query_duration_seconds_bucket[5m]))) > 0.25
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High DB query latency (p95)"
+              description: "95th percentile DB query latency > 250ms over the last 10 minutes"
+      # ── SMTP ──────────────────────────────────────────────────────────────
+      - name: tokentimer.smtp
+        rules:
+          - alert: TokenTimerSMTPFailuresSpike
+            expr: sum(increase(tokentimer_smtp_sends_total{outcome!~"success"}[10m])) > 2
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "SMTP failures spike"
+              description: "More than 2 SMTP failures in the last 10 minutes"
+          - alert: TokenTimerSMTPLatencyP95High
+            expr: >-
+              histogram_quantile(0.95, sum by (le, kind)
+              (rate(tokentimer_smtp_latency_seconds_bucket[5m]))) > 2
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High SMTP latency (p95)"
+              description: "95th percentile SMTP latency > 2s (kind={{ $labels.kind }})"
+      # ── Auth / Security ───────────────────────────────────────────────────
+      - name: tokentimer.security
+        rules:
+          - alert: TokenTimerLoginFailuresSpike
+            expr: increase(tokentimer_login_attempts_total{outcome="failure"}[10m]) > 20
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Login failures spike"
+              description: "More than 20 failed login attempts in the last 10 minutes"
+          - alert: TokenTimerRateLimitHitsSpike
+            expr: sum(increase(tokentimer_rate_limit_hits_total[10m])) > 10
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Rate limit hits spike"
+              description: "More than 10 rate-limited responses (HTTP 429) sent in the last 10 minutes"
+          - alert: TokenTimerCSRFRejectionsSpike
+            expr: increase(tokentimer_csrf_rejections_total[10m]) > 10
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CSRF rejections spike"
+              description: "More than 10 CSRF rejections in the last 10 minutes"
+
+# -- Network Policy
+networkPolicy:
+  enabled: true
+  ingressNamespace: "ingress-nginx"
+  monitoringNamespace: "monitoring"
+
+# -- ServiceAccount
+serviceAccount:
+  create: true
+  annotations:
+    test.tokentimer.ch/sa: "true"

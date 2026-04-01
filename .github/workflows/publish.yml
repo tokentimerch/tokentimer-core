@@ -1,0 +1,114 @@
+name: Publish Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_latest:
+        description: "Also tag and push :latest"
+        required: false
+        type: boolean
+        default: false
+      tag_suffix:
+        description: "Optional extra tag suffix (e.g. staging-latest, v1.2.3)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  publish:
+    name: Build and Push Images (no tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        run: |
+          OWNER=${{ github.repository_owner }}
+          SHA_TAG=${{ github.sha }}
+          BRANCH=${GITHUB_REF_NAME//\//-}
+          API_REPO="ghcr.io/${OWNER}/tokentimer-core-api"
+          DASHBOARD_REPO="ghcr.io/${OWNER}/tokentimer-core-dashboard"
+          WORKER_REPO="ghcr.io/${OWNER}/tokentimer-core-worker"
+
+          echo "api_repo=${API_REPO}" >> $GITHUB_OUTPUT
+          echo "dashboard_repo=${DASHBOARD_REPO}" >> $GITHUB_OUTPUT
+          echo "worker_repo=${WORKER_REPO}" >> $GITHUB_OUTPUT
+
+          # Conditionally push latest tags only if explicitly requested
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            echo "api_latest=${API_REPO}:latest" >> $GITHUB_OUTPUT
+            echo "dashboard_latest=${DASHBOARD_REPO}:latest" >> $GITHUB_OUTPUT
+            echo "worker_latest=${WORKER_REPO}:latest" >> $GITHUB_OUTPUT
+          fi
+          # Optional extra suffix
+          if [ -n "${{ inputs.tag_suffix }}" ]; then
+            echo "api_extra=${API_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
+            echo "dashboard_extra=${DASHBOARD_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
+            echo "worker_extra=${WORKER_REPO}:${{ inputs.tag_suffix }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push API
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/compose/Dockerfile.api
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.meta.outputs.api_repo }}:${{ github.sha }}
+            ${{ steps.meta.outputs.api_repo }}:${{ github.ref_name }}
+            ${{ steps.meta.outputs.api_latest }}
+            ${{ steps.meta.outputs.api_extra }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Dashboard
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/compose/Dockerfile.dashboard
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            VITE_API_URL=
+          tags: |
+            ${{ steps.meta.outputs.dashboard_repo }}:${{ github.sha }}
+            ${{ steps.meta.outputs.dashboard_repo }}:${{ github.ref_name }}
+            ${{ steps.meta.outputs.dashboard_latest }}
+            ${{ steps.meta.outputs.dashboard_extra }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Worker
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/compose/Dockerfile.worker
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.meta.outputs.worker_repo }}:${{ github.sha }}
+            ${{ steps.meta.outputs.worker_repo }}:${{ github.ref_name }}
+            ${{ steps.meta.outputs.worker_latest }}
+            ${{ steps.meta.outputs.worker_extra }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

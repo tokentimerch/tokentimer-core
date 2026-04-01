@@ -1,0 +1,440 @@
+name: CI
+
+# Security scanning with Grype uploads results to GitHub Security tab.
+# The security-events: write permission is required for uploading SARIF files to Code Scanning.
+# If Code Scanning is not enabled, the upload will fail gracefully and results are uploaded as artifacts.
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  frontend_quality:
+    name: Frontend Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm --filter @tokentimer/dashboard lint
+
+      - name: Check code formatting
+        run: pnpm --filter @tokentimer/dashboard exec prettier --check "src/**/*.{js,jsx,css}"
+
+      - name: Type check
+        run: pnpm --filter @tokentimer/dashboard type-check
+
+      - name: Build frontend
+        run: pnpm --filter @tokentimer/dashboard build
+
+  worker_quality:
+    name: Worker Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint worker code
+        run: pnpm --filter @tokentimer/worker lint
+
+      - name: Check for security vulnerabilities (worker)
+        run: pnpm audit --prod --audit-level=moderate
+
+  backend_quality:
+    name: Backend Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate contracts manifest
+        run: pnpm run check:contracts
+
+      - name: Validate contracts integrity
+        run: pnpm run check:contracts:integrity
+
+      - name: Run contract tests
+        env:
+          CONTRACT_API_REQUIRED: "0"
+        run: pnpm run test:contracts
+
+      - name: Lint backend code
+        run: pnpm --filter @tokentimer/api lint
+
+      - name: Check for security vulnerabilities
+        run: pnpm audit --prod --audit-level=moderate
+
+      - name: Validate package.json
+        run: pnpm --filter @tokentimer/api validate || echo "No validate script found"
+
+  coverage_backend:
+    name: Coverage Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Run backend coverage suite
+        run: pnpm run test:coverage:backend
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-coverage-backend-${{ github.run_id }}
+          path: |
+            coverage/**
+            logs/*
+          if-no-files-found: ignore
+
+      - name: Print backend coverage table (end of job)
+        if: always()
+        run: pnpm run coverage:report:backend || true
+
+  coverage_frontend:
+    name: Coverage Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run frontend coverage suite
+        run: pnpm run test:coverage:frontend
+
+      - name: Upload frontend coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-coverage-frontend-${{ github.run_id }}
+          path: |
+            apps/dashboard/coverage/**
+          if-no-files-found: ignore
+
+  build_and_test:
+    if: github.event_name != 'pull_request'
+    name: Build and Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Start test stack (docker compose)
+        run: docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+
+      - name: Wait for backend readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then
+              echo "Backend is up"; exit 0; fi; sleep 2; done
+          echo "Backend did not become ready"; docker compose -f deploy/compose/docker-compose.test.yml logs api | tail -n 200; exit 1
+
+      - name: Run runtime API contract tests
+        env:
+          CONTRACT_API_REQUIRED: "1"
+          API_BASE_URL: http://localhost:4000
+        run: node --test tests/contract/api-endpoints.test.js
+
+      - name: Run integration tests (Mocha + JUnit)
+        env:
+          TEST_API_URL: http://localhost:4000
+          NODE_ENV: test
+        run: |
+          mkdir -p test-results
+          pnpm run test:ci
+
+      - name: Capture docker logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          docker compose -f deploy/compose/docker-compose.test.yml ps > artifacts/compose-ps.txt || true
+          docker compose -f deploy/compose/docker-compose.test.yml logs --no-color > artifacts/docker-logs.txt || true
+
+      - name: Tear down test stack
+        if: always()
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: junit-test-results
+          path: test-results/**/*.xml
+          if-no-files-found: ignore
+
+      - name: Upload docker logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: docker-logs
+          path: artifacts/*.txt
+          if-no-files-found: ignore
+
+  helm_chart:
+    name: Helm Chart Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Helm
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Helm dependency build
+        run: helm dependency build deploy/helm
+
+      - name: Helm lint
+        run: helm lint deploy/helm -f deploy/helm/ci/ci-values.yaml
+
+      - name: Helm template (validate rendering)
+        run: helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml > /dev/null
+
+  docker_build_and_scan:
+    name: Docker Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: [frontend_quality, worker_quality, backend_quality, build_and_test, helm_chart]
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Build API image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/compose/Dockerfile.api
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: tokentimer/api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build dashboard image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/compose/Dockerfile.dashboard
+          platforms: linux/amd64
+          push: false
+          load: true
+          build-args: |
+            VITE_API_URL=
+          tags: tokentimer/dashboard:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build worker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/compose/Dockerfile.worker
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: tokentimer/worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --- Trivy (disabled 2026-03-22, supply chain compromise) ---
+      # Restore when aquasecurity/trivy ecosystem is confirmed safe.
+      # See: https://www.stepsecurity.io/blog/trivy-compromised-a-second-time---malicious-v0-69-4-release
+      #
+      # - name: Install Trivy
+      #   run: |
+      #     curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.69.3
+      #     trivy --version
+      #
+      # - name: Run Trivy vulnerability scanner (API)
+      #   run: trivy image --scanners vuln --format sarif --output trivy-results-api.sarif "tokentimer/api:${{ github.sha }}"
+      #
+      # - name: Run Trivy vulnerability scanner (dashboard)
+      #   run: trivy image --scanners vuln --format sarif --output trivy-results-dashboard.sarif "tokentimer/dashboard:${{ github.sha }}"
+      #
+      # - name: Run Trivy vulnerability scanner (worker)
+      #   run: trivy image --scanners vuln --format sarif --output trivy-results-worker.sarif "tokentimer/worker:${{ github.sha }}"
+
+      # --- Grype (Trivy replacement) ---
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          grype version
+
+      - name: Scan API image with Grype
+        run: grype "tokentimer/api:${{ github.sha }}" -o sarif --file grype-results-api.sarif
+
+      - name: Scan dashboard image with Grype
+        run: grype "tokentimer/dashboard:${{ github.sha }}" -o sarif --file grype-results-dashboard.sarif
+
+      - name: Scan worker image with Grype
+        run: grype "tokentimer/worker:${{ github.sha }}" -o sarif --file grype-results-worker.sarif
+
+      # SARIF upload to GitHub Security tab requires GitHub Advanced Security (paid for private repos).
+      # Uncomment the upload-sarif steps below if GHAS is enabled.
+      #
+      # - name: Upload Grype scan results to GitHub Security tab (API)
+      #   uses: github/codeql-action/upload-sarif@v4
+      #   if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   env:
+      #     CODEQL_ACTION_DISABLE_TELEMETRY: "true"
+      #   with:
+      #     sarif_file: "grype-results-api.sarif"
+      #     wait-for-processing: false
+      #   continue-on-error: true
+      #
+      # - name: Upload Grype scan results to GitHub Security tab (dashboard)
+      #   uses: github/codeql-action/upload-sarif@v4
+      #   if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   env:
+      #     CODEQL_ACTION_DISABLE_TELEMETRY: "true"
+      #   with:
+      #     sarif_file: "grype-results-dashboard.sarif"
+      #     wait-for-processing: false
+      #   continue-on-error: true
+      #
+      # - name: Upload Grype scan results to GitHub Security tab (worker)
+      #   uses: github/codeql-action/upload-sarif@v4
+      #   if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   env:
+      #     CODEQL_ACTION_DISABLE_TELEMETRY: "true"
+      #   with:
+      #     sarif_file: "grype-results-worker.sarif"
+      #     wait-for-processing: false
+      #   continue-on-error: true
+
+      - name: Upload SARIF scan results as artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: grype-scan-results
+          path: |
+            grype-results-api.sarif
+            grype-results-dashboard.sarif
+            grype-results-worker.sarif
+          if-no-files-found: ignore

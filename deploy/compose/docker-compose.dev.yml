@@ -1,0 +1,305 @@
+# TokenTimer Core - Development Environment
+# Usage: docker compose -f docker-compose.dev.yml up
+
+networks:
+  tokentimer-network:
+    driver: bridge
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: tokentimer-core-postgres-dev
+    environment:
+      POSTGRES_DB: tokentimer
+      POSTGRES_USER: tokentimer
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tokentimer-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokentimer -d tokentimer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile.dev
+      cache_from:
+        - node:22-slim
+    container_name: tokentimer-core-api-dev
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+      - OPENAPI_SPEC_PATH=/contracts/openapi/openapi.yaml
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - APP_URL=http://localhost:5173
+      - API_URL=http://localhost:4000
+      - SESSION_SECRET=dev_session_secret_change_in_production
+      - ADMIN_EMAIL=admin@localhost.local
+      - ADMIN_PASSWORD=AdminPassword123!
+      - ADMIN_NAME=Administrator
+      # SMTP (optional - configure here or via System Settings UI)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - FROM_EMAIL=${FROM_EMAIL:-}
+      - FROM_EMAIL_NAME=${FROM_EMAIL_NAME:-}
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
+      - TWILIO_WHATSAPP_TEST_CONTENT_SID=${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/api:/app
+      - ../../packages/contracts/openapi:/contracts/openapi:ro
+      - /app/node_modules
+    restart: unless-stopped
+    command: sh -c "pnpm run migrate && pnpm start"
+
+  dashboard:
+    build:
+      context: ../../apps/dashboard
+      dockerfile: Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-dashboard-dev
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=${API_URL:-http://localhost:4000}
+      - VITE_ENVIRONMENT=development
+    volumes:
+      - ../../apps/dashboard:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    networks:
+      - tokentimer-network
+    restart: unless-stopped
+    command: sh -c "pnpm run dev -- --host 0.0.0.0"
+
+  # Worker - Alert Discovery (queues alerts)
+  worker-discovery:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-worker-discovery
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - APP_URL=http://localhost:5173
+      - SESSION_SECRET=dev_session_secret_change_in_production
+      # SMTP (optional - configure here or via System Settings UI)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - FROM_EMAIL=${FROM_EMAIL:-}
+      - FROM_EMAIL_NAME=${FROM_EMAIL_NAME:-}
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
+      - TWILIO_WHATSAPP_TEST_CONTENT_SID=${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+    restart: unless-stopped
+    command: sh -c "pnpm run start:discovery"
+
+  # Worker - Alert Delivery (sends notifications)
+  worker-delivery:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-worker-delivery
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - APP_URL=http://localhost:5173
+      - SESSION_SECRET=dev_session_secret_change_in_production
+      # SMTP (optional - configure here or via System Settings UI)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - FROM_EMAIL=${FROM_EMAIL:-}
+      - FROM_EMAIL_NAME=${FROM_EMAIL_NAME:-}
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
+      - TWILIO_WHATSAPP_TEST_CONTENT_SID=${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
+      - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+    restart: unless-stopped
+    command: sh -c "pnpm run start:delivery"
+
+  # Worker - Weekly Digest (sends weekly summary emails)
+  worker-weekly-digest:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-worker-weekly-digest
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - APP_URL=http://localhost:5173
+      - SESSION_SECRET=dev_session_secret_change_in_production
+      # SMTP (optional - configure here or via System Settings UI)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - FROM_EMAIL=${FROM_EMAIL:-}
+      - FROM_EMAIL_NAME=${FROM_EMAIL_NAME:-}
+      # Twilio WhatsApp (optional - configure here or via System Settings UI)
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
+      - TWILIO_WHATSAPP_TEST_CONTENT_SID=${TWILIO_WHATSAPP_TEST_CONTENT_SID:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
+      - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
+      - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+    restart: unless-stopped
+    command: node src/weekly-digest-runner.js
+
+  # Worker - Auto Sync (scheduled integration scans)
+  worker-auto-sync:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-worker-auto-sync
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+      - SESSION_SECRET=dev_session_secret_change_in_production
+      - API_URL=http://api:4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+    restart: unless-stopped
+    command: node src/auto-sync-worker.js
+
+  # Worker - Endpoint (SSL) Check (SSL + health monitoring)
+  worker-endpoint-check:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile.dev
+      cache_from:
+        - node:22-alpine
+    container_name: tokentimer-core-worker-endpoint-check
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=tokentimer
+      - DB_USER=tokentimer
+      - DB_PASSWORD=password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - tokentimer-network
+    volumes:
+      - ../../apps/worker:/app/apps/worker
+      - /app/node_modules
+      - /app/apps/worker/node_modules
+    restart: unless-stopped
+    command: node src/endpoint-check-worker.js
+
+volumes:
+  postgres_data:

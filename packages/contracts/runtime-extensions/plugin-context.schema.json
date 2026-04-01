@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/runtime-extensions/plugin-context.schema.json",
+  "title": "Runtime Extension Plugin Context Contract",
+  "description": "Machine-validated contract for runtime extension hooks exposed by tokentimer-core.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractName", "version", "hooks"],
+  "properties": {
+    "contractName": {
+      "const": "runtime-extensions.plugin-context"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setAuthFeaturesProvider", "setAutoSyncProviders"],
+      "properties": {
+        "setAuthFeaturesProvider": {
+          "$ref": "#/definitions/hookDefinition"
+        },
+        "setAutoSyncProviders": {
+          "$ref": "#/definitions/hookDefinition"
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "definitions": {
+    "hookDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signature", "lifecycle", "fallback"],
+      "properties": {
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

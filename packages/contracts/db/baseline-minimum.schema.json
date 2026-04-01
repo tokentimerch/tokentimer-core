@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/db/baseline-minimum.schema.json",
+  "title": "Baseline Minimum DB Shape Contract",
+  "description": "Minimum DB tables and columns required by all variants.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tables"],
+  "properties": {
+    "tables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["users", "workspaces", "workspace_memberships"],
+      "properties": {
+        "users": {
+          "$ref": "#/definitions/tableUsers"
+        },
+        "workspaces": {
+          "$ref": "#/definitions/tableWorkspaces"
+        },
+        "workspace_memberships": {
+          "$ref": "#/definitions/tableMemberships"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "tableUsers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "contains": { "const": "id" },
+          "minItems": 4
+        }
+      }
+    },
+    "tableWorkspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "contains": { "const": "id" },
+          "minItems": 4
+        }
+      }
+    },
+    "tableMemberships": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "contains": { "const": "workspace_id" },
+          "minItems": 3
+        }
+      }
+    }
+  }
+}

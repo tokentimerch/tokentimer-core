@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/image-composition/manifest.schema.json",
+  "title": "Variant Image Composition Manifest",
+  "description": "Deterministic manifest describing how a variant image stage is composed from core baseline and variant overlays.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "variant",
+    "generatedAt",
+    "core",
+    "stage",
+    "overlaySummary"
+  ],
+  "properties": {
+    "manifestVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "variant": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "core": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repoPath", "coreRef", "coreVersion"],
+      "properties": {
+        "repoPath": { "type": "string", "minLength": 1 },
+        "coreRef": { "type": "string", "minLength": 1 },
+        "coreVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "root", "contexts"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["overlay"] },
+        "root": { "type": "string", "minLength": 1 },
+        "contexts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "test"],
+          "properties": {
+            "runtime": { "type": "string", "minLength": 1 },
+            "test": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "overlaySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "copiedCoreFiles",
+        "overlayFiles",
+        "trackedOverrides",
+        "variantOnlyEntries",
+        "trackedFiles"
+      ],
+      "properties": {
+        "copiedCoreFiles": { "type": "integer", "minimum": 0 },
+        "overlayFiles": { "type": "integer", "minimum": 0 },
+        "trackedOverrides": { "type": "integer", "minimum": 0 },
+        "variantOnlyEntries": { "type": "integer", "minimum": 0 },
+        "trackedFiles": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "tracked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "source"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "source": { "type": "string", "enum": ["core", "variant"] }
+        }
+      }
+    }
+  }
+}

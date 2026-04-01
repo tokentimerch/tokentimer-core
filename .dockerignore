@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Node modules (installed during build)
+node_modules
+*/node_modules
+**/node_modules
+
+# Build artifacts
+apps/dashboard/dist
+apps/dashboard/.vite
+
+# Development files
+*.log
+npm-debug.log*
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.vscode
+.idea
+*.sublime-*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+**/__tests__
+**/*.test.js
+**/*.spec.js
+tests/
+
+# Deployment configs (not needed inside images)
+k8s/
+docker-compose*.yml
+*.dev.yml
+
+# Non-essential directories
+scripts/
+email-previews/
+logs/
+reports/

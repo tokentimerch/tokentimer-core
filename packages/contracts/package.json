@@ -1,0 +1,8 @@
+{
+  "name": "@tokentimer/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "license": "BUSL-1.1",
+  "description": "API and queue schema contracts for TokenTimer",
+  "type": "module"
+}

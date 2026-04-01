@@ -1,0 +1,17 @@
+{{- if and .Values.monitoring.prometheusRules.enabled (gt (len .Values.monitoring.prometheusRules.groups) 0) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "tokentimer.fullname" . }}
+  {{- if .Values.monitoring.prometheusRules.namespace }}
+  namespace: {{ .Values.monitoring.prometheusRules.namespace }}
+  {{- end }}
+  labels:
+    {{- include "tokentimer.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRules.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    {{- toYaml .Values.monitoring.prometheusRules.groups | nindent 4 }}
+{{- end }}

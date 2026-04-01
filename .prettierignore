@@ -1,0 +1,6 @@
+deploy/helm/templates/**
+.coverage/**
+coverage/**
+.build/**
+node_modules/**
+logs/**
