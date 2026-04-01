@@ -4,7 +4,7 @@ import {
   showSuccess as showGlobalSuccess,
 } from './toast.js';
 import { logger } from './logger.js';
-import { resetIdentity, trackEvent } from './analytics.js';
+import { resetIdentity } from './analytics.js';
 
 // API base URL resolution:
 // - If runtime env.js defines API_URL, use it first

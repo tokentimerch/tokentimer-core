@@ -1731,7 +1731,9 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
           });
           setIntegrationQuota({ used, limit, remaining });
         } catch {
-          logger.info('[ImportModal] Complete failure, using unlimited default');
+          logger.info(
+            '[ImportModal] Complete failure, using unlimited default'
+          );
           setIntegrationQuota({ used: 0, limit: null, remaining: null });
         }
       }
