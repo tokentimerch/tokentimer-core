@@ -7,6 +7,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.1] - 2026-04-04
+
+### Security
+
+- Patch transitive `ajv` ReDoS vulnerability by overriding `ajv@6` to `6.14.0`
+- Patch transitive `lodash` code injection and prototype pollution by overriding to `4.18.1`
+- Pin all GitHub Actions to immutable SHA digests across CI, release, publish, and performance workflows to prevent supply-chain attacks through tag manipulation
+- Gate Grype container image scans with `--fail-on high --only-fixed` so the pipeline fails on fixable high/critical vulnerabilities
+
+---
+
 ## [0.1.0] - 2026-04-01
 
 First public release. Complete extraction of the self-hosted core from the
@@ -118,4 +129,5 @@ tokentimer-cloud SaaS codebase into a standalone, variant-agnostic repository.
 
 ---
 
+[0.1.1]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tokentimerch/tokentimer-core/releases/tag/v0.1.0
