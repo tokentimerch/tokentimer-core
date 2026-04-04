@@ -387,13 +387,19 @@ jobs:
           grype version
 
       - name: Scan API image with Grype
-        run: grype "tokentimer/api:${{ github.sha }}" -o sarif --file grype-results-api.sarif
+        run: |
+          grype "tokentimer/api:${{ github.sha }}" -o sarif --file grype-results-api.sarif
+          grype "tokentimer/api:${{ github.sha }}" --fail-on high --only-fixed
 
       - name: Scan dashboard image with Grype
-        run: grype "tokentimer/dashboard:${{ github.sha }}" -o sarif --file grype-results-dashboard.sarif
+        run: |
+          grype "tokentimer/dashboard:${{ github.sha }}" -o sarif --file grype-results-dashboard.sarif
+          grype "tokentimer/dashboard:${{ github.sha }}" --fail-on high --only-fixed
 
       - name: Scan worker image with Grype
-        run: grype "tokentimer/worker:${{ github.sha }}" -o sarif --file grype-results-worker.sarif
+        run: |
+          grype "tokentimer/worker:${{ github.sha }}" -o sarif --file grype-results-worker.sarif
+          grype "tokentimer/worker:${{ github.sha }}" --fail-on high --only-fixed
 
       # SARIF upload to GitHub Security tab requires GitHub Advanced Security (paid for private repos).
       # Uncomment the upload-sarif steps below if GHAS is enabled.
