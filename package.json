@@ -69,7 +69,9 @@
       "flatted": "3.4.2",
       "serialize-javascript": "7.0.5",
       "picomatch@2": "2.3.2",
-      "picomatch@4": "4.0.4"
+      "picomatch@4": "4.0.4",
+      "ajv@6": "6.14.0",
+      "lodash": "4.18.1"
     },
     "onlyBuiltDependencies": [
       "esbuild",
