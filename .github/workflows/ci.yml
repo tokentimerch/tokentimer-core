@@ -293,7 +293,7 @@ jobs:
 
       - name: Install Helm
         run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.20.1 bash
           helm version
 
       - name: Helm dependency build
@@ -383,7 +383,7 @@ jobs:
       # --- Grype (Trivy replacement) ---
       - name: Install Grype
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.110.0
           grype version
 
       - name: Scan API image with Grype

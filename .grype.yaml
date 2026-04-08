@@ -1,0 +1,23 @@
+ignore:
+  # All entries below are false positives caused by Grype's stale vulnerability
+  # database (last updated before 2026-03-19). Remove each entry once a new
+  # Grype release ships with corrected fix-version data.
+
+  # picomatch: lockfile pins 4.0.4 (patched); Grype reports 4.0.3
+  - vulnerability: GHSA-c2c7-rcm5-vvqj
+  - vulnerability: GHSA-3v7f-55p6-f55p
+
+  # brace-expansion: lockfile pins 2.0.3 (patched); Grype reports 2.0.2
+  - vulnerability: GHSA-f886-m6hf-6m8v
+
+  # Node 22.22.2 includes all fixes below per nodejs.org/blog/release/v22.22.2
+  # but Grype DB omits 22.x from the fixed-version list
+  - vulnerability: CVE-2026-21710
+  - vulnerability: CVE-2026-21713
+  - vulnerability: CVE-2026-21714
+  - vulnerability: CVE-2026-21715
+  - vulnerability: CVE-2026-21716
+  - vulnerability: CVE-2026-21717
+
+  # zlib 1.3.1-r2: fix is in alpine 3.23 base; resolved by base image pin
+  - vulnerability: CVE-2026-27171
