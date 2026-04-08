@@ -31,7 +31,7 @@
     "express-validator": "7.3.1",
     "helmet": "8.1.0",
     "jsonwebtoken": "9.0.3",
-    "nodemailer": "8.0.4",
+    "nodemailer": "8.0.5",
     "otplib": "13.3.0",
     "passport": "0.7.0",
     "passport-local": "1.0.0",
