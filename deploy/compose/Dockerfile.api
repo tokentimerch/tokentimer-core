@@ -1,5 +1,5 @@
 # TokenTimer API Dockerfile
-FROM node:22-alpine
+FROM node:22.22.2-alpine3.21
 
 # Install curl for healthcheck
 RUN apk add --no-cache curl

@@ -1,4 +1,4 @@
-FROM node:22.18-slim AS build
+FROM node:22.22.2-slim AS build
 
 # Build arguments (leave empty by default so production uses relative /api)
 ARG VITE_API_URL=
@@ -34,7 +34,7 @@ ENV REACT_APP_ENVIRONMENT=$REACT_APP_ENVIRONMENT
 RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm run build
 
 # Production stage with Nginx
-FROM nginx:1.27.0-alpine
+FROM nginx:1.28.3-alpine3.23
 
 # Create non-root user for Nginx
 RUN addgroup -g 1001 -S nginx-user && \

@@ -7,7 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [0.1.1] - 2026-04-04
+## [0.1.1] - 2026-04-08
 
 ### Security
 
@@ -15,6 +15,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Patch transitive `lodash` code injection and prototype pollution by overriding to `4.18.1`
 - Pin all GitHub Actions to immutable SHA digests across CI, release, publish, and performance workflows to prevent supply-chain attacks through tag manipulation
 - Gate Grype container image scans with `--fail-on high --only-fixed` so the pipeline fails on fixable high/critical vulnerabilities
+- Pin Grype to v0.110.0 and Helm to v3.20.1 in CI workflows to eliminate unpinned `curl | bash` supply-chain risk
+- Pin all Docker base images to exact versions: `node:22.22.2-slim`, `node:22.22.2-alpine3.21`, `nginx:1.28.3-alpine3.23`
+- Add `.grype.yaml` ignore list for 10 false positives caused by Grype's stale vulnerability database (picomatch, brace-expansion, Node 22.22.2 CVEs, zlib)
 
 ---
 

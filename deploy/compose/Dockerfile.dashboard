@@ -1,5 +1,5 @@
 # TokenTimer Dashboard Dockerfile
-FROM node:22-alpine AS builder
+FROM node:22.22.2-alpine3.21 AS builder
 
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
@@ -34,7 +34,7 @@ ARG API_URL=""
 RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm --filter @tokentimer/dashboard run build
 
 # Production image
-FROM nginx:alpine
+FROM nginx:1.28.3-alpine3.23
 
 # Create non-root nginx user and prepare writable directories
 RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentimer && \
