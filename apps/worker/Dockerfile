@@ -1,5 +1,7 @@
 FROM node:22.22.2-alpine3.23
-RUN apk add --no-cache libpng=1.6.56-r0
+
+# Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
+RUN apk update && apk upgrade --no-cache
 
 WORKDIR /app
 

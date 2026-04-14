@@ -1,8 +1,11 @@
 # TokenTimer Worker Dockerfile
 FROM node:22.22.2-alpine3.23
 
-# Pin libpng to patched version (CVE-2026-33416, CVE-2026-33636)
-RUN apk add --no-cache curl libpng=1.6.56-r0
+# Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
+RUN apk update && apk upgrade --no-cache
+
+# Install curl for optional probes / tooling
+RUN apk add --no-cache curl
 
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate

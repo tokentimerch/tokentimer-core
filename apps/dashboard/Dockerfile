@@ -36,8 +36,8 @@ RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm run build
 # Production stage with Nginx
 FROM nginx:1.28.3-alpine3.23
 
-# Pin libpng to patched version (CVE-2026-33416, CVE-2026-33636)
-RUN apk add --no-cache libpng=1.6.56-r0
+# Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
+RUN apk update && apk upgrade --no-cache
 
 # Create non-root user for Nginx
 RUN addgroup -g 1001 -S nginx-user && \

@@ -383,7 +383,7 @@ jobs:
       # --- Grype (Trivy replacement) ---
       - name: Install Grype
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.110.0
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.111.0
           grype version
 
       - name: Scan API image with Grype
