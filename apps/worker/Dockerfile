@@ -1,5 +1,4 @@
 FROM node:22.22.2-alpine3.23
-RUN apk add --no-cache libpng=1.6.56-r0
 
 WORKDIR /app
 
