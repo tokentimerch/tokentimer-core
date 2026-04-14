@@ -71,7 +71,8 @@
       "picomatch@2": "2.3.2",
       "picomatch@4": "4.0.4",
       "ajv@6": "6.14.0",
-      "lodash": "4.18.1"
+      "lodash": "4.18.1",
+      "follow-redirects": "1.16.0"
     },
     "onlyBuiltDependencies": [
       "esbuild",
