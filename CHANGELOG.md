@@ -7,6 +7,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+## [0.1.2] - 2026-04-14
+
+### Security
+
+- Bump direct **axios** dependencies to **1.15.0** and add a root **pnpm** override so **follow-redirects** resolves to **1.16.0** (regenerated lockfile).
+- Bump Grype in CI to [v0.111.0](https://github.com/anchore/grype/releases/tag/v0.111.0) (same pinned `install.sh` pattern as before).
+- On Alpine-based production and dev Docker stages, run `apk update && apk upgrade --no-cache` so `libcrypto3`, `libssl3`, and `musl` pick up fixes from the current Alpine 3.23 package index (keeps Grype `--fail-on high --only-fixed` passing when base image layers lag mirrors).
+
+### Changed
+
+- Remove explicit **libpng** `apk` installs from Alpine-based Dockerfiles; rely on official **nginx** and **node** Alpine images instead of brittle version pins.
+
 ## [0.1.1] - 2026-04-08
 
 ### Security
@@ -133,5 +147,6 @@ tokentimer-cloud SaaS codebase into a standalone, variant-agnostic repository.
 
 ---
 
+[0.1.2]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tokentimerch/tokentimer-core/releases/tag/v0.1.0
