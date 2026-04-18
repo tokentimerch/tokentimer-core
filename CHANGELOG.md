@@ -15,11 +15,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Session invalidation on password change.** `POST /api/account/change-password` now deletes every other session for the acting user from the `connect-pg-simple` `session` table and rotates the acting session id via `req.session.regenerate` + `req.login`, so other browsers and devices are logged out immediately. Mitigates OWASP **ASVS 3.3.1** and the attacker-persistence-after-password-change scenario.
 - **Session invalidation on password reset.** `POST /auth/reset-password` (token-based, unauthenticated) now deletes all sessions belonging to the reset user, so any live attacker session is revoked when the legitimate user completes a reset from an email link.
-- Revocation is transactional to the request but wrapped in a best-effort `try/catch` so a transient `session` store error cannot block the credential update itself; the audit entry (`PASSWORD_CHANGED` / `PASSWORD_RESET_COMPLETED`) is still emitted.
+- **Session invalidation on 2FA enable.** `POST /api/account/2fa/enable` now deletes every other session for the acting user and rotates the acting session id. A concurrent session that pre-dates the 2FA enrollment no longer skips the new second factor.
+- **Session invalidation on 2FA disable.** `POST /api/account/2fa/disable` (password-gated) now deletes every other session for the acting user and rotates the acting session id, so a 2FA downgrade cannot silently leave other devices authenticated.
+- Revocation is transactional to the request but wrapped in a best-effort `try/catch` so a transient `session` store error cannot block the credential or 2FA update itself; the audit entry (`PASSWORD_CHANGED`, `PASSWORD_RESET_COMPLETED`, `TWO_FACTOR_ENABLED`, `TWO_FACTOR_DISABLED`) is still emitted.
 
 ### Added
 
-- Integration suite `tests/integration/auth-session-invalidation.integration.test.js` asserting: acting session survives, every other session row for the user is deleted, `Set-Cookie` is emitted (session rotation), old password is rejected, new password works, other users are unaffected, and reset flow wipes every session for the target account only.
+- Integration suite `tests/integration/auth-session-invalidation.integration.test.js` asserting, for every covered flow: acting session survives, every other session row for the user is deleted, `Set-Cookie` is emitted (session rotation), old credentials are rejected, new credentials work, other users are unaffected, and `reset-password` wipes every session for the target account only. New describe blocks cover `POST /api/account/2fa/enable` and `POST /api/account/2fa/disable`, driving real TOTP tokens through `otplib` against the live `/api/account/2fa/setup` + `/auth/verify-2fa` endpoints.
 
 ### Changed
 

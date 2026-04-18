@@ -679,6 +679,23 @@ router.post(
       );
 
       delete req.session.setup2FA;
+
+      const currentSid = req.sessionID;
+      const actingUser = req.user;
+      try {
+        await pool.query(
+          `DELETE FROM session
+             WHERE sid <> $1
+               AND (sess #>> '{passport,user}') = $2`,
+          [currentSid, String(req.user.id)],
+        );
+      } catch (revokeErr) {
+        logger.error("Failed to revoke other sessions on 2FA enable", {
+          userId: req.user.id,
+          error: revokeErr.message,
+        });
+      }
+
       try {
         await writeAudit({
           actorUserId: req.user.id,
@@ -695,7 +712,30 @@ router.post(
           error: _err.message,
         });
       }
-      res.json({ message: "Two-factor authentication enabled" });
+
+      return req.session.regenerate((regenErr) => {
+        if (regenErr) {
+          logger.error("Session regenerate failed after 2FA enable", {
+            userId: actingUser.id,
+            error: regenErr.message,
+          });
+          return res
+            .status(500)
+            .json({ error: "Failed to rotate session after 2FA enable" });
+        }
+        req.login(actingUser, (loginErr) => {
+          if (loginErr) {
+            logger.error("Re-login after 2FA enable failed", {
+              userId: actingUser.id,
+              error: loginErr.message,
+            });
+            return res.status(500).json({
+              error: "Failed to re-establish session after 2FA enable",
+            });
+          }
+          return res.json({ message: "Two-factor authentication enabled" });
+        });
+      });
     } catch (error) {
       logger.error("2FA enable error:", {
         error: error.message,
@@ -728,6 +768,23 @@ router.post(
         "UPDATE users SET two_factor_enabled = FALSE, two_factor_secret = NULL, updated_at = NOW() WHERE id = $1",
         [req.user.id],
       );
+
+      const currentSid = req.sessionID;
+      const actingUser = req.user;
+      try {
+        await pool.query(
+          `DELETE FROM session
+             WHERE sid <> $1
+               AND (sess #>> '{passport,user}') = $2`,
+          [currentSid, String(req.user.id)],
+        );
+      } catch (revokeErr) {
+        logger.error("Failed to revoke other sessions on 2FA disable", {
+          userId: req.user.id,
+          error: revokeErr.message,
+        });
+      }
+
       try {
         await writeAudit({
           actorUserId: req.user.id,
@@ -744,7 +801,30 @@ router.post(
           error: _err.message,
         });
       }
-      res.json({ message: "Two-factor authentication disabled" });
+
+      return req.session.regenerate((regenErr) => {
+        if (regenErr) {
+          logger.error("Session regenerate failed after 2FA disable", {
+            userId: actingUser.id,
+            error: regenErr.message,
+          });
+          return res
+            .status(500)
+            .json({ error: "Failed to rotate session after 2FA disable" });
+        }
+        req.login(actingUser, (loginErr) => {
+          if (loginErr) {
+            logger.error("Re-login after 2FA disable failed", {
+              userId: actingUser.id,
+              error: loginErr.message,
+            });
+            return res.status(500).json({
+              error: "Failed to re-establish session after 2FA disable",
+            });
+          }
+          return res.json({ message: "Two-factor authentication disabled" });
+        });
+      });
     } catch (error) {
       logger.error("2FA disable error:", {
         error: error.message,
