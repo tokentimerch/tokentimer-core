@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/config",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Shared configuration for TokenTimer",
   "main": "src/index.js",
   "type": "module",

@@ -1112,6 +1112,21 @@ router.post(
       // Update password and clear reset token
       await User.resetPassword(token, passwordHash);
 
+      // Revoke every session for this user so any attacker with a live
+      // session is kicked and only the new password lets them back in.
+      try {
+        await pool.query(
+          `DELETE FROM session
+             WHERE (sess #>> '{passport,user}') = $1`,
+          [String(user.id)],
+        );
+      } catch (revokeErr) {
+        logger.error("Failed to revoke sessions on password reset", {
+          userId: user.id,
+          error: revokeErr.message,
+        });
+      }
+
       res.json({
         message:
           "Password reset successfully! You can now log in with your new password.",
@@ -1193,6 +1208,24 @@ router.post(
         [req.user.id, newHash],
       );
 
+      // Revoke every session for this user except the one performing the change.
+      // This logs out any other browser/device so the new password is required there.
+      const currentSid = req.sessionID;
+      const actingUser = req.user;
+      try {
+        await pool.query(
+          `DELETE FROM session
+             WHERE sid <> $1
+               AND (sess #>> '{passport,user}') = $2`,
+          [currentSid, String(req.user.id)],
+        );
+      } catch (revokeErr) {
+        logger.error("Failed to revoke other sessions on password change", {
+          userId: req.user.id,
+          error: revokeErr.message,
+        });
+      }
+
       try {
         await writeAudit({
           actorUserId: req.user.id,
@@ -1210,7 +1243,30 @@ router.post(
         });
       }
 
-      res.json({ message: "Password changed successfully" });
+      // Rotate the session id for the acting session (defense in depth).
+      return req.session.regenerate((regenErr) => {
+        if (regenErr) {
+          logger.error("Session regenerate failed after password change", {
+            userId: actingUser.id,
+            error: regenErr.message,
+          });
+          return res
+            .status(500)
+            .json({ error: "Failed to rotate session after password change" });
+        }
+        req.login(actingUser, (loginErr) => {
+          if (loginErr) {
+            logger.error("Re-login after password change failed", {
+              userId: actingUser.id,
+              error: loginErr.message,
+            });
+            return res.status(500).json({
+              error: "Failed to re-establish session after password change",
+            });
+          }
+          return res.json({ message: "Password changed successfully" });
+        });
+      });
     } catch (error) {
       logger.error("Change password error:", {
         error: error.message,
