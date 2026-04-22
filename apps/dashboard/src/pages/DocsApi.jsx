@@ -990,10 +990,8 @@ curl -s -b cookies.txt -X POST <your-backend-url>/api/v1/workspaces/11111111-111
                     — remove
                   </ListItem>
                   <ListItem>
-                    <strong>
-                      GET /api/v1/workspaces/:id/invitations
-                    </strong>{' '}
-                    — list pending (unaccepted) invitations. Never returns the
+                    <strong>GET /api/v1/workspaces/:id/invitations</strong> —
+                    list pending (unaccepted) invitations. Never returns the
                     invitation token.
                   </ListItem>
                   <ListItem>
