@@ -989,12 +989,32 @@ curl -s -b cookies.txt -X POST <your-backend-url>/api/v1/workspaces/11111111-111
                     </strong>{' '}
                     — remove
                   </ListItem>
+                  <ListItem>
+                    <strong>
+                      GET /api/v1/workspaces/:id/invitations
+                    </strong>{' '}
+                    — list pending (unaccepted) invitations. Never returns the
+                    invitation token.
+                  </ListItem>
+                  <ListItem>
+                    <strong>
+                      DELETE /api/v1/workspaces/:id/invitations/:invitationId
+                    </strong>{' '}
+                    — cancel a pending invitation (manager+). Responds 204 on
+                    success and emits an INVITATION_CANCELLED audit event.
+                  </ListItem>
                 </List>
                 <CopyableCodeBlock
                   code={`# Invite member (manager+)
 curl -s -b cookies.txt -X POST <your-backend-url>/api/v1/workspaces/00000000-0000-0000-0000-000000000000/members \
   -H 'Content-Type: application/json' \
-  -d '{"email":"teammate@example.com","role":"viewer"}' | jq '.'`}
+  -d '{"email":"teammate@example.com","role":"viewer"}' | jq '.'
+
+# List pending invitations
+curl -s -b cookies.txt <your-backend-url>/api/v1/workspaces/00000000-0000-0000-0000-000000000000/invitations | jq '.'
+
+# Cancel a pending invitation (manager+)
+curl -s -b cookies.txt -X DELETE <your-backend-url>/api/v1/workspaces/00000000-0000-0000-0000-000000000000/invitations/<invitation-id>`}
                 />
               </Box>
 

@@ -22,6 +22,8 @@ tests/integration/contacts-crud.test.js
 tests/integration/contact-groups-settings.test.js
 tests/integration/workspaces-lifecycle.integration.test.js
 tests/integration/workspace-transfer-tokens.test.js
+tests/integration/workspace-invitations-list.integration.test.js
+tests/integration/workspace-invitations-cancel.integration.test.js
 tests/integration/contact-group-reassignment.test.js
 
 # Alert system

@@ -6,6 +6,12 @@ import {
 import { logger } from './logger.js';
 import { resetIdentity } from './analytics.js';
 
+// Tracks whether the frontend has ever observed a logged-in session. A 401
+// should only trigger the "session expired" toast + redirect when the user
+// actually had a session that could expire. Without this, background 401s on
+// public pages or 404s look like forced logouts.
+let hasObservedLoggedInSession = false;
+
 // API base URL resolution:
 // - If runtime env.js defines API_URL, use it first
 // - Otherwise if VITE_API_URL is set and not pointing to localhost when we're not on localhost, use it
@@ -387,6 +393,15 @@ export const handleApiError = (error, customMessage = null) => {
           message = null;
           break;
         }
+        // If the user never had a logged-in session, there is no session to
+        // expire. Skip the toast + redirect so background 401s on unknown
+        // paths (e.g. a 404 URL hitting /api/v1/workspaces) don't masquerade
+        // as a forced logout.
+        if (!hasObservedLoggedInSession) {
+          suppressToast = true;
+          message = null;
+          break;
+        }
         message = 'Your session has expired. Please log in again.';
         // Secure redirect - don't expose authentication state details
         setTimeout(() => {
@@ -512,6 +527,9 @@ export const API_ENDPOINTS = {
   WORKSPACE_INVITE: id => `/api/v1/workspaces/${id}/members`,
   WORKSPACE_MEMBER: (id, userId) =>
     `/api/v1/workspaces/${id}/members/${userId}`,
+  WORKSPACE_INVITATIONS: id => `/api/v1/workspaces/${id}/invitations`,
+  WORKSPACE_INVITATION: (id, invitationId) =>
+    `/api/v1/workspaces/${id}/invitations/${invitationId}`,
   WORKSPACE_ALERT_SETTINGS: id => `/api/v1/workspaces/${id}/alert-settings`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
   // Vault integration (workspace_id required for scan)
@@ -552,6 +570,9 @@ export const authAPI = {
   login: async credentials => {
     try {
       const response = await apiClient.post(API_ENDPOINTS.LOGIN, credentials);
+      if (response?.data?.success || response?.data?.user) {
+        hasObservedLoggedInSession = true;
+      }
       return response.data;
     } catch (error) {
       throw new Error(handleApiError(error));
@@ -569,6 +590,8 @@ export const authAPI = {
       } catch (_) {}
     } catch (error) {
       handleApiError(error);
+    } finally {
+      hasObservedLoggedInSession = false;
     }
   },
 
@@ -576,6 +599,9 @@ export const authAPI = {
   getSession: async () => {
     try {
       const response = await apiClient.get(API_ENDPOINTS.GET_SESSION);
+      if (response?.data?.loggedIn) {
+        hasObservedLoggedInSession = true;
+      }
       return response.data;
     } catch (error) {
       // Don't show error for session check
@@ -592,6 +618,7 @@ export const authAPI = {
         const response = await apiClient.get(API_ENDPOINTS.GET_SESSION);
 
         if (response.data && response.data.loggedIn) {
+          hasObservedLoggedInSession = true;
           logger.info('Session verified successfully');
           return true;
         }
@@ -630,6 +657,7 @@ export const authAPI = {
         const response = await apiClient.get(API_ENDPOINTS.GET_SESSION);
 
         if (response.data && response.data.loggedIn) {
+          hasObservedLoggedInSession = true;
           logger.info('Session established successfully');
           return true;
         }
@@ -1003,6 +1031,27 @@ export const workspaceAPI = {
     try {
       await apiClient.delete(API_ENDPOINTS.WORKSPACE_MEMBER(id, userId));
       showSuccessMessage('Member removed');
+    } catch (e) {
+      throw new Error(handleApiError(e));
+    }
+  },
+  listInvitations: async (id, limit = 100, offset = 0) => {
+    try {
+      const res = await apiClient.get(
+        API_ENDPOINTS.WORKSPACE_INVITATIONS(id),
+        { params: { limit, offset } }
+      );
+      return res.data;
+    } catch (e) {
+      throw new Error(handleApiError(e));
+    }
+  },
+  cancelInvitation: async (id, invitationId) => {
+    try {
+      await apiClient.delete(
+        API_ENDPOINTS.WORKSPACE_INVITATION(id, invitationId)
+      );
+      showSuccessMessage('Invitation cancelled');
     } catch (e) {
       throw new Error(handleApiError(e));
     }

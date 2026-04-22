@@ -48,6 +48,7 @@ export default function Workspaces({
   const [workspaces, setWorkspaces] = React.useState([]);
   const [currentWorkspace, setCurrentWorkspace] = React.useState(null);
   const [members, setMembers] = React.useState([]);
+  const [pendingInvitations, setPendingInvitations] = React.useState([]);
   const [inviteEmail, setInviteEmail] = React.useState('');
   const [inviteRole, setInviteRole] = React.useState('viewer');
   const [newWorkspaceName, setNewWorkspaceName] = React.useState('');
@@ -266,11 +267,18 @@ export default function Workspaces({
         if (selected) {
           const res = await workspaceAPI.listMembers(selected.id, 100, 0);
           if (!cancelled) setMembers(res?.items || []);
+          try {
+            const inv = await workspaceAPI.listInvitations(selected.id, 100, 0);
+            if (!cancelled) setPendingInvitations(inv?.items || []);
+          } catch (_) {
+            if (!cancelled) setPendingInvitations([]);
+          }
         }
       } catch (_) {
         if (!cancelled) {
           setWorkspaces([]);
           setMembers([]);
+          setPendingInvitations([]);
         }
       }
     })();
@@ -282,6 +290,15 @@ export default function Workspaces({
   async function reloadMembers(workspaceId) {
     const res = await workspaceAPI.listMembers(workspaceId, 100, 0);
     setMembers(res?.items || []);
+  }
+
+  async function reloadInvitations(workspaceId) {
+    try {
+      const res = await workspaceAPI.listInvitations(workspaceId, 100, 0);
+      setPendingInvitations(res?.items || []);
+    } catch (_) {
+      setPendingInvitations([]);
+    }
   }
 
   return (
@@ -368,6 +385,7 @@ export default function Workspaces({
                             0
                           );
                           setMembers(res?.items || []);
+                          await reloadInvitations(sel.id);
                           try {
                             // Keep user on the same page, only refresh context + nav
                             selectWorkspace(sel.id, { replace: true });
@@ -412,6 +430,7 @@ export default function Workspaces({
                           } catch (_) {}
                         } else {
                           setMembers([]);
+                          setPendingInvitations([]);
                         }
                         // No redirect to tokens; stay on Workspaces page
                       } catch (_) {
@@ -444,8 +463,13 @@ export default function Workspaces({
                     const ws = workspaces.find(w => w.id === id);
                     setCurrentWorkspace(ws || null);
                     setRenaming(false);
-                    if (ws) await reloadMembers(ws.id);
-                    else setMembers([]);
+                    if (ws) {
+                      await reloadMembers(ws.id);
+                      await reloadInvitations(ws.id);
+                    } else {
+                      setMembers([]);
+                      setPendingInvitations([]);
+                    }
                   }}
                 >
                   {workspaces.map(w => (
@@ -655,7 +679,6 @@ export default function Workspaces({
                 <Button
                   onClick={async () => {
                     if (!currentWorkspace || !inviteEmail) return;
-                    // Core: no restrictions on adding members to personal workspaces
                     const email = inviteEmail.trim();
                     if (!/.+@.+\..+/.test(email)) {
                       showWarning('Invalid email');
@@ -667,6 +690,7 @@ export default function Workspaces({
                     });
                     setInviteEmail('');
                     await reloadMembers(currentWorkspace.id);
+                    await reloadInvitations(currentWorkspace.id);
                   }}
                   isDisabled={!canManage}
                 >
@@ -779,6 +803,67 @@ export default function Workspaces({
                   </Tbody>
                 </Table>
               </Box>
+
+              {pendingInvitations.length > 0 && (
+                <Box mt={6}>
+                  <Text fontWeight='semibold' mb={2}>
+                    Pending invitations ({pendingInvitations.length})
+                  </Text>
+                  <Text fontSize='sm' color='gray.500' mb={3}>
+                    Invitations that have not yet been accepted. They count
+                    toward your workspace member cap when one is configured.
+                  </Text>
+                  <Box overflowX='auto'>
+                    <Table size='sm' minW='600px'>
+                      <Thead>
+                        <Tr>
+                          <Th>Email</Th>
+                          <Th>Role</Th>
+                          <Th>Sent</Th>
+                          <Th></Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {pendingInvitations.map(inv => (
+                          <Tr key={inv.id}>
+                            <Td>{inv.email}</Td>
+                            <Td>{inv.role}</Td>
+                            <Td>
+                              {inv.created_at
+                                ? new Date(inv.created_at).toLocaleString()
+                                : ''}
+                            </Td>
+                            <Td>
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                isDisabled={!canManage}
+                                onClick={async () => {
+                                  if (!currentWorkspace) return;
+                                  try {
+                                    await workspaceAPI.cancelInvitation(
+                                      currentWorkspace.id,
+                                      inv.id
+                                    );
+                                  } catch (e) {
+                                    showError(
+                                      'Failed to cancel invitation',
+                                      String(e?.message || '')
+                                    );
+                                  }
+                                  await reloadInvitations(currentWorkspace.id);
+                                }}
+                              >
+                                Cancel invite
+                              </Button>
+                            </Td>
+                          </Tr>
+                        ))}
+                      </Tbody>
+                    </Table>
+                  </Box>
+                </Box>
+              )}
             </Box>
           </VStack>
         )}
@@ -1169,8 +1254,10 @@ export default function Workspaces({
                   if (next) {
                     const res = await workspaceAPI.listMembers(next.id, 100, 0);
                     setMembers(res?.items || []);
+                    await reloadInvitations(next.id);
                   } else {
                     setMembers([]);
+                    setPendingInvitations([]);
                   }
                   try {
                     window.dispatchEvent(

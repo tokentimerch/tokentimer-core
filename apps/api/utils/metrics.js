@@ -50,6 +50,11 @@ const inviteSentTotal = new client.Counter({
   help: "Workspace invites created",
 });
 
+const inviteCancelledTotal = new client.Counter({
+  name: "tokentimer_invite_cancelled_total",
+  help: "Workspace invites cancelled (pending rows only)",
+});
+
 module.exports = {
   httpRequestDuration,
   httpRequestsTotal,
@@ -60,4 +65,5 @@ module.exports = {
   rbacDeniedTotal,
   workspacesCreatedTotal,
   inviteSentTotal,
+  inviteCancelledTotal,
 };
