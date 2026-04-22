@@ -405,6 +405,45 @@ export default function DocsTeams() {
               </Box>
 
               <Box
+                id='pending-invitations'
+                bg={cardBg}
+                border='1px solid'
+                borderColor={borderColor}
+                borderRadius='md'
+                p={{ base: 4, md: 6 }}
+                w='full'
+                overflowX='hidden'
+              >
+                <Heading size='md' mb={2}>
+                  Pending invitations
+                </Heading>
+                <Text fontSize='sm' color={bodyColor} mb={2}>
+                  When you invite a teammate who does not yet have a TokenTimer
+                  account, a pending invitation row is stored until they
+                  register. Admins and workspace managers can see and cancel
+                  these rows from <em>Workspaces</em>.
+                </Text>
+                <List
+                  spacing={1}
+                  pl={4}
+                  styleType='disc'
+                  mb={2}
+                  color={bodyColor}
+                  fontSize='sm'
+                >
+                  <ListItem>
+                    Cancelling a pending invitation deletes the row and writes
+                    an <strong>INVITATION_CANCELLED</strong> audit event. It
+                    never affects invitations that have already been accepted.
+                  </ListItem>
+                  <ListItem>
+                    The invitation token is treated as a bearer secret and is
+                    never returned by the list endpoint.
+                  </ListItem>
+                </List>
+              </Box>
+
+              <Box
                 id='deleting'
                 bg={cardBg}
                 border='1px solid'

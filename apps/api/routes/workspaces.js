@@ -15,7 +15,11 @@ const {
   generateEmailTemplate,
 } = require("../services/emailService");
 const { sanitizeForLogging } = require("../utils/sanitize");
-const { workspacesCreatedTotal, inviteSentTotal } = require("../utils/metrics");
+const {
+  workspacesCreatedTotal,
+  inviteSentTotal,
+  inviteCancelledTotal,
+} = require("../utils/metrics");
 
 const router = require("express").Router();
 
@@ -524,8 +528,13 @@ router.post(
           });
         }
         let memberLimit = MEMBER_LIMITS[orgPlan];
-        if (typeof memberLimit === "undefined")
+        if (typeof memberLimit === "undefined") {
+          logger.warn("Unknown plan in MEMBER_LIMITS lookup", {
+            plan: orgPlan,
+            workspaceId: ws.id,
+          });
           memberLimit = MEMBER_LIMITS.oss ?? Infinity;
+        }
         if (Number.isFinite(memberLimit)) {
           const memberCountRes = await pool.query(
             `SELECT COUNT(DISTINCT wm.user_id)::int AS c
@@ -539,7 +548,7 @@ router.post(
             `SELECT COUNT(DISTINCT LOWER(wi.email))::int AS c
                FROM workspaces w
                JOIN workspace_invitations wi ON wi.workspace_id = w.id
-              WHERE w.created_by = $1`,
+              WHERE w.created_by = $1 AND wi.accepted_at IS NULL`,
             [ws.created_by],
           );
           const pendingInviteCount = pendingInvitesRes.rows?.[0]?.c || 0;
@@ -564,7 +573,7 @@ router.post(
               `SELECT 1
                  FROM workspaces w
                  JOIN workspace_invitations wi ON wi.workspace_id = w.id
-                WHERE w.created_by = $1 AND LOWER(wi.email) = $2
+                WHERE w.created_by = $1 AND LOWER(wi.email) = $2 AND wi.accepted_at IS NULL
                 LIMIT 1`,
               [ws.created_by, normalizedEmail],
             );
@@ -600,6 +609,19 @@ router.post(
          ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
           [targetUserId, ws.id, role, userId],
         );
+        // Clear any residual invitation row for this email so it does not count
+        // against plan caps and does not leak through the pending list.
+        try {
+          await pool.query(
+            `DELETE FROM workspace_invitations WHERE workspace_id = $1 AND LOWER(email) = $2`,
+            [ws.id, normalizedEmail],
+          );
+        } catch (_err) {
+          logger.warn("Residual invitation cleanup failed", {
+            error: _err.message,
+            workspaceId: ws.id,
+          });
+        }
       } else {
         // Not registered: create invitation token record
         const inviteId = require("crypto").randomUUID();
@@ -617,7 +639,12 @@ router.post(
         action: "MEMBER_INVITED_OR_UPDATED",
         targetType: "workspace",
         workspaceId: ws.id,
-        metadata: { role },
+        metadata: {
+          role,
+          email: normalizedEmail,
+          workspace_name: ws.name,
+          recipient_type: userRes.rowCount > 0 ? "existing_user" : "new_user",
+        },
       });
       // Send invitation/notification email (best-effort)
       try {
@@ -672,7 +699,11 @@ If you did not expect this invitation, please contact your workspace administrat
             action: "INVITE_EMAIL_SENT",
             targetType: "workspace",
             workspaceId: ws.id,
-            metadata: { role },
+            metadata: {
+              role,
+              email: normalizedEmail,
+              workspace_name: ws.name,
+            },
           });
         } else {
           logger.warn("Invite email send failed", {
@@ -859,6 +890,125 @@ router.get(
       return res
         .status(500)
         .json({ error: "Failed to list members", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// List pending (unaccepted) invitations for a workspace.
+// Never returns the `token` column (treated as a bearer secret).
+router.get(
+  "/api/v1/workspaces/:id/invitations",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  async (req, res) => {
+    try {
+      const limit = Math.max(
+        1,
+        Math.min(200, parseInt(req.query.limit || "100", 10)),
+      );
+      const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
+      const { rows } = await pool.query(
+        `SELECT wi.id,
+                wi.email,
+                wi.role,
+                wi.created_at,
+                wi.accepted_at,
+                wi.invited_by,
+                u.display_name AS invited_by_name
+           FROM workspace_invitations wi
+           LEFT JOIN users u ON u.id = wi.invited_by
+          WHERE wi.workspace_id = $1
+            AND wi.accepted_at IS NULL
+          ORDER BY wi.created_at DESC
+          LIMIT $2 OFFSET $3`,
+        [req.workspace.id, limit, offset],
+      );
+      return res.json({ items: rows, pagination: { limit, offset } });
+    } catch (err) {
+      logger.error("Failed to list workspace invitations", {
+        error: err.message,
+        workspaceId: req.workspace?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list invitations",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+// Cancel a pending invitation. Only removes rows where accepted_at IS NULL so
+// that accepted invitations (historical records) are never disturbed.
+router.delete(
+  "/api/v1/workspaces/:id/invitations/:invitationId",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  authorize("membership.cancel_invite"),
+  async (req, res) => {
+    try {
+      const invitationId = String(req.params.invitationId || "").trim();
+      if (!invitationId) {
+        return res.status(400).json({
+          error: "invitationId required",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      const { rows } = await pool.query(
+        `DELETE FROM workspace_invitations
+          WHERE id = $1 AND workspace_id = $2 AND accepted_at IS NULL
+          RETURNING email, role`,
+        [invitationId, req.workspace.id],
+      );
+      if (rows.length === 0) {
+        return res
+          .status(404)
+          .json({ error: "Invitation not found", code: "NOT_FOUND" });
+      }
+      const { email, role } = rows[0];
+      try {
+        await writeAudit({
+          actorUserId: req.user.id,
+          subjectUserId: req.user.id,
+          action: "INVITATION_CANCELLED",
+          targetType: "workspace_invitation",
+          targetId: invitationId,
+          workspaceId: req.workspace.id,
+          metadata: {
+            email,
+            role,
+            workspace_name: req.workspace.name,
+            invitation_id: invitationId,
+          },
+        });
+      } catch (auditErr) {
+        logger.warn("Failed to write INVITATION_CANCELLED audit event", {
+          error: auditErr.message,
+          workspaceId: req.workspace.id,
+          invitationId,
+        });
+      }
+      try {
+        inviteCancelledTotal.inc();
+      } catch (metricErr) {
+        logger.warn("Failed to increment inviteCancelledTotal metric", {
+          error: metricErr.message,
+        });
+      }
+      return res.status(204).send();
+    } catch (err) {
+      logger.error("Failed to cancel workspace invitation", {
+        error: err.message,
+        workspaceId: req.workspace?.id,
+        invitationId: req.params?.invitationId,
+      });
+      return res.status(500).json({
+        error: "Failed to cancel invitation",
+        code: "INTERNAL_ERROR",
+      });
     }
   },
 );

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.1.3
+  version: 0.2.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -691,6 +691,96 @@ paths:
           description: Member removed
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/invitations:
+    get:
+      tags: [Workspaces]
+      summary: List pending workspace invitations
+      operationId: listWorkspaceInvitations
+      description: >
+        Returns unaccepted invitations for the workspace. The invitation
+        `token` is a bearer secret and is never returned by this endpoint.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Pending invitations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        email:
+                          type: string
+                          format: email
+                        role:
+                          type: string
+                        invited_by:
+                          type: integer
+                        created_at:
+                          type: string
+                          format: date-time
+                        accepted_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  pagination:
+                    type: object
+                    properties:
+                      limit:
+                        type: integer
+                      offset:
+                        type: integer
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/invitations/{invitationId}:
+    delete:
+      tags: [Workspaces]
+      summary: Cancel a pending workspace invitation
+      operationId: cancelWorkspaceInvitation
+      description: >
+        Deletes a pending invitation (accepted_at IS NULL) and emits an
+        INVITATION_CANCELLED audit event. Does not touch invitations that have
+        already been accepted.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: invitationId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Invitation cancelled
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/transfer-tokens:

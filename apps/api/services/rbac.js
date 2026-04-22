@@ -33,6 +33,7 @@ const actionPolicy = {
   "membership.invite": "workspace_manager",
   "membership.change_role": "workspace_manager",
   "membership.remove": "workspace_manager",
+  "membership.cancel_invite": "workspace_manager",
   "section.create": "workspace_manager",
   "section.update": "workspace_manager",
   "section.delete": "workspace_manager",

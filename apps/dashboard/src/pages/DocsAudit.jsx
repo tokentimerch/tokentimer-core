@@ -438,10 +438,27 @@ export default function DocsAudit() {
                   </ListItem>
                   <ListItem>
                     <strong>MEMBER_INVITED_OR_UPDATED</strong> metadata:{' '}
-                    {'{ role }'}
+                    {'{ role, email, workspace_name, recipient_type }'}. Emitted
+                    synchronously when an invitation or direct membership is
+                    created. {`recipient_type`} is {`"existing_user"`} when the
+                    email already has a TokenTimer account (membership created
+                    directly) or {`"invitation"`} when a pending invitation row
+                    was written for a new email.
                   </ListItem>
                   <ListItem>
-                    <strong>INVITE_EMAIL_SENT</strong> metadata: {'{ role }'}
+                    <strong>INVITE_EMAIL_SENT</strong> metadata:{' '}
+                    {'{ role, email, workspace_name }'}. Emitted only after the
+                    invitation email was handed off to the SMTP transport
+                    successfully. Absence of this event after
+                    MEMBER_INVITED_OR_UPDATED means the email step failed and
+                    the operator should check mail logs.
+                  </ListItem>
+                  <ListItem>
+                    <strong>INVITATION_CANCELLED</strong> metadata:{' '}
+                    {'{ email, role, workspace_name, invitation_id }'}. Emitted
+                    when a pending invitation is removed via{' '}
+                    <code>DELETE /api/v1/workspaces/:id/invitations/:invitationId</code>.
+                    Accepted invitations are never cancelled by this endpoint.
                   </ListItem>
                   <ListItem>
                     <strong>MEMBER_ROLE_CHANGED</strong> metadata: {'{ role }'}

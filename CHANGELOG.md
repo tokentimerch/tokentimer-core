@@ -9,6 +9,30 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-22
+
+### Fixed
+
+- **Workspace invitation cancellation.** `DELETE /api/v1/workspaces/{id}/invitations/{invitationId}` now deletes only rows with `accepted_at IS NULL`, matching the OpenAPI description and preserving accepted invitations as history. Unknown or already-accepted invitations return **404** instead of a misleading **204**.
+- **Dashboard session UX on unknown routes.** The API client only treats **401** as “session expired” with redirect to `/login` after the app has observed a logged-in session (`hasObservedLoggedInSession`), so anonymous users on non-app URLs (for example a client-side **404**) no longer see a spurious expiry toast or forced redirect.
+
+### Added
+
+- **Prometheus metric** `tokentimer_invite_cancelled_total` (counter) incremented when a pending invitation is successfully cancelled (`apps/api/utils/metrics.js`, wired from `apps/api/routes/workspaces.js`).
+
+### Changed
+
+- Align contract and spec versions with the app version. The following files are bumped from **0.1.3** to **0.2.0** so consumers can pin on a single release:
+  - `contracts.manifest.json`
+  - `packages/contracts/openapi/openapi.yaml`
+  - `packages/contracts/api/auth-route-compat.contract.json`
+  - `packages/contracts/runtime-extensions/plugin-context.contract.json`
+  - `packages/contracts/runtime-extensions/plugin-context.example.json`
+
+### Dependencies
+
+- **No dependency or lockfile changes** are part of this release; `pnpm-lock.yaml` and root `pnpm.overrides` are unchanged from **0.1.3**.
+
 ## [0.1.3] - 2026-04-18
 
 ### Security
@@ -170,6 +194,7 @@ tokentimer-cloud SaaS codebase into a standalone, variant-agnostic repository.
 
 ---
 
+[0.2.0]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.0...v0.1.1

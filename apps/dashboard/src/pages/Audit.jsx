@@ -109,6 +109,7 @@ const ALL_ACTION_TYPES = [
   'MEMBER_ROLE_CHANGED',
   'MEMBER_REMOVED',
   'INVITE_EMAIL_SENT',
+  'INVITATION_CANCELLED',
   // Contact management
   'WORKSPACE_CONTACT_CREATED',
   'WORKSPACE_CONTACT_UPDATED',
@@ -564,6 +565,11 @@ export default function Audit({
       if (md.old_role && md.new_role)
         parts.push(`Role: ${md.old_role} -> ${md.new_role}`);
       if (md.workspace_name) parts.push(`Workspace: ${md.workspace_name}`);
+      if (md.recipient_type)
+        parts.push(
+          `Recipient: ${md.recipient_type === 'existing_user' ? 'existing user' : 'new user'}`
+        );
+      if (md.invitation_id) parts.push(`Invitation ID: ${md.invitation_id}`);
       if (md.invited_by) parts.push(`Invited by: ${md.invited_by}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
@@ -738,7 +744,8 @@ export default function Audit({
       action === 'MEMBER_INVITED_OR_UPDATED' ||
       action === 'MEMBER_ROLE_CHANGED' ||
       action === 'MEMBER_REMOVED' ||
-      action === 'INVITE_EMAIL_SENT'
+      action === 'INVITE_EMAIL_SENT' ||
+      action === 'INVITATION_CANCELLED'
     ) {
       const formatted = formatMemberMetadata(ev);
       if (formatted) return formatted;

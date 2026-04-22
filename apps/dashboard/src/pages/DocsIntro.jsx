@@ -511,6 +511,15 @@ export default function DocsIntro() {
                     <ListItem>
                       <ChakraLink
                         as={RouterLink}
+                        to='/docs/teams#pending-invitations'
+                        color={linkColor}
+                      >
+                        Pending invitations
+                      </ChakraLink>
+                    </ListItem>
+                    <ListItem>
+                      <ChakraLink
+                        as={RouterLink}
                         to='/docs/teams#deleting'
                         color={linkColor}
                       >
