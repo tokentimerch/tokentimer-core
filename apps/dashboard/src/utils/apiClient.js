@@ -1037,10 +1037,9 @@ export const workspaceAPI = {
   },
   listInvitations: async (id, limit = 100, offset = 0) => {
     try {
-      const res = await apiClient.get(
-        API_ENDPOINTS.WORKSPACE_INVITATIONS(id),
-        { params: { limit, offset } }
-      );
+      const res = await apiClient.get(API_ENDPOINTS.WORKSPACE_INVITATIONS(id), {
+        params: { limit, offset },
+      });
       return res.data;
     } catch (e) {
       throw new Error(handleApiError(e));

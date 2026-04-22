@@ -457,8 +457,10 @@ export default function DocsAudit() {
                     <strong>INVITATION_CANCELLED</strong> metadata:{' '}
                     {'{ email, role, workspace_name, invitation_id }'}. Emitted
                     when a pending invitation is removed via{' '}
-                    <code>DELETE /api/v1/workspaces/:id/invitations/:invitationId</code>.
-                    Accepted invitations are never cancelled by this endpoint.
+                    <code>
+                      DELETE /api/v1/workspaces/:id/invitations/:invitationId
+                    </code>
+                    . Accepted invitations are never cancelled by this endpoint.
                   </ListItem>
                   <ListItem>
                     <strong>MEMBER_ROLE_CHANGED</strong> metadata: {'{ role }'}
