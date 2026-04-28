@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.2.0
+  version: 0.3.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -2328,6 +2328,285 @@ paths:
                 additionalProperties: true
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/domain-checker/lookup:
+    post:
+      tags: [Workspaces]
+      summary: Discover subdomains for a root domain
+      operationId: workspaceDomainCheckerLookup
+      description: |
+        Runs passive subdomain discovery with subfinder's default behavior for publicly known hostnames under the given root domain.
+        It does not scan private DNS or internal network records. Results may be slow, partial, or capped; clients should use a long HTTP timeout.
+        Lookup requests are rate limited per workspace and user.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain:
+                  type: string
+                  description: Root domain to search (for example example.com)
+                  example: example.com
+      responses:
+        "200":
+          description: Passive subdomain discovery results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domain, source, items]
+                properties:
+                  domain:
+                    type: string
+                  source:
+                    type: string
+                    example: subfinder
+                  items:
+                    type: array
+                    description: Hostname findings. The field name is retained for compatibility with existing domain-checker clients.
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                          description: Discovered hostname.
+                        domains:
+                          type: array
+                          items:
+                            type: string
+                        sources:
+                          type: array
+                          items:
+                            type: string
+                            enum: [subfinder]
+                        checked:
+                          type: boolean
+                      additionalProperties: true
+                  partial:
+                    type: boolean
+                    description: True when one discovery tool failed or results were capped.
+                  toolErrors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tool:
+                          type: string
+                          enum: [subfinder]
+                        code:
+                          type: string
+                        message:
+                          type: string
+                  meta:
+                    type: object
+                    properties:
+                      tools:
+                        type: array
+                        items:
+                          type: string
+                          enum: [subfinder]
+                      toolsSucceeded:
+                        type: integer
+                      toolsFailed:
+                        type: integer
+                      truncated:
+                        type: boolean
+                      durationMs:
+                        type: integer
+                      maxResults:
+                        type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: A lookup is already running for this workspace and domain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                    example: DOMAIN_CHECKER_BUSY
+        "429":
+          description: Domain checker lookup rate limited
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                    example: DOMAIN_CHECKER_RATE_LIMITED
+        "502":
+          description: Discovery tool error or invalid response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+        "503":
+          description: Discovery tools unavailable or all sources failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                    example: DOMAIN_CHECKER_FAILED
+                  toolErrors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tool:
+                          type: string
+                          enum: [subfinder]
+                        code:
+                          type: string
+                        message:
+                          type: string
+        "504":
+          description: Domain discovery lookup timed out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                    example: DOMAIN_CHECKER_TIMEOUT
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/domain-checker/import:
+    post:
+      tags: [Workspaces]
+      summary: Import selected hostnames from domain checker results
+      operationId: workspaceDomainCheckerImport
+      description: |
+        Fetches the live TLS certificate for each selected hostname, then creates ssl_cert tokens in the workspace.
+        Duplicate imports are skipped when a matching token already exists.
+        Optionally creates endpoint monitors (`domain_monitors`) for each discovered hostname when
+        `monitorOptions.enabled` is true. Existing monitors for the same workspace and URL are left untouched.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain, certificates]
+              properties:
+                domain:
+                  type: string
+                  description: Root domain that was used for lookup
+                  example: example.com
+                certificates:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: object
+                    additionalProperties: true
+                monitorOptions:
+                  type: object
+                  description: Optional block enabling bulk creation of endpoint monitors for the imported hostnames.
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: Whether to create `domain_monitors` rows for each imported hostname.
+                      default: false
+                    health_check_enabled:
+                      type: boolean
+                      description: Enable periodic HTTP(S) health checks on the created monitors.
+                      default: false
+                    check_interval:
+                      type: string
+                      description: Health check cadence for the created monitors.
+                      enum: ["1min", "5min", "30min", "hourly", "daily"]
+                      default: "hourly"
+                    alert_after_failures:
+                      type: integer
+                      description: Number of consecutive failures before a "down" alert is triggered.
+                      minimum: 1
+                      maximum: 10
+                      default: 2
+                    contact_group_id:
+                      type: string
+                      nullable: true
+                      description: Contact group for alerts from the created monitors. Falls back to the workspace default if omitted.
+      responses:
+        "201":
+          description: Import result with created and skipped rows
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imported, skipped]
+                properties:
+                  imported:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  skipped:
+                    type: array
+                    description: |-
+                      Hostnames that were not imported. Each entry includes a `reason`
+                      (`duplicate` or `invalid_certificate`) and a machine-readable `detail`
+                      plus identifying info (hostnames, subject, expiration when available) so clients can
+                      explain why the rows were skipped.
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        reason:
+                          type: string
+                          enum: [duplicate, invalid_certificate]
+                        detail:
+                          type: string
+                          description: Machine-readable sub-reason.
+                  skippedCounts:
+                    type: object
+                    description: Per-reason skip counts mirroring the `skipped` array.
+                    properties:
+                      duplicate:
+                        type: integer
+                      invalid:
+                        type: integer
+                  monitors:
+                    type: object
+                    description: Endpoint monitor creation summary when `monitorOptions.enabled` was true.
+                    properties:
+                      created:
+                        type: integer
+                        description: New monitors created for imported hostnames.
+                      existing:
+                        type: integer
+                        description: Hostnames that already had a monitor in this workspace.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/tokens/reassign-contact-group:

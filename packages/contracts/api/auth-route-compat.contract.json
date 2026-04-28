@@ -1,6 +1,6 @@
 {
   "contractName": "api.auth-route-compat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Canonical auth route compatibility guarantees across core and consumers.",
   "guarantees": {
     "stableRoutes": [

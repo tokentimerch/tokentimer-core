@@ -251,6 +251,15 @@ export default function DocsIntro() {
                         </ListItem>
                       </List>
                     </ListItem>
+                    <ListItem>
+                      <ChakraLink
+                        as={RouterLink}
+                        to='/docs/tokens#endpoint-monitoring'
+                        color={linkColor}
+                      >
+                        Endpoint &amp; SSL monitoring
+                      </ChakraLink>
+                    </ListItem>
                   </List>
                 </ListItem>
                 <ListItem>

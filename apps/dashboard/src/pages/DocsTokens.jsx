@@ -222,6 +222,15 @@ export default function DocsTokens() {
                     </ListItem>
                   </List>
                 </ListItem>
+                <ListItem>
+                  <ChakraLink
+                    href='#endpoint-monitoring'
+                    fontWeight='medium'
+                    color={linkColor}
+                  >
+                    Endpoint & SSL monitoring
+                  </ChakraLink>
+                </ListItem>
               </List>
             </Box>
           </GridItem>
@@ -2631,6 +2640,144 @@ API Gateway Key,key_secret,api_key,2025-12-15,"prod, api",api.example.com,"read,
                     </AccordionPanel>
                   </AccordionItem>
                 </Accordion>
+              </Box>
+
+              <Box
+                id='endpoint-monitoring'
+                bg={cardBg}
+                border='1px solid'
+                borderColor={borderColor}
+                borderRadius='md'
+                p={{ base: 4, md: 6 }}
+                w='full'
+                overflowX='hidden'
+              >
+                <Heading size='md' mb={2}>
+                  Endpoint & SSL monitoring
+                </Heading>
+                <Text fontSize='sm' color={bodyColor} mb={3}>
+                  TokenTimer can monitor HTTPS endpoints for SSL certificate
+                  expiration and endpoint health. When you add an endpoint,
+                  TokenTimer automatically fetches the SSL certificate, creates
+                  a token to track its expiration, and optionally performs
+                  periodic health checks. The Domain Checker uses
+                  subfinder&apos;s default passive discovery behavior to find
+                  publicly known subdomains for a root domain, then lets you
+                  review and bulk-import them as SSL tokens. It does not scan
+                  private DNS or internal network records.
+                </Text>
+
+                <Heading as='h3' size='sm' mt={4} mb={2}>
+                  How SSL tokens are created
+                </Heading>
+                <List
+                  spacing={1}
+                  pl={4}
+                  styleType='disc'
+                  color={bodyColor}
+                  fontSize='sm'
+                >
+                  <ListItem>
+                    When you add a URL (e.g., <Code>https://example.com</Code>),
+                    TokenTimer connects via TLS to read the SSL certificate.
+                  </ListItem>
+                  <ListItem>
+                    A token is <strong>automatically created</strong> with the
+                    hostname as its name (e.g., &quot;example.com&quot;), the
+                    certificate expiration date, issuer, serial number, and
+                    subject.
+                  </ListItem>
+                  <ListItem>
+                    The token&apos;s <Code>domains</Code> field is populated
+                    with the hostname and the <Code>location</Code> field stores
+                    the full URL.
+                  </ListItem>
+                  <ListItem>
+                    The token type is set to <Code>ssl_cert</Code> with category{' '}
+                    <Code>cert</Code>.
+                  </ListItem>
+                  <ListItem>
+                    On subsequent SSL checks, TokenTimer refreshes the linked
+                    token&apos;s certificate metadata, including expiration
+                    date, issuer, subject, and serial number when the
+                    certificate changes or is renewed.
+                  </ListItem>
+                </List>
+
+                <Heading as='h3' size='sm' mt={4} mb={2}>
+                  Health checking
+                </Heading>
+                <List
+                  spacing={1}
+                  pl={4}
+                  styleType='disc'
+                  color={bodyColor}
+                  fontSize='sm'
+                >
+                  <ListItem>
+                    <strong>Enable/disable</strong>: Health checking is off by
+                    default and can be toggled per endpoint.
+                  </ListItem>
+                  <ListItem>
+                    <strong>Check intervals</strong>: Every 1 min, 5 min, 30
+                    min, hourly, or daily.
+                  </ListItem>
+                  <ListItem>
+                    <strong>What is checked</strong>: An HTTP GET request is
+                    made to the URL. A 2xx or 3xx response is
+                    &quot;healthy&quot;; 4xx/5xx or timeouts are
+                    &quot;unhealthy&quot;.
+                  </ListItem>
+                  <ListItem>
+                    <strong>Dashboard indicator</strong>: A health status icon
+                    appears next to the token&apos;s expiry pill in the
+                    dashboard (green = healthy, orange = unhealthy, red = error,
+                    gray = pending).
+                  </ListItem>
+                  <ListItem>
+                    <strong>Alerts</strong>: When the status transitions from
+                    healthy to unhealthy, an alert is triggered. See the{' '}
+                    <ChakraLink
+                      href='/docs/alerts#endpoint-health'
+                      color={linkColor}
+                    >
+                      Endpoint Health Alerts
+                    </ChakraLink>{' '}
+                    documentation for details on the alerting strategy.
+                  </ListItem>
+                </List>
+
+                <Heading as='h3' size='sm' mt={4} mb={2}>
+                  Managing endpoints and Domain Checker
+                </Heading>
+                <List
+                  spacing={1}
+                  pl={4}
+                  styleType='disc'
+                  color={bodyColor}
+                  fontSize='sm'
+                >
+                  <ListItem>
+                    Click{' '}
+                    <strong>&quot;Endpoint &amp; SSL monitor&quot;</strong> on
+                    the dashboard to open the Endpoint &amp; SSL monitoring
+                    modal. From there you can add a single URL for health checks
+                    and SSL tracking, or use the Domain Checker to discover and
+                    bulk‑import every SSL certificate ever issued for a root
+                    domain.
+                  </ListItem>
+                  <ListItem>
+                    The modal lists monitored endpoints with SSL status, health
+                    status, response time, and check interval.
+                  </ListItem>
+                  <ListItem>
+                    Use the refresh button to trigger a manual health check.
+                  </ListItem>
+                  <ListItem>
+                    Deleting an endpoint monitor does <strong>not</strong>{' '}
+                    delete the associated SSL token.
+                  </ListItem>
+                </List>
               </Box>
             </VStack>
           </GridItem>

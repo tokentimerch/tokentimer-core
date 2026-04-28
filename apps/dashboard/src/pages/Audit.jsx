@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -134,6 +134,9 @@ const ALL_ACTION_TYPES = [
   'DOMAIN_MONITOR_UPDATED',
   'DOMAIN_MONITOR_DELETED',
   'DOMAIN_MONITOR_HEALTH_CHECK',
+  // Domain checker (subfinder)
+  'DOMAIN_CHECKER_LOOKUP',
+  'DOMAIN_CHECKER_IMPORT',
   // Digests
   'WEEKLY_DIGEST_SENT',
 ].sort();
@@ -154,7 +157,8 @@ export default function Audit({
   const [query, setQuery] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [limit] = useState(50);
-  const [offset, setOffset] = useState(0);
+  /** Start offset of the last fetched page; kept in a ref so updating it does not recreate `load` and retrigger the filter effect. */
+  const pageOffsetRef = useRef(0);
   const [scope, setScope] = useState(() => {
     try {
       return localStorage.getItem('tt_audit_scope') || 'user';
@@ -184,7 +188,7 @@ export default function Audit({
           setLoadingMore(true);
         } else {
           setLoading(true);
-          setOffset(0);
+          pageOffsetRef.current = 0;
         }
         setError('');
         const viewerOnly = !isManagerOrAdminAny && !isAdminAny;
@@ -202,7 +206,7 @@ export default function Audit({
           effectiveScope = 'workspace';
         }
         const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
-        const currentOffset = isMore ? offset + limit : 0;
+        const currentOffset = isMore ? pageOffsetRef.current + limit : 0;
         const eventsData = await alertAPI.getAuditEvents(limit, currentOffset, {
           scope: effectiveScope,
           workspaceId: effectiveWorkspaceId,
@@ -213,9 +217,10 @@ export default function Audit({
         const newEvents = Array.isArray(eventsData) ? eventsData : [];
         if (isMore) {
           setEvents(prev => [...prev, ...newEvents]);
-          setOffset(currentOffset);
+          pageOffsetRef.current = currentOffset;
         } else {
           setEvents(newEvents);
+          pageOffsetRef.current = 0;
         }
         setHasMore(newEvents.length === limit);
       } catch (e) {
@@ -228,7 +233,6 @@ export default function Audit({
     [
       authorized,
       limit,
-      offset,
       scope,
       workspaceId,
       auditWorkspaceId,
@@ -666,6 +670,53 @@ export default function Audit({
     }
   }
 
+  function formatDomainCheckerMetadata(ev) {
+    try {
+      let md = ev?.metadata;
+      if (md == null) md = {};
+      else if (typeof md === 'string') {
+        try {
+          md = JSON.parse(md);
+        } catch (_) {
+          md = {};
+        }
+      }
+      const action = String(ev?.action || '');
+      const parts = [];
+      if (md.domain) parts.push(`Domain: ${md.domain}`);
+      if (action === 'DOMAIN_CHECKER_LOOKUP') {
+        if (md.results != null) parts.push(`Results: ${md.results}`);
+        if (md.source) parts.push(`Source: ${md.source}`);
+        if (md.partial) parts.push('Partial: yes');
+        if (md.truncated) parts.push('Truncated: yes');
+      }
+      if (action === 'DOMAIN_CHECKER_IMPORT') {
+        if (md.submitted != null) parts.push(`Submitted: ${md.submitted}`);
+        if (md.imported != null) parts.push(`Imported: ${md.imported}`);
+        if (md.skipped != null) parts.push(`Skipped: ${md.skipped}`);
+        if (md.skipped_unreachable != null)
+          parts.push(`DNS / no name resolution: ${md.skipped_unreachable}`);
+        if (md.skipped_other_invalid != null)
+          parts.push(`Other invalid: ${md.skipped_other_invalid}`);
+        if (md.skipped_duplicate != null)
+          parts.push(`Duplicate: ${md.skipped_duplicate}`);
+        if (md.skipped_invalid != null)
+          parts.push(`Invalid (total): ${md.skipped_invalid}`);
+        if (md.create_monitors != null)
+          parts.push(`Create monitors: ${md.create_monitors ? 'yes' : 'no'}`);
+        if (md.monitors_created != null)
+          parts.push(`Monitors created: ${md.monitors_created}`);
+        if (md.monitors_existing != null)
+          parts.push(`Monitors existing: ${md.monitors_existing}`);
+        if (md.monitor_check_interval)
+          parts.push(`Monitor interval: ${md.monitor_check_interval}`);
+      }
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   function formatMetadata(ev) {
     const action = String(ev?.action || '');
 
@@ -802,6 +853,14 @@ export default function Audit({
       action === 'DOMAIN_MONITOR_HEALTH_CHECK'
     ) {
       const formatted = formatDomainMonitorMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'DOMAIN_CHECKER_LOOKUP' ||
+      action === 'DOMAIN_CHECKER_IMPORT'
+    ) {
+      const formatted = formatDomainCheckerMetadata(ev);
       if (formatted) return formatted;
     }
 

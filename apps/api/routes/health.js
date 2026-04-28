@@ -28,12 +28,12 @@ router.get("/health", async (req, res) => {
 
 // Auth features availability endpoint (for frontend conditional UI)
 // Core only supports local email/password
-router.get("/api/auth/features", (req, res) => {
+router.get("/api/auth/features", (_req, res) => {
   res.json({ saml: false, oidc: false });
 });
 
 // CSRF rejection counter
-router.use((err, _req, res, next) => {
+router.use((err, _req, _res, next) => {
   if (
     err &&
     (err.code === "EBADCSRFTOKEN" || err.message === "invalid csrf token")
@@ -41,7 +41,7 @@ router.use((err, _req, res, next) => {
     try {
       csrfRejections.inc();
     } catch (_) {
-      /* eslint-disable-line no-empty */
+      /* best-effort metrics only */
     }
   }
   next(err);

@@ -3,6 +3,7 @@ const { ipKeyGenerator } = require("express-rate-limit");
 const slowDown = require("express-slow-down");
 const { logger } = require("../utils/logger");
 const { parseLimits } = require("../services/planLimits");
+const { normalizeRootDomain } = require("../services/domainChecker");
 
 function intEnv(name, fallback) {
   const raw = process.env[name];
@@ -267,6 +268,51 @@ const testApiLimiter = rateLimit({
   },
 });
 
+const domainCheckerLookupLimiter = rateLimit({
+  windowMs: intEnv("DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS", 60 * 1000),
+  max: Math.max(1, intEnv("DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX", 1)),
+  message:
+    "Domain checker lookup is rate limited. Please wait before trying again.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  skip: (req) => !normalizeRootDomain(req.body?.domain),
+  keyGenerator: (req) => {
+    const workspaceId = req.workspace?.id || req.params?.id || "unknown";
+    if (req.user && req.user.id) {
+      return `domain-checker:${workspaceId}:user-${req.user.id}`;
+    }
+    return `domain-checker:${workspaceId}:ip-${ipKeyGenerator(req)}`;
+  },
+  handler: (req, res) => {
+    const windowMs = intEnv(
+      "DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS",
+      60 * 1000,
+    );
+    const fallbackRetrySec = Math.max(1, Math.ceil(windowMs / 1000));
+    const resetTime = req.rateLimit?.resetTime;
+    const retryAfterSeconds =
+      resetTime instanceof Date
+        ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+        : fallbackRetrySec;
+    logger.warn("RATE_LIMIT_EXCEEDED", {
+      type: "domain_checker_lookup",
+      userId: req.user?.id || null,
+      workspaceId: req.workspace?.id || req.params?.id || null,
+      ip: ipKeyGenerator(req),
+      userAgent: req.get("User-Agent"),
+      retryAfterSeconds,
+    });
+    res.set("Retry-After", String(retryAfterSeconds));
+    res.status(429).json({
+      error:
+        "Domain checker lookup is rate limited. Please wait before trying again.",
+      code: "DOMAIN_CHECKER_RATE_LIMITED",
+      retry_after_seconds: retryAfterSeconds,
+    });
+  },
+});
+
 let resolvedApiLimiter;
 /**
  * Returns the API rate-limit middleware (resolved once per process).
@@ -297,6 +343,10 @@ const getTestApiLimiter = () => {
     ? noRateLimit
     : planAwareApiLimiter;
 };
+
+function getDomainCheckerLookupLimiter() {
+  return domainCheckerLookupLimiter;
+}
 
 /**
  * Apply global rate limit unless path is auth/session or user is authenticated.
@@ -329,6 +379,7 @@ module.exports = {
   emailVerificationLimiter,
   planAwareApiLimiter,
   getApiLimiter,
+  getDomainCheckerLookupLimiter,
   getTestApiLimiter,
   noRateLimit,
   applyGlobalRateLimit,
