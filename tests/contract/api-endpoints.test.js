@@ -20,7 +20,7 @@ async function isHealthReachable() {
   }
 }
 
-/** True only when tokentimer-core apps/api is listening (not e.g. oauth-backend on the same port). */
+/** True only when tokentimer-core apps/api is listening on the configured port. */
 async function isCoreContractApiAvailable() {
   try {
     const healthRes = await fetch(`${API_BASE}/health`);
@@ -65,7 +65,7 @@ if (healthReachable && !coreApiAvailable && contractApiRequired) {
     `API runtime contract checks require tokentimer-core apps/api at API_URL (${API_BASE}). ` +
       `GET /health succeeded but GET /api/auth/features did not return core's payload ` +
       `(status ${featuresStatus}; expected 200 with saml and oidc booleans). ` +
-      `Another service often uses the same port (for example tokentimer-original oauth-backend). ` +
+      `Another service may be using the same port. ` +
       `Start the core API or set API_URL to the core base URL (and restart after pulling).`,
   );
 }

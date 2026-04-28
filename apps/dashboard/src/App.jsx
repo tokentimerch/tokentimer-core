@@ -3275,9 +3275,10 @@ function DashboardView({
   const [domains, setDomains] = useState([]);
   const [domainsLoading, setDomainsLoading] = useState(false);
   const [checkingDomain, setCheckingDomain] = useState(null);
-  const [domainListSort, setDomainListSort] = useState('az');
-  const [domainListHealth, setDomainListHealth] = useState('__all__');
-  const [domainListInterval, setDomainListInterval] = useState('__all__');
+  const [domainListSort, setDomainListSort] = useState({
+    key: 'az',
+    direction: 'asc',
+  });
   const [domainCheckerInput, setDomainCheckerInput] = useState('');
   const [domainCheckerResults, setDomainCheckerResults] = useState([]);
   const [domainCheckerSelected, setDomainCheckerSelected] = useState([]);
@@ -3432,49 +3433,54 @@ function DashboardView({
       return Number.isFinite(ts) ? ts : Number.POSITIVE_INFINITY;
     };
 
-    const copy = domains.filter(item => {
-      if (
-        domainListHealth !== '__all__' &&
-        healthOf(item) !== domainListHealth
-      ) {
-        return false;
-      }
-      if (
-        domainListInterval !== '__all__' &&
-        String(item?.check_interval || '') !== domainListInterval
-      ) {
-        return false;
-      }
-      return true;
-    });
+    const copy = [...domains];
 
     copy.sort((a, b) => {
-      switch (domainListSort) {
+      let result;
+      switch (domainListSort.key) {
         case 'expiration':
-          return (
+          result =
             expirationTs(a) - expirationTs(b) ||
-            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url))
-          );
+            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
+          break;
         case 'interval':
-          return (
+          result =
             (intervalOrder[String(a?.check_interval || '')] ?? 999) -
               (intervalOrder[String(b?.check_interval || '')] ?? 999) ||
-            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url))
-          );
+            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
+          break;
         case 'health':
-          return (
+          result =
             (healthOrder[healthOf(a)] ?? 999) -
               (healthOrder[healthOf(b)] ?? 999) ||
-            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url))
-          );
+            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
+          break;
         case 'az':
         default:
-          return domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
+          result = domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
+          break;
       }
+      return domainListSort.direction === 'desc' ? -result : result;
     });
 
     return copy;
-  }, [domains, domainListHealth, domainListInterval, domainListSort]);
+  }, [domains, domainListSort]);
+
+  const handleDomainListSort = key => {
+    setDomainListSort(current => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const renderDomainSortArrow = key => (
+    <Text fontSize='xs' opacity={domainListSort.key === key ? 1 : 0.3}>
+      {domainListSort.key === key && domainListSort.direction === 'desc'
+        ? '↓'
+        : '↑'}
+    </Text>
+  );
 
   useEffect(() => {
     if (isDomainModalOpen && ctxWorkspaceId) loadDomains();
@@ -3940,9 +3946,7 @@ function DashboardView({
           setDomainCheckerTruncated(false);
           setDomainCheckerToolErrors([]);
           setDomainCheckerInput('');
-          setDomainListSort('az');
-          setDomainListHealth('__all__');
-          setDomainListInterval('__all__');
+          setDomainListSort({ key: 'az', direction: 'asc' });
           await refreshAfterDomainCheckerImport();
           window.requestAnimationFrame(() => {
             const modalBody = document.querySelector(
@@ -6451,44 +6455,6 @@ function DashboardView({
                 </Alert>
               ) : (
                 <>
-                  <HStack spacing={3} align='flex-end' flexWrap='wrap' mb={2}>
-                    <FormControl minW='180px' maxW='240px'>
-                      <FormLabel fontSize='xs'>Health filter</FormLabel>
-                      <Select
-                        size='sm'
-                        value={domainListHealth}
-                        onChange={e => setDomainListHealth(e.target.value)}
-                      >
-                        <option value='__all__'>All health states</option>
-                        <option value='healthy'>Healthy</option>
-                        <option value='warning'>Warning</option>
-                        <option value='error'>Error</option>
-                        <option value='pending'>Pending</option>
-                      </Select>
-                    </FormControl>
-                    <FormControl minW='180px' maxW='240px'>
-                      <FormLabel fontSize='xs'>Interval filter</FormLabel>
-                      <Select
-                        size='sm'
-                        value={domainListInterval}
-                        onChange={e => setDomainListInterval(e.target.value)}
-                      >
-                        <option value='__all__'>All intervals</option>
-                        {[
-                          ...new Set(
-                            domains.map(d => String(d.check_interval || ''))
-                          ),
-                        ]
-                          .filter(Boolean)
-                          .sort()
-                          .map(interval => (
-                            <option key={interval} value={interval}>
-                              {interval}
-                            </option>
-                          ))}
-                      </Select>
-                    </FormControl>
-                  </HStack>
                   {visibleDomains.length === 0 ? (
                     <Alert status='info' borderRadius='md' size='sm'>
                       <AlertIcon />
@@ -6616,34 +6582,51 @@ function DashboardView({
                               <Th
                                 w='28%'
                                 cursor='pointer'
-                                onClick={() => setDomainListSort('az')}
+                                userSelect='none'
+                                onClick={() => handleDomainListSort('az')}
                               >
-                                Endpoint
-                                {domainListSort === 'az' ? ' (A-Z)' : ''}
+                                <HStack spacing={1} justify='space-between'>
+                                  <Text>Endpoint</Text>
+                                  {renderDomainSortArrow('az')}
+                                </HStack>
                               </Th>
                               <Th
                                 whiteSpace='nowrap'
                                 cursor='pointer'
-                                onClick={() => setDomainListSort('expiration')}
+                                userSelect='none'
+                                onClick={() =>
+                                  handleDomainListSort('expiration')
+                                }
                               >
-                                SSL
-                                {domainListSort === 'expiration'
-                                  ? ' (by expiry)'
-                                  : ''}
+                                <HStack spacing={1} justify='space-between'>
+                                  <Text>SSL</Text>
+                                  {renderDomainSortArrow('expiration')}
+                                </HStack>
                               </Th>
                               <Th
                                 whiteSpace='nowrap'
                                 cursor='pointer'
-                                onClick={() => setDomainListSort('health')}
+                                userSelect='none'
+                                onClick={() => handleDomainListSort('health')}
                               >
-                                Health
-                                {domainListSort === 'health'
-                                  ? ' (by status)'
-                                  : ''}
+                                <HStack spacing={1} justify='space-between'>
+                                  <Text>Health</Text>
+                                  {renderDomainSortArrow('health')}
+                                </HStack>
                               </Th>
                               <Th whiteSpace='nowrap'>Response</Th>
                               <Th whiteSpace='nowrap'>Last Check</Th>
-                              <Th whiteSpace='nowrap'>Interval</Th>
+                              <Th
+                                whiteSpace='nowrap'
+                                cursor='pointer'
+                                userSelect='none'
+                                onClick={() => handleDomainListSort('interval')}
+                              >
+                                <HStack spacing={1} justify='space-between'>
+                                  <Text>Interval</Text>
+                                  {renderDomainSortArrow('interval')}
+                                </HStack>
+                              </Th>
                               <Th whiteSpace='nowrap'>Alert after</Th>
                               <Th
                                 textAlign='right'

@@ -51,7 +51,6 @@ const { lookupDomain, normalizeRootDomain, parseDiscoveryLines } =
   requireFirstExisting([
     "apps/api/services/domainChecker",
     "apps/saas/services/domainChecker",
-    "oauth-backend/services/domainChecker",
   ]);
 
 const paidPlanForDomainChecker = "pro";
@@ -199,7 +198,6 @@ describe("Domain checker discovery service integration", function () {
     const source = readFirstExisting([
       "apps/api/middleware/rateLimit.js",
       "apps/saas/middleware/rateLimit.js",
-      "oauth-backend/index.js",
     ]);
 
     expect(source).to.include("DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS");
