@@ -11,10 +11,24 @@ const API_BASE = process.env.API_URL || "http://localhost:4000";
 const contractApiRequired = process.env.CONTRACT_API_REQUIRED === "1";
 const inCi = process.env.CI === "true";
 
-async function isApiAvailable() {
+async function isHealthReachable() {
   try {
     const res = await fetch(`${API_BASE}/health`);
     return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** True only when tokentimer-core apps/api is listening on the configured port. */
+async function isCoreContractApiAvailable() {
+  try {
+    const healthRes = await fetch(`${API_BASE}/health`);
+    if (!healthRes.ok) return false;
+    const featuresRes = await fetch(`${API_BASE}/api/auth/features`);
+    if (!featuresRes.ok) return false;
+    const data = await featuresRes.json();
+    return typeof data.saml === "boolean" && typeof data.oidc === "boolean";
   } catch (_) {
     return false;
   }
@@ -30,20 +44,40 @@ if (
   );
 }
 
-const apiAvailable = await isApiAvailable();
-if (!apiAvailable && contractApiRequired) {
+const healthReachable = await isHealthReachable();
+const coreApiAvailable = await isCoreContractApiAvailable();
+
+if (!healthReachable && contractApiRequired) {
   throw new Error(
     `API runtime contract checks are required but ${API_BASE}/health is unavailable`,
   );
 }
 
-if (!apiAvailable && !contractApiRequired) {
-  console.log(
-    `api-endpoints contract test skipped: API unavailable at ${API_BASE} and CONTRACT_API_REQUIRED=0`,
+if (healthReachable && !coreApiAvailable && contractApiRequired) {
+  let featuresStatus = "unreachable";
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/features`);
+    featuresStatus = String(r.status);
+  } catch (_) {
+    featuresStatus = "error";
+  }
+  throw new Error(
+    `API runtime contract checks require tokentimer-core apps/api at API_URL (${API_BASE}). ` +
+      `GET /health succeeded but GET /api/auth/features did not return core's payload ` +
+      `(status ${featuresStatus}; expected 200 with saml and oidc booleans). ` +
+      `Another service may be using the same port. ` +
+      `Start the core API or set API_URL to the core base URL (and restart after pulling).`,
   );
 }
 
-const describeApi = apiAvailable ? describe : describe.skip;
+if (!coreApiAvailable && !contractApiRequired) {
+  console.log(
+    `api-endpoints contract test skipped: core API not detected at ${API_BASE} ` +
+      `(need GET /health and GET /api/auth/features with saml/oidc). CONTRACT_API_REQUIRED=0`,
+  );
+}
+
+const describeApi = coreApiAvailable ? describe : describe.skip;
 
 describeApi("API Contract Tests", () => {
   describe("Health Endpoint", () => {

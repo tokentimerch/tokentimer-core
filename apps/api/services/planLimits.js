@@ -32,6 +32,49 @@ const INTEGRATION_SCAN_LIMITS = parseLimits(
   DEFAULT_INTEGRATION_SCAN_LIMITS,
 );
 
+const DEFAULT_DOMAIN_CHECKER_DISCOVERY_LIMITS = {
+  oss: 10_000_000,
+};
+
+const DOMAIN_CHECKER_DISCOVERY_LIMITS = parseLimits(
+  process.env.DOMAIN_CHECKER_DISCOVERY_LIMITS,
+  DEFAULT_DOMAIN_CHECKER_DISCOVERY_LIMITS,
+);
+
+const DEFAULT_DOMAIN_CHECKER_IMPORT_LIMITS = {
+  oss: 50_000,
+};
+
+const DOMAIN_CHECKER_IMPORT_LIMITS = parseLimits(
+  process.env.DOMAIN_CHECKER_IMPORT_LIMITS,
+  DEFAULT_DOMAIN_CHECKER_IMPORT_LIMITS,
+);
+
+function boundedPositiveInt(value, fallback, max = 25_000_000) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, max);
+  return fallback;
+}
+
+function getDomainCheckerDiscoveryMaxResults(plan = "oss") {
+  const planKey = String(plan || "oss").toLowerCase();
+  const fallback =
+    DOMAIN_CHECKER_DISCOVERY_LIMITS[planKey] ??
+    DOMAIN_CHECKER_DISCOVERY_LIMITS.oss;
+  return boundedPositiveInt(process.env.DOMAIN_CHECKER_MAX_RESULTS, fallback);
+}
+
+function getDomainCheckerImportMaxCertificates(plan = "oss") {
+  const planKey = String(plan || "oss").toLowerCase();
+  const fallback =
+    DOMAIN_CHECKER_IMPORT_LIMITS[planKey] ?? DOMAIN_CHECKER_IMPORT_LIMITS.oss;
+  return boundedPositiveInt(
+    process.env.DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES,
+    fallback,
+    200_000,
+  );
+}
+
 /**
  * Get integration scan usage for a workspace for the current month.
  * Uses the workspace_integration_usage table with automatic month rollover.
@@ -233,6 +276,10 @@ module.exports = {
   CONTACT_GROUP_LIMITS,
   CONTACT_GROUP_MEMBER_LIMITS,
   INTEGRATION_SCAN_LIMITS,
+  DOMAIN_CHECKER_DISCOVERY_LIMITS,
+  DOMAIN_CHECKER_IMPORT_LIMITS,
+  getDomainCheckerDiscoveryMaxResults,
+  getDomainCheckerImportMaxCertificates,
   canCreateAnotherWorkspace,
   countUserEligibleWorkspaces,
   // Per-workspace integration quota functions

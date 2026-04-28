@@ -209,6 +209,14 @@ export default function DocsAudit() {
                         Endpoint Monitoring
                       </ChakraLink>
                     </ListItem>
+                    <ListItem>
+                      <ChakraLink
+                        href='#domain-checker-events'
+                        color={linkColor}
+                      >
+                        Domain Checker
+                      </ChakraLink>
+                    </ListItem>
                   </List>
                 </ListItem>
               </List>
@@ -738,6 +746,66 @@ export default function DocsAudit() {
                   <ListItem>
                     <strong>DOMAIN_MONITOR_HEALTH_CHECK</strong> metadata:{' '}
                     {'{ url, status, response_ms }'}
+                  </ListItem>
+                </List>
+
+                <Heading
+                  as='h3'
+                  size='sm'
+                  mt={4}
+                  mb={2}
+                  id='domain-checker-events'
+                >
+                  Domain Checker
+                </Heading>
+                <Text
+                  fontSize='sm'
+                  color={bodyColor}
+                  mb={3}
+                  wordBreak='break-word'
+                  overflowWrap='anywhere'
+                >
+                  Emitted when a workspace member discovers publicly known
+                  subdomains for a root domain using passive discovery
+                  (subfinder), or imports selected hostnames into the workspace
+                  as SSL tokens. Lookup is rate limited per workspace and user.
+                </Text>
+                <List
+                  spacing={1}
+                  pl={4}
+                  styleType='disc'
+                  color={bodyColor}
+                  fontSize='sm'
+                  wordBreak='break-word'
+                  overflowWrap='anywhere'
+                >
+                  <ListItem>
+                    <strong>DOMAIN_CHECKER_LOOKUP</strong> metadata:{' '}
+                    {
+                      '{ domain, source, results, partial, tools_succeeded, tools_failed, truncated }'
+                    }
+                    . {'"'}source{'"'} is {'"'}subfinder{'"'}. {'"'}partial{'"'}{' '}
+                    is true when only some discovery tools completed. {'"'}
+                    tools_failed{'"'}
+                    lists any tool names that timed out or errored.
+                  </ListItem>
+                  <ListItem>
+                    <strong>DOMAIN_CHECKER_IMPORT</strong> metadata:{' '}
+                    {
+                      '{ domain, source, submitted, imported, skipped, skipped_duplicate, skipped_invalid, skipped_unreachable, skipped_other_invalid, create_monitors, monitors_created, monitors_existing }'
+                    }
+                    . When {'"'}create_monitors{'"'} is true the event also
+                    includes{' '}
+                    {
+                      '{ monitor_check_interval, monitor_health_check_enabled, monitor_alert_after_failures, monitor_contact_group_id }'
+                    }
+                    . {'"'}submitted{'"'} is the number of certificates the
+                    client selected, {'"'}imported{'"'} counts newly created SSL
+                    tokens, {'"'}skipped_unreachable{'"'} counts DNS failures
+                    (no name or temporary resolver failure), {'"'}
+                    skipped_other_invalid{'"'} is invalid skips excluding those
+                    DNS cases, and {'"'}skipped_duplicate{'"'} / {'"'}
+                    skipped_invalid{'"'} are aggregate skip counts.
                   </ListItem>
                 </List>
               </Box>

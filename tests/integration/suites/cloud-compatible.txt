@@ -29,6 +29,7 @@ tests/integration/alert-notifications.test.js
 tests/integration/alert-settings.test.js
 tests/integration/alert-bug-fixes.test.js
 tests/integration/alert-delivery-email-routing.test.js
+tests/integration/domain-checker.integration.test.js
 
 # Contacts
 tests/integration/contacts-crud.test.js

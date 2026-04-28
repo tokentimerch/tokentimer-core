@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/worker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "BUSL-1.1",
   "type": "module",
@@ -8,6 +8,7 @@
   "scripts": {
     "start:discovery": "node src/queue-manager.js",
     "start:delivery": "node src/delivery-worker.js",
+    "build": "node --check src/queue-manager.js && node --check src/delivery-worker.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },

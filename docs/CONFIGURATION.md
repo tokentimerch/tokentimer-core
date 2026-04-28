@@ -56,33 +56,33 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## Authentication and security
 
-| Variable                     | Description                          | Default value                          | Scope        |
-| ---------------------------- | ------------------------------------ | -------------------------------------- | ------------ |
-| `LOCAL_AUTH_ENABLED`         | Enable local email/password auth     | `true`                                 | API auth     |
-| `REQUIRE_EMAIL_VERIFICATION` | Require verified email before access | `true`                                 | API auth     |
-| `TWO_FACTOR_ENABLED`         | Enable 2FA features                  | `true`                                 | API auth     |
-| `SESSION_MAX_AGE`            | Session max age in ms                | `86400000`                             | API auth     |
-| `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookie only for local non-TLS production troubleshooting | `false` | API auth |
-| `CSRF_ENABLED`               | Enable CSRF protection               | `true`                                 | API security |
-| `MIN_PASSWORD_LENGTH`        | Minimum password length              | `8`                                    | API auth     |
-| `REQUIRE_UPPERCASE`          | Enforce uppercase in passwords       | `true`                                 | API auth     |
-| `REQUIRE_NUMBERS`            | Enforce numeric chars in passwords   | `true`                                 | API auth     |
-| `PHONE_HASH_SALT`            | Optional salt for phone hashing      | `unset`                                | API privacy  |
-| `WORKER_API_KEY`             | Worker-to-API auth key               | `unset (falls back to SESSION_SECRET)` | Worker, API  |
+| Variable                                   | Description                                                                     | Default value                          | Scope        |
+| ------------------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------- | ------------ |
+| `LOCAL_AUTH_ENABLED`                       | Enable local email/password auth                                                | `true`                                 | API auth     |
+| `REQUIRE_EMAIL_VERIFICATION`               | Require verified email before access                                            | `true`                                 | API auth     |
+| `TWO_FACTOR_ENABLED`                       | Enable 2FA features                                                             | `true`                                 | API auth     |
+| `SESSION_MAX_AGE`                          | Session max age in ms                                                           | `86400000`                             | API auth     |
+| `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookie only for local non-TLS production troubleshooting | `false`                                | API auth     |
+| `CSRF_ENABLED`                             | Enable CSRF protection                                                          | `true`                                 | API security |
+| `MIN_PASSWORD_LENGTH`                      | Minimum password length                                                         | `8`                                    | API auth     |
+| `REQUIRE_UPPERCASE`                        | Enforce uppercase in passwords                                                  | `true`                                 | API auth     |
+| `REQUIRE_NUMBERS`                          | Enforce numeric chars in passwords                                              | `true`                                 | API auth     |
+| `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
+| `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
 ## Email and delivery
 
-| Variable                   | Description                               | Default value                                             | Scope             |
-| -------------------------- | ----------------------------------------- | --------------------------------------------------------- | ----------------- |
-| `SMTP_HOST`                | SMTP host(s) (comma-separated)            | `localhost` in config helper, `unset` in compose examples | API, worker email |
-| `SMTP_PORT`                | SMTP port(s) (comma-separated)            | `587` in config helper                                    | API, worker email |
-| `SMTP_USER`                | SMTP username(s) (comma-separated)        | `unset`                                                   | API, worker email |
-| `SMTP_PASS`                | SMTP password(s) (comma-separated)        | `unset`                                                   | API, worker email |
-| `FROM_EMAIL`               | Sender email override                     | `unset`                                                   | API, worker email |
-| `FROM_EMAIL_NAME`          | Sender display name                       | `TokenTimer`                                              | API, worker email |
-| `SMTP_SECURE`              | Force SMTPS/SSL                           | `false`                                                   | API, worker email |
-| `SMTP_REQUIRE_TLS`         | Require STARTTLS upgrade                  | `true`                                                    | API, worker email |
-| `SMTP_REJECT_UNAUTHORIZED` | Reject invalid TLS certs                  | `unset`                                                   | API, worker email |
+| Variable                   | Description                        | Default value                                             | Scope             |
+| -------------------------- | ---------------------------------- | --------------------------------------------------------- | ----------------- |
+| `SMTP_HOST`                | SMTP host(s) (comma-separated)     | `localhost` in config helper, `unset` in compose examples | API, worker email |
+| `SMTP_PORT`                | SMTP port(s) (comma-separated)     | `587` in config helper                                    | API, worker email |
+| `SMTP_USER`                | SMTP username(s) (comma-separated) | `unset`                                                   | API, worker email |
+| `SMTP_PASS`                | SMTP password(s) (comma-separated) | `unset`                                                   | API, worker email |
+| `FROM_EMAIL`               | Sender email override              | `unset`                                                   | API, worker email |
+| `FROM_EMAIL_NAME`          | Sender display name                | `TokenTimer`                                              | API, worker email |
+| `SMTP_SECURE`              | Force SMTPS/SSL                    | `false`                                                   | API, worker email |
+| `SMTP_REQUIRE_TLS`         | Require STARTTLS upgrade           | `true`                                                    | API, worker email |
+| `SMTP_REJECT_UNAUTHORIZED` | Reject invalid TLS certs           | `unset`                                                   | API, worker email |
 
 ## Alerts, limits, and webhooks
 
@@ -130,6 +130,10 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 | `GITHUB_ADDRESS_ALLOWLIST`                | GitHub host allowlist                                                       | `empty (no host restriction)`         | Integration security |
 | `GITLAB_ADDRESS_ALLOWLIST`                | GitLab host allowlist                                                       | `empty (no host restriction)`         | Integration security |
 | `INTEGRATION_SCAN_LIMITS`                 | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Integration quotas   |
+| `DOMAIN_CHECKER_DISCOVERY_LIMITS`         | Domain checker discovery result cap map (`plan:value`)                      | `oss:10000000`                        | Domain checker       |
+| `DOMAIN_CHECKER_IMPORT_LIMITS`            | Domain checker import request cap map (`plan:value`)                        | `oss:50000`                           | Domain checker       |
+| `DOMAIN_CHECKER_MAX_RESULTS`              | Direct override for discovery results, capped internally at 25,000,000      | `unset`                               | Domain checker       |
+| `DOMAIN_CHECKER_IMPORT_MAX_CERTIFICATES`  | Direct override for import certificates per request, capped at 200,000      | `unset`                               | Domain checker       |
 | `CONTACT_GROUP_LIMITS`                    | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `CONTACT_GROUP_MEMBER_LIMITS`             | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Contact groups       |
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
@@ -145,19 +149,19 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 
 ## WhatsApp (Twilio)
 
-| Variable                                    | Description                              | Default value | Scope               |
-| ------------------------------------------- | ---------------------------------------- | ------------- | ------------------- |
-| `TWILIO_ACCOUNT_SID`                        | Twilio account SID                       | `unset`       | WhatsApp            |
-| `TWILIO_AUTH_TOKEN`                         | Twilio auth token                        | `unset`       | WhatsApp            |
-| `TWILIO_WHATSAPP_FROM`                      | WhatsApp sender (E.164)                  | `unset`       | WhatsApp            |
-| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES` | Content template SID for expiring alerts | `unset`       | WhatsApp            |
-| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED` | Content template SID for expired alerts  | `unset`       | WhatsApp            |
-| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN` | Content template SID for endpoint down alerts | `unset` | WhatsApp |
-| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED` | Content template SID for endpoint recovered alerts | `unset` | WhatsApp |
-| `TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID` | Content template SID for weekly digest   | `unset`       | WhatsApp            |
-| `TWILIO_WHATSAPP_TEST_CONTENT_SID`          | Content template SID for test messages   | `unset`       | WhatsApp            |
-| `WHATSAPP_RATE_PER_MIN`                     | Outbound WhatsApp message rate cap       | `unset`       | WhatsApp throttling |
-| `WHATSAPP_DRY_RUN`                          | Log messages without sending when `true` | `false`       | WhatsApp testing    |
+| Variable                                               | Description                                        | Default value | Scope               |
+| ------------------------------------------------------ | -------------------------------------------------- | ------------- | ------------------- |
+| `TWILIO_ACCOUNT_SID`                                   | Twilio account SID                                 | `unset`       | WhatsApp            |
+| `TWILIO_AUTH_TOKEN`                                    | Twilio auth token                                  | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_FROM`                                 | WhatsApp sender (E.164)                            | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES`            | Content template SID for expiring alerts           | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED`            | Content template SID for expired alerts            | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN`      | Content template SID for endpoint down alerts      | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED` | Content template SID for endpoint recovered alerts | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID`            | Content template SID for weekly digest             | `unset`       | WhatsApp            |
+| `TWILIO_WHATSAPP_TEST_CONTENT_SID`                     | Content template SID for test messages             | `unset`       | WhatsApp            |
+| `WHATSAPP_RATE_PER_MIN`                                | Outbound WhatsApp message rate cap                 | `unset`       | WhatsApp throttling |
+| `WHATSAPP_DRY_RUN`                                     | Log messages without sending when `true`           | `false`       | WhatsApp testing    |
 
 ### Admin Setup: Twilio WhatsApp
 

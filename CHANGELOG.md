@@ -9,16 +9,52 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-04-22
-
-### Fixed
-
-- **Workspace invitation cancellation.** `DELETE /api/v1/workspaces/{id}/invitations/{invitationId}` now deletes only rows with `accepted_at IS NULL`, matching the OpenAPI description and preserving accepted invitations as history. Unknown or already-accepted invitations return **404** instead of a misleading **204**.
-- **Dashboard session UX on unknown routes.** The API client only treats **401** as “session expired” with redirect to `/login` after the app has observed a logged-in session (`hasObservedLoggedInSession`), so anonymous users on non-app URLs (for example a client-side **404**) no longer see a spurious expiry toast or forced redirect.
+## [0.3.0] - 2026-04-27
 
 ### Added
 
-- **Prometheus metric** `tokentimer_invite_cancelled_total` (counter) incremented when a pending invitation is successfully cancelled (`apps/api/utils/metrics.js`, wired from `apps/api/routes/workspaces.js`).
+- **Domain Checker.** Discover publicly known subdomains for a root domain with subfinder's default passive discovery behavior, review results in the dashboard, and import selected live SSL certificates as tokens in a single click. Domain Checker does not scan private DNS or internal network records.
+- **Bulk endpoint monitor creation from Domain Checker.** When importing discovered hostnames, optionally create an endpoint monitor for each hostname in one step, with the same settings as the Add endpoint form (health check, check interval, alert after failures, contact group). Hostnames that already have a monitor are skipped automatically.
+- **New audit events for Domain Checker.** Every lookup and import now emits a dedicated audit event (`DOMAIN_CHECKER_LOOKUP`, `DOMAIN_CHECKER_IMPORT`) with rich metadata (domain, counts of imported / skipped / duplicate / invalid certificates, and, when applicable, the monitor settings used). Both events are filterable in the audit log and documented in `/docs/audit`.
+- **Resilient self-hosted discovery.** Domain Checker runs subfinder with process timeouts, safe argument handling, configurable result/import limits, and clear warning text when discovery is unavailable or capped.
+- **Rate limiting for Domain Checker.** Certificate discovery is limited to one lookup per workspace every 60 seconds (configurable). Rate limit responses include a standard `Retry-After` header so clients can back off cleanly.
+- **Domain Checker REST API.** Two new endpoints let integrations trigger discovery and import programmatically:
+  - `POST /api/v1/workspaces/{id}/domain-checker/lookup`
+  - `POST /api/v1/workspaces/{id}/domain-checker/import`
+
+### Changed
+
+- Renamed the dashboard **"Monitor Endpoint"** action to **"Endpoint & SSL monitor"** (button and modal title), since the same place now covers both single-URL endpoint (SSL) monitoring and domain-wide SSL discovery via the Domain Checker. Matching updates in `/docs/tokens` and in the `Endpoint & SSL monitoring` solutions page.
+- Refined the dashboard UX for Endpoint & SSL monitoring and token management: endpoint tables now support column-header sorting, health and interval filters, full multi-line URLs, clickable token domain links, bulk section assignment, and a compact non-persisted **Last import summary** after Domain Checker imports.
+- Added build scripts for the API and worker packages so the root build can syntax-check backend entry points during release verification.
+- Bumped TokenTimer Core from **0.2.0** to **0.3.0**.
+
+### Fixed
+
+- Fixed Audit Log pagination so **Load More** appends the next page without immediately collapsing back to the first page.
+- Fixed Domain Checker import refresh behavior so the discovered-results table clears after a successful import while the endpoint monitor table and import summary remain visible.
+- Fixed manual endpoint health checks so clicking **Run health check now** refreshes monitor data without moving the modal scroll position.
+
+### Security
+
+- Build `subfinder` v2.13.0 from source in the API Docker images instead of downloading a bundled binary, and remove unnecessary runtime packages from the production image.
+
+### Dependencies
+
+- Updated security-related dependency pins and overrides, including `uuid` 14.0.0, `fast-xml-parser` 5.7.2, and `postcss` 8.5.12.
+
+## [0.2.0] - 2026-04-22
+
+### Added
+
+- **Workspace invitation management (two new HTTP endpoints),** documented in OpenAPI and covered by integration tests:
+  - **`GET /api/v1/workspaces/{id}/invitations`** lists **pending** invitations (`accepted_at IS NULL`) with pagination (`limit`, `offset`). The invite **`token`** is never returned in the JSON payload.
+  - **`DELETE /api/v1/workspaces/{id}/invitations/{invitationId}`** cancels a **pending** invitation only (`accepted_at IS NULL`), emits an **`INVITATION_CANCELLED`** audit event, and increments the invite-cancelled metric. Unknown IDs or invitations that are already accepted return **404** (no row deleted, no audit for spurious cancel on accepted rows).
+- **Prometheus metric** `tokentimer_invite_cancelled_total` (counter) on successful pending-invitation cancellation (`apps/api/utils/metrics.js`, wired from `apps/api/routes/workspaces.js`).
+
+### Fixed
+
+- **Dashboard session UX on unknown routes.** The API client only treats **401** as “session expired” with redirect to `/login` after the app has observed a logged-in session (`hasObservedLoggedInSession`), so anonymous users on non-app URLs (for example a client-side **404**) no longer see a spurious expiry toast or forced redirect.
 
 ### Changed
 
@@ -194,6 +230,7 @@ tokentimer-cloud SaaS codebase into a standalone, variant-agnostic repository.
 
 ---
 
+[0.3.0]: https://github.com/tokentimerch/tokentimer-core/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.1...v0.1.2

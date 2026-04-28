@@ -2,7 +2,10 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const {
+  getApiLimiter,
+  getDomainCheckerLookupLimiter,
+} = require("../middleware/rateLimit");
 const systemSettings = require("../services/systemSettings");
 const {
   loadWorkspace,
@@ -10,8 +13,67 @@ const {
   authorize,
 } = require("../services/rbac");
 const { formatDateYmd } = require("../services/integrationUtils");
+const {
+  getDomainCheckerDiscoveryMaxResults,
+  getDomainCheckerImportMaxCertificates,
+} = require("../services/planLimits");
+const {
+  lookupDomain,
+  normalizeHostname,
+  normalizeRootDomain,
+  isWithinRootDomain,
+  fetchHostnameCertificate,
+  liveCertificateImportSkipDetail,
+} = require("../services/domainChecker");
+
+const DNS_LIVE_CERT_SKIP_DETAILS = new Set([
+  "live_certificate_dns_unresolved",
+  "live_certificate_dns_temporary",
+]);
 
 const router = require("express").Router();
+
+function publicToolErrors(toolErrors) {
+  if (!Array.isArray(toolErrors) || toolErrors.length === 0) return undefined;
+  return toolErrors.map((error) => ({
+    tool: error.tool || "unknown",
+    code: error.code || "DOMAIN_CHECKER_TOOL_ERROR",
+    message: error.message || "Discovery tool failed",
+  }));
+}
+
+function attachLongRunningDomainImportSocket(req, res) {
+  try {
+    res.setHeader("X-Accel-Buffering", "no");
+  } catch (_) {}
+  try {
+    if (req.socket) {
+      const ms = Number(process.env.DOMAIN_CHECKER_IMPORT_SOCKET_TIMEOUT_MS);
+      if (Number.isFinite(ms) && ms > 0) req.socket.setTimeout(ms);
+      else req.socket.setTimeout(0);
+    }
+  } catch (_) {}
+}
+
+function normalizeTokenSectionInput(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parts = Array.isArray(value) ? value : String(value).split(",");
+  const flat = [];
+  for (const p of parts) {
+    if (p === undefined || p === null || p === "") continue;
+    if (typeof p === "string") {
+      for (const piece of p.split(",")) {
+        const t = piece.trim();
+        if (t) flat.push(t.slice(0, 200));
+      }
+    } else {
+      const s = String(p).trim();
+      if (s) flat.push(s.slice(0, 200));
+    }
+  }
+  const uniq = [...new Set(flat)];
+  return uniq.length ? uniq : null;
+}
 
 // ============================================================
 // AUTO-SYNC CONFIGURATION ENDPOINTS
@@ -436,6 +498,530 @@ router.get(
   },
 );
 
+// Discover hostnames for a root domain via passive open-source discovery tools.
+router.post(
+  "/api/v1/workspaces/:id/domain-checker/lookup",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  authorize("domain.manage"),
+  getDomainCheckerLookupLimiter(),
+  async (req, res) => {
+    try {
+      const domain = normalizeRootDomain(req.body?.domain);
+      if (!domain) {
+        return res.status(400).json({
+          error: "A valid root domain is required",
+          code: "INVALID_DOMAIN",
+        });
+      }
+
+      logger.info("Domain checker lookup started", {
+        domain,
+        workspaceId: req.workspace.id,
+        userId: req.user.id,
+      });
+      const subfinderAll = req.body && req.body.subfinder_all === true;
+      const result = await lookupDomain(domain, {
+        workspaceId: req.workspace.id,
+        maxResults: getDomainCheckerDiscoveryMaxResults("oss"),
+        subfinderAll,
+      });
+      logger.info("Domain checker lookup completed", {
+        domain,
+        workspaceId: req.workspace.id,
+        userId: req.user.id,
+        results: result.items.length,
+        partial: Boolean(result.partial),
+        toolsSucceeded: result.meta?.toolsSucceeded ?? null,
+        toolsFailed: result.meta?.toolsFailed ?? null,
+        truncated: Boolean(result.meta?.truncated),
+        durationMs: result.meta?.durationMs ?? null,
+        toolErrors: result.toolErrors || [],
+      });
+
+      try {
+        await writeAudit({
+          actorUserId: req.user.id,
+          subjectUserId: req.user.id,
+          action: "DOMAIN_CHECKER_LOOKUP",
+          targetType: "domain_checker",
+          targetId: null,
+          channel: null,
+          workspaceId: req.workspace.id,
+          metadata: {
+            domain,
+            source: result.source,
+            subfinder_all: subfinderAll,
+            results: result.items.length,
+            partial: Boolean(result.partial),
+            tools_succeeded: result.meta?.toolsSucceeded ?? null,
+            tools_failed: result.meta?.toolsFailed ?? null,
+            truncated: Boolean(result.meta?.truncated),
+          },
+        });
+      } catch (_err) {
+        logger.warn("Audit write failed (DOMAIN_CHECKER_LOOKUP)", {
+          error: _err.message,
+        });
+      }
+
+      res.json({
+        ...result,
+        toolErrors: publicToolErrors(result.toolErrors),
+      });
+    } catch (e) {
+      const code = e.code || "DOMAIN_CHECKER_LOOKUP_FAILED";
+      const status = (() => {
+        if (code === "INVALID_DOMAIN") return 400;
+        if (code === "DOMAIN_CHECKER_TIMEOUT") return 504;
+        if (code === "DOMAIN_CHECKER_BUSY") return 409;
+        if (code === "DOMAIN_CHECKER_TOOL_MISSING") return 503;
+        if (Number.isFinite(Number(e.status))) return Number(e.status);
+        return 502;
+      })();
+      logger.warn("Domain checker lookup failed", {
+        error: e.message,
+        code,
+        status,
+        attempts: e.attempts || null,
+        retryAfterSec: e.retryAfterSec || null,
+        toolErrors: e.toolErrors || [],
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      if (e.retryAfterSec) {
+        res.set("Retry-After", String(e.retryAfterSec));
+      }
+      const payload = {
+        error:
+          code === "DOMAIN_CHECKER_TIMEOUT"
+            ? "Domain discovery timed out. Please try again later."
+            : code === "DOMAIN_CHECKER_BUSY"
+              ? "A domain discovery scan is already running for this workspace."
+              : code === "DOMAIN_CHECKER_TOOL_MISSING"
+                ? "Domain discovery tools are not available in this deployment."
+                : "Failed to discover hostnames for this domain",
+        code,
+        toolErrors: publicToolErrors(e.toolErrors),
+      };
+      if (e.retryAfterSec) payload.retry_after_seconds = e.retryAfterSec;
+      if (e.attempts) payload.attempts = e.attempts;
+      res.status(status).json(payload);
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/domain-checker/import",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  authorize("domain.manage"),
+  async (req, res) => {
+    try {
+      attachLongRunningDomainImportSocket(req, res);
+      const domain = normalizeRootDomain(req.body?.domain);
+      const certificates = Array.isArray(req.body?.certificates)
+        ? req.body.certificates
+        : [];
+      const monitorOptions = req.body?.monitorOptions || {};
+      const createMonitors = Boolean(monitorOptions.enabled);
+      const monitorHealthCheckEnabled =
+        monitorOptions.health_check_enabled === true;
+      const monitorCheckInterval = [
+        "1min",
+        "5min",
+        "30min",
+        "hourly",
+        "daily",
+      ].includes(String(monitorOptions.check_interval || ""))
+        ? String(monitorOptions.check_interval)
+        : "hourly";
+      const monitorAlertAfterFailures = Math.max(
+        1,
+        Math.min(
+          10,
+          Number.parseInt(
+            String(monitorOptions.alert_after_failures ?? "2"),
+            10,
+          ) || 2,
+        ),
+      );
+
+      if (!domain) {
+        return res.status(400).json({
+          error: "A valid root domain is required",
+          code: "INVALID_DOMAIN",
+        });
+      }
+      if (certificates.length === 0) {
+        return res.status(400).json({
+          error: "At least one certificate must be selected",
+          code: "NO_CERTIFICATES_SELECTED",
+        });
+      }
+      const importMax = getDomainCheckerImportMaxCertificates("oss");
+      if (certificates.length > importMax) {
+        return res.status(400).json({
+          error: `A maximum of ${importMax} certificates can be imported at once`,
+          code: "TOO_MANY_CERTIFICATES",
+        });
+      }
+
+      const tokenOptions = req.body?.tokenOptions || {};
+      const importSection = normalizeTokenSectionInput(tokenOptions.section);
+      if (importSection && importSection.length > 50) {
+        return res.status(400).json({
+          error: "At most 50 section labels are allowed",
+          code: "INVALID_SECTION",
+        });
+      }
+
+      let defaultContactGroupId = null;
+      try {
+        const wsSettings = await pool.query(
+          "SELECT default_contact_group_id FROM workspace_settings WHERE workspace_id = $1",
+          [req.workspace.id],
+        );
+        if (wsSettings.rows[0]?.default_contact_group_id) {
+          defaultContactGroupId = String(
+            wsSettings.rows[0].default_contact_group_id,
+          );
+        }
+      } catch (_err) {
+        logger.warn("DB operation failed", { error: _err.message });
+      }
+
+      const imported = [];
+      const skipped = [];
+      let monitorsCreated = 0;
+      let monitorsExisting = 0;
+      let skippedDuplicate = 0;
+      let skippedInvalid = 0;
+
+      for (const certificate of certificates) {
+        const rawDomains = Array.isArray(certificate.domains)
+          ? certificate.domains
+          : [certificate.name || certificate.commonName || domain];
+        const certDomains = Array.from(
+          new Set(
+            rawDomains
+              .map(normalizeHostname)
+              .filter(
+                (hostname) => hostname && isWithinRootDomain(hostname, domain),
+              ),
+          ),
+        ).sort();
+
+        let expiration = formatDateYmd(
+          certificate.expiration ||
+            certificate.validTo ||
+            certificate.not_after,
+        );
+        let issuer = certificate.issuer || certificate.issuerName || null;
+        let subject =
+          certificate.subject || certificate.commonName || certDomains[0];
+        let serialNumber =
+          certificate.serialNumber || certificate.serial_number || null;
+        let tlsFingerprint =
+          certificate.fingerprint || certificate.ssl_fingerprint || null;
+
+        let liveCertFetchErr = null;
+        if (certDomains.length > 0 && !expiration) {
+          try {
+            const liveCert = await fetchHostnameCertificate(certDomains[0]);
+            expiration = formatDateYmd(liveCert.validTo);
+            issuer = issuer || liveCert.issuer;
+            subject = subject || liveCert.subject || certDomains[0];
+            serialNumber = serialNumber || liveCert.serialNumber;
+            tlsFingerprint = tlsFingerprint || liveCert.fingerprint;
+          } catch (tlsErr) {
+            liveCertFetchErr = tlsErr;
+            logger.warn(
+              "Domain checker import live certificate lookup failed",
+              {
+                workspaceId: req.workspace.id,
+                userId: req.user.id,
+                domain,
+                hostname: certDomains[0],
+                error: tlsErr.message,
+                code: tlsErr.code || null,
+              },
+            );
+          }
+        }
+
+        if (certDomains.length === 0 || !expiration) {
+          const invalidReason =
+            certDomains.length === 0
+              ? !expiration
+                ? "no_matching_domains_and_missing_expiration"
+                : "no_matching_domains"
+              : liveCertificateImportSkipDetail(liveCertFetchErr);
+          const skipEntry = {
+            id: certificate.id || certificate.sourceCertId || null,
+            reason: "invalid_certificate",
+            detail: invalidReason,
+            domains: certDomains,
+            rawDomains: Array.isArray(rawDomains) ? rawDomains.slice(0, 5) : [],
+            expiration: expiration || null,
+          };
+          skipped.push(skipEntry);
+          skippedInvalid += 1;
+          logger.warn("Domain checker import skipped certificate", {
+            workspaceId: req.workspace.id,
+            userId: req.user.id,
+            domain,
+            reason: skipEntry.reason,
+            detail: skipEntry.detail,
+            certificateId: skipEntry.id,
+            rawDomains: skipEntry.rawDomains,
+          });
+          continue;
+        }
+
+        const sourceCertId =
+          certificate.sourceCertId || certificate.min_cert_id || null;
+        const sourceUrl = certificate.sourceUrl || null;
+        const sources = Array.isArray(certificate.sources)
+          ? certificate.sources.filter(Boolean)
+          : [];
+        const noteSource = sources.length
+          ? `sources: ${sources.join(", ")}`
+          : "sources: subfinder";
+
+        let duplicate = null;
+        if (sourceCertId) {
+          const duplicateBySource = await pool.query(
+            `SELECT id FROM tokens
+             WHERE workspace_id = $1
+               AND type = 'ssl_cert'
+               AND notes ILIKE $2
+             LIMIT 1`,
+            [req.workspace.id, `%domain checker source id: ${sourceCertId}%`],
+          );
+          duplicate = duplicateBySource.rows[0] || null;
+        }
+        if (!duplicate) {
+          const duplicateByShape = await pool.query(
+            `SELECT id FROM tokens
+             WHERE workspace_id = $1
+               AND type = 'ssl_cert'
+               AND expiration = $2
+               AND COALESCE(issuer, '') = COALESCE($3, '')
+               AND domains && $4::text[]
+             LIMIT 1`,
+            [req.workspace.id, expiration, issuer, certDomains],
+          );
+          duplicate = duplicateByShape.rows[0] || null;
+        }
+
+        if (duplicate) {
+          const skipEntry = {
+            id: certificate.id || sourceCertId || null,
+            tokenId: duplicate.id,
+            reason: "duplicate",
+            detail: sourceCertId
+              ? "existing_token_for_domain_checker_source_id"
+              : "existing_token_for_expiration_issuer_and_domain",
+            subject,
+            domains: certDomains,
+            expiration,
+            issuer: issuer || null,
+          };
+          skipped.push(skipEntry);
+          skippedDuplicate += 1;
+          logger.warn("Domain checker import skipped certificate", {
+            workspaceId: req.workspace.id,
+            userId: req.user.id,
+            domain,
+            reason: skipEntry.reason,
+            detail: skipEntry.detail,
+            certificateId: skipEntry.id,
+            existingTokenId: duplicate.id,
+            subject,
+            domains: certDomains,
+            expiration,
+          });
+          continue;
+        }
+
+        const tokenResult = await pool.query(
+          `INSERT INTO tokens
+             (user_id, workspace_id, created_by, name, expiration, type, category,
+              issuer, serial_number, subject, domains, location, notes, contact_group_id, imported_at, section)
+           VALUES ($1, $2, $3, $4, $5, 'ssl_cert', 'cert',
+                   $6, $7, $8, $9, $10, $11, $12, NOW(), $13::text[])
+           RETURNING id, name, expiration`,
+          [
+            req.user.id,
+            req.workspace.id,
+            req.user.id,
+            String(
+              certificate.name || certificate.commonName || certDomains[0],
+            ).slice(0, 100),
+            expiration,
+            issuer,
+            serialNumber,
+            subject,
+            certDomains,
+            sourceUrl,
+            `Imported by domain checker (${noteSource}).${sourceCertId ? ` domain checker source id: ${sourceCertId}.` : ""} Fingerprint: ${tlsFingerprint || "unknown"}. Domains: ${certDomains.join(", ")}`,
+            certificate.contact_group_id || defaultContactGroupId,
+            importSection,
+          ],
+        );
+
+        imported.push({
+          certificateId: certificate.id || sourceCertId || null,
+          tokenId: tokenResult.rows[0].id,
+          name: tokenResult.rows[0].name,
+          expiration: tokenResult.rows[0].expiration,
+        });
+
+        if (createMonitors) {
+          for (const certDomain of certDomains) {
+            const monitorUrl = `https://${certDomain}`;
+            const existingMonitor = await pool.query(
+              `SELECT id FROM domain_monitors
+               WHERE workspace_id = $1 AND url = $2
+               LIMIT 1`,
+              [req.workspace.id, monitorUrl],
+            );
+            if (existingMonitor.rows[0]?.id) {
+              monitorsExisting += 1;
+              continue;
+            }
+            let monitorSslValidTo = null;
+            try {
+              if (expiration) {
+                const expStr = String(expiration);
+                const d = new Date(
+                  expStr.includes("T") ? expStr : `${expStr}T12:00:00.000Z`,
+                );
+                if (Number.isFinite(d.getTime())) monitorSslValidTo = d;
+              }
+            } catch (_) {}
+            const monitorValidated = Boolean(monitorSslValidTo);
+            const monitorValidatedAt = monitorValidated ? new Date() : null;
+            await pool.query(
+              `INSERT INTO domain_monitors
+                 (workspace_id, url, validated, validated_at,
+                  ssl_issuer, ssl_subject, ssl_valid_from, ssl_valid_to, ssl_serial, ssl_fingerprint,
+                  token_id, health_check_enabled, check_interval, alert_after_failures, created_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+              [
+                req.workspace.id,
+                monitorUrl,
+                monitorValidated,
+                monitorValidatedAt,
+                issuer || null,
+                subject || null,
+                null,
+                monitorSslValidTo,
+                serialNumber || null,
+                tlsFingerprint || null,
+                tokenResult.rows[0].id,
+                monitorHealthCheckEnabled,
+                monitorCheckInterval,
+                monitorAlertAfterFailures,
+                req.user.id,
+              ],
+            );
+            monitorsCreated += 1;
+          }
+        }
+      }
+
+      logger.info("Domain checker import completed", {
+        workspaceId: req.workspace.id,
+        userId: req.user.id,
+        domain,
+        submitted: certificates.length,
+        imported: imported.length,
+        skipped: skipped.length,
+        skipped_duplicate: skippedDuplicate,
+        skipped_invalid: skippedInvalid,
+        monitors_created: monitorsCreated,
+        monitors_existing: monitorsExisting,
+        create_monitors: createMonitors,
+      });
+
+      try {
+        const skippedUnreachable = skipped.filter(
+          (s) =>
+            s.reason === "invalid_certificate" &&
+            DNS_LIVE_CERT_SKIP_DETAILS.has(s.detail),
+        ).length;
+        const skippedOtherInvalid = Math.max(
+          0,
+          skippedInvalid - skippedUnreachable,
+        );
+        const auditMetadata = {
+          domain,
+          source: "subfinder",
+          submitted: certificates.length,
+          imported: imported.length,
+          skipped: skipped.length,
+          skipped_duplicate: skippedDuplicate,
+          skipped_invalid: skippedInvalid,
+          skipped_unreachable: skippedUnreachable,
+          skipped_other_invalid: skippedOtherInvalid,
+          create_monitors: createMonitors,
+          monitors_created: monitorsCreated,
+          monitors_existing: monitorsExisting,
+        };
+        if (createMonitors) {
+          auditMetadata.monitor_check_interval = monitorCheckInterval;
+          auditMetadata.monitor_health_check_enabled =
+            monitorHealthCheckEnabled;
+          auditMetadata.monitor_alert_after_failures =
+            monitorAlertAfterFailures;
+          auditMetadata.monitor_contact_group_id =
+            monitorOptions.contact_group_id || defaultContactGroupId || null;
+        }
+        await writeAudit({
+          actorUserId: req.user.id,
+          subjectUserId: req.user.id,
+          action: "DOMAIN_CHECKER_IMPORT",
+          targetType: "domain_checker",
+          targetId: null,
+          channel: null,
+          workspaceId: req.workspace.id,
+          metadata: auditMetadata,
+        });
+      } catch (_err) {
+        logger.warn("Audit write failed (DOMAIN_CHECKER_IMPORT)", {
+          error: _err.message,
+        });
+      }
+
+      res.status(201).json({
+        imported,
+        skipped,
+        skippedCounts: {
+          duplicate: skippedDuplicate,
+          invalid: skippedInvalid,
+        },
+        monitors: { created: monitorsCreated, existing: monitorsExisting },
+      });
+    } catch (e) {
+      logger.error("Domain checker import failed", {
+        error: e.message,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      res.status(500).json({
+        error: "Failed to import domain certificates",
+        code: "DOMAIN_CHECKER_IMPORT_FAILED",
+      });
+    }
+  },
+);
+
 // Add endpoint monitor
 router.post(
   "/api/v1/workspaces/:id/domains",
@@ -452,9 +1038,18 @@ router.post(
         check_interval,
         alert_after_failures,
         contact_group_id,
+        section: endpointSectionRaw,
       } = req.body || {};
       if (!url || typeof url !== "string") {
         return res.status(400).json({ error: "url is required" });
+      }
+      const endpointTokenSection =
+        normalizeTokenSectionInput(endpointSectionRaw);
+      if (endpointTokenSection && endpointTokenSection.length > 50) {
+        return res.status(400).json({
+          error: "At most 50 section labels are allowed",
+          code: "INVALID_SECTION",
+        });
       }
       // Basic URL validation
       let parsedUrl;
@@ -578,8 +1173,8 @@ router.post(
       if (sslData.ssl_valid_to) {
         try {
           const tokenResult = await pool.query(
-            `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, issuer, serial_number, subject, domains, location, notes, contact_group_id)
-             VALUES ($1, $2, $3, $4, $5, 'ssl_cert', 'cert', $6, $7, $8, $9, $10, $11, $12)
+            `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, issuer, serial_number, subject, domains, location, notes, contact_group_id, section)
+             VALUES ($1, $2, $3, $4, $5, 'ssl_cert', 'cert', $6, $7, $8, $9, $10, $11, $12, $13::text[])
              RETURNING id`,
             [
               req.user.id,
@@ -594,6 +1189,7 @@ router.post(
               normalizedUrl,
               `Auto-created by endpoint monitor. Fingerprint: ${sslData.ssl_fingerprint || "unknown"}`,
               resolvedContactGroupId,
+              endpointTokenSection,
             ],
           );
           // Link token to endpoint monitor

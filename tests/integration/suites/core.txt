@@ -58,6 +58,7 @@ tests/integration/webhook-ssrf-protection.test.js
 tests/integration/endpoint-monitor.test.js
 tests/integration/endpoint-health-alerts.test.js
 tests/integration/endpoint-check-worker.integration.test.js
+tests/integration/domain-checker.integration.test.js
 
 # Integrations
 tests/integration/github.integration.test.js
