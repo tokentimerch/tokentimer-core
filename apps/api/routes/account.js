@@ -156,15 +156,7 @@ router.delete(
         userId,
       ]);
 
-      // Anonymize audit trail references for this user (preserve workspace audit history)
-      try {
-        await client.query(
-          "UPDATE audit_events SET subject_user_id = NULL WHERE subject_user_id = $1",
-          [userId],
-        );
-      } catch (_err) {
-        logger.warn("Audit write failed", { error: _err.message });
-      }
+      // Anonymize audit trail actor references for this user.
       try {
         await client.query(
           "UPDATE audit_events SET actor_user_id = NULL WHERE actor_user_id = $1",

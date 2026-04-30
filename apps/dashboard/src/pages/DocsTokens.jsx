@@ -461,7 +461,9 @@ export default function DocsTokens() {
                   Import tokens directly from secret management platforms
                   (Vault, AWS Secrets Manager, Azure Key Vault, GCP Secret
                   Manager), source control systems (GitLab, GitHub), or from
-                  files (CSV, XLSX, JSON, YAML).
+                  files (CSV, XLSX, JSON, YAML). You can also use Domain Checker
+                  to discover subdomains and import live SSL certificates as
+                  tokens.
                 </Text>
 
                 <Box
