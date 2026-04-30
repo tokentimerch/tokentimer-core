@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-30
+
+### Fixed
+
+- Fixed account deletion for users that already had audit events, so right-to-be-forgotten cleanup no longer fails on those audit references.
+
+### Changed
+
+- Refined README wording to explicitly mention public subdomain discovery, SSL certificate imports, and HTTPS endpoint checks.
+- Updated release metadata from **0.3.0** to **0.3.1** across package and contract version files.
+- Updated licensing metadata to use the registered company name **Tokentimer Sàrl, Switzerland**.
+
 ## [0.3.0] - 2026-04-27
 
 ### Added
@@ -230,6 +242,7 @@ tokentimer-cloud SaaS codebase into a standalone, variant-agnostic repository.
 
 ---
 
+[0.3.1]: https://github.com/tokentimerch/tokentimer-core/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/tokentimerch/tokentimer-core/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/tokentimerch/tokentimer-core/compare/v0.1.2...v0.1.3

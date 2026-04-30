@@ -31,7 +31,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 
 - **Unified expiration visibility:** Track certificates, tokens, secrets, licenses, subscriptions, and other expiring assets across providers and environments in one place.
 - **Flexible multi-channel alerting:** Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
-- **Native integrations, auto-sync, and automated discovery:** Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, while also monitoring HTTPS endpoints for SSL expiry and health.
+- **Native integrations, auto-sync, and automated discovery:** Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
 - **Built for teams and audits:** Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
 - **Security-first by design:** TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys.
 
@@ -122,4 +122,4 @@ Each release converts to [AGPLv3](https://www.gnu.org/licenses/agpl-3.0.html) fo
 
 For commercial licensing or questions, contact [support@tokentimer.ch](mailto:support@tokentimer.ch).
 
-"TokenTimer" is a trademark of Franz ALLIOD, on behalf of TokenTimer Sàrl (in formation), Switzerland.
+"TokenTimer" is a trademark of Tokentimer Sàrl, Switzerland.
