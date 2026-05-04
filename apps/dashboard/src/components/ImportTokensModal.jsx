@@ -1964,7 +1964,13 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                     </Text>
                     <Text fontSize='sm' mt={1}>
                       <ChakraLink
-                        onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-file', '_blank', 'noopener,noreferrer')}
+                        onClick={() =>
+                          window.open(
+                            'https://tokentimer.ch/docs/tokens#import-file',
+                            '_blank',
+                            'noopener,noreferrer'
+                          )
+                        }
                         cursor='pointer'
                         color='blue.500'
                         textDecoration='underline'
@@ -2175,7 +2181,13 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                     </Text>
                     <Text fontSize='sm' mt={1}>
                       <ChakraLink
-                        onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-azure-ad', '_blank', 'noopener,noreferrer')}
+                        onClick={() =>
+                          window.open(
+                            'https://tokentimer.ch/docs/tokens#import-azure-ad',
+                            '_blank',
+                            'noopener,noreferrer'
+                          )
+                        }
                         cursor='pointer'
                         color='blue.500'
                         textDecoration='underline'
@@ -2461,7 +2473,13 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                     <Text fontSize='xs'>
                       Need help? See{' '}
                       <ChakraLink
-                        onClick={() => window.open('https://tokentimer.ch/docs/tokens#import', '_blank', 'noopener,noreferrer')}
+                        onClick={() =>
+                          window.open(
+                            'https://tokentimer.ch/docs/tokens#import',
+                            '_blank',
+                            'noopener,noreferrer'
+                          )
+                        }
                         cursor='pointer'
                         textDecoration='underline'
                         color='blue.500'

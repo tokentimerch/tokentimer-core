@@ -238,7 +238,13 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-github', '_blank', 'noopener,noreferrer')}
+            onClick={() =>
+              window.open(
+                'https://tokentimer.ch/docs/tokens#import-github',
+                '_blank',
+                'noopener,noreferrer'
+              )
+            }
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

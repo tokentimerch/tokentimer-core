@@ -62,7 +62,11 @@ const CustomTooltip = ({
     if (closeProps?.onClick) {
       closeProps.onClick(e);
     }
-    window.open('https://tokentimer.ch/docs#self-hosted', '_blank', 'noopener,noreferrer');
+    window.open(
+      'https://tokentimer.ch/docs#self-hosted',
+      '_blank',
+      'noopener,noreferrer'
+    );
   };
 
   return (
