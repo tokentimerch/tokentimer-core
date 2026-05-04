@@ -20,7 +20,6 @@ import {
   AlertDescription,
   Link,
 } from '@chakra-ui/react';
-import { Link as RouterLink } from 'react-router-dom';
 import { showSuccess, showError } from '../utils/toast.js';
 import Navigation from '../components/Navigation';
 import apiClient from '../utils/apiClient';

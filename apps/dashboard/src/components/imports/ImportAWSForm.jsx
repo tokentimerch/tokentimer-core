@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -101,7 +100,6 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
   const isLight = useColorModeValue(true, false);
 
   const [awsAccessKeyId, setAwsAccessKeyId] = React.useState('');

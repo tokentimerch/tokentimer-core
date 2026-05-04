@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Modal,
   ModalOverlay,
@@ -716,7 +715,6 @@ function _getGCPItemDetails(item) {
 }
 
 export default function ImportTokensModal({ isOpen, onClose, onImported }) {
-  const navigate = useNavigate();
   const { workspaceId } = useWorkspace();
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';

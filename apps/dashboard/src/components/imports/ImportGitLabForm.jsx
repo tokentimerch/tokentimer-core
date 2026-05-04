@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -95,8 +94,6 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
-
   const [gitlabBaseUrl, setGitlabBaseUrl] = React.useState(() => {
     try {
       return localStorage.getItem('tt_gitlab_baseurl') || 'https://gitlab.com';

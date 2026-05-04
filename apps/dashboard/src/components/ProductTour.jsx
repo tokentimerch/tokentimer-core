@@ -28,7 +28,6 @@ const CustomTooltip = ({
   _size,
   isLastStep,
 }) => {
-  const navigate = useNavigate();
   const { colorMode: _colorMode } = useColorMode();
   const [brand500, brand400, gray700, gray200, gray800, gray600, white] =
     useToken('colors', [

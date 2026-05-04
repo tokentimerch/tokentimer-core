@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -95,7 +94,6 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
   const maxItemsPerMount = 1000;
 
   // Vault integration state

@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -86,8 +85,6 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
-
   const [azureVaultUrl, setAzureVaultUrl] = React.useState('');
   const [azureToken, setAzureToken] = React.useState('');
   const [azureItems, setAzureItems] = React.useState([]);

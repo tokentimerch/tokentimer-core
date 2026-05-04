@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -82,8 +81,6 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
-
   const [gcpProjectId, setGcpProjectId] = React.useState('');
   const [gcpAccessToken, setGcpAccessToken] = React.useState('');
   const [gcpItems, setGcpItems] = React.useState([]);
