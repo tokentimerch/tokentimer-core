@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -95,7 +94,6 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
   const maxItemsPerMount = 1000;
 
   // Vault integration state
@@ -264,7 +262,13 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-hashicorp')}
+            onClick={() =>
+              window.open(
+                'https://tokentimer.ch/docs/tokens#import-hashicorp',
+                '_blank',
+                'noopener,noreferrer'
+              )
+            }
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

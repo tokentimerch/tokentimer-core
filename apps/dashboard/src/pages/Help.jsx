@@ -20,7 +20,6 @@ import {
   AlertDescription,
   Link,
 } from '@chakra-ui/react';
-import { Link as RouterLink } from 'react-router-dom';
 import { showSuccess, showError } from '../utils/toast.js';
 import Navigation from '../components/Navigation';
 import apiClient from '../utils/apiClient';
@@ -366,12 +365,12 @@ function Help({
                   <AlertDescription>
                     Visit the{' '}
                     <Link
-                      as={RouterLink}
-                      to='/docs'
+                      href='https://tokentimer.ch/docs#self-hosted'
+                      isExternal
                       color='blue.500'
                       textDecoration='underline'
                     >
-                      Product & API Docs
+                      Product &amp; API Docs ↗
                     </Link>{' '}
                     for usage guides and API reference.
                   </AlertDescription>

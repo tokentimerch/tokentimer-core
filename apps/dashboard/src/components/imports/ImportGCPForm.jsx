@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -82,8 +81,6 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
-
   const [gcpProjectId, setGcpProjectId] = React.useState('');
   const [gcpAccessToken, setGcpAccessToken] = React.useState('');
   const [gcpItems, setGcpItems] = React.useState([]);
@@ -200,7 +197,13 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-gcp')}
+            onClick={() =>
+              window.open(
+                'https://tokentimer.ch/docs/tokens#import-gcp',
+                '_blank',
+                'noopener,noreferrer'
+              )
+            }
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

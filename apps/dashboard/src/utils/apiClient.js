@@ -375,7 +375,6 @@ export const handleApiError = (error, customMessage = null) => {
           '/',
           '/login',
           '/register',
-          '/docs',
           '/solutions',
           '/blog',
           '/compare',

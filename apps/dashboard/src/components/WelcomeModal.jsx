@@ -14,7 +14,6 @@ import {
   useColorModeValue,
   HStack,
 } from '@chakra-ui/react';
-import { useNavigate } from 'react-router-dom';
 import { FaRocket, FaCheckCircle } from 'react-icons/fa';
 import { FiPlay } from 'react-icons/fi';
 
@@ -26,7 +25,6 @@ function WelcomeModal({
   emailSent = true,
   onStartTour,
 }) {
-  const navigate = useNavigate();
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
   const headerColor = useColorModeValue('blue.600', 'blue.400');
@@ -120,12 +118,12 @@ function WelcomeModal({
                 )}
                 <Text fontSize='xs' color={nextTextColor}>
                   <Link
-                    onClick={() => navigate('/docs')}
-                    cursor='pointer'
+                    href='https://tokentimer.ch/docs#self-hosted'
+                    isExternal
                     color='blue.500'
                     textDecoration='underline'
                   >
-                    ✓ Check the documentation to see how it works
+                    ✓ Check the documentation to see how it works ↗
                   </Link>
                 </Text>
                 <Text fontSize='xs' color={nextTextColor}>

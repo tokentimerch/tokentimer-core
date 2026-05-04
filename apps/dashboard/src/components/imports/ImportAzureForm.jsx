@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box,
   VStack,
@@ -86,8 +85,6 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   },
   ref
 ) {
-  const navigate = useNavigate();
-
   const [azureVaultUrl, setAzureVaultUrl] = React.useState('');
   const [azureToken, setAzureToken] = React.useState('');
   const [azureItems, setAzureItems] = React.useState([]);
@@ -210,7 +207,13 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-azure')}
+            onClick={() =>
+              window.open(
+                'https://tokentimer.ch/docs/tokens#import-azure',
+                '_blank',
+                'noopener,noreferrer'
+              )
+            }
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

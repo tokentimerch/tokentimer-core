@@ -60,7 +60,7 @@ Enterprise features include:
 
 - **Community Support**: GitHub Issues for bug reports and feature requests
 - **Commercial Support**: Available with Enterprise license
-- **Documentation**: https://tokentimer.ch/docs
+- **Documentation**: https://tokentimer.ch/docs#self-hosted
 
 ## Contact
 
