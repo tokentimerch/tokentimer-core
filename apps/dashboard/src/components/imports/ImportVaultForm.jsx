@@ -264,7 +264,7 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-hashicorp')}
+            onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-hashicorp', '_blank', 'noopener,noreferrer')}
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

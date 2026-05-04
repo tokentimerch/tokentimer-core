@@ -344,10 +344,11 @@ const MobileNav = ({
                 data-tour='mobile-docs-nav'
                 variant='ghost'
                 justifyContent='start'
-                onClick={() => {
-                  navigate('/docs');
-                  onClose();
-                }}
+                as='a'
+                href='https://tokentimer.ch/docs#self-hosted'
+                target='_blank'
+                rel='noopener noreferrer'
+                onClick={onClose}
                 bg='transparent'
                 _hover={{
                   bg: primaryHoverBg,
@@ -360,7 +361,7 @@ const MobileNav = ({
                 py={2}
                 px={3}
               >
-                Docs
+                Docs ↗
               </Button>
 
               {canSeeAudit && (
@@ -1026,25 +1027,24 @@ const Navigation = ({
               </AccessibleButton>
             )}
 
-            {/* Docs always visible */}
+            {/* Docs — links to online documentation */}
             <AccessibleButton
               data-tour='docs-nav'
               variant='ghost'
               size='md'
-              onClick={() => {
-                if (window.location.pathname !== '/docs') {
-                  navigate('/docs');
-                }
-              }}
+              as='a'
+              href='https://tokentimer.ch/docs#self-hosted'
+              target='_blank'
+              rel='noopener noreferrer'
               bg='transparent'
               _hover={{
                 bg: primaryHoverBg,
               }}
               _focus={{ bg: 'transparent' }}
               _active={{ bg: 'transparent' }}
-              aria-label='Documentation'
+              aria-label='Documentation (opens online)'
             >
-              Docs
+              Docs ↗
             </AccessibleButton>
 
             {/* Audit: visible only if user has manager/admin role somewhere */}

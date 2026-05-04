@@ -63,7 +63,7 @@ const CustomTooltip = ({
     if (closeProps?.onClick) {
       closeProps.onClick(e);
     }
-    navigate('/docs');
+    window.open('https://tokentimer.ch/docs#self-hosted', '_blank', 'noopener,noreferrer');
   };
 
   return (

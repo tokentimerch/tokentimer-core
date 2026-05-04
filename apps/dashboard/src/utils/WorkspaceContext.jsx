@@ -73,7 +73,6 @@ export function WorkspaceProvider({ children }) {
       path === '/help' ||
       path === '/privacy-policy' ||
       path === '/terms-of-service' ||
-      path.startsWith('/docs') ||
       path.startsWith('/solutions') ||
       path.startsWith('/blog') ||
       path.startsWith('/faq');
@@ -134,7 +133,6 @@ export function WorkspaceProvider({ children }) {
       path === '/help' ||
       path === '/privacy-policy' ||
       path === '/terms-of-service' ||
-      path.startsWith('/docs') ||
       path.startsWith('/solutions') ||
       path.startsWith('/blog') ||
       path.startsWith('/faq');

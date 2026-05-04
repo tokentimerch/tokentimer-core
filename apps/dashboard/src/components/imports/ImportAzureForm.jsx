@@ -210,7 +210,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-azure')}
+            onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-azure', '_blank', 'noopener,noreferrer')}
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

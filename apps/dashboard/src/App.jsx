@@ -73,7 +73,6 @@ import {
 } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
-import DocsLayout from './layouts/DocsLayout.jsx';
 import { trackEvent } from './utils/analytics.js';
 import {
   FiDownload,
@@ -145,13 +144,6 @@ const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const Help = lazy(() => import('./pages/Help'));
 const Usage = lazy(() => import('./pages/Usage'));
 const Audit = lazy(() => import('./pages/Audit'));
-const DocsIntro = lazy(() => import('./pages/DocsIntro.jsx'));
-const DocsTeams = lazy(() => import('./pages/DocsTeams.jsx'));
-const DocsTokens = lazy(() => import('./pages/DocsTokens.jsx'));
-const DocsAlerts = lazy(() => import('./pages/DocsAlerts.jsx'));
-const DocsAudit = lazy(() => import('./pages/DocsAudit.jsx'));
-const DocsUsage = lazy(() => import('./pages/DocsUsage.jsx'));
-const DocsApi = lazy(() => import('./pages/DocsApi.jsx'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
 import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
@@ -405,8 +397,7 @@ function App() {
           window.location &&
           window.location.pathname) ||
         '';
-      // Block docs as if non-public to avoid header flicker until session hydrates
-      return !isPublicPath(path) || path.startsWith('/docs');
+      return !isPublicPath(path);
     } catch (_) {
       return true;
     }
@@ -1007,7 +998,6 @@ function App() {
   }, [checkSessionWithRetry]);
 
   // Fetch tokens when session is available
-  // Ensure public routes never remain in a loading state (except /docs which we block until session resolves)
   useEffect(() => {
     try {
       const path = (window.location && window.location.pathname) || '';
@@ -1035,7 +1025,6 @@ function App() {
         '/register',
         '/reset-password',
         '/verify-email',
-        '/docs',
       ].some(p => path === p || (p !== '/' && path.startsWith(p)));
       if (isPublic) return;
     } catch (_) {}
@@ -2365,50 +2354,6 @@ function App() {
                           </AdminOnlyRoute>
                         }
                       />
-                      <Route
-                        path='/docs'
-                        element={
-                          <DocsLayout
-                            session={session}
-                            sessionLoading={loading}
-                            onLogout={handleLogout}
-                            onAccountClick={handleHelpAccountClick}
-                            onNavigateToDashboard={
-                              handleHelpNavigateToDashboard
-                            }
-                            onNavigateToLanding={handleNavigateToLanding}
-                          />
-                        }
-                      >
-                        <Route
-                          index
-                          element={<DocsIntro session={session} />}
-                        />
-                        <Route
-                          path='teams'
-                          element={<DocsTeams session={session} />}
-                        />
-                        <Route
-                          path='tokens'
-                          element={<DocsTokens session={session} />}
-                        />
-                        <Route
-                          path='alerts'
-                          element={<DocsAlerts session={session} />}
-                        />
-                        <Route
-                          path='audit'
-                          element={<DocsAudit session={session} />}
-                        />
-                        <Route
-                          path='usage'
-                          element={<DocsUsage session={session} />}
-                        />
-                        <Route
-                          path='api'
-                          element={<DocsApi session={session} />}
-                        />
-                      </Route>
                       <Route
                         path='/help'
                         element={

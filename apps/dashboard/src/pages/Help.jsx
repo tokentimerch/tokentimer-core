@@ -366,12 +366,12 @@ function Help({
                   <AlertDescription>
                     Visit the{' '}
                     <Link
-                      as={RouterLink}
-                      to='/docs'
+                      href='https://tokentimer.ch/docs#self-hosted'
+                      isExternal
                       color='blue.500'
                       textDecoration='underline'
                     >
-                      Product & API Docs
+                      Product &amp; API Docs ↗
                     </Link>{' '}
                     for usage guides and API reference.
                   </AlertDescription>

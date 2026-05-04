@@ -357,7 +357,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-aws')}
+            onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-aws', '_blank', 'noopener,noreferrer')}
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

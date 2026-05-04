@@ -90,6 +90,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
 | [ROADMAP.md](ROADMAP.md) | Engineering roadmap and metrics |
+|| [https://tokentimer.ch/docs#self-hosted](https://tokentimer.ch/docs#self-hosted) | Tool usage online documentation (self-hosted) |
 
 <br>
 

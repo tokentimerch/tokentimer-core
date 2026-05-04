@@ -200,7 +200,7 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-gcp')}
+            onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-gcp', '_blank', 'noopener,noreferrer')}
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

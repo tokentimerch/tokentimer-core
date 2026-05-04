@@ -120,12 +120,12 @@ function WelcomeModal({
                 )}
                 <Text fontSize='xs' color={nextTextColor}>
                   <Link
-                    onClick={() => navigate('/docs')}
-                    cursor='pointer'
+                    href='https://tokentimer.ch/docs#self-hosted'
+                    isExternal
                     color='blue.500'
                     textDecoration='underline'
                   >
-                    ✓ Check the documentation to see how it works
+                    ✓ Check the documentation to see how it works ↗
                   </Link>
                 </Text>
                 <Text fontSize='xs' color={nextTextColor}>

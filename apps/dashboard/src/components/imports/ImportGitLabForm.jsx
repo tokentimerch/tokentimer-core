@@ -246,7 +246,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
-            onClick={() => navigate('/docs/tokens#import-gitlab')}
+            onClick={() => window.open('https://tokentimer.ch/docs/tokens#import-gitlab', '_blank', 'noopener,noreferrer')}
             cursor='pointer'
             color='blue.500'
             textDecoration='underline'

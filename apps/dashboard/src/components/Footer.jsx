@@ -125,11 +125,8 @@ const Footer = () => {
             }}
           >
             <Link
-              href='/docs'
-              onClick={e => {
-                e.preventDefault();
-                navigate('/docs');
-              }}
+              href='https://tokentimer.ch/docs#self-hosted'
+              isExternal
               cursor='pointer'
               color={footerLinkColor}
               _hover={{
@@ -139,7 +136,7 @@ const Footer = () => {
               fontSize='sm'
               whiteSpace='nowrap'
               flexShrink={0}
-              aria-label='Documentation'
+              aria-label='Documentation (opens online)'
             >
               <HStack spacing='2' align='center'>
                 <Icon as={FiBookOpen} boxSize={4} />
