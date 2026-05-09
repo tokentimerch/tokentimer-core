@@ -14,8 +14,7 @@ export function domainStatusColor(status) {
 }
 
 export function domainSslBadge(domain) {
-  if (!domain.ssl_valid_to)
-    return <Badge colorScheme='gray'>No SSL</Badge>;
+  if (!domain.ssl_valid_to) return <Badge colorScheme='gray'>No SSL</Badge>;
   const daysLeft = Math.ceil(
     (new Date(domain.ssl_valid_to) - new Date()) / (1000 * 60 * 60 * 24)
   );

@@ -95,11 +95,7 @@ function normalizeDomainCheckerItems(value) {
         record.domains || record.domain || record.hostname || record.name
       );
       const name = String(
-        record.name ||
-          record.hostname ||
-          record.commonName ||
-          domains[0] ||
-          ''
+        record.name || record.hostname || record.commonName || domains[0] || ''
       ).trim();
       if (!name) return null;
       const id = String(record.id || `disc-${name}-${index}`);
@@ -142,10 +138,7 @@ const DomainCheckerRow = memo(function DomainCheckerRow({
   return (
     <Tr>
       <Td>
-        <Checkbox
-          isChecked={isSelected}
-          onChange={() => onToggle(cert.id)}
-        />
+        <Checkbox isChecked={isSelected} onChange={() => onToggle(cert.id)} />
       </Td>
       <Td>
         <Text fontSize='sm' fontWeight='medium'>
@@ -563,9 +556,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
   );
 
   const domainCheckerSelectAllVisibleState = useMemo(() => {
-    const ids = domainCheckerVisibleResults
-      .map(c => c?.id)
-      .filter(Boolean);
+    const ids = domainCheckerVisibleResults.map(c => c?.id).filter(Boolean);
     if (ids.length === 0) return { checked: false, indeterminate: false };
     let n = 0;
     for (const id of ids) {
@@ -578,9 +569,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
   }, [domainCheckerVisibleResults, selectedIds]);
 
   const toggleDomainCheckerSelectAllVisible = useCallback(() => {
-    const ids = domainCheckerVisibleResults
-      .map(c => c?.id)
-      .filter(Boolean);
+    const ids = domainCheckerVisibleResults.map(c => c?.id).filter(Boolean);
     if (ids.length === 0) return;
     setSelectedIds(prev => {
       const allOn = ids.every(id => prev.has(id));
@@ -874,8 +863,8 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
         <ModalBody data-endpoint-ssl-modal-body='true'>
           <VStack spacing={5} align='stretch'>
             <Text fontSize='sm' color={helpTextColor}>
-              Monitor SSL certificates and endpoint health for your URLs.
-              Tokens are auto-created for each SSL certificate detected.
+              Monitor SSL certificates and endpoint health for your URLs. Tokens
+              are auto-created for each SSL certificate detected.
             </Text>
 
             {domainCheckerImportReport && (
@@ -926,18 +915,13 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                           <FiChevronDown />
                         )
                       }
-                      onClick={() =>
-                        setDomainCheckerImportReportOpen(o => !o)
-                      }
+                      onClick={() => setDomainCheckerImportReportOpen(o => !o)}
                     >
                       {domainCheckerImportReportOpen
                         ? 'Show less'
                         : 'Show more'}
                     </Button>
-                    <Collapse
-                      in={domainCheckerImportReportOpen}
-                      animateOpacity
-                    >
+                    <Collapse in={domainCheckerImportReportOpen} animateOpacity>
                       <Box
                         as='pre'
                         mt={2}
@@ -1256,9 +1240,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                         aria-label='Delete'
                                         colorScheme='red'
                                         variant='ghost'
-                                        onClick={() =>
-                                          handleDeleteDomain(d.id)
-                                        }
+                                        onClick={() => handleDeleteDomain(d.id)}
                                       />
                                     </Tooltip>
                                   </HStack>
@@ -1284,8 +1266,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                         </Button>
                         <Text fontSize='sm' color={helpTextColor}>
                           Showing{' '}
-                          {endpointMonitorsPage *
-                            ENDPOINT_MONITORS_PAGE_SIZE +
+                          {endpointMonitorsPage * ENDPOINT_MONITORS_PAGE_SIZE +
                             1}
                           –
                           {Math.min(
@@ -1303,9 +1284,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                               ENDPOINT_MONITORS_PAGE_SIZE >=
                             visibleDomains.length
                           }
-                          onClick={() =>
-                            setEndpointMonitorsPage(p => p + 1)
-                          }
+                          onClick={() => setEndpointMonitorsPage(p => p + 1)}
                         >
                           Next
                         </Button>
@@ -1405,8 +1384,8 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 <Alert status='info' borderRadius='md' mt={3} py={2}>
                   <AlertIcon />
                   <AlertDescription fontSize='xs'>
-                    This list is capped at {domainCheckerCapCount} hostnames
-                    per discovery run. Names beyond that cap are not stored or
+                    This list is capped at {domainCheckerCapCount} hostnames per
+                    discovery run. Names beyond that cap are not stored or
                     shown, so import is limited to this table. Team workspaces
                     can discover more hostnames than Pro workspaces.
                   </AlertDescription>
@@ -1492,10 +1471,10 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   <Alert status='info' borderRadius='md' py={2}>
                     <AlertIcon />
                     <AlertDescription fontSize='xs'>
-                      Import runs in batches (up to about 5 minutes per batch
-                      on slow hosts). After each run, hosts that finished
-                      importing are removed from your selection so you can
-                      click Import again for the rest without re-scanning.
+                      Import runs in batches (up to about 5 minutes per batch on
+                      slow hosts). After each run, hosts that finished importing
+                      are removed from your selection so you can click Import
+                      again for the rest without re-scanning.
                     </AlertDescription>
                   </Alert>
                   <FormControl maxW='480px'>
@@ -1559,9 +1538,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                           size='sm'
                           isChecked={domainCheckerMonitorHealthCheck}
                           onChange={e =>
-                            setDomainCheckerMonitorHealthCheck(
-                              e.target.checked
-                            )
+                            setDomainCheckerMonitorHealthCheck(e.target.checked)
                           }
                         />
                       </FormControl>
@@ -1644,9 +1621,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 <Input
                   size='sm'
                   value={domainEndpointTokenSection}
-                  onChange={e =>
-                    setDomainEndpointTokenSection(e.target.value)
-                  }
+                  onChange={e => setDomainEndpointTokenSection(e.target.value)}
                   placeholder='Optional, comma-separated'
                 />
               </FormControl>
@@ -1685,9 +1660,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   <Select
                     size='sm'
                     value={domainAlertAfter}
-                    onChange={e =>
-                      setDomainAlertAfter(Number(e.target.value))
-                    }
+                    onChange={e => setDomainAlertAfter(Number(e.target.value))}
                   >
                     <option value={1}>1 failure</option>
                     <option value={2}>2 failures</option>

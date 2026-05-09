@@ -3246,13 +3246,8 @@ function DashboardView({
 
   const workspaceContactLabels = useMemo(() => {
     const set = new Set();
-    for (const c of Array.isArray(workspaceContacts)
-      ? workspaceContacts
-      : []) {
-      const name = [c.first_name, c.last_name]
-        .filter(Boolean)
-        .join(' ')
-        .trim();
+    for (const c of Array.isArray(workspaceContacts) ? workspaceContacts : []) {
+      const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
       const phone = (c.phone_e164 || '').trim();
       const parts = [name, phone].filter(Boolean);
       const label = parts.join(' - ');
@@ -3532,9 +3527,7 @@ function DashboardView({
       }
     } catch (error) {
       logger.error('Bulk section assignment failed', error);
-      toast.error(
-        error?.response?.data?.error || 'Failed to assign section'
-      );
+      toast.error(error?.response?.data?.error || 'Failed to assign section');
     }
   };
 
@@ -4516,10 +4509,7 @@ function DashboardView({
 
                 {/* Datalist for workspace contacts suggestions (creation form) */}
                 <datalist id='workspace-contacts-suggestions'>
-                  {(Array.isArray(workspaceContacts)
-                    ? workspaceContacts
-                    : []
-                  )
+                  {(Array.isArray(workspaceContacts) ? workspaceContacts : [])
                     .map(c => {
                       const name = [c.first_name, c.last_name]
                         .filter(Boolean)
@@ -4530,7 +4520,9 @@ function DashboardView({
                       const label = parts.join(' - ');
                       return { c, label };
                     })
-                    .filter(({ label }) => label && !selectedContactLabels.has(label))
+                    .filter(
+                      ({ label }) => label && !selectedContactLabels.has(label)
+                    )
                     .map(({ c, label }) => (
                       <option key={c.id} value={label} />
                     ))}

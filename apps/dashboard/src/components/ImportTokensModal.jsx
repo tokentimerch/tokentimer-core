@@ -1087,7 +1087,10 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
       }
       case 'vault': {
         const formCreds = vaultFormRef.current?.getCredentials();
-        credentials = formCreds?.credentials ?? { address: vaultAddress, token: vaultToken };
+        credentials = formCreds?.credentials ?? {
+          address: vaultAddress,
+          token: vaultToken,
+        };
         scanParams = formCreds?.scanParams ?? {
           address: vaultAddress,
           include: { kv: includeKV, pki: includePKI },
@@ -1111,7 +1114,10 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
       }
       case 'azure': {
         const formCreds = azureFormRef.current?.getCredentials();
-        credentials = formCreds?.credentials ?? { vaultUrl: azureVaultUrl, token: azureToken };
+        credentials = formCreds?.credentials ?? {
+          vaultUrl: azureVaultUrl,
+          token: azureToken,
+        };
         scanParams = formCreds?.scanParams ?? {
           vaultUrl: azureVaultUrl,
           include: { secrets: true, certificates: true, keys: true },
@@ -1129,7 +1135,10 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
         break;
       case 'gcp': {
         const formCreds = gcpFormRef.current?.getCredentials();
-        credentials = formCreds?.credentials ?? { projectId: gcpProjectId, accessToken: gcpAccessToken };
+        credentials = formCreds?.credentials ?? {
+          projectId: gcpProjectId,
+          accessToken: gcpAccessToken,
+        };
         scanParams = formCreds?.scanParams ?? {
           projectId: gcpProjectId,
           include: { secrets: true },
@@ -1755,7 +1764,12 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onCloseInternal} size='4xl' motionPreset='none'>
+      <Modal
+        isOpen={isOpen}
+        onClose={onCloseInternal}
+        size='4xl'
+        motionPreset='none'
+      >
         <ModalOverlay />
         <ModalContent bg={cardBg} border='1px solid' borderColor={borderColor}>
           <ModalHeader>
