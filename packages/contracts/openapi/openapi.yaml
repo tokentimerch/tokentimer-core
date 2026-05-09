@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.3.2
+  version: 0.4.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -990,6 +990,52 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
   /api/tokens/bulk:
+    put:
+      tags: [Tokens]
+      summary: Bulk update tokens
+      operationId: bulkUpdateTokens
+      description: Updates multiple tokens in one request (supports section assignment) and returns per-item processing details.
+      requestBody:
+        description: List of token ids and fields to update.
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, section]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
+                section:
+                  nullable: true
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+      responses:
+        "200":
+          description: Bulk update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  successCount:
+                    type: integer
+                  failedCount:
+                    type: integer
+                  results:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       tags: [Tokens]
       summary: Bulk delete tokens

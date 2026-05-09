@@ -190,6 +190,13 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importAzureSelected,
     getSelectedCount: () => selectedRowsAzure.size,
+    getCredentials: () => ({
+      credentials: { vaultUrl: azureVaultUrl, token: azureToken },
+      scanParams: {
+        vaultUrl: azureVaultUrl,
+        include: { secrets: true, certificates: true, keys: true },
+      },
+    }),
   }));
 
   return (

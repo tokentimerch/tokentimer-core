@@ -226,6 +226,21 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importGithubSelected,
     getSelectedCount: () => selectedRowsGithub.size,
+    getCredentials: () => ({
+      credentials: {
+        baseUrl: githubBaseUrl || 'https://api.github.com',
+        token: githubToken,
+      },
+      scanParams: {
+        baseUrl: githubBaseUrl || 'https://api.github.com',
+        include: {
+          tokens: githubIncludeTokens,
+          sshKeys: githubIncludeSSHKeys,
+          deployKeys: githubIncludeDeployKeys,
+          secrets: githubIncludeSecrets,
+        },
+      },
+    }),
   }));
 
   return (

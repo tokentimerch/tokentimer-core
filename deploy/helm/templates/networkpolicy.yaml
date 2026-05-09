@@ -60,6 +60,14 @@ spec:
       ports:
         - protocol: TCP
           port: 4000
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "tokentimer.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: auto-sync
+      ports:
+        - protocol: TCP
+          port: 4000
   egress:
     {{- if .Values.postgresql.cloudnative.enabled }}
     - to:
@@ -212,6 +220,15 @@ spec:
           port: 465
         - protocol: TCP
           port: 587
+    # API (auto-sync scan + import endpoints)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "tokentimer.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
     # HTTPS (Slack, Discord, Teams webhooks, Twilio)
     - to:
         - ipBlock:

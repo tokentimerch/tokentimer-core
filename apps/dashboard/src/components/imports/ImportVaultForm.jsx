@@ -249,6 +249,15 @@ const ImportVaultForm = React.forwardRef(function ImportVaultForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importVaultSelected,
     getSelectedCount: () => selectedRowsVault.size,
+    getCredentials: () => ({
+      credentials: { address: vaultAddress, token: vaultToken },
+      scanParams: {
+        address: vaultAddress,
+        include: { kv: includeKV, pki: includePKI },
+        pathPrefix: pathPrefix || '',
+        maxItemsPerMount,
+      },
+    }),
   }));
 
   return (

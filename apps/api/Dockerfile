@@ -23,7 +23,7 @@ COPY --from=subfinder-builder /go/bin/subfinder /usr/local/bin/subfinder
 RUN subfinder -version
 
 # Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml* ./

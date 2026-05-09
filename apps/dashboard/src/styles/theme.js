@@ -654,8 +654,6 @@ const components = {
       dialogContainer: {
         bg: 'transparent',
         backgroundColor: 'transparent',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
         _light: {
           bg: 'transparent',
           backgroundColor: 'transparent',
@@ -673,8 +671,6 @@ const components = {
       dialogContainer: {
         bg: 'transparent',
         backgroundColor: 'transparent',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
         _light: {
           bg: 'transparent',
           backgroundColor: 'transparent',
@@ -799,8 +795,8 @@ export const theme = extendTheme({
   shadows,
   components,
   config: {
-    initialColorMode: 'light',
-    useSystemColorMode: false,
+    initialColorMode: 'system',
+    useSystemColorMode: true,
   },
   styles: {
     global: props => ({

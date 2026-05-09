@@ -273,7 +273,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: ${DB_NAME:-tokentimer}
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
-      API_URL: ${API_URL:-http://api:4000}
+      API_URL: http://api:4000
     volumes: []
 
   # Worker Service - Endpoint (SSL) Check

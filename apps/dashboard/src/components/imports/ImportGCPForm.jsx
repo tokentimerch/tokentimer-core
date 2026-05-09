@@ -186,6 +186,13 @@ const ImportGCPForm = React.forwardRef(function ImportGCPForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importGcpSelected,
     getSelectedCount: () => selectedRowsGcp.size,
+    getCredentials: () => ({
+      credentials: { projectId: gcpProjectId, accessToken: gcpAccessToken },
+      scanParams: {
+        projectId: gcpProjectId,
+        include: { secrets: true },
+      },
+    }),
   }));
 
   return (

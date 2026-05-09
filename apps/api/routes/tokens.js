@@ -613,6 +613,178 @@ router.post(
   },
 );
 
+// Bulk update tokens (supports section assignment).
+// MUST be registered before PUT /api/tokens/:id so Express does not treat the
+// literal "bulk" as an integer :id parameter.
+// Mirrors the shape and authorization of DELETE /api/tokens/bulk.
+router.put(
+  "/api/tokens/bulk",
+  getTestApiLimiter(),
+  requireAuth,
+  requireNotViewer,
+  async (req, res) => {
+    const { ids, section } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No token IDs provided", code: "VALIDATION_ERROR" });
+    }
+
+    if (ids.length > 500) {
+      return res.status(400).json({
+        error: "Cannot update more than 500 tokens at once",
+        code: "VALIDATION_ERROR",
+      });
+    }
+
+    if (section === undefined) {
+      return res.status(400).json({ error: "No fields to update", code: "VALIDATION_ERROR" });
+    }
+
+    // Normalize section using the same rules as PUT /api/tokens/:id
+    let normalizedSection;
+    try {
+      if (section === null) {
+        normalizedSection = null;
+      } else {
+        const parts = Array.isArray(section)
+          ? section
+          : String(section).split(",");
+        if (Array.isArray(section) && section.length > 50) {
+          throw new Error("Too many labels (max 50)");
+        }
+        if (typeof section === "string" && section.length > 255) {
+          throw new Error("Section text must be less than 255 characters");
+        }
+        const flat = parts
+          .flatMap((p) => (typeof p === "string" ? p.split(",") : [p]))
+          .map((s) => (typeof s === "string" ? s.trim() : s))
+          .filter(Boolean);
+        for (const s of flat) {
+          if (typeof s !== "string") {
+            throw new Error("Labels must be strings");
+          }
+          if (s.length > 120) {
+            throw new Error("Each label must be less than 120 characters");
+          }
+          if (/[<>]/.test(s)) {
+            throw new Error("Labels cannot contain HTML tags");
+          }
+        }
+        normalizedSection = flat.length > 0 ? [...new Set(flat)] : null;
+      }
+    } catch (e) {
+      return res.status(400).json({ error: e.message, code: "VALIDATION_ERROR" });
+    }
+
+    try {
+      const userId = req.user.id;
+
+      // 1. Fetch all requested tokens to check ownership/workspace permissions in one go
+      const tokensRes = await pool.query(
+        "SELECT id, name, workspace_id, user_id FROM tokens WHERE id = ANY($1::int[])",
+        [ids],
+      );
+      const existingTokens = tokensRes.rows;
+      const existingIds = new Set(existingTokens.map((t) => t.id));
+
+      const results = {
+        success: [],
+        failed: [],
+      };
+
+      for (const id of ids) {
+        if (!existingIds.has(parseInt(id))) {
+          results.failed.push({ id, reason: "Not found" });
+        }
+      }
+
+      // 2. Filter tokens by role (core never checks is_frozen)
+      const authorizedTokens = [];
+      const workspaceIds = [
+        ...new Set(
+          existingTokens
+            .filter((t) => t.workspace_id)
+            .map((t) => t.workspace_id),
+        ),
+      ];
+
+      const rolesMap = new Map();
+      if (workspaceIds.length > 0) {
+        const rolesRes = await pool.query(
+          "SELECT workspace_id, role FROM workspace_memberships WHERE user_id = $1 AND workspace_id = ANY($2::uuid[])",
+          [userId, workspaceIds],
+        );
+        rolesRes.rows.forEach((r) => rolesMap.set(r.workspace_id, r.role));
+      }
+
+      for (const token of existingTokens) {
+        let canUpdate = false;
+        if (token.workspace_id) {
+          const role = rolesMap.get(token.workspace_id);
+          canUpdate = role === "admin" || role === "workspace_manager";
+        } else {
+          canUpdate = token.user_id === userId;
+        }
+
+        if (canUpdate) {
+          authorizedTokens.push(token);
+        } else {
+          results.failed.push({ id: token.id, reason: "Forbidden" });
+        }
+      }
+
+      const authorizedIds = authorizedTokens.map((t) => t.id);
+
+      if (authorizedIds.length > 0) {
+        // 3. Single SQL UPDATE for all authorized tokens
+        await pool.query(
+          "UPDATE tokens SET section = $1::text[], updated_at = NOW() WHERE id = ANY($2::int[])",
+          [normalizedSection, authorizedIds],
+        );
+
+        // 4. Audit per token to keep parity with PUT /api/tokens/:id
+        for (const token of authorizedTokens) {
+          results.success.push(token.id);
+          try {
+            await writeAudit({
+              actorUserId: userId,
+              subjectUserId: userId,
+              action: "TOKEN_UPDATED",
+              targetType: "token",
+              targetId: token.id,
+              channel: null,
+              workspaceId: token.workspace_id || null,
+              metadata: {
+                fields: ["section"],
+                bulk: true,
+                name: token.name,
+              },
+            });
+          } catch (_) {
+            /* ignore audit errors */
+          }
+        }
+      }
+
+      res.json({
+        message: `Processed ${ids.length} tokens`,
+        successCount: results.success.length,
+        failedCount: results.failed.length,
+        results,
+      });
+    } catch (error) {
+      logger.error("Error in bulk token update:", {
+        error: error.message,
+        stack: error.stack,
+        userId: req.user?.id,
+      });
+      res.status(500).json({ error: "Failed to process bulk update" });
+    }
+  },
+);
+
 // Update token
 router.put(
   "/api/tokens/:id",

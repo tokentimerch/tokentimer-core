@@ -344,6 +344,17 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importAwsSelected,
     getSelectedCount: () => selectedRowsAws.size,
+    getCredentials: () => ({
+      credentials: {
+        accessKeyId: awsAccessKeyId,
+        secretAccessKey: awsSecretAccessKey,
+        region: awsRegion || 'us-east-1',
+      },
+      scanParams: {
+        region: awsRegion || 'us-east-1',
+        include: { secrets: true, iam: true, certificates: true },
+      },
+    }),
   }));
 
   return (

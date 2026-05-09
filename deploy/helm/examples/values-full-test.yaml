@@ -404,6 +404,40 @@ monitoring:
             annotations:
               summary: "High SMTP latency (p95)"
               description: "95th percentile SMTP latency > 2s (kind={{ $labels.kind }})"
+      # ── Auto-sync ─────────────────────────────────────────────────────────
+      - name: tokentimer.auto-sync
+        rules:
+          - alert: AutoSyncProviderFailures
+            expr: |
+              sum by (provider) (increase(auto_sync_runs_total{status="failure"}[3h]))
+              >= 3
+              unless
+              sum by (provider) (increase(auto_sync_runs_total{status="success"}[3h]))
+              > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Auto-sync provider {{ $labels.provider }} failing"
+              description: >-
+                Auto-sync for {{ $labels.provider }} has failed
+                {{ $value | printf "%.0f" }} times in 3 h with no successes.
+                Check credentials and network connectivity.
+              runbook_url: "https://tokentimer.ch/docs#auto-sync-troubleshooting"
+          - alert: AutoSyncNotRunning
+            expr: |
+              (time() - max by (provider) (auto_sync_last_run_timestamp{status="success"}))
+              > 90000
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Auto-sync for {{ $labels.provider }} has not succeeded in > 25 h"
+              description: >-
+                The auto-sync CronJob for {{ $labels.provider }} has not completed
+                a successful run in more than 25 hours. The CronJob may be stuck,
+                misconfigured, or disabled.
+              runbook_url: "https://tokentimer.ch/docs#auto-sync-troubleshooting"
       # ── Auth / Security ───────────────────────────────────────────────────
       - name: tokentimer.security
         rules:

@@ -434,22 +434,8 @@ monitoring:
     namespace: ""
     labels: {}
     groups: []
-    #   - name: tokentimer.rules
-    #     rules:
-    #       - alert: TokenTimerZeroSends72h
-    #         expr: sum(increase(alerts_delivery_total{status="success"}[72h])) == 0
-    #         for: 1h
-    #         labels:
-    #           severity: warning
-    #         annotations:
-    #           summary: No successful sends in 72h
-    #       - alert: AppErrorsRecent
-    #         expr: sum(increase(app_log_errors_total[5m])) > 0
-    #         for: 0m
-    #         labels:
-    #           severity: warning
-    #         annotations:
-    #           summary: Application errors detected
+    # See deploy/helm/examples/values-full-test.yaml for ready-to-use rule groups
+    # covering alert delivery, auto-sync failures, application errors, and security.
 
 # -- ServiceAccount ------------------------------------------------------------
 serviceAccount:
