@@ -56,13 +56,13 @@ spec:
                 {{- with .Values.worker.envFrom }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
-              {{- if .Values.worker.env }}
               env:
+                - name: API_URL
+                  value: "http://{{ include "tokentimer.fullname" . }}-api:{{ .Values.api.service.port }}"
                 {{- range $key, $value := .Values.worker.env }}
                 - name: {{ $key }}
                   value: {{ $value | quote }}
                 {{- end }}
-              {{- end }}
               volumeMounts:
                 - name: tmp
                   mountPath: /tmp

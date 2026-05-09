@@ -9,6 +9,43 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-09
+
+### Added
+
+- **Bulk token section assignment via a single API call.** New `PUT /api/tokens/bulk` endpoint accepts up to 500 token IDs and a `section` value, applies the update in one SQL statement, and returns per-token success/failure detail. The dashboard's multi-select section workflow now uses this endpoint instead of N individual requests, and the new endpoint is fully documented in OpenAPI.
+- **`EndpointSslMonitorModal` extracted to its own component file.** The endpoint monitor and SSL certificate modal is now a standalone `apps/dashboard/src/components/EndpointSslMonitorModal.jsx`, making the file smaller and the component independently testable.
+- **Domain utilities extracted.** `domainStatusColor`, `domainSslBadge`, `domainFormatUrl`, and `domainValueToUrl` are now in `apps/dashboard/src/utils/domains.jsx`, shared across components without duplication.
+- **Auto-sync Prometheus metrics.** Three new metrics pushed to Pushgateway after every worker run: `auto_sync_runs_total{provider,status}` (counter), `auto_sync_items_imported_total{provider}` (counter), and `auto_sync_last_run_timestamp{provider,status}` (gauge). Two ready-to-use PrometheusRule alert definitions (`AutoSyncProviderFailures`, `AutoSyncNotRunning`) added to `deploy/helm/examples/values-full-test.yaml`.
+- **Server-side credential validation for auto-sync configs.** The `POST` and `PUT /api/v1/workspaces/:id/auto-sync` endpoints now validate that required credential fields (e.g. `token` for GitHub/GitLab, `accessKeyId`+`secretAccessKey` for AWS) are present and non-empty before encrypting and storing. Returns HTTP 400 with a descriptive error instead of silently storing unusable credentials.
+
+### Fixed
+
+- **Auto-sync rework and credential decryption fix.** Reworked the auto-sync worker to delegate token import to the existing `POST /api/v1/integrations/import` endpoint (the same one the dashboard uses) for all providers, so deduplication, sanitization, and audit logging are identical to a manual import. Fixed a credential decryption bug where the worker used a SHA-256-derived key while the API encrypts with `scryptSync`; the legacy SHA-256 path is kept as a fallback for older records.
+- **Auto-sync `API_URL` hardcoded in Docker Compose and Kubernetes CronJob.** The worker service in `docker-compose.yml` previously derived `API_URL` from the user-facing `.env` variable, which defaults to `http://localhost:4000`. Since `localhost` inside a container resolves to the container itself, every scan request failed with a network error. `API_URL` is now hardcoded to `http://api:4000` in the Compose service definition. The Helm CronJob template applies the same fix by injecting `http://<release>-api:<port>` directly, overriding whatever `config.apiUrl` is in the ConfigMap.
+- **Kubernetes NetworkPolicy updated for auto-sync.** The worker egress policy was missing a rule for port 4000 to the API pod, and the API ingress policy did not allow traffic from the `auto-sync` component. With NetworkPolicy enabled, every HTTP call from the auto-sync CronJob was silently dropped. Both policies are now updated.
+- **Auto-sync credential reading fixed in the import modal.** All integration form components (`ImportGitHubForm`, `ImportGitLabForm`, `ImportAWSForm`, `ImportAzureForm`, `ImportGCPForm`, `ImportVaultForm`) now expose a `getCredentials()` method via `useImperativeHandle`. The parent `ImportTokensModal` reads live form state through these refs instead of stale parent-scope state variables that were never updated, which caused every auto-sync save to silently store an empty token.
+- **Auto-sync worker pre-flight credential validation.** The worker now checks required credential fields immediately after decryption and throws a descriptive error (`token (empty)` vs `token (absent)`) before attempting any HTTP call, replacing a confusing HTTP 400 from the downstream scan endpoint.
+
+### Changed
+
+- **System color mode enabled by default.** The dashboard now follows the OS light/dark preference (`useSystemColorMode: true`, `initialColorMode: "system"`). Previously the dashboard was always light.
+- **Modal animations disabled for `ImportTokensModal`.** Added `motionPreset="none"` to remove the open/close animation, which was causing visual jank on slower machines.
+- **Backdrop blur removed from Chakra dialog containers.** Removed `backdropFilter: blur(10px)` from both light and dark dialog theme overrides to avoid a GPU compositing layer on every modal open.
+- **`CreateTokenNotesField` memoized with `flushSync`.** The notes textarea in the create/duplicate token forms is now a memoized component; `flushSync` ensures uncommitted note input is flushed to state before form submission.
+- **Bulk section assignment error messages surfaced.** The dashboard now shows the API-returned error string on failure instead of a generic "Failed to assign section" toast.
+- Updated pnpm from **10.33.0** to **10.33.4** across `package.json`, all three Dockerfiles, and CI.
+- Updated release metadata from **0.3.2** to **0.4.0** across all package and contract version files.
+
+### Security
+
+- Upgraded `axios` from **1.15.0** to **1.16.0** in all three packages (`api`, `dashboard`, `worker`) — fixes multiple prototype-pollution and SSRF advisories (GHSA-pmwg-cvhr-8vh7, GHSA-q8qp-cvcw-x6jj, GHSA-pf86-5x62-jrwf, GHSA-6chq-wfr3-2hj9, and others).
+- Upgraded `express-rate-limit` from **8.3.1** to **8.5.1** in `api`.
+- Upgraded `@aws-sdk/client-acm/iam/secrets-manager/sts` from **3.990.0** to **3.1045.0** in `api`.
+- Added `fast-xml-builder@1.2.0` and upgraded `fast-xml-parser` override from **5.7.2** to **5.7.3** to resolve GHSA-5wm8-gmm8-39j9 in the AWS SDK transitive chain.
+- Upgraded Grype from **v0.111.0** to **v0.112.0** in CI.
+- Updated the Go builder stage in `Dockerfile.api` from `golang:1.26.2-alpine3.23` to `golang:1.26.3-alpine3.23` to resolve stdlib CVEs in the subfinder binary.
+
 ## [0.3.2] - 2026-05-04
 
 ### Changed

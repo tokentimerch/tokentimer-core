@@ -1,6 +1,6 @@
 {
   "name": "tokentimer-core",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
@@ -53,14 +53,15 @@
     "docker:up": "docker compose -f deploy/compose/docker-compose.yml up",
     "docker:down": "docker compose -f deploy/compose/docker-compose.yml down"
   },
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@10.33.4",
   "engines": {
     "node": ">=22.0.0"
   },
   "pnpm": {
     "overrides": {
       "tar": "7.5.7",
-      "fast-xml-parser": "5.7.2",
+      "fast-xml-builder": "1.2.0",
+      "fast-xml-parser": "5.7.3",
       "minimatch": "9.0.9",
       "brace-expansion": "2.0.3",
       "path-to-regexp": "8.4.0",

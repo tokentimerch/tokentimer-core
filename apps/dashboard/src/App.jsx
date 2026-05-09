@@ -1,8 +1,9 @@
-import { logger } from './utils/logger.js';
+﻿import { logger } from './utils/logger.js';
 import { getExpiryStatus, getColorFromString } from './styles/colors.js';
 
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useCallback,
   useRef,
@@ -11,6 +12,7 @@ import {
   useMemo,
   memo,
 } from 'react';
+import { flushSync } from 'react-dom';
 import {
   ChakraProvider,
   ColorModeScript,
@@ -21,8 +23,8 @@ import {
   FormLabel,
   FormErrorMessage,
   Input,
+  Textarea,
   Select,
-  Switch,
   Button,
   Flex,
   Text,
@@ -35,9 +37,6 @@ import {
   Td,
   Badge,
   VStack,
-  Stack,
-  NumberInput,
-  NumberInputField,
   useColorMode,
   useColorModeValue,
   Tooltip,
@@ -50,7 +49,6 @@ import {
   ModalBody,
   ModalCloseButton,
   useDisclosure,
-  Divider,
   HStack,
   Alert,
   AlertIcon,
@@ -79,14 +77,10 @@ import {
   FiTrash2,
   FiPlus,
   FiX,
-  FiChevronDown,
-  FiChevronUp,
   FiChevronRight,
   FiGlobe,
-  FiRefreshCw,
   FiExternalLink,
   FiActivity,
-  FiAlertTriangle,
 } from 'react-icons/fi';
 
 import { theme } from './styles/theme';
@@ -100,28 +94,18 @@ import { AccessibleSpinner } from './components/Accessibility';
 import TruncatedText from './components/TruncatedText';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
-import {
-  SortableTh,
-  domainStatusColor,
-  domainSslBadge,
-  domainFormatUrl,
-} from './components/DashboardHelpers.jsx';
+import { SortableTh } from './components/DashboardHelpers.jsx';
+import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
+import { domainValueToUrl } from './utils/domains.jsx';
 
 import apiClient, {
   authAPI,
   tokenAPI,
   formatDate,
   workspaceAPI,
-  API_ENDPOINTS,
   showSuccessMessage,
 } from './utils/apiClient';
 
-function domainValueToUrl(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `https://${raw}`;
-}
 import {
   formatExpirationDate,
   isNeverExpires,
@@ -146,7 +130,7 @@ const Usage = lazy(() => import('./pages/Usage'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
-import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
+import { WorkspaceProvider } from './utils/WorkspaceContext.jsx';
 
 // VerifyEmailWrapper component to handle session-based redirects
 function VerifyEmailWrapper({ session }) {
@@ -567,6 +551,7 @@ function App() {
   // Location entries array for dynamic location fields
   const [locationEntries, setLocationEntries] = useState(['']);
   const locationSyncRef = useRef(false);
+  const createTokenNotesFlushRef = useRef(() => {});
 
   // Sync locationEntries when formData.location changes externally (e.g., from import)
   useEffect(() => {
@@ -1411,6 +1396,9 @@ function App() {
    */
   const handleTokenAdd = async e => {
     e.preventDefault();
+    flushSync(() => {
+      createTokenNotesFlushRef.current();
+    });
 
     if (!validateForm()) {
       return;
@@ -1575,6 +1563,9 @@ function App() {
     try {
       setIsSubmitting(true);
       onDuplicateModalClose();
+      flushSync(() => {
+        createTokenNotesFlushRef.current();
+      });
 
       // Prepare token data again (same as in handleTokenAdd)
       let domainsArray = null;
@@ -2465,6 +2456,9 @@ function App() {
                                 removeLocationEntry={removeLocationEntry}
                                 updateLocationEntry={updateLocationEntry}
                                 defaultContactGroupId={defaultContactGroupId}
+                                createTokenNotesFlushRef={
+                                  createTokenNotesFlushRef
+                                }
                               />
                             )
                           ) : (
@@ -2821,6 +2815,7 @@ function DashboardWrapper({
   removeLocationEntry,
   updateLocationEntry,
   defaultContactGroupId = '',
+  createTokenNotesFlushRef,
 }) {
   const [searchParams] = useSearchParams();
   const [currentView, setCurrentView] = useState('dashboard');
@@ -2960,6 +2955,7 @@ function DashboardWrapper({
               removeLocationEntry={removeLocationEntry}
               updateLocationEntry={updateLocationEntry}
               defaultContactGroupId={defaultContactGroupId}
+              createTokenNotesFlushRef={createTokenNotesFlushRef}
             />
           ) : currentView === 'account' ? (
             <Account session={session} onAccountDeleted={onAccountDeleted} />
@@ -3090,6 +3086,58 @@ function DashboardWrapper({
  * Note: SortableTh and domain helper functions have been extracted to ./components/DashboardHelpers.jsx
  */
 
+const CreateTokenNotesField = memo(function CreateTokenNotesField({
+  parentNotes,
+  onCommitNotes,
+  submitFlushRef,
+  inputBg,
+  inputBorder,
+  placeholderColor,
+}) {
+  const [local, setLocal] = useState(() => parentNotes ?? '');
+  const taRef = useRef(null);
+
+  useEffect(() => {
+    setLocal(parentNotes ?? '');
+  }, [parentNotes]);
+
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [local]);
+
+  useEffect(() => {
+    submitFlushRef.current = () => {
+      onCommitNotes(taRef.current?.value ?? '');
+    };
+    return () => {
+      submitFlushRef.current = () => {};
+    };
+  }, [local, onCommitNotes, submitFlushRef]);
+
+  return (
+    <Textarea
+      ref={taRef}
+      id='notes'
+      name='notes'
+      value={local}
+      onChange={e => setLocal(e.target.value)}
+      onBlur={e => onCommitNotes(e.target.value)}
+      bg={inputBg}
+      borderColor={inputBorder}
+      placeholder='Additional information'
+      _placeholder={{ color: placeholderColor }}
+      maxLength={10000}
+      rows={2}
+      resize='none'
+      overflow='hidden'
+      minH='40px'
+    />
+  );
+});
+
 function DashboardView({
   _session,
   tokens,
@@ -3137,6 +3185,7 @@ function DashboardView({
   removeLocationEntry,
   updateLocationEntry,
   defaultContactGroupId = '',
+  createTokenNotesFlushRef,
 }) {
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
@@ -3147,7 +3196,6 @@ function DashboardView({
   const _popoverBg = useColorModeValue('gray.100', 'gray.800');
   const _popoverBorder = useColorModeValue('gray.400', 'gray.600');
   const helpTextColor = useColorModeValue('gray.600', 'gray.400');
-  const domainBorderColor = useColorModeValue('gray.200', 'gray.700');
 
   // Use reusable dashboard color hooks
   const {
@@ -3163,6 +3211,172 @@ function DashboardView({
     mobileCardBg,
     secondaryTextColor,
   } = useDashboardColors();
+
+  const commitCreateNotes = useCallback(
+    v => {
+      onInputChange({ target: { name: 'notes', value: v } });
+    },
+    [onInputChange]
+  );
+
+  const contactTagBg = useColorModeValue('blue.100', 'blue.800');
+  const contactTagColor = useColorModeValue('blue.800', 'blue.200');
+
+  const contactInputRef = useRef(null);
+  const [contactTags, setContactTags] = useState([]);
+  const [contactInputValue, setContactInputValue] = useState('');
+  const contactsFromTagsRef = useRef(false);
+
+  useEffect(() => {
+    if (contactsFromTagsRef.current) {
+      contactsFromTagsRef.current = false;
+      return;
+    }
+    if (!formData.contacts) {
+      setContactTags([]);
+      setContactInputValue('');
+    } else {
+      const tags = formData.contacts
+        .split(',')
+        .map(t => t.trim())
+        .filter(Boolean);
+      setContactTags(tags);
+    }
+  }, [formData.contacts]);
+
+  const workspaceContactLabels = useMemo(() => {
+    const set = new Set();
+    for (const c of Array.isArray(workspaceContacts)
+      ? workspaceContacts
+      : []) {
+      const name = [c.first_name, c.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const phone = (c.phone_e164 || '').trim();
+      const parts = [name, phone].filter(Boolean);
+      const label = parts.join(' - ');
+      if (label) set.add(label);
+    }
+    return set;
+  }, [workspaceContacts]);
+
+  const selectedContactLabels = useMemo(
+    () => new Set(contactTags),
+    [contactTags]
+  );
+
+  const removeContactTag = index => {
+    const newTags = contactTags.filter((_, i) => i !== index);
+    setContactTags(newTags);
+    contactsFromTagsRef.current = true;
+    onInputChange({ target: { name: 'contacts', value: newTags.join(', ') } });
+  };
+
+  const commitContactTag = trimmed => {
+    if (!trimmed) return;
+    if (contactTags.includes(trimmed)) return;
+    const newTags = [...contactTags, trimmed];
+    const newValue = newTags.join(', ');
+    if (newValue.length > 500) return;
+    setContactTags(newTags);
+    setContactInputValue('');
+    contactsFromTagsRef.current = true;
+    onInputChange({ target: { name: 'contacts', value: newValue } });
+  };
+
+  const handleContactInputChange = e => {
+    const v = e.target.value;
+    const trimmed = v.trim();
+    setContactInputValue(v);
+    if (
+      workspaceContactLabels.has(trimmed) &&
+      !selectedContactLabels.has(trimmed)
+    ) {
+      commitContactTag(trimmed);
+    }
+  };
+
+  const handleContactKeyDown = e => {
+    if (e.key === 'Enter' && contactInputValue.trim()) {
+      e.preventDefault();
+      commitContactTag(contactInputValue.trim());
+    } else if (
+      e.key === 'Backspace' &&
+      !contactInputValue &&
+      contactTags.length > 0
+    ) {
+      removeContactTag(contactTags.length - 1);
+    }
+  };
+
+  const renderContactTagInput = placeholder => (
+    <Box
+      border='1px solid'
+      borderColor={inputBorder}
+      borderRadius='md'
+      bg={inputBg}
+      px={2}
+      py='6px'
+      minH='40px'
+      cursor='text'
+      onClick={() => contactInputRef.current?.focus()}
+    >
+      <Flex wrap='wrap' gap={1} alignItems='center'>
+        {contactTags.map((tag, i) => (
+          <Flex
+            key={i}
+            align='center'
+            bg={contactTagBg}
+            color={contactTagColor}
+            borderRadius='md'
+            px={2}
+            py='2px'
+            fontSize='sm'
+            gap={1}
+          >
+            <Text fontSize='sm' lineHeight='short'>
+              {tag}
+            </Text>
+            <Box
+              as='button'
+              type='button'
+              onClick={e => {
+                e.stopPropagation();
+                removeContactTag(i);
+              }}
+              lineHeight={1}
+              cursor='pointer'
+              opacity={0.7}
+              _hover={{ opacity: 1 }}
+              fontSize='xs'
+              fontWeight='bold'
+            >
+              ×
+            </Box>
+          </Flex>
+        ))}
+        <Input
+          ref={contactInputRef}
+          type='text'
+          value={contactInputValue}
+          onChange={handleContactInputChange}
+          onKeyDown={handleContactKeyDown}
+          list='workspace-contacts-suggestions'
+          placeholder={contactTags.length === 0 ? placeholder : ''}
+          _placeholder={{ color: placeholderColor }}
+          border='none'
+          bg='transparent'
+          p={0}
+          h='28px'
+          flex={1}
+          minW='120px'
+          fontSize='sm'
+          _focus={{ boxShadow: 'none', outline: 'none' }}
+        />
+      </Flex>
+    </Box>
+  );
 
   // Per-panel search terms keyed by category value
   const [panelQueries, setPanelQueries] = useState(() => {
@@ -3209,719 +3423,6 @@ function DashboardView({
     onOpen: onDomainModalOpen,
     onClose: onDomainModalClose,
   } = useDisclosure();
-  const [domainUrl, setDomainUrl] = useState('');
-  const [domainHealthCheck, setDomainHealthCheck] = useState(true);
-  const [domainInterval, setDomainInterval] = useState('hourly');
-  const [domainAlertAfter, setDomainAlertAfter] = useState(2);
-  const [domainContactGroupId, setDomainContactGroupId] = useState(
-    defaultContactGroupId || ''
-  );
-  const [addingDomain, setAddingDomain] = useState(false);
-  const [domains, setDomains] = useState([]);
-  const [domainsLoading, setDomainsLoading] = useState(false);
-  const [checkingDomain, setCheckingDomain] = useState(null);
-  const [domainListSort, setDomainListSort] = useState({
-    key: 'az',
-    direction: 'asc',
-  });
-  const [domainCheckerInput, setDomainCheckerInput] = useState('');
-  const [domainCheckerResults, setDomainCheckerResults] = useState([]);
-  const [domainCheckerSelected, setDomainCheckerSelected] = useState([]);
-  const [domainCheckerLoading, setDomainCheckerLoading] = useState(false);
-  const [domainCheckerImporting, setDomainCheckerImporting] = useState(false);
-  const [domainCheckerPartial, setDomainCheckerPartial] = useState(false);
-  const [domainCheckerTruncated, setDomainCheckerTruncated] = useState(false);
-  const [domainCheckerCapCount, setDomainCheckerCapCount] = useState(500);
-  const [domainCheckerToolErrors, setDomainCheckerToolErrors] = useState([]);
-  const [domainCheckerCreateMonitors, setDomainCheckerCreateMonitors] =
-    useState(false);
-  const [domainCheckerMonitorHealthCheck, setDomainCheckerMonitorHealthCheck] =
-    useState(false);
-  const [domainCheckerMonitorInterval, setDomainCheckerMonitorInterval] =
-    useState('hourly');
-  const [domainCheckerMonitorAlertAfter, setDomainCheckerMonitorAlertAfter] =
-    useState(2);
-  const [
-    domainCheckerMonitorContactGroupId,
-    setDomainCheckerMonitorContactGroupId,
-  ] = useState(defaultContactGroupId || '');
-  const [domainCheckerImportSection, setDomainCheckerImportSection] =
-    useState('');
-  const [domainEndpointTokenSection, setDomainEndpointTokenSection] =
-    useState('');
-  const domainCheckerImportInFlightRef = useRef(false);
-  const [domainCheckerPage, setDomainCheckerPage] = useState(0);
-  const [domainCheckerSubfinderAll, setDomainCheckerSubfinderAll] =
-    useState(false);
-  const [domainCheckerImportReport, setDomainCheckerImportReport] =
-    useState(null);
-  const [domainCheckerImportReportOpen, setDomainCheckerImportReportOpen] =
-    useState(false);
-  const DOMAIN_CHECKER_PAGE_SIZE = 50;
-  const DOMAIN_CHECKER_LOOKUP_TIMEOUT_MS = 300_000;
-  const DOMAIN_CHECKER_IMPORT_CHUNK_SIZE = 25;
-  const DOMAIN_CHECKER_IMPORT_CHUNK_TIMEOUT_MS = 300_000;
-
-  const handleDomainModalClose = () => {
-    setDomainCheckerImportReport(null);
-    setDomainCheckerImportReportOpen(false);
-    onDomainModalClose();
-  };
-
-  const normalizeDomainCheckerStringArray = value => {
-    if (Array.isArray(value)) {
-      return value.map(item => String(item || '').trim()).filter(Boolean);
-    }
-    if (typeof value === 'string') {
-      return value
-        .split(',')
-        .map(item => item.trim())
-        .filter(Boolean);
-    }
-    return [];
-  };
-
-  const normalizeDomainCheckerItems = value => {
-    const rawItems = Array.isArray(value) ? value : [];
-    const seen = new Set();
-    return rawItems
-      .map((item, index) => {
-        const record = item && typeof item === 'object' ? item : { name: item };
-        const domains = normalizeDomainCheckerStringArray(
-          record.domains || record.domain || record.hostname || record.name
-        );
-        const name = String(
-          record.name ||
-            record.hostname ||
-            record.commonName ||
-            domains[0] ||
-            ''
-        ).trim();
-        if (!name) return null;
-        const id = String(record.id || `disc-${name}-${index}`);
-        const key = id || name;
-        if (seen.has(key)) return null;
-        seen.add(key);
-        return {
-          ...record,
-          id,
-          name,
-          domains: domains.length ? domains : [name],
-          sources: normalizeDomainCheckerStringArray(
-            record.sources || record.source
-          ),
-          checked: record.checked !== false,
-        };
-      })
-      .filter(Boolean);
-  };
-
-  const normalizeDomainCheckerToolErrors = value =>
-    (Array.isArray(value) ? value : [])
-      .map(error => {
-        if (typeof error === 'string') return { tool: error };
-        if (!error || typeof error !== 'object') return null;
-        return {
-          tool: String(error.tool || error.code || '').trim(),
-          message: String(error.message || '').trim(),
-        };
-      })
-      .filter(error => error && (error.tool || error.message));
-
-  const { workspaceId: ctxWorkspaceId } = useWorkspace();
-
-  // Load domains when modal opens, with up to 3 retries for transient errors (503, 502, etc.)
-  const loadDomains = useCallback(async () => {
-    if (!ctxWorkspaceId) return;
-    setDomainsLoading(true);
-    const maxAttempts = 3;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      try {
-        const res = await apiClient.get(
-          `/api/v1/workspaces/${ctxWorkspaceId}/domains`
-        );
-        setDomains(res.data?.items || []);
-        setDomainsLoading(false);
-        return;
-      } catch (e) {
-        const status = e?.response?.status;
-        const isTransient = !status || status >= 500 || status === 429;
-        if (attempt < maxAttempts - 1 && isTransient) {
-          await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
-          continue;
-        }
-        logger.error('Failed to load endpoint monitors', e);
-      }
-    }
-    setDomainsLoading(false);
-  }, [ctxWorkspaceId]);
-
-  const visibleDomains = useMemo(() => {
-    const healthOf = item => String(item?.last_health_status || 'pending');
-    const intervalOrder = {
-      '1min': 0,
-      '5min': 1,
-      '15min': 2,
-      hourly: 3,
-      daily: 4,
-    };
-    const healthOrder = {
-      healthy: 0,
-      warning: 1,
-      error: 2,
-      pending: 3,
-    };
-    const expirationTs = item => {
-      const raw = item?.ssl_valid_to || item?.ssl_expires_at || null;
-      if (!raw) return Number.POSITIVE_INFINITY;
-      const ts = new Date(raw).getTime();
-      return Number.isFinite(ts) ? ts : Number.POSITIVE_INFINITY;
-    };
-
-    const copy = [...domains];
-
-    copy.sort((a, b) => {
-      let result;
-      switch (domainListSort.key) {
-        case 'expiration':
-          result =
-            expirationTs(a) - expirationTs(b) ||
-            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
-          break;
-        case 'interval':
-          result =
-            (intervalOrder[String(a?.check_interval || '')] ?? 999) -
-              (intervalOrder[String(b?.check_interval || '')] ?? 999) ||
-            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
-          break;
-        case 'health':
-          result =
-            (healthOrder[healthOf(a)] ?? 999) -
-              (healthOrder[healthOf(b)] ?? 999) ||
-            domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
-          break;
-        case 'az':
-        default:
-          result = domainFormatUrl(a.url).localeCompare(domainFormatUrl(b.url));
-          break;
-      }
-      return domainListSort.direction === 'desc' ? -result : result;
-    });
-
-    return copy;
-  }, [domains, domainListSort]);
-
-  const handleDomainListSort = key => {
-    setDomainListSort(current => ({
-      key,
-      direction:
-        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
-    }));
-  };
-
-  const renderDomainSortArrow = key => (
-    <Text fontSize='xs' opacity={domainListSort.key === key ? 1 : 0.3}>
-      {domainListSort.key === key && domainListSort.direction === 'desc'
-        ? '↓'
-        : '↑'}
-    </Text>
-  );
-
-  useEffect(() => {
-    if (isDomainModalOpen && ctxWorkspaceId) loadDomains();
-  }, [isDomainModalOpen, ctxWorkspaceId, loadDomains]);
-
-  const handleAddDomain = async () => {
-    if (!domainUrl.trim() || !ctxWorkspaceId) return;
-    setAddingDomain(true);
-    try {
-      const endpointBody = {
-        url: domainUrl.trim(),
-        health_check_enabled: domainHealthCheck,
-        check_interval: domainInterval,
-        alert_after_failures: domainAlertAfter,
-        contact_group_id: domainContactGroupId || null,
-      };
-      if (domainEndpointTokenSection.trim()) {
-        endpointBody.section = domainEndpointTokenSection.trim();
-      }
-      await apiClient.post(
-        `/api/v1/workspaces/${ctxWorkspaceId}/domains`,
-        endpointBody
-      );
-      showSuccessMessage('Endpoint added! SSL certificate tracked.');
-      setDomainUrl('');
-      setDomainHealthCheck(true);
-      setDomainInterval('hourly');
-      setDomainAlertAfter(2);
-      setDomainContactGroupId(defaultContactGroupId || '');
-      setDomainEndpointTokenSection('');
-      loadDomains();
-      try {
-        window.dispatchEvent(new CustomEvent('tt:tokens-imported'));
-        window.dispatchEvent(
-          new CustomEvent('tt:tokens-updated', { detail: { t: Date.now() } })
-        );
-      } catch (_) {}
-      try {
-        await Promise.all(
-          TOKEN_CATEGORIES.map(cat =>
-            fetchTokensForCategoryReset(cat.value, {
-              workspaceId: ctxWorkspaceId,
-            })
-          )
-        );
-      } catch (err) {
-        logger.error('Token list refresh after endpoint add failed', err);
-      }
-      try {
-        const section =
-          (panelQueries && panelQueries.__section) ||
-          new URLSearchParams(window.location.search).get('section') ||
-          '__all__';
-        await fetchGlobalFacets?.({ workspaceId: ctxWorkspaceId, section });
-      } catch (_) {}
-    } catch (e) {
-      const msg = e?.response?.data?.error || 'Failed to add endpoint';
-      logger.error('Endpoint add failed:', msg);
-      toast.error(msg);
-    } finally {
-      setAddingDomain(false);
-    }
-  };
-
-  const handleDeleteDomain = async domainId => {
-    try {
-      await apiClient.delete(
-        `/api/v1/workspaces/${ctxWorkspaceId}/domains/${domainId}`
-      );
-      showSuccessMessage('Endpoint monitor deleted');
-      loadDomains();
-      window.dispatchEvent(new CustomEvent('tt:tokens-updated'));
-    } catch (e) {
-      toast.error(
-        e?.response?.data?.error || 'Failed to delete endpoint monitor'
-      );
-    }
-  };
-
-  const handleCheckDomain = async (domainId, event) => {
-    event?.preventDefault?.();
-    event?.currentTarget?.blur?.();
-    const modalBody = document.querySelector(
-      '[data-endpoint-ssl-modal-body="true"]'
-    );
-    const previousScrollTop = modalBody?.scrollTop;
-    try {
-      setCheckingDomain(domainId);
-      const res = await apiClient.post(
-        `/api/v1/workspaces/${ctxWorkspaceId}/domains/${domainId}/check`
-      );
-      const { data } = res;
-      if (data.status === 'healthy') {
-        showSuccessMessage(`Healthy (${data.responseMs}ms)`);
-      } else {
-        toast.error(
-          `${data.status}: ${data.error || 'Unknown error'} (${data.responseMs}ms)`
-        );
-      }
-      await loadDomains();
-      if (modalBody && typeof previousScrollTop === 'number') {
-        window.requestAnimationFrame(() => {
-          modalBody.scrollTop = previousScrollTop;
-        });
-      }
-    } catch (e) {
-      toast.error(e?.response?.data?.error || 'Health check failed');
-    } finally {
-      setCheckingDomain(null);
-    }
-  };
-
-  const handleDomainCheckerLookup = async () => {
-    if (!domainCheckerInput.trim() || !ctxWorkspaceId) return;
-    setDomainCheckerLoading(true);
-    setDomainCheckerTruncated(false);
-    setDomainCheckerImportReport(null);
-    setDomainCheckerImportReportOpen(false);
-    const lookupUrl = `/api/v1/workspaces/${ctxWorkspaceId}/domain-checker/lookup`;
-    const lookupBody = {
-      domain: domainCheckerInput.trim(),
-      subfinder_all: domainCheckerSubfinderAll,
-    };
-    const lookupReqOpts = { timeout: DOMAIN_CHECKER_LOOKUP_TIMEOUT_MS };
-    const lookupMaxAttempts = 3;
-    const lookupRetriable = e => {
-      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError')
-        return false;
-      const status = e?.response?.status;
-      if (status == null) {
-        const c = e?.code;
-        return (
-          c === 'ECONNABORTED' ||
-          c === 'ERR_NETWORK' ||
-          c === 'ETIMEDOUT' ||
-          c === 'ECONNRESET' ||
-          (!e?.response && c !== 'ERR_BAD_REQUEST')
-        );
-      }
-      return status >= 500 && status < 600;
-    };
-    try {
-      let res;
-      for (let attempt = 0; attempt < lookupMaxAttempts; attempt += 1) {
-        try {
-          res = await apiClient.post(lookupUrl, lookupBody, lookupReqOpts);
-          break;
-        } catch (e) {
-          const last = attempt === lookupMaxAttempts - 1;
-          if (last || !lookupRetriable(e)) throw e;
-          toast('Discovery is slow or the connection dropped. Retrying…', {
-            icon: '⏳',
-          });
-          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-        }
-      }
-      const items = normalizeDomainCheckerItems(res.data?.items);
-      const cap = Number(res.data?.meta?.maxResults);
-      const capN = Number.isFinite(cap) && cap > 0 ? cap : 500;
-      setDomainCheckerCapCount(capN);
-      setDomainCheckerTruncated(Boolean(res.data?.meta?.truncated));
-      setDomainCheckerResults(items);
-      setDomainCheckerPartial(Boolean(res.data?.partial));
-      setDomainCheckerToolErrors(
-        normalizeDomainCheckerToolErrors(res.data?.toolErrors)
-      );
-      if (items.length === 0) {
-        toast.error('No subdomains found for this domain.');
-      } else {
-        showSuccessMessage(
-          `Found ${items.length} subdomain${items.length === 1 ? '' : 's'}.`
-        );
-      }
-    } catch (e) {
-      setDomainCheckerTruncated(false);
-      const code = e?.response?.data?.code;
-      const retryAfter = e?.response?.data?.retry_after_seconds;
-      const base =
-        code === 'DOMAIN_CHECKER_RATE_LIMITED' && Number.isFinite(retryAfter)
-          ? `Rate limited. Try again in about ${retryAfter}s.`
-          : e?.response?.data?.error;
-      toast.error(
-        base ||
-          'Domain checker lookup failed. Discovery tools may be slow or unavailable.'
-      );
-    } finally {
-      setDomainCheckerLoading(false);
-    }
-  };
-
-  const toggleDomainCheckerResult = id => {
-    setDomainCheckerSelected(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
-
-  const domainCheckerVisibleResults = useMemo(() => {
-    return Array.isArray(domainCheckerResults)
-      ? domainCheckerResults.filter(Boolean)
-      : [];
-  }, [domainCheckerResults]);
-
-  const domainCheckerPageItems = useMemo(
-    () =>
-      domainCheckerVisibleResults.slice(
-        domainCheckerPage * DOMAIN_CHECKER_PAGE_SIZE,
-        (domainCheckerPage + 1) * DOMAIN_CHECKER_PAGE_SIZE
-      ),
-    [domainCheckerPage, domainCheckerVisibleResults]
-  );
-
-  const domainCheckerSelectedSet = useMemo(
-    () => new Set(domainCheckerSelected),
-    [domainCheckerSelected]
-  );
-
-  const domainCheckerSelectAllVisibleState = useMemo(() => {
-    const ids = domainCheckerVisibleResults.map(c => c?.id).filter(Boolean);
-    if (ids.length === 0) return { checked: false, indeterminate: false };
-    let n = 0;
-    for (const id of ids) {
-      if (domainCheckerSelectedSet.has(id)) n += 1;
-    }
-    return {
-      checked: n === ids.length,
-      indeterminate: n > 0 && n < ids.length,
-    };
-  }, [domainCheckerVisibleResults, domainCheckerSelectedSet]);
-
-  const toggleDomainCheckerSelectAllVisible = useCallback(() => {
-    const ids = domainCheckerVisibleResults.map(c => c?.id).filter(Boolean);
-    if (ids.length === 0) return;
-    const allOn = ids.every(id => domainCheckerSelectedSet.has(id));
-    if (allOn) {
-      const drop = new Set(ids);
-      setDomainCheckerSelected(prev => prev.filter(id => !drop.has(id)));
-    } else {
-      setDomainCheckerSelected(prev => Array.from(new Set([...prev, ...ids])));
-    }
-  }, [domainCheckerVisibleResults, domainCheckerSelectedSet]);
-
-  const prevDomainCheckerResultsRef = useRef(null);
-  useEffect(() => {
-    const isNewLookup =
-      domainCheckerResults !== prevDomainCheckerResultsRef.current;
-    prevDomainCheckerResultsRef.current = domainCheckerResults;
-    if (isNewLookup) {
-      setDomainCheckerSelected(
-        domainCheckerVisibleResults
-          .filter(c => c?.checked && c?.id)
-          .map(c => c.id)
-      );
-    } else {
-      const visibleIds = new Set(
-        domainCheckerVisibleResults.map(c => c.id).filter(Boolean)
-      );
-      setDomainCheckerSelected(prev => prev.filter(id => visibleIds.has(id)));
-    }
-    setDomainCheckerPage(0);
-  }, [domainCheckerVisibleResults, domainCheckerResults]);
-
-  const handleDomainCheckerImport = async () => {
-    if (!ctxWorkspaceId || domainCheckerSelectedSet.size === 0) return;
-    if (domainCheckerImportInFlightRef.current) return;
-    domainCheckerImportInFlightRef.current = true;
-    const selected = domainCheckerVisibleResults.filter(item =>
-      domainCheckerSelectedSet.has(item.id)
-    );
-    setDomainCheckerImporting(true);
-    setDomainCheckerImportReport(null);
-    setDomainCheckerImportReportOpen(false);
-    try {
-      const peelDomainCheckerSelectionAfterImport = (
-        importedList,
-        skippedList
-      ) => {
-        const drop = new Set();
-        for (const row of importedList || []) {
-          const cid = row && (row.certificateId || row.certificate_id);
-          if (cid) drop.add(String(cid));
-        }
-        for (const row of skippedList || []) {
-          if (row && row.reason === 'duplicate' && row.id)
-            drop.add(String(row.id));
-        }
-        if (drop.size === 0) return;
-        setDomainCheckerSelected(prev =>
-          prev.filter(id => !drop.has(String(id)))
-        );
-      };
-
-      const payloadBase = {
-        domain: domainCheckerInput.trim(),
-        monitorOptions: {
-          enabled: domainCheckerCreateMonitors,
-          health_check_enabled: domainCheckerMonitorHealthCheck,
-          check_interval: domainCheckerMonitorInterval,
-          alert_after_failures: domainCheckerMonitorAlertAfter,
-          contact_group_id: domainCheckerMonitorContactGroupId || null,
-        },
-      };
-      if (domainCheckerImportSection.trim()) {
-        payloadBase.tokenOptions = {
-          section: domainCheckerImportSection.trim(),
-        };
-      }
-
-      const mergedImported = [];
-      const mergedSkipped = [];
-      let monitorsCreated = 0;
-      let monitorsExisting = 0;
-      let chunkError = null;
-      let hadNoResponseChunk = false;
-
-      for (
-        let i = 0;
-        i < selected.length;
-        i += DOMAIN_CHECKER_IMPORT_CHUNK_SIZE
-      ) {
-        const chunk = selected.slice(i, i + DOMAIN_CHECKER_IMPORT_CHUNK_SIZE);
-        try {
-          const res = await apiClient.post(
-            `/api/v1/workspaces/${ctxWorkspaceId}/domain-checker/import`,
-            { ...payloadBase, certificates: chunk },
-            { timeout: DOMAIN_CHECKER_IMPORT_CHUNK_TIMEOUT_MS }
-          );
-          mergedImported.push(
-            ...(Array.isArray(res.data?.imported)
-              ? res.data.imported
-              : []
-            ).filter(Boolean)
-          );
-          mergedSkipped.push(
-            ...(Array.isArray(res.data?.skipped)
-              ? res.data.skipped
-              : []
-            ).filter(Boolean)
-          );
-          monitorsCreated += res.data?.monitors?.created || 0;
-          monitorsExisting += res.data?.monitors?.existing || 0;
-        } catch (e) {
-          if (!e?.response) {
-            // Continue with remaining chunks; backend may still commit this interrupted chunk.
-            hadNoResponseChunk = true;
-            chunkError = e;
-            continue;
-          }
-          chunkError = e;
-          break;
-        }
-      }
-
-      const refreshAfterDomainCheckerImport = async () => {
-        try {
-          window.dispatchEvent(new CustomEvent('tt:tokens-imported'));
-          window.dispatchEvent(
-            new CustomEvent('tt:tokens-updated', { detail: { t: Date.now() } })
-          );
-        } catch (_) {}
-        try {
-          await Promise.all(
-            TOKEN_CATEGORIES.map(cat =>
-              fetchTokensForCategoryReset(cat.value, {
-                workspaceId: ctxWorkspaceId,
-              })
-            )
-          );
-        } catch (err) {
-          logger.error(
-            'Token list refresh after domain checker import failed',
-            err
-          );
-        }
-        try {
-          const section =
-            (panelQueries && panelQueries.__section) ||
-            new URLSearchParams(window.location.search).get('section') ||
-            '__all__';
-          await fetchGlobalFacets?.({ workspaceId: ctxWorkspaceId, section });
-        } catch (_) {}
-        try {
-          await loadDomains();
-        } catch (_) {}
-      };
-
-      const applyImportReport = (imported, skippedList, options = {}) => {
-        const safeSkipped = skippedList.filter(Boolean);
-        const dnsUnreachableDetails = new Set([
-          'live_certificate_dns_unresolved',
-          'live_certificate_dns_temporary',
-        ]);
-        const unreachable = safeSkipped.filter(
-          s =>
-            s.reason === 'invalid_certificate' &&
-            dnsUnreachableDetails.has(s.detail)
-        ).length;
-        const errorLike = safeSkipped.length - unreachable;
-        const logLines = safeSkipped.map(s => {
-          const label =
-            (typeof s.subject === 'string' && s.subject.trim()) ||
-            (Array.isArray(s.domains) && s.domains[0]) ||
-            (typeof s.name === 'string' && s.name) ||
-            s.id ||
-            'host';
-          const reason = s.reason || 'unknown';
-          const detail = s.detail ? ` — ${s.detail}` : '';
-          return `${label}: ${reason}${detail}`;
-        });
-        setDomainCheckerImportReport({
-          unreachable,
-          errorLike,
-          imported,
-          importedLowerBound: Boolean(options.importedLowerBound),
-          logLines,
-        });
-        setDomainCheckerImportReportOpen(false);
-      };
-
-      if (chunkError && !hadNoResponseChunk) {
-        await refreshAfterDomainCheckerImport();
-        if (mergedImported.length || mergedSkipped.length) {
-          peelDomainCheckerSelectionAfterImport(mergedImported, mergedSkipped);
-          applyImportReport(mergedImported.length, mergedSkipped, {
-            importedLowerBound: false,
-          });
-          toast.error(
-            chunkError?.response?.data?.error || 'Failed to import certificates'
-          );
-        } else {
-          setDomainCheckerImportReport(null);
-          toast.error(
-            chunkError?.response?.data?.error || 'Failed to import certificates'
-          );
-        }
-      } else {
-        const importedList = mergedImported;
-        const skippedList = mergedSkipped;
-        const imported = importedList.length;
-
-        let summary = `Imported ${imported} SSL token${imported === 1 ? '' : 's'}`;
-        if (monitorsCreated || monitorsExisting) {
-          const monitorParts = [];
-          if (monitorsCreated)
-            monitorParts.push(
-              `${monitorsCreated} new monitor${monitorsCreated === 1 ? '' : 's'}`
-            );
-          if (monitorsExisting)
-            monitorParts.push(`${monitorsExisting} already existed`);
-          summary += ` (${monitorParts.join(', ')})`;
-        }
-        summary += '.';
-        peelDomainCheckerSelectionAfterImport(importedList, skippedList);
-        showSuccessMessage(summary);
-
-        applyImportReport(imported, skippedList, {
-          importedLowerBound: hadNoResponseChunk,
-        });
-        if (!hadNoResponseChunk) {
-          setDomainCheckerResults([]);
-          setDomainCheckerSelected([]);
-          setDomainCheckerPage(0);
-          setDomainCheckerPartial(false);
-          setDomainCheckerTruncated(false);
-          setDomainCheckerToolErrors([]);
-          setDomainCheckerInput('');
-          setDomainListSort({ key: 'az', direction: 'asc' });
-          await refreshAfterDomainCheckerImport();
-          window.requestAnimationFrame(() => {
-            const modalBody = document.querySelector(
-              '[data-endpoint-ssl-modal-body="true"]'
-            );
-            modalBody?.scrollTo({ top: 0, behavior: 'smooth' });
-          });
-        } else {
-          await refreshAfterDomainCheckerImport();
-        }
-        if (hadNoResponseChunk) {
-          toast.error(
-            `One or more import batches lost the response before completion. At least ${imported} token(s) are confirmed from completed batches; additional tokens may have been imported in interrupted batches. Refresh the list to verify the final total.`
-          );
-        }
-      }
-    } catch (e) {
-      setDomainCheckerImportReport(null);
-      const noResponse = !e?.response;
-      toast.error(
-        noResponse
-          ? 'Connection closed before the response finished. Some tokens may already be imported; refresh the list before retrying.'
-          : e?.response?.data?.error || 'Failed to import certificates'
-      );
-    } finally {
-      domainCheckerImportInFlightRef.current = false;
-      setDomainCheckerImporting(false);
-    }
-  };
-
   // Form collapse state - collapsed by default for cleaner UI
   const [isFormExpanded, setIsFormExpanded] = useState(false);
 
@@ -3995,22 +3496,24 @@ function DashboardView({
     }
 
     try {
-      const updates = await Promise.allSettled(
-        tokenIds.map(id =>
-          apiClient.put(API_ENDPOINTS.UPDATE_TOKEN(id), { section: [draft] })
-        )
-      );
-      const successIds = [];
-      let failedCount = 0;
-      updates.forEach((result, index) => {
-        if (result.status === 'fulfilled') successIds.push(tokenIds[index]);
-        else failedCount += 1;
+      const res = await apiClient.put('/api/tokens/bulk', {
+        ids: tokenIds,
+        section: [draft],
       });
+      const data = res.data || {};
+      const successIds = Array.isArray(data.results?.success)
+        ? data.results.success
+        : [];
+      const failedCount =
+        typeof data.failedCount === 'number'
+          ? data.failedCount
+          : Math.max(tokenIds.length - successIds.length, 0);
 
       if (successIds.length > 0) {
-        safeSetTokens(prev =>
+        const successSet = new Set(successIds.map(id => String(id)));
+        _setTokens(prev =>
           prev.map(token =>
-            successIds.includes(token.id)
+            successSet.has(String(token.id))
               ? { ...token, section: [draft] }
               : token
           )
@@ -4029,7 +3532,9 @@ function DashboardView({
       }
     } catch (error) {
       logger.error('Bulk section assignment failed', error);
-      toast.error('Failed to assign section');
+      toast.error(
+        error?.response?.data?.error || 'Failed to assign section'
+      );
     }
   };
 
@@ -4681,19 +4186,7 @@ function DashboardView({
                       <FormLabel htmlFor='contacts'>
                         Contacts (Key custodian)
                       </FormLabel>
-                      <Input
-                        type='text'
-                        id='contacts'
-                        name='contacts'
-                        value={formData.contacts}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Who manages this certificate?'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={200}
-                        list='workspace-contacts-suggestions'
-                      />
+                      {renderContactTagInput('Who manages this certificate?')}
                     </FormControl>
                   </SimpleGrid>
                 )}
@@ -4840,19 +4333,7 @@ function DashboardView({
                       <FormLabel htmlFor='contacts'>
                         Contacts (Key custodian)
                       </FormLabel>
-                      <Input
-                        type='text'
-                        id='contacts'
-                        name='contacts'
-                        value={formData.contacts}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Who manages this key/secret?'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={200}
-                        list='workspace-contacts-suggestions'
-                      />
+                      {renderContactTagInput('Who manages this key/secret?')}
                     </FormControl>
                   </SimpleGrid>
                 )}
@@ -4947,19 +4428,7 @@ function DashboardView({
 
                     <FormControl>
                       <FormLabel htmlFor='contacts'>Contacts</FormLabel>
-                      <Input
-                        type='text'
-                        id='contacts'
-                        name='contacts'
-                        value={formData.contacts}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Who owns this renewal?'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={200}
-                        list='workspace-contacts-suggestions'
-                      />
+                      {renderContactTagInput('Who owns this renewal?')}
                     </FormControl>
                   </SimpleGrid>
                 )}
@@ -5040,19 +4509,7 @@ function DashboardView({
 
                     <FormControl>
                       <FormLabel htmlFor='contacts'>Contacts</FormLabel>
-                      <Input
-                        type='text'
-                        id='contacts'
-                        name='contacts'
-                        value={formData.contacts}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Who manages this item?'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={200}
-                        list='workspace-contacts-suggestions'
-                      />
+                      {renderContactTagInput('Who manages this item?')}
                     </FormControl>
                   </SimpleGrid>
                 )}
@@ -5062,32 +4519,33 @@ function DashboardView({
                   {(Array.isArray(workspaceContacts)
                     ? workspaceContacts
                     : []
-                  ).map(c => {
-                    const name = [c.first_name, c.last_name]
-                      .filter(Boolean)
-                      .join(' ')
-                      .trim();
-                    const phone = (c.phone_e164 || '').trim();
-                    const parts = [name, phone].filter(Boolean);
-                    const label = parts.join(' - ');
-                    return <option key={c.id} value={label} />;
-                  })}
+                  )
+                    .map(c => {
+                      const name = [c.first_name, c.last_name]
+                        .filter(Boolean)
+                        .join(' ')
+                        .trim();
+                      const phone = (c.phone_e164 || '').trim();
+                      const parts = [name, phone].filter(Boolean);
+                      const label = parts.join(' - ');
+                      return { c, label };
+                    })
+                    .filter(({ label }) => label && !selectedContactLabels.has(label))
+                    .map(({ c, label }) => (
+                      <option key={c.id} value={label} />
+                    ))}
                 </datalist>
 
                 {/* Notes field for all categories */}
                 <FormControl mt={6}>
                   <FormLabel htmlFor='notes'>Notes</FormLabel>
-                  <Input
-                    type='text'
-                    id='notes'
-                    name='notes'
-                    value={formData.notes}
-                    onChange={onInputChange}
-                    bg={inputBg}
-                    borderColor={inputBorder}
-                    placeholder='Additional information'
-                    _placeholder={{ color: placeholderColor }}
-                    maxLength={500}
+                  <CreateTokenNotesField
+                    parentNotes={formData.notes}
+                    onCommitNotes={commitCreateNotes}
+                    submitFlushRef={createTokenNotesFlushRef}
+                    inputBg={inputBg}
+                    inputBorder={inputBorder}
+                    placeholderColor={placeholderColor}
                   />
                 </FormControl>
 
@@ -6285,866 +5743,16 @@ function DashboardView({
 
       {/* Global load more removed in favor of per-category controls */}
 
-      {/* Endpoint & SSL monitoring modal: single-URL health checks + Domain Checker SSL discovery */}
-      <Modal
+      <EndpointSslMonitorModal
         isOpen={isDomainModalOpen}
-        onClose={handleDomainModalClose}
-        size='xl'
-      >
-        <ModalOverlay />
-        <ModalContent maxW='1100px'>
-          <ModalHeader>Endpoint & SSL monitoring</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody data-endpoint-ssl-modal-body='true'>
-            <VStack spacing={5} align='stretch'>
-              <Text fontSize='sm' color={helpTextColor}>
-                Monitor SSL certificates and endpoint health for your URLs.
-                Tokens are auto-created for each SSL certificate detected.
-              </Text>
-
-              {domainCheckerImportReport && (
-                <Box
-                  p={3}
-                  borderRadius='md'
-                  borderWidth='1px'
-                  borderColor={domainBorderColor}
-                  fontSize='sm'
-                >
-                  <HStack justify='space-between' align='start' spacing={3}>
-                    <Box>
-                      <Text fontWeight='semibold'>Last import summary</Text>
-                      <Text color={helpTextColor}>
-                        {domainCheckerImportReport.importedLowerBound
-                          ? 'At least '
-                          : ''}
-                        {domainCheckerImportReport.imported} SSL token
-                        {domainCheckerImportReport.imported === 1
-                          ? ''
-                          : 's'}{' '}
-                        {domainCheckerImportReport.importedLowerBound
-                          ? 'confirmed in completed responses'
-                          : 'created'}
-                        , {domainCheckerImportReport.errorLike} skipped,{' '}
-                        {domainCheckerImportReport.unreachable} unreachable.
-                      </Text>
-                    </Box>
-                    <Button
-                      size='xs'
-                      variant='ghost'
-                      onClick={() => {
-                        setDomainCheckerImportReport(null);
-                        setDomainCheckerImportReportOpen(false);
-                      }}
-                    >
-                      Dismiss
-                    </Button>
-                  </HStack>
-                  {domainCheckerImportReport.logLines.length > 0 && (
-                    <>
-                      <Button
-                        variant='link'
-                        size='xs'
-                        mt={1}
-                        rightIcon={
-                          domainCheckerImportReportOpen ? (
-                            <FiChevronUp />
-                          ) : (
-                            <FiChevronDown />
-                          )
-                        }
-                        onClick={() =>
-                          setDomainCheckerImportReportOpen(o => !o)
-                        }
-                      >
-                        {domainCheckerImportReportOpen
-                          ? 'Show less'
-                          : 'Show more'}
-                      </Button>
-                      <Collapse
-                        in={domainCheckerImportReportOpen}
-                        animateOpacity
-                      >
-                        <Box
-                          as='pre'
-                          mt={2}
-                          p={2}
-                          borderRadius='md'
-                          bg='blackAlpha.50'
-                          _dark={{ bg: 'whiteAlpha.100' }}
-                          fontSize='xs'
-                          whiteSpace='pre-wrap'
-                          wordBreak='break-word'
-                          maxH='220px'
-                          overflowY='auto'
-                        >
-                          {domainCheckerImportReport.logLines.join('\n')}
-                        </Box>
-                      </Collapse>
-                    </>
-                  )}
-                </Box>
-              )}
-
-              {/* Existing domains list */}
-              {domainsLoading ? (
-                <Text fontSize='sm' color={helpTextColor}>
-                  Loading endpoints...
-                </Text>
-              ) : domains.length === 0 ? (
-                <Alert status='info' borderRadius='md' size='sm'>
-                  <AlertIcon />
-                  <AlertDescription fontSize='sm'>
-                    No endpoints monitored yet. Add one below to start tracking
-                    SSL certificates and endpoint health.
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <>
-                  {visibleDomains.length === 0 ? (
-                    <Alert status='info' borderRadius='md' size='sm'>
-                      <AlertIcon />
-                      <AlertDescription fontSize='sm'>
-                        No endpoints match your current filters.
-                      </AlertDescription>
-                    </Alert>
-                  ) : (
-                    <>
-                      {/* Mobile: Card list */}
-                      <Box display={{ base: 'block', md: 'none' }}>
-                        <VStack align='stretch' spacing={3}>
-                          {visibleDomains.map(d => (
-                            <Box
-                              key={d.id}
-                              p={4}
-                              bg={mobileCardBg}
-                              border='1px solid'
-                              borderColor={domainBorderColor}
-                              borderRadius='md'
-                            >
-                              <HStack
-                                justify='space-between'
-                                align='start'
-                                mb={2}
-                              >
-                                <Box flex='1' minW='0'>
-                                  <HStack spacing={1}>
-                                    <Text
-                                      fontWeight='semibold'
-                                      fontSize='sm'
-                                      wordBreak='break-all'
-                                    >
-                                      {domainFormatUrl(d.url)}
-                                    </Text>
-                                    <IconButton
-                                      as='a'
-                                      href={d.url}
-                                      target='_blank'
-                                      rel='noopener'
-                                      size='xs'
-                                      variant='ghost'
-                                      icon={<FiExternalLink />}
-                                      aria-label='Open'
-                                    />
-                                  </HStack>
-                                  {d.ssl_issuer && (
-                                    <Text fontSize='xs' color={helpTextColor}>
-                                      Issuer: {d.ssl_issuer}
-                                    </Text>
-                                  )}
-                                </Box>
-                                <HStack spacing={1}>
-                                  <IconButton
-                                    size='xs'
-                                    icon={<FiRefreshCw />}
-                                    aria-label='Check now'
-                                    onClick={event =>
-                                      handleCheckDomain(d.id, event)
-                                    }
-                                    isLoading={checkingDomain === d.id}
-                                  />
-                                  <IconButton
-                                    size='xs'
-                                    icon={<FiTrash2 />}
-                                    aria-label='Delete'
-                                    colorScheme='red'
-                                    variant='ghost'
-                                    onClick={() => handleDeleteDomain(d.id)}
-                                  />
-                                </HStack>
-                              </HStack>
-                              <HStack spacing={2} flexWrap='wrap' mb={2}>
-                                {domainSslBadge(d)}
-                                {d.last_health_status ? (
-                                  <Badge
-                                    colorScheme={domainStatusColor(
-                                      d.last_health_status
-                                    )}
-                                  >
-                                    {d.last_health_status}
-                                  </Badge>
-                                ) : (
-                                  <Badge colorScheme='gray'>Pending</Badge>
-                                )}
-                                <Badge variant='outline'>
-                                  {d.check_interval}
-                                </Badge>
-                                <Badge variant='outline' colorScheme='orange'>
-                                  {d.alert_after_failures || 2}x
-                                </Badge>
-                              </HStack>
-                              <HStack
-                                spacing={4}
-                                fontSize='xs'
-                                color={helpTextColor}
-                              >
-                                {d.last_health_response_ms != null && (
-                                  <Text>{d.last_health_response_ms}ms</Text>
-                                )}
-                                {d.last_health_check_at && (
-                                  <Text>
-                                    {new Date(
-                                      d.last_health_check_at
-                                    ).toLocaleString()}
-                                  </Text>
-                                )}
-                              </HStack>
-                            </Box>
-                          ))}
-                        </VStack>
-                      </Box>
-
-                      {/* Desktop: Table */}
-                      <Box
-                        display={{ base: 'none', md: 'block' }}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={domainBorderColor}
-                        overflow='auto'
-                      >
-                        <Table size='sm' variant='simple' tableLayout='fixed'>
-                          <Thead>
-                            <Tr>
-                              <Th
-                                w='28%'
-                                cursor='pointer'
-                                userSelect='none'
-                                onClick={() => handleDomainListSort('az')}
-                              >
-                                <HStack spacing={1} justify='space-between'>
-                                  <Text>Endpoint</Text>
-                                  {renderDomainSortArrow('az')}
-                                </HStack>
-                              </Th>
-                              <Th
-                                whiteSpace='nowrap'
-                                cursor='pointer'
-                                userSelect='none'
-                                onClick={() =>
-                                  handleDomainListSort('expiration')
-                                }
-                              >
-                                <HStack spacing={1} justify='space-between'>
-                                  <Text>SSL</Text>
-                                  {renderDomainSortArrow('expiration')}
-                                </HStack>
-                              </Th>
-                              <Th
-                                whiteSpace='nowrap'
-                                cursor='pointer'
-                                userSelect='none'
-                                onClick={() => handleDomainListSort('health')}
-                              >
-                                <HStack spacing={1} justify='space-between'>
-                                  <Text>Health</Text>
-                                  {renderDomainSortArrow('health')}
-                                </HStack>
-                              </Th>
-                              <Th whiteSpace='nowrap'>Response</Th>
-                              <Th whiteSpace='nowrap'>Last Check</Th>
-                              <Th
-                                whiteSpace='nowrap'
-                                cursor='pointer'
-                                userSelect='none'
-                                onClick={() => handleDomainListSort('interval')}
-                              >
-                                <HStack spacing={1} justify='space-between'>
-                                  <Text>Interval</Text>
-                                  {renderDomainSortArrow('interval')}
-                                </HStack>
-                              </Th>
-                              <Th whiteSpace='nowrap'>Alert after</Th>
-                              <Th
-                                textAlign='right'
-                                whiteSpace='nowrap'
-                                width='92px'
-                              ></Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {visibleDomains.map(d => (
-                              <Tr key={d.id}>
-                                <Td maxW='0'>
-                                  <HStack spacing={1} minW='0'>
-                                    <Text
-                                      fontWeight='medium'
-                                      fontSize='sm'
-                                      whiteSpace='normal'
-                                      wordBreak='break-all'
-                                      overflowWrap='anywhere'
-                                      flex='1'
-                                      minW='0'
-                                    >
-                                      {domainFormatUrl(d.url)}
-                                    </Text>
-                                    <Tooltip label='Open in browser'>
-                                      <IconButton
-                                        as='a'
-                                        href={d.url}
-                                        target='_blank'
-                                        rel='noopener'
-                                        size='xs'
-                                        variant='ghost'
-                                        icon={<FiExternalLink />}
-                                        aria-label='Open'
-                                      />
-                                    </Tooltip>
-                                  </HStack>
-                                  {d.ssl_issuer && (
-                                    <Text fontSize='2xs' color={helpTextColor}>
-                                      Issuer: {d.ssl_issuer}
-                                    </Text>
-                                  )}
-                                </Td>
-                                <Td whiteSpace='nowrap'>{domainSslBadge(d)}</Td>
-                                <Td whiteSpace='nowrap'>
-                                  {d.last_health_status ? (
-                                    <Tooltip
-                                      label={
-                                        d.last_health_error ||
-                                        `HTTP ${d.last_health_status_code}`
-                                      }
-                                    >
-                                      <Badge
-                                        colorScheme={domainStatusColor(
-                                          d.last_health_status
-                                        )}
-                                      >
-                                        {d.last_health_status}
-                                      </Badge>
-                                    </Tooltip>
-                                  ) : (
-                                    <Badge colorScheme='gray'>Pending</Badge>
-                                  )}
-                                </Td>
-                                <Td fontSize='xs' whiteSpace='nowrap'>
-                                  {d.last_health_response_ms != null
-                                    ? `${d.last_health_response_ms}ms`
-                                    : '-'}
-                                </Td>
-                                <Td fontSize='xs' whiteSpace='nowrap'>
-                                  {d.last_health_check_at
-                                    ? new Date(
-                                        d.last_health_check_at
-                                      ).toLocaleString()
-                                    : '-'}
-                                </Td>
-                                <Td whiteSpace='nowrap'>
-                                  <Badge variant='outline'>
-                                    {d.check_interval}
-                                  </Badge>
-                                </Td>
-                                <Td>
-                                  <Tooltip
-                                    label={`Alert sent after ${d.alert_after_failures || 2} consecutive failures`}
-                                  >
-                                    <Badge
-                                      variant='outline'
-                                      colorScheme='orange'
-                                    >
-                                      {d.alert_after_failures || 2}x
-                                    </Badge>
-                                  </Tooltip>
-                                </Td>
-                                <Td textAlign='right'>
-                                  <HStack spacing={1} justify='flex-end'>
-                                    <Tooltip label='Run health check now'>
-                                      <IconButton
-                                        size='xs'
-                                        icon={<FiRefreshCw />}
-                                        aria-label='Check now'
-                                        onClick={event =>
-                                          handleCheckDomain(d.id, event)
-                                        }
-                                        isLoading={checkingDomain === d.id}
-                                      />
-                                    </Tooltip>
-                                    <Tooltip label='Delete endpoint monitor'>
-                                      <IconButton
-                                        size='xs'
-                                        icon={<FiTrash2 />}
-                                        aria-label='Delete'
-                                        colorScheme='red'
-                                        variant='ghost'
-                                        onClick={() => handleDeleteDomain(d.id)}
-                                      />
-                                    </Tooltip>
-                                  </HStack>
-                                </Td>
-                              </Tr>
-                            ))}
-                          </Tbody>
-                        </Table>
-                      </Box>
-                    </>
-                  )}
-                </>
-              )}
-
-              <Divider />
-              <Box>
-                <HStack justify='space-between' align='start' mb={2}>
-                  <Box>
-                    <Text fontWeight='semibold' fontSize='sm'>
-                      Domain checker
-                    </Text>
-                    <Text fontSize='xs' color={helpTextColor}>
-                      Discovery is best-effort and uses subfinder&apos;s default
-                      passive discovery behavior. Results come from public
-                      passive sources; TokenTimer does not scan private DNS or
-                      internal network records. Then import selected hosts as
-                      SSL tokens and endpoint monitors.
-                    </Text>
-                  </Box>
-                  <Badge colorScheme='purple'>Subdomain discovery</Badge>
-                </HStack>
-                <HStack spacing={3} align='flex-end' flexWrap='wrap'>
-                  <FormControl flex={2} minW='220px'>
-                    <FormLabel fontSize='sm'>Root domain</FormLabel>
-                    <Input
-                      size='sm'
-                      value={domainCheckerInput}
-                      onChange={e => setDomainCheckerInput(e.target.value)}
-                      placeholder='example.com'
-                    />
-                  </FormControl>
-                  <HStack align='center' spacing={1} pb={1}>
-                    <Checkbox
-                      size='sm'
-                      colorScheme='blue'
-                      isChecked={domainCheckerSubfinderAll}
-                      onChange={e =>
-                        setDomainCheckerSubfinderAll(e.target.checked)
-                      }
-                    >
-                      Use all sources
-                    </Checkbox>
-                    <Tooltip
-                      hasArrow
-                      fontSize='xs'
-                      maxW='280px'
-                      label='subfinder -all uses every passive source and is slower than the default. Passive indexes can list stale or abandoned subdomains; SSL import may then touch hosts that no longer match your live certificates.'
-                    >
-                      <IconButton
-                        aria-label='About subfinder all sources'
-                        icon={<FiAlertTriangle />}
-                        size='xs'
-                        variant='ghost'
-                        colorScheme='orange'
-                      />
-                    </Tooltip>
-                  </HStack>
-                  <Button
-                    size='sm'
-                    colorScheme='purple'
-                    isLoading={domainCheckerLoading}
-                    loadingText='Discovering...'
-                    onClick={handleDomainCheckerLookup}
-                    isDisabled={!domainCheckerInput.trim()}
-                  >
-                    Discover subdomains
-                  </Button>
-                </HStack>
-                <Alert status='info' borderRadius='md' mt={3} py={2}>
-                  <AlertIcon />
-                  <AlertDescription fontSize='xs'>
-                    Discovery can take up to about 5 minutes on large domains.
-                    Leave this tab open while a scan runs.
-                  </AlertDescription>
-                </Alert>
-                {domainCheckerPartial && (
-                  <Alert status='warning' borderRadius='md' mt={3}>
-                    <AlertIcon />
-                    <AlertDescription fontSize='sm'>
-                      Some discovery sources were unavailable. Showing partial
-                      results
-                      {domainCheckerToolErrors.length
-                        ? ` (${domainCheckerToolErrors
-                            .map(error => error?.tool || error?.message)
-                            .filter(Boolean)
-                            .join(', ')})`
-                        : ''}
-                      .
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {domainCheckerTruncated && (
-                  <Alert status='info' borderRadius='md' mt={3} py={2}>
-                    <AlertIcon />
-                    <AlertDescription fontSize='xs'>
-                      This list is capped at {domainCheckerCapCount} hostnames
-                      per discovery run. Names beyond that cap are not stored or
-                      shown, so import is limited to this table. The server
-                      limit is configurable (DOMAIN_CHECKER_MAX_RESULTS).
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {domainCheckerResults.length > 0 && (
-                  <Box
-                    mt={3}
-                    border='1px solid'
-                    borderColor={domainBorderColor}
-                    borderRadius='md'
-                    overflow='auto'
-                  >
-                    <Table size='sm'>
-                      <Thead>
-                        <Tr>
-                          <Th>
-                            <Checkbox
-                              aria-label='Select all discovered hosts (all pages)'
-                              isChecked={
-                                domainCheckerSelectAllVisibleState.checked
-                              }
-                              isIndeterminate={
-                                domainCheckerSelectAllVisibleState.indeterminate
-                              }
-                              onChange={toggleDomainCheckerSelectAllVisible}
-                            />
-                          </Th>
-                          <Th>Hostname</Th>
-                          <Th>Domains</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {domainCheckerPageItems.map(cert => {
-                          const domains = Array.isArray(cert.domains)
-                            ? cert.domains
-                            : [];
-                          return (
-                            <Tr key={cert.id}>
-                              <Td>
-                                <Checkbox
-                                  isChecked={domainCheckerSelectedSet.has(
-                                    cert.id
-                                  )}
-                                  onChange={() =>
-                                    toggleDomainCheckerResult(cert.id)
-                                  }
-                                />
-                              </Td>
-                              <Td>
-                                <Text fontSize='sm' fontWeight='medium'>
-                                  {cert.name}
-                                </Text>
-                              </Td>
-                              <Td fontSize='xs'>
-                                {domains.slice(0, 6).join(', ')}
-                                {domains.length > 6
-                                  ? ` +${domains.length - 6} more`
-                                  : ''}
-                              </Td>
-                            </Tr>
-                          );
-                        })}
-                      </Tbody>
-                    </Table>
-                  </Box>
-                )}
-                {domainCheckerResults.length > 0 && (
-                  <HStack mt={3} spacing={2} align='center' flexWrap='wrap'>
-                    <Button
-                      size='xs'
-                      variant='outline'
-                      isDisabled={domainCheckerPage === 0}
-                      onClick={() => setDomainCheckerPage(p => p - 1)}
-                    >
-                      ← Prev
-                    </Button>
-                    <Text fontSize='xs' color={helpTextColor}>
-                      {domainCheckerPage * DOMAIN_CHECKER_PAGE_SIZE + 1}–
-                      {Math.min(
-                        (domainCheckerPage + 1) * DOMAIN_CHECKER_PAGE_SIZE,
-                        domainCheckerVisibleResults.length
-                      )}{' '}
-                      of {domainCheckerVisibleResults.length}
-                      {domainCheckerResults.length !==
-                      domainCheckerVisibleResults.length
-                        ? ` (${domainCheckerResults.length} total)`
-                        : ''}
-                    </Text>
-                    <Button
-                      size='xs'
-                      variant='outline'
-                      isDisabled={
-                        (domainCheckerPage + 1) * DOMAIN_CHECKER_PAGE_SIZE >=
-                        domainCheckerVisibleResults.length
-                      }
-                      onClick={() => setDomainCheckerPage(p => p + 1)}
-                    >
-                      Next →
-                    </Button>
-                  </HStack>
-                )}
-                {domainCheckerResults.length > 0 && (
-                  <Stack mt={3} spacing={3}>
-                    <Alert status='info' borderRadius='md' py={2}>
-                      <AlertIcon />
-                      <AlertDescription fontSize='xs'>
-                        Import runs in batches (up to about 5 minutes per batch
-                        on slow hosts). After each run, hosts that finished
-                        importing are removed from your selection so you can
-                        click Import again for the rest without re-scanning.
-                      </AlertDescription>
-                    </Alert>
-                    <FormControl maxW='480px'>
-                      <FormLabel fontSize='sm'>
-                        Section for imported SSL tokens
-                      </FormLabel>
-                      <Input
-                        size='sm'
-                        value={domainCheckerImportSection}
-                        onChange={e =>
-                          setDomainCheckerImportSection(e.target.value)
-                        }
-                        placeholder='Comma-separated labels (optional)'
-                      />
-                    </FormControl>
-                    <FormControl
-                      display='flex'
-                      alignItems='center'
-                      minW='200px'
-                      maxW='360px'
-                    >
-                      <FormLabel mb={0} fontSize='sm'>
-                        Also create endpoint monitors
-                      </FormLabel>
-                      <Switch
-                        size='sm'
-                        isChecked={domainCheckerCreateMonitors}
-                        onChange={e =>
-                          setDomainCheckerCreateMonitors(e.target.checked)
-                        }
-                      />
-                    </FormControl>
-                    {domainCheckerCreateMonitors && (
-                      <HStack spacing={3} align='flex-end' flexWrap='wrap'>
-                        <FormControl minW='140px' maxW='220px'>
-                          <FormLabel fontSize='sm'>Interval</FormLabel>
-                          <Select
-                            size='sm'
-                            value={domainCheckerMonitorInterval}
-                            onChange={e =>
-                              setDomainCheckerMonitorInterval(e.target.value)
-                            }
-                          >
-                            <option value='1min'>Every 1 min</option>
-                            <option value='5min'>Every 5 min</option>
-                            <option value='30min'>Every 30 min</option>
-                            <option value='hourly'>Hourly</option>
-                            <option value='daily'>Daily</option>
-                          </Select>
-                        </FormControl>
-                        <FormControl
-                          display='flex'
-                          alignItems='center'
-                          minW='120px'
-                          pb={1}
-                        >
-                          <FormLabel mb={0} fontSize='sm'>
-                            Health Check
-                          </FormLabel>
-                          <Switch
-                            size='sm'
-                            isChecked={domainCheckerMonitorHealthCheck}
-                            onChange={e =>
-                              setDomainCheckerMonitorHealthCheck(
-                                e.target.checked
-                              )
-                            }
-                          />
-                        </FormControl>
-                        {domainCheckerMonitorHealthCheck && (
-                          <FormControl minW='130px' maxW='220px'>
-                            <FormLabel fontSize='sm'>
-                              Alert after failures
-                            </FormLabel>
-                            <NumberInput
-                              size='sm'
-                              min={1}
-                              max={10}
-                              value={domainCheckerMonitorAlertAfter}
-                              onChange={(_, valueAsNumber) =>
-                                setDomainCheckerMonitorAlertAfter(
-                                  Number.isFinite(valueAsNumber)
-                                    ? valueAsNumber
-                                    : 2
-                                )
-                              }
-                            >
-                              <NumberInputField />
-                            </NumberInput>
-                          </FormControl>
-                        )}
-                        <FormControl minW='220px' maxW='280px'>
-                          <FormLabel fontSize='sm'>Contact group</FormLabel>
-                          <Select
-                            size='sm'
-                            value={domainCheckerMonitorContactGroupId}
-                            onChange={e =>
-                              setDomainCheckerMonitorContactGroupId(
-                                e.target.value
-                              )
-                            }
-                          >
-                            <option value=''>Default workspace group</option>
-                            {contactGroups.map(g => (
-                              <option key={g.id} value={g.id}>
-                                {g.name}
-                              </option>
-                            ))}
-                          </Select>
-                        </FormControl>
-                      </HStack>
-                    )}
-                    <HStack justify='flex-end' align='center' flexWrap='wrap'>
-                      <Button
-                        size='sm'
-                        colorScheme='purple'
-                        isLoading={domainCheckerImporting}
-                        isDisabled={
-                          domainCheckerSelectedSet.size === 0 ||
-                          domainCheckerImporting
-                        }
-                        onClick={handleDomainCheckerImport}
-                      >
-                        Import selected ({domainCheckerSelectedSet.size})
-                      </Button>
-                    </HStack>
-                  </Stack>
-                )}
-              </Box>
-
-              {/* Add new endpoint form */}
-              <Divider />
-              <Text fontWeight='semibold' fontSize='sm'>
-                Add new endpoint
-              </Text>
-              <HStack spacing={3} align='flex-end' flexWrap='wrap'>
-                <FormControl flex={2} minW='200px'>
-                  <FormLabel fontSize='sm'>URL</FormLabel>
-                  <Input
-                    size='sm'
-                    value={domainUrl}
-                    onChange={e => setDomainUrl(e.target.value)}
-                    placeholder='https://example.com'
-                  />
-                </FormControl>
-                <FormControl flex={1} minW='160px' maxW='260px'>
-                  <FormLabel fontSize='sm'>SSL token section</FormLabel>
-                  <Input
-                    size='sm'
-                    value={domainEndpointTokenSection}
-                    onChange={e =>
-                      setDomainEndpointTokenSection(e.target.value)
-                    }
-                    placeholder='Optional, comma-separated'
-                  />
-                </FormControl>
-                <FormControl flex={1} minW='120px'>
-                  <FormLabel fontSize='sm'>Interval</FormLabel>
-                  <Select
-                    size='sm'
-                    value={domainInterval}
-                    onChange={e => setDomainInterval(e.target.value)}
-                  >
-                    <option value='1min'>Every 1 min</option>
-                    <option value='5min'>Every 5 min</option>
-                    <option value='30min'>Every 30 min</option>
-                    <option value='hourly'>Hourly</option>
-                    <option value='daily'>Daily</option>
-                  </Select>
-                </FormControl>
-                <FormControl
-                  display='flex'
-                  alignItems='center'
-                  minW='120px'
-                  pb={1}
-                >
-                  <FormLabel mb={0} fontSize='sm'>
-                    Health Check
-                  </FormLabel>
-                  <Switch
-                    size='sm'
-                    isChecked={domainHealthCheck}
-                    onChange={e => setDomainHealthCheck(e.target.checked)}
-                  />
-                </FormControl>
-                {domainHealthCheck && (
-                  <FormControl minW='130px' flex={1}>
-                    <FormLabel fontSize='sm'>Alert after failures</FormLabel>
-                    <Select
-                      size='sm'
-                      value={domainAlertAfter}
-                      onChange={e =>
-                        setDomainAlertAfter(Number(e.target.value))
-                      }
-                    >
-                      <option value={1}>1 failure</option>
-                      <option value={2}>2 failures</option>
-                      <option value={3}>3 failures</option>
-                      <option value={5}>5 failures</option>
-                      <option value={10}>10 failures</option>
-                    </Select>
-                  </FormControl>
-                )}
-                {Array.isArray(contactGroups) && contactGroups.length > 0 && (
-                  <FormControl minW='150px' flex={1}>
-                    <FormLabel fontSize='sm'>Contact group</FormLabel>
-                    <Select
-                      size='sm'
-                      value={domainContactGroupId}
-                      onChange={e => setDomainContactGroupId(e.target.value)}
-                    >
-                      <option value=''>Workspace default</option>
-                      {contactGroups.map(g => (
-                        <option key={g.id} value={g.id}>
-                          {g.name}
-                          {String(g.id) === String(defaultContactGroupId)
-                            ? ' (default)'
-                            : ''}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormControl>
-                )}
-                <Button
-                  size='sm'
-                  colorScheme='blue'
-                  leftIcon={<FiPlus />}
-                  isLoading={addingDomain}
-                  onClick={handleAddDomain}
-                  isDisabled={!domainUrl.trim()}
-                >
-                  Add
-                </Button>
-              </HStack>
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button onClick={handleDomainModalClose}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        onClose={onDomainModalClose}
+        contactGroups={contactGroups}
+        defaultContactGroupId={defaultContactGroupId}
+        panelQueries={panelQueries}
+        TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+        fetchGlobalFacets={fetchGlobalFacets}
+        fetchTokensForCategoryReset={fetchTokensForCategoryReset}
+      />
     </Box>
   );
 }

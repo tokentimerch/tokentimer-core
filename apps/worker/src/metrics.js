@@ -137,6 +137,28 @@ export const gWeeklyDigestLastRunSuccess = new client.Gauge({
   registers: [metricsRegister],
 });
 
+// Auto-sync metrics
+export const cAutoSync = new client.Counter({
+  name: "auto_sync_runs_total",
+  help: "Auto-sync runs by provider and status (success|failure)",
+  labelNames: ["provider", "status"],
+  registers: [metricsRegister],
+});
+
+export const cAutoSyncItems = new client.Counter({
+  name: "auto_sync_items_imported_total",
+  help: "Items imported (created or updated) by auto-sync, by provider",
+  labelNames: ["provider"],
+  registers: [metricsRegister],
+});
+
+export const gAutoSyncLastRun = new client.Gauge({
+  name: "auto_sync_last_run_timestamp",
+  help: "Unix timestamp of the last auto-sync attempt, by provider and status",
+  labelNames: ["provider", "status"],
+  registers: [metricsRegister],
+});
+
 // Centralized error counter for logger
 export const cLogError = new client.Counter({
   name: "app_log_errors_total",

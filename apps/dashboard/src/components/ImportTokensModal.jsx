@@ -1046,12 +1046,13 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
     let credentials = {};
     let scanParams = {};
     switch (source) {
-      case 'github':
-        credentials = {
+      case 'github': {
+        const formCreds = githubFormRef.current?.getCredentials();
+        credentials = formCreds?.credentials ?? {
           baseUrl: githubBaseUrl || 'https://api.github.com',
           token: githubToken,
         };
-        scanParams = {
+        scanParams = formCreds?.scanParams ?? {
           baseUrl: githubBaseUrl || 'https://api.github.com',
           include: {
             tokens: githubIncludeTokens,
@@ -1061,12 +1062,14 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
           },
         };
         break;
-      case 'gitlab':
-        credentials = {
+      }
+      case 'gitlab': {
+        const formCreds = gitlabFormRef.current?.getCredentials();
+        credentials = formCreds?.credentials ?? {
           baseUrl: gitlabBaseUrl || 'https://gitlab.com',
           token: gitlabToken,
         };
-        scanParams = {
+        scanParams = formCreds?.scanParams ?? {
           baseUrl: gitlabBaseUrl || 'https://gitlab.com',
           include: { tokens: true, keys: true },
           filters: {
@@ -1081,33 +1084,40 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
           },
         };
         break;
-      case 'vault':
-        credentials = { address: vaultAddress, token: vaultToken };
-        scanParams = {
+      }
+      case 'vault': {
+        const formCreds = vaultFormRef.current?.getCredentials();
+        credentials = formCreds?.credentials ?? { address: vaultAddress, token: vaultToken };
+        scanParams = formCreds?.scanParams ?? {
           address: vaultAddress,
           include: { kv: includeKV, pki: includePKI },
           pathPrefix: pathPrefix || '',
           maxItemsPerMount: maxItemsPerMount || 1000,
         };
         break;
-      case 'aws':
-        credentials = {
+      }
+      case 'aws': {
+        const formCreds = awsFormRef.current?.getCredentials();
+        credentials = formCreds?.credentials ?? {
           accessKeyId: awsAccessKeyId,
           secretAccessKey: awsSecretAccessKey,
           region: awsRegion || 'us-east-1',
         };
-        scanParams = {
+        scanParams = formCreds?.scanParams ?? {
           region: awsRegion || 'us-east-1',
           include: { secrets: true, iam: true, certificates: true },
         };
         break;
-      case 'azure':
-        credentials = { vaultUrl: azureVaultUrl, token: azureToken };
-        scanParams = {
+      }
+      case 'azure': {
+        const formCreds = azureFormRef.current?.getCredentials();
+        credentials = formCreds?.credentials ?? { vaultUrl: azureVaultUrl, token: azureToken };
+        scanParams = formCreds?.scanParams ?? {
           vaultUrl: azureVaultUrl,
           include: { secrets: true, certificates: true, keys: true },
         };
         break;
+      }
       case 'azure-ad':
         credentials = { token: azureADToken };
         scanParams = {
@@ -1117,10 +1127,15 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
           },
         };
         break;
-      case 'gcp':
-        credentials = { projectId: gcpProjectId, accessToken: gcpAccessToken };
-        scanParams = { projectId: gcpProjectId, include: { secrets: true } };
+      case 'gcp': {
+        const formCreds = gcpFormRef.current?.getCredentials();
+        credentials = formCreds?.credentials ?? { projectId: gcpProjectId, accessToken: gcpAccessToken };
+        scanParams = formCreds?.scanParams ?? {
+          projectId: gcpProjectId,
+          include: { secrets: true },
+        };
         break;
+      }
     }
     return { credentials, scanParams };
   };
@@ -1740,7 +1755,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onCloseInternal} size='4xl'>
+      <Modal isOpen={isOpen} onClose={onCloseInternal} size='4xl' motionPreset='none'>
         <ModalOverlay />
         <ModalContent bg={cardBg} border='1px solid' borderColor={borderColor}>
           <ModalHeader>

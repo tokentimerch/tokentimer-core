@@ -104,7 +104,11 @@ async function loadWorkspace(req, res, next) {
     if (wsRes.rowCount === 0)
       return res.status(404).json({ error: "Workspace not found" });
     req.workspace = wsRes.rows[0];
-    if (req.user && req.user.id) {
+    if (req.isWorkerCall) {
+      // Internal worker calls are pre-authenticated with WORKER_API_KEY / SESSION_SECRET.
+      // Grant admin access so they can reach any workspace endpoint without a membership row.
+      req.authz = { ...(req.authz || {}), workspaceRole: "admin" };
+    } else if (req.user && req.user.id) {
       let role = await getUserWorkspaceRole(req.user.id, workspaceIdString);
       // Treat workspace owner as implicit admin even if no membership row exists
       if (

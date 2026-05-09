@@ -1,5 +1,5 @@
 # TokenTimer API Dockerfile
-FROM golang:1.26.2-alpine3.23 AS subfinder-builder
+FROM golang:1.26.3-alpine3.23 AS subfinder-builder
 
 RUN apk add --no-cache ca-certificates git && \
     CGO_ENABLED=0 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.13.0
@@ -16,7 +16,7 @@ COPY --from=subfinder-builder /go/bin/subfinder /usr/local/bin/subfinder
 RUN subfinder -version
 
 # Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 
 # Create non-root user (UID/GID 1000 is taken by the built-in node user)
 RUN addgroup -g 1001 -S tokentimer && adduser -u 1001 -S tokentimer -G tokentimer

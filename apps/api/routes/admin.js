@@ -161,6 +161,27 @@ function computeNextSyncAt(frequency, scheduleTime, scheduleTz) {
   return candidate;
 }
 
+const REQUIRED_CRED_FIELDS = {
+  github: ["token"],
+  gitlab: ["token"],
+  aws: ["accessKeyId", "secretAccessKey"],
+  azure: ["token"],
+  "azure-ad": ["token"],
+  gcp: ["projectId", "accessToken"],
+  vault: ["address", "token"],
+};
+
+function validateAutoSyncCredentials(provider, credentials) {
+  if (!credentials || typeof credentials !== "object") return null;
+  const required = REQUIRED_CRED_FIELDS[provider] || [];
+  const empty = required.filter((f) => !credentials[f]);
+  if (empty.length === 0) return null;
+  const detail = empty.map((f) =>
+    f in credentials ? `${f} (empty)` : `${f} (absent)`,
+  );
+  return `Missing required credential fields for ${provider}: ${detail.join(", ")}`;
+}
+
 // List auto-sync configs for a workspace
 router.get(
   "/api/v1/workspaces/:id/auto-sync",
@@ -207,6 +228,10 @@ router.post(
         return res
           .status(400)
           .json({ error: "provider and credentials are required" });
+      }
+      const credError = validateAutoSyncCredentials(provider, credentials);
+      if (credError) {
+        return res.status(400).json({ error: credError });
       }
       // Check provider is allowed
       const allowed = CORE_AUTO_SYNC_PROVIDERS;
@@ -302,6 +327,20 @@ router.put(
       let idx = 1;
 
       if (credentials !== undefined) {
+        const existing = await pool.query(
+          `SELECT provider FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
+          [req.params.configId, req.workspace.id],
+        );
+        if (existing.rows.length === 0) {
+          return res.status(404).json({ error: "Auto-sync config not found" });
+        }
+        const credError = validateAutoSyncCredentials(
+          existing.rows[0].provider,
+          credentials,
+        );
+        if (credError) {
+          return res.status(400).json({ error: credError });
+        }
         const credJson =
           typeof credentials === "string"
             ? credentials

@@ -8,34 +8,65 @@
 
 import { pool, withClient } from "./db.js";
 import { logger } from "./logger.js";
+import {
+  cAutoSync,
+  cAutoSyncItems,
+  gAutoSyncLastRun,
+  pushMetrics,
+} from "./metrics.js";
 import crypto from "crypto";
 import axios from "axios";
 
-// Encryption helpers (same as systemSettings.js)
+// Encryption helpers — must mirror systemSettings.js exactly
+const KDF_SALT = "tokentimer-settings-encryption";
+
+// Derive the key once per process; scryptSync is intentionally expensive.
+let _encryptionKey = null;
+let _legacyEncryptionKey = null;
+
 function getEncryptionKey() {
-  const secret = process.env.SESSION_SECRET || "";
-  return crypto.createHash("sha256").update(secret).digest();
+  if (!_encryptionKey) {
+    const secret = process.env.SESSION_SECRET || "";
+    _encryptionKey = crypto.scryptSync(secret, KDF_SALT, 32);
+  }
+  return _encryptionKey;
+}
+
+// Legacy key used before the scrypt KDF was introduced (pre-v0.1 values)
+function getLegacyEncryptionKey() {
+  if (!_legacyEncryptionKey) {
+    const secret = process.env.SESSION_SECRET || "";
+    _legacyEncryptionKey = crypto.createHash("sha256").update(secret).digest();
+  }
+  return _legacyEncryptionKey;
+}
+
+function decryptWithKey(ciphertext, key) {
+  const parts = ciphertext.split(":");
+  if (parts.length !== 3) return null;
+  const iv = Buffer.from(parts[0], "hex");
+  const tag = Buffer.from(parts[1], "hex");
+  const encrypted = parts[2];
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  let decrypted = decipher.update(encrypted, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
 }
 
 function decrypt(ciphertext) {
   if (!ciphertext) return null;
   try {
-    const parts = ciphertext.split(":");
-    if (parts.length !== 3) return null;
-    const key = getEncryptionKey();
-    const iv = Buffer.from(parts[0], "hex");
-    const tag = Buffer.from(parts[1], "hex");
-    const encrypted = parts[2];
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(tag);
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
-  } catch (e) {
-    logger.error("Failed to decrypt auto-sync credentials", {
-      error: e.message,
-    });
-    return null;
+    return decryptWithKey(ciphertext, getEncryptionKey());
+  } catch (_) {
+    try {
+      return decryptWithKey(ciphertext, getLegacyEncryptionKey());
+    } catch (e) {
+      logger.error("Failed to decrypt auto-sync credentials", {
+        error: e.message,
+      });
+      return null;
+    }
   }
 }
 
@@ -137,6 +168,12 @@ async function runAutoSync() {
   logger.info("Auto-sync worker started");
 
   await withClient(async (client) => {
+    // Wrap the SELECT FOR UPDATE and the per-config status updates in an
+    // explicit transaction so the row locks are held until each UPDATE commits.
+    // Without BEGIN/COMMIT the lock is released immediately after SELECT in
+    // autocommit mode, making SKIP LOCKED useless against concurrent workers.
+    await client.query("BEGIN");
+
     // Pick up due configs with row-level locking
     const dueResult = await client.query(
       `SELECT * FROM auto_sync_configs
@@ -147,24 +184,30 @@ async function runAutoSync() {
     );
 
     if (dueResult.rows.length === 0) {
+      await client.query("ROLLBACK");
       logger.info("No auto-sync configs due");
       return;
     }
 
     logger.info(`Processing ${dueResult.rows.length} auto-sync configs`);
 
-    for (const config of dueResult.rows) {
-      const {
-        id,
-        workspace_id,
-        provider,
-        credentials_encrypted,
-        scan_params,
-        frequency,
-        schedule_time,
-        schedule_tz,
-      } = config;
-      logger.info(`Syncing ${provider} for workspace ${workspace_id}`);
+    // Run all due configs concurrently. The HTTP calls (scan + import) are
+    // independent of each other; only the final status UPDATE needs the
+    // shared client, but since we serialise those writes and they are fast,
+    // sharing the client is safe here.
+    await Promise.allSettled(
+      dueResult.rows.map(async (config) => {
+        const {
+          id,
+          workspace_id,
+          provider,
+          credentials_encrypted,
+          scan_params,
+          frequency,
+          schedule_time,
+          schedule_tz,
+        } = config;
+        logger.info(`Syncing ${provider} for workspace ${workspace_id}`);
 
       try {
         // Decrypt credentials
@@ -173,6 +216,31 @@ async function runAutoSync() {
           throw new Error("Failed to decrypt credentials");
         }
         const creds = JSON.parse(credJson);
+
+        // Validate that required credential fields are present before hitting
+        // the scan endpoint, so missing-field errors surface with clear context
+        // rather than an opaque 400 from the downstream API.
+        const REQUIRED_CRED_FIELDS = {
+          github: ["token"],
+          gitlab: ["token"],
+          aws: ["accessKeyId", "secretAccessKey"],
+          azure: ["token"],
+          "azure-ad": ["token"],
+          gcp: ["projectId", "accessToken"],
+          vault: ["address", "token"],
+        };
+        const missing = (REQUIRED_CRED_FIELDS[provider] || []).filter(
+          (f) => !creds[f],
+        );
+        if (missing.length > 0) {
+          const detail = missing.map((f) =>
+            f in creds ? `${f} (empty)` : `${f} (absent)`,
+          );
+          throw new Error(
+            `Invalid credentials for ${provider}: ${detail.join(", ")}. ` +
+              `Re-save the auto-sync config with valid credentials.`,
+          );
+        }
 
         // Call the API's scan endpoint via HTTP
         const apiUrl = process.env.API_URL || "http://api:4000";
@@ -271,57 +339,24 @@ async function runAutoSync() {
             throw new Error(`Unknown provider: ${provider}`);
         }
 
-        // Call the scan API endpoint
+        // 1. Scan: discover items from the provider
         const scanResponse = await axios.post(scanUrl, scanBody, {
           timeout: 120000,
           headers: authHeaders,
         });
         const scanResult = scanResponse.data;
-
         const itemsCount = scanResult?.items?.length || 0;
 
-        // Import results into workspace
+        // 2. Import: delegate to the existing import endpoint so deduplication,
+        //    sanitization, type validation, and audit logging are identical to
+        //    what a user gets when importing manually from the dashboard.
         if (itemsCount > 0) {
-          const NEVER_EXPIRES_DATE = "2099-12-31";
-          for (const item of scanResult.items) {
-            try {
-              const name = String(item.name || "").trim();
-              if (!name || name.length < 3) continue;
-              let expiration = item.expiration || item.expiresAt || null;
-              if (expiration) {
-                const d = new Date(expiration);
-                if (isNaN(d.getTime())) expiration = null;
-                else expiration = d.toISOString().split("T")[0];
-              }
-              if (!expiration) expiration = NEVER_EXPIRES_DATE;
-
-              const category = (item.category || "general").toLowerCase();
-              const type = (item.type || "other").toLowerCase();
-              const section = item.source ? [item.source] : null;
-
-              // Upsert: update if exists, create if not
-              await client.query(
-                `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category, section, location, notes, imported_at)
-                 VALUES (NULL, $1, NULL, $2, $3, $4, $5, $6, $7, $8, NOW())
-                 ON CONFLICT ON CONSTRAINT tokens_pkey DO NOTHING`,
-                [
-                  workspace_id,
-                  name.substring(0, 100),
-                  expiration,
-                  type,
-                  category,
-                  section,
-                  item.location || null,
-                  `Auto-synced from ${provider}`,
-                ],
-              );
-            } catch (itemErr) {
-              logger.warn("Auto-sync: failed to import item", {
-                name: item.name,
-                error: itemErr.message,
-              });
-            }
-          }
+          const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
+          await axios.post(
+            importUrl,
+            { items: scanResult.items },
+            { timeout: 60000, headers: authHeaders },
+          );
         }
 
         // Update config: success
@@ -334,15 +369,23 @@ async function runAutoSync() {
           [itemsCount, nextSync, id],
         );
 
+        cAutoSync.inc({ provider, status: "success" });
+        cAutoSyncItems.inc({ provider }, itemsCount);
+        gAutoSyncLastRun.set({ provider, status: "success" }, Date.now() / 1000);
         logger.info(`Auto-sync ${provider} completed: ${itemsCount} items`, {
           workspace_id,
         });
       } catch (syncErr) {
         logger.error(`Auto-sync ${provider} failed`, {
           workspace_id,
-          error: syncErr.message,
+          error: syncErr?.message || String(syncErr),
+          httpStatus: syncErr?.response?.status,
+          httpBody: syncErr?.response?.data,
+          stack: syncErr?.stack,
         });
 
+        cAutoSync.inc({ provider, status: "failure" });
+        gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
         // Update config: failed
         const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
         await client.query(
@@ -350,13 +393,19 @@ async function runAutoSync() {
            SET last_sync_at = NOW(), last_sync_status = 'failed',
                last_sync_error = $1, next_sync_at = $2, updated_at = NOW()
            WHERE id = $3`,
-          [String(syncErr.message).substring(0, 1000), nextSync, id],
+          [String(syncErr?.message || syncErr).substring(0, 1000), nextSync, id],
         );
       }
-    }
+    }));
+
+    // Commit all status updates and release the FOR UPDATE locks atomically.
+    await client.query("COMMIT");
   });
 
   logger.info("Auto-sync worker finished");
+  await pushMetrics("auto-sync").catch((e) =>
+    logger.warn("Failed to push metrics", { error: e.message }),
+  );
 }
 
 // Entry point
