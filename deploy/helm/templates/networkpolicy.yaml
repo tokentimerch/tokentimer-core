@@ -145,7 +145,7 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
       ports:
         - protocol: TCP
-          port: 80
+          port: {{ .Values.dashboard.containerPort }}
     {{- end }}
     {{- if .Values.networkPolicy.monitoringNamespace }}
     - from:
@@ -154,7 +154,7 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
       ports:
         - protocol: TCP
-          port: 80
+          port: {{ .Values.dashboard.containerPort }}
     {{- end }}
   egress:
     # DNS (nginx resolver)

@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-18
+
+### Fixed
+
+- **Dashboard nginx on port 8080** in compose-built images and Helm (`containerPort: 8080`, Service still exposes port 80). Fixes `bind() to 0.0.0.0:80 failed (13: Permission denied)` when Kubernetes drops all capabilities (`securityContext.capabilities.drop: [ALL]`).
+
+### Changed
+
+- **CloudNativePG Cluster template** exposes optional CNPG spec fields with sane defaults (`maxSyncReplicas: 2`, `minSyncReplicas: 1`, 10Gi storage, 512Mi-1Gi resources). Power users can pass any other `Cluster` spec field via `postgresql.cloudnative.parameters` or `postgresql.cloudnative.extraSpec`.
+- **Version metadata bumped to 0.5.2** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
 ## [0.5.1] - 2026-05-18
 
 ### Added
