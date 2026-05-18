@@ -54,7 +54,7 @@ spec:
               envFrom:
                 {{- include "tokentimer.envFrom" . | nindent 16 }}
                 {{- with .Values.worker.envFrom }}
-                {{- toYaml . | nindent 16 }}
+                {{- include "tokentimer.renderEnvFromExtras" (dict "root" $ "entries" .) | nindent 16 }}
                 {{- end }}
               env:
                 - name: API_URL
@@ -75,7 +75,7 @@ spec:
             - name: tmp
               emptyDir: {}
             {{- with .Values.worker.extraVolumes }}
-            {{- toYaml . | nindent 12 }}
+            {{- include "tokentimer.renderExtraVolumes" (dict "root" $ "volumes" .) | nindent 12 }}
             {{- end }}
           {{- with .Values.worker.nodeSelector }}
           nodeSelector:

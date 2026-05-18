@@ -19,7 +19,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.1.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.5.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag
     pullPolicy: IfNotPresent
 
@@ -84,6 +84,8 @@ api:
     failureThreshold: 40
 
   env: {}
+  # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
+  # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []
   extraVolumes: []
   extraVolumeMounts: []
@@ -103,7 +105,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.1.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.5.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -147,13 +149,15 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.1.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.5.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
   # Extra env/volumes for all CronJobs.
   # Precedence: workspace DB settings > env vars here > code defaults.
   env: {}
+  # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
+  # (e.g. '{{ .Release.Name }}-overlay-env').
   envFrom: []
   extraVolumes: []
   extraVolumeMounts: []
@@ -358,7 +362,7 @@ postgresql:
     username: tokentimer
     password: ""
     existingSecret: ""
-    sslMode: prefer
+    sslMode: require
 
 # -- Application Configuration ------------------------------------------------
 config:
