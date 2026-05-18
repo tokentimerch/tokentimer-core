@@ -66,7 +66,7 @@ spec:
           envFrom:
             {{- include "tokentimer.envFrom" . | nindent 12 }}
             {{- with .Values.api.envFrom }}
-            {{- toYaml . | nindent 12 }}
+            {{- include "tokentimer.renderEnvFromExtras" (dict "root" $ "entries" .) | nindent 12 }}
             {{- end }}
           {{- if .Values.api.env }}
           env:
@@ -85,7 +85,7 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- with .Values.api.extraVolumes }}
-        {{- toYaml . | nindent 8 }}
+        {{- include "tokentimer.renderExtraVolumes" (dict "root" $ "volumes" .) | nindent 8 }}
         {{- end }}
       {{- with .Values.api.nodeSelector }}
       nodeSelector:

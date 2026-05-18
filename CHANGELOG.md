@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-18
+
+### Added
+
+- **Helm tpl support for `api.envFrom`, `worker.envFrom`, and `extraVolumes`.** `configMapRef.name`, `secretRef.name`, and `secret.secretName` values may use Helm `tpl` (for example `{{ .Release.Name }}-overlay-env`) so umbrella charts can wire release-scoped ConfigMaps and Secrets without hard-coded names.
+- **`helm-template-verify` default-values scenario and CNPG SSL assertion.** The script now templates chart `values.yaml` and fails if `DB_SSL: require` is missing when CloudNativePG is enabled.
+
+### Fixed
+
+- **CloudNativePG installs rejected non-SSL database connections.** The chart ConfigMap now sets `DB_SSL: require` whenever `postgresql.cloudnative.enabled` is true, matching the default `pg_hba` rules (`hostssl` + `hostnossl reject`) and fixing API startup errors such as `pg_hba.conf rejects connection ... no encryption`.
+
+### Changed
+
+- **Version metadata bumped to 0.5.1** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
 ## [0.5.0] - 2026-05-18
 
 ### Added

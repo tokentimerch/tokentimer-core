@@ -107,8 +107,8 @@ In practice this means:
 The chart exposes first-class values for the most common settings (database, SMTP, Twilio, monitoring, ingress). For the full list of environment variables the app supports (rate limits, delivery windows, webhook security, auth tuning, etc.), see the [configuration reference](../../docs/CONFIGURATION.md).
 
 Any env var not exposed as a dedicated values key can be passed through:
-- `api.env` / `api.envFrom` for the API deployment
-- `worker.env` / `worker.envFrom` for all CronJob workers
+- `api.env` / `api.envFrom` for the API deployment (`envFrom` ref names support Helm `tpl`)
+- `worker.env` / `worker.envFrom` for all CronJob workers (same `tpl` behavior)
 - `api.extraVolumes` / `api.extraVolumeMounts` for the API
 - `worker.extraVolumes` / `worker.extraVolumeMounts` for all workers
 

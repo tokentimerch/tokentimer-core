@@ -164,3 +164,52 @@ and any existing secrets for DB / SMTP / Twilio.
     name: {{ .Values.twilio.existingSecret }}
 {{- end }}
 {{- end }}
+
+{{/*
+Additional envFrom entries from values (api.envFrom / worker.envFrom).
+configMapRef.name and secretRef.name may use Helm tpl, e.g. '{{ .Release.Name }}-overlay-env'.
+*/}}
+{{- define "tokentimer.renderEnvFromExtras" -}}
+{{- $root := .root }}
+{{- range .entries }}
+{{- if .configMapRef }}
+- configMapRef:
+    name: {{ tpl (.configMapRef.name | toString) $root | quote }}
+{{- end }}
+{{- if .secretRef }}
+- secretRef:
+    name: {{ tpl (.secretRef.name | toString) $root | quote }}
+    {{- if hasKey .secretRef "optional" }}
+    optional: {{ .secretRef.optional }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Extra pod volumes from values (api.extraVolumes / worker.extraVolumes).
+secret.secretName and configMap.name may use Helm tpl.
+*/}}
+{{- define "tokentimer.renderExtraVolumes" -}}
+{{- $root := .root }}
+{{- range .volumes }}
+- name: {{ .name }}
+  {{- if .emptyDir }}
+  emptyDir: {}
+  {{- else if .secret }}
+  secret:
+    secretName: {{ tpl (.secret.secretName | toString) $root | quote }}
+    {{- if hasKey .secret "optional" }}
+    optional: {{ .secret.optional }}
+    {{- end }}
+  {{- else if .configMap }}
+  configMap:
+    name: {{ tpl (.configMap.name | toString) $root | quote }}
+    {{- if hasKey .configMap "optional" }}
+    optional: {{ .configMap.optional }}
+    {{- end }}
+  {{- else }}
+  {{- omit . "name" | toYaml | nindent 2 }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -299,11 +299,8 @@ jobs:
       - name: Helm dependency build
         run: helm dependency build deploy/helm
 
-      - name: Helm lint
-        run: helm lint deploy/helm -f deploy/helm/ci/ci-values.yaml
-
-      - name: Helm template (validate rendering)
-        run: helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml > /dev/null
+      - name: Helm lint and template (all example values)
+        run: bash scripts/helm-template-verify.sh
 
   compose_validation:
     name: Compose File Validation
