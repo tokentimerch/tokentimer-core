@@ -68,6 +68,7 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 | `REQUIRE_UPPERCASE`                        | Enforce uppercase in passwords                                                  | `true`                                 | API auth     |
 | `REQUIRE_NUMBERS`                          | Enforce numeric chars in passwords                                              | `true`                                 | API auth     |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
+| `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
 
 ## Email and delivery

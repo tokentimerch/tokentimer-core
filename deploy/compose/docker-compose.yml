@@ -74,16 +74,36 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}
 
-      # Admin Bootstrap
+      # Reverse proxy: number of trusted proxy hops in front of the API.
+      # Affects req.ip and req.protocol resolution. Default 2 covers
+      # LB -> reverse-proxy. Set 0 when no proxy is in front.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-2}
+
+      # Admin Bootstrap (set DISABLE_ADMIN_BOOTSTRAP=true to skip)
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+      DISABLE_ADMIN_BOOTSTRAP: ${DISABLE_ADMIN_BOOTSTRAP:-}
+
+      # Worker <-> API shared secret (falls back to SESSION_SECRET if unset)
+      WORKER_API_KEY: ${WORKER_API_KEY:-}
+
+      # Alerting / delivery tuning (workspace DB > env vars here > code defaults)
+      ALERT_THRESHOLDS: ${ALERT_THRESHOLDS:-}
+      ALERT_MAX_ATTEMPTS: ${ALERT_MAX_ATTEMPTS:-}
+      ALERT_RETRY_DELAY_MS: ${ALERT_RETRY_DELAY_MS:-}
+
+      # Metrics (Prometheus)
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
       FROM_EMAIL: ${FROM_EMAIL:-}
       FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
 
@@ -101,6 +121,18 @@ services:
     volumes: []
     ports:
       - "${API_PORT:-4000}:4000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:4000/health',(r)=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
 
   # Worker Service - Alert Discovery
   worker-discovery:
@@ -130,12 +162,20 @@ services:
 
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      WORKER_API_KEY: ${WORKER_API_KEY:-}
+
+      # Metrics (Prometheus pushgateway)
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
       FROM_EMAIL: ${FROM_EMAIL:-}
       FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
 
@@ -180,12 +220,29 @@ services:
 
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      WORKER_API_KEY: ${WORKER_API_KEY:-}
+
+      # Delivery tuning
+      ALERT_THRESHOLDS: ${ALERT_THRESHOLDS:-}
+      ALERT_MAX_ATTEMPTS: ${ALERT_MAX_ATTEMPTS:-}
+      ALERT_RETRY_DELAY_MS: ${ALERT_RETRY_DELAY_MS:-}
+      DELIVERY_WINDOW_DEFAULT_START: ${DELIVERY_WINDOW_DEFAULT_START:-}
+      DELIVERY_WINDOW_DEFAULT_END: ${DELIVERY_WINDOW_DEFAULT_END:-}
+      DELIVERY_WINDOW_DEFAULT_TZ: ${DELIVERY_WINDOW_DEFAULT_TZ:-}
+      DELIVERY_WINDOW_DEFERRAL_MS: ${DELIVERY_WINDOW_DEFERRAL_MS:-}
+
+      # Metrics (Prometheus pushgateway)
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
       FROM_EMAIL: ${FROM_EMAIL:-}
       FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
 
@@ -230,12 +287,25 @@ services:
 
       # Session secret (needed for decrypting DB-stored secrets)
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      WORKER_API_KEY: ${WORKER_API_KEY:-}
+
+      # Delivery window (digest also respects it)
+      DELIVERY_WINDOW_DEFAULT_START: ${DELIVERY_WINDOW_DEFAULT_START:-}
+      DELIVERY_WINDOW_DEFAULT_END: ${DELIVERY_WINDOW_DEFAULT_END:-}
+      DELIVERY_WINDOW_DEFAULT_TZ: ${DELIVERY_WINDOW_DEFAULT_TZ:-}
+
+      # Metrics (Prometheus pushgateway)
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
       FROM_EMAIL: ${FROM_EMAIL:-}
       FROM_EMAIL_NAME: ${FROM_EMAIL_NAME:-}
 
@@ -273,7 +343,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: ${DB_NAME:-tokentimer}
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
+      WORKER_API_KEY: ${WORKER_API_KEY:-}
       API_URL: http://api:4000
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
     volumes: []
 
   # Worker Service - Endpoint (SSL) Check
@@ -296,6 +370,9 @@ services:
       DB_USER: ${DB_USER:-tokentimer}
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME: ${DB_NAME:-tokentimer}
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
 
   # Dashboard (Frontend)
   dashboard:
@@ -310,6 +387,12 @@ services:
       - api
     ports:
       - "${DASHBOARD_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 volumes:
   postgres_data:

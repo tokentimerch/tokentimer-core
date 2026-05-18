@@ -92,11 +92,11 @@ Several settings can be configured at multiple levels. The app resolves them wit
 
 | Setting | DB (System Settings UI) | DB (per-workspace) | Env var (Helm values) | Code default |
 |---|---|---|---|---|
-| SMTP config | **Wins** | -- | Fallback | `localhost:587` |
+| SMTP config (incl. `smtp.secure`, `smtp.requireTls`) | **Wins** | -- | Fallback | `localhost:587` |
 | Twilio credentials + SIDs | **Wins** | -- | Fallback | Disabled |
 | Alert thresholds | -- | **Wins** | Fallback | `30,14,7,1,0` |
 | Delivery window | -- | **Wins** | Fallback | `00:00-23:59 UTC` |
-| Admin bootstrap | -- | -- | **Only source** | Skip if admin exists |
+| Admin bootstrap (`config.adminEmail` / `config.disableAdminBootstrap`) | -- | -- | **Only source** | Skip if admin exists |
 
 In practice this means:
 - **SMTP / Twilio** values set in the Helm chart are the initial bootstrap config. Once an admin configures them in the System Settings UI, the DB values take over and the env vars are ignored.
@@ -258,8 +258,9 @@ CloudNativePG PVCs are retained by default. Delete them manually if no longer ne
 ## Example Values
 
 See the `examples/` directory:
-- `values-minimal.yaml` -- single-node CNPG, no ingress
+- `values-minimal.yaml` -- single-node CNPG, no ingress (smallest viable install)
 - `values-external-db.yaml` -- external PostgreSQL with ingress and monitoring
+- `values-full-test.yaml` -- lab/Minikube with HPA, metrics, all workers enabled
 
 ## Environment Variables Reference
 

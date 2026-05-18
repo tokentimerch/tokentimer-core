@@ -55,6 +55,8 @@ services:
       - SMTP_PORT=${SMTP_PORT:-}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_SECURE=${SMTP_SECURE:-}
+      - SMTP_REQUIRE_TLS=${SMTP_REQUIRE_TLS:-}
       - FROM_EMAIL=${FROM_EMAIL:-}
       - FROM_EMAIL_NAME=${FROM_EMAIL_NAME:-}
       # Twilio WhatsApp (optional - configure here or via System Settings UI)
@@ -67,6 +69,9 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+      # Metrics / diagnostics
+      - ENABLE_METRICS=${ENABLE_METRICS:-false}
+      - ENVIRONMENT_SUFFIX=${ENVIRONMENT_SUFFIX:-}
     depends_on:
       postgres:
         condition: service_healthy

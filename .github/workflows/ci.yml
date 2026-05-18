@@ -305,6 +305,23 @@ jobs:
       - name: Helm template (validate rendering)
         run: helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml > /dev/null
 
+  compose_validation:
+    name: Compose File Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate production compose
+        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml config -q
+
+      - name: Validate production compose + images overlay
+        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
+
+      - name: Validate dev compose
+        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q
+
   docker_build_and_scan:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest

@@ -11,6 +11,9 @@ data:
   APP_URL: {{ .Values.config.baseUrl | quote }}
   API_URL: {{ .Values.config.apiUrl | quote }}
 
+  # Reverse proxy: number of trusted hops for req.ip / req.protocol resolution
+  TRUST_PROXY_HOPS: {{ .Values.config.trustProxyHops | default 2 | quote }}
+
   # Database -- when using an external DB with existingSecret, skip all DB keys
   # so the secret is the sole source of truth. CloudNativePG always renders them.
   {{- if or .Values.postgresql.cloudnative.enabled (not .Values.postgresql.external.existingSecret) }}
@@ -30,8 +33,13 @@ data:
 
   # Admin bootstrap -- skipped when existingSecret owns these keys
   {{- if not .Values.config.existingSecret }}
-  ADMIN_EMAIL: {{ .Values.config.adminEmail | required "config.adminEmail is required for initial admin setup (or use config.existingSecret)" | quote }}
+  {{- if not .Values.config.disableAdminBootstrap }}
+  ADMIN_EMAIL: {{ .Values.config.adminEmail | required "config.adminEmail is required for initial admin setup (or set config.disableAdminBootstrap=true / config.existingSecret)" | quote }}
+  {{- end }}
   ADMIN_NAME: {{ .Values.config.adminName | default "Administrator" | quote }}
+  {{- end }}
+  {{- if .Values.config.disableAdminBootstrap }}
+  DISABLE_ADMIN_BOOTSTRAP: "true"
   {{- end }}
 
   # Metrics
@@ -58,6 +66,12 @@ data:
   {{- end }}
   {{- if .Values.smtp.fromName }}
   FROM_EMAIL_NAME: {{ .Values.smtp.fromName | quote }}
+  {{- end }}
+  {{- if .Values.smtp.secure }}
+  SMTP_SECURE: {{ .Values.smtp.secure | quote }}
+  {{- end }}
+  {{- if .Values.smtp.requireTls }}
+  SMTP_REQUIRE_TLS: {{ .Values.smtp.requireTls | quote }}
   {{- end }}
   {{- end }}
 

@@ -137,6 +137,18 @@ export const gWeeklyDigestLastRunSuccess = new client.Gauge({
   registers: [metricsRegister],
 });
 
+export const gDeliveryLastSuccessUnix = new client.Gauge({
+  name: "alerts_delivery_last_success_unix",
+  help: "Unix timestamp of the most recent successful alert delivery (from DB)",
+  registers: [metricsRegister],
+});
+
+export const gWeeklyDigestLastSentUnix = new client.Gauge({
+  name: "weekly_digest_last_sent_unix",
+  help: "Unix timestamp of the most recent weekly digest send (from DB)",
+  registers: [metricsRegister],
+});
+
 // Auto-sync metrics
 export const cAutoSync = new client.Counter({
   name: "auto_sync_runs_total",

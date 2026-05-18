@@ -12,6 +12,7 @@ import {
   gWeeklyDigestTokensIncluded,
   gWeeklyDigestLastRun,
   gWeeklyDigestLastRunSuccess,
+  gWeeklyDigestLastSentUnix,
   gRunnerUp,
   pushMetrics,
 } from "./metrics.js";
@@ -905,6 +906,19 @@ export async function weeklyDigestJob() {
     gWeeklyDigestLastRunSuccess.set(success ? 1 : 0);
   } catch (_err) {
     logger.warn("DB operation failed", { error: _err.message });
+  }
+
+  // Track last digest send timestamp from DB (used by WeeklyDigestNoSendsWeek alert)
+  try {
+    await withClient(async (client) => {
+      const res = await client.query(
+        `SELECT EXTRACT(EPOCH FROM MAX(sent_at))::bigint AS ts FROM weekly_digest_log`,
+      );
+      const ts = res.rows[0]?.ts;
+      if (ts) gWeeklyDigestLastSentUnix.set(Number(ts));
+    });
+  } catch (_err) {
+    logger.debug("Non-critical operation failed", { error: _err.message });
   }
 
   // Push metrics to Pushgateway

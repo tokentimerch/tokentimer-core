@@ -70,3 +70,8 @@ package-lock.json
 
 # Reports
 reports/
+
+# Agent-skills setup (Matt Pocock skills, kept local-only per setup-matt-pocock-skills)
+/AGENTS.md
+/docs/agents/
+/.scratch/

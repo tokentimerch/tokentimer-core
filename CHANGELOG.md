@@ -9,6 +9,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-18
+
+### Added
+
+- **Plugin-ready system settings JSONB column registry.** `systemSettings.js` now exposes `registerJsonColumn(columnName, options)` so enterprise and plugin layers can add encrypted JSONB columns to `system_settings` at startup without touching core. Each column participates in the existing env > DB > default precedence and supports per-column `featureGate(req)` predicates to enforce entitlement boundaries at the API layer.
+- **System settings GET/PUT surface registered JSONB columns.** `GET /api/admin/system-settings` merges registered plugin columns (subject to their feature gates) into the response alongside `smtp` and `whatsapp`. `PUT` accepts and persists plugin column payloads alongside core fields.
+- **`TRUST_PROXY_HOPS` env var** lets operators control the number of trusted reverse-proxy hops in front of the API (`0` = no proxy, `1` = single ingress, `2` = LB + ingress, default). Affects `req.ip` and `req.protocol` resolution used for rate-limit keys and SSO callback URL generation. Documented in `docs/CONFIGURATION.md`, `.env.example`, Helm `values.yaml`, and `configmap.yaml`.
+- **`disableAdminBootstrap` Helm value** (`config.disableAdminBootstrap: false`). Set to `true` to skip automatic admin account creation on first boot — useful when all users are managed via SSO. Propagated through `configmap.yaml` as `DISABLE_ADMIN_BOOTSTRAP=true`.
+- **SMTP TLS knobs: `SMTP_SECURE` and `SMTP_REQUIRE_TLS`.** Force SSL (`secure`) or require STARTTLS (`requireTls`) without relying on auto-detection. Available via env vars, `docker-compose.yml`, and Helm `smtp.secure` / `smtp.requireTls` values.
+- **Configurable NetworkPolicy egress CIDRs.** `networkPolicy.egress.smtpCidrs` and `networkPolicy.egress.httpsCidrs` in `values.yaml` replace the hard-coded `0.0.0.0/0` catch-all. Default to `[0.0.0.0/0]` to preserve existing behaviour; operators can narrow to known relays or provider IP ranges.
+- **`alerts_delivery_last_success_unix` Prometheus gauge.** Set by the delivery worker after each run to the DB timestamp of the most recent successful delivery. Powers time-based alerting on stale alert queues.
+- **`weekly_digest_last_sent_unix` Prometheus gauge.** Set by the weekly-digest worker to the DB timestamp of the most recent digest send. Powers `WeeklyDigestNoSendsWeek`-style alerts.
+- **`requireAnyAdmin` middleware caching.** Result is stored on `req._adminCheckResult` and the session-deserialized `req.user.is_admin` is trusted directly, saving a DB round-trip per admin API call.
+- **`compose_validation` CI job.** New GitHub Actions job validates `docker-compose.yml`, `docker-compose.images.yml` overlay, and `docker-compose.dev.yml` with `docker compose config -q` on every push, catching env-variable and YAML errors before they reach production.
+- **`helm:lint` and `helm:template` root scripts.** Added to `package.json` for developer convenience.
+- **Healthchecks for `api` and `dashboard` services** in `docker-compose.yml`. The API uses a native `node -e` HTTP probe (no curl required in Alpine); the dashboard uses `wget`.
+- **Unit tests for `systemSettings` JSON column registry** (`tests/integration/system-settings.unit.test.js`). Covers `registerJsonColumn` validation, `getJsonColumn`, `setJsonColumn`, secret-field encryption, env-var override, and feature-gate logic.
+
+### Changed
+
+- **`ADMIN_EMAIL` is no longer required when `config.disableAdminBootstrap` is true.** The `required` guard in `configmap.yaml` is skipped, removing a Helm install blocker for SSO-only deployments.
+- **`docker-compose.yml` env var coverage extended.** `WORKER_API_KEY`, `ALERT_THRESHOLDS`, `ALERT_MAX_ATTEMPTS`, `ALERT_RETRY_DELAY_MS`, `DELIVERY_WINDOW_*`, `ENABLE_METRICS`, `PUSHGATEWAY_URL`, and `ENVIRONMENT_SUFFIX` are now forwarded to the relevant worker containers, removing the need for manual `docker-compose.override.yml` stubs.
+- **`docker-compose.dev.yml` parity.** `SMTP_SECURE`, `SMTP_REQUIRE_TLS`, `ENABLE_METRICS`, and `ENVIRONMENT_SUFFIX` forwarded to the dev API service.
+- **Helm `values.schema.json` extended.** Added schemas for `config.adminName`, `config.disableAdminBootstrap`, `config.nodeEnv`, `config.trustProxyHops`, `networkPolicy.ingressNamespace`, `networkPolicy.monitoringNamespace`, and the new `networkPolicy.egress` object.
+
+### Fixed
+
+- **Repeated `system_settings` table-missing log noise suppressed.** Boot sequences (and tests without the schema seeded) no longer flood logs — the warning fires once (`42P01`), then drops to debug-level for subsequent misses.
+- **`whatsapp-webhook-status` test stability fix.** Corrected an assertion that was timing-sensitive in CI.
+- **`.gitignore` extended** to exclude `/AGENTS.md`, `/docs/agents/`, and `/.scratch/` (local agent-skill scaffolding artifacts).
+
 ## [0.4.0] - 2026-05-09
 
 ### Added
