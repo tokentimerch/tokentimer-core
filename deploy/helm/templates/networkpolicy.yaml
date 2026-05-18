@@ -93,9 +93,12 @@ spec:
         - protocol: TCP
           port: 53
     # SMTP
+    {{- with .Values.networkPolicy.egress.smtpCidrs }}
     - to:
+        {{- range . }}
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 25
@@ -103,13 +106,18 @@ spec:
           port: 465
         - protocol: TCP
           port: 587
+    {{- end }}
     # HTTPS (OAuth providers, external integrations)
+    {{- with .Values.networkPolicy.egress.httpsCidrs }}
     - to:
+        {{- range . }}
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
 
 ---
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -210,9 +218,12 @@ spec:
         - protocol: TCP
           port: 53
     # SMTP
+    {{- with .Values.networkPolicy.egress.smtpCidrs }}
     - to:
+        {{- range . }}
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 25
@@ -220,6 +231,7 @@ spec:
           port: 465
         - protocol: TCP
           port: 587
+    {{- end }}
     # API (auto-sync scan + import endpoints)
     - to:
         - podSelector:
@@ -230,12 +242,16 @@ spec:
         - protocol: TCP
           port: {{ .Values.api.service.port }}
     # HTTPS (Slack, Discord, Teams webhooks, Twilio)
+    {{- with .Values.networkPolicy.egress.httpsCidrs }}
     - to:
+        {{- range . }}
         - ipBlock:
-            cidr: 0.0.0.0/0
+            cidr: {{ . }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
     {{- if .Values.monitoring.metrics.pushgatewayUrl }}
     # Pushgateway
     {{- if .Values.networkPolicy.monitoringNamespace }}

@@ -9,8 +9,12 @@
         "existingSecret": { "type": "string" },
         "adminEmail": { "type": "string", "format": "email" },
         "adminPassword": { "type": "string" },
+        "adminName": { "type": "string" },
+        "disableAdminBootstrap": { "type": "boolean" },
+        "nodeEnv": { "type": "string", "enum": ["production", "development", "test"] },
         "baseUrl": { "type": "string", "format": "uri" },
         "apiUrl": { "type": "string", "format": "uri" },
+        "trustProxyHops": { "type": "integer", "minimum": 0, "maximum": 32 },
         "alertThresholds": { "type": "string", "pattern": "^[0-9]+(,[0-9]+)*$" }
       }
     },
@@ -89,7 +93,28 @@
     "networkPolicy": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "ingressNamespace": { "type": "string" },
+        "monitoringNamespace": { "type": "string" },
+        "egress": {
+          "type": "object",
+          "properties": {
+            "smtpCidrs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/(3[0-2]|[12]?[0-9])$"
+              }
+            },
+            "httpsCidrs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/(3[0-2]|[12]?[0-9])$"
+              }
+            }
+          }
+        }
       }
     },
     "monitoring": {

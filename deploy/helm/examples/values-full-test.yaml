@@ -163,7 +163,7 @@ monitoring:
             annotations:
               summary: "TokenTimer API is down"
           - alert: TokenTimerZeroSends48h
-            expr: sum(increase(alerts_delivery_total{status="success"}[48h])) == 0
+            expr: (time() - alerts_delivery_last_success_unix{worker="delivery-worker"}) > 172800
             for: 30m
             labels:
               severity: critical
@@ -333,6 +333,16 @@ monitoring:
             annotations:
               summary: "Weekly digest run failed"
               description: "Weekly digest last run failed (success metric = 0)"
+          - alert: TokenTimerWeeklyDigestNoSendsWeek
+            expr: (time() - weekly_digest_last_sent_unix{worker="weekly-digest"}) > 604800
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "No weekly digests sent in 7 days"
+              description: >-
+                No weekly digests sent in the last 7 days (might be expected
+                if no users have digest-eligible tokens)
       # ── Application errors ────────────────────────────────────────────────
       - name: tokentimer.application
         rules:

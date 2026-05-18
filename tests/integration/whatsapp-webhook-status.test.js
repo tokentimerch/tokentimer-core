@@ -1,7 +1,7 @@
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
 const crypto = require("crypto");
 
-const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+const BASE = process.env.TEST_API_URL || `http://localhost:${process.env.TT_TEST_API_PORT || "4000"}`;
 
 const hasTwilio = !!process.env.TWILIO_AUTH_TOKEN;
 const describeIf = hasTwilio ? describe : describe.skip;

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "repo": "tokentimer-core",
   "contractsPackage": "@tokentimer/contracts",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "namespaces": [
     {
       "name": "queue",

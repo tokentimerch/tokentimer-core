@@ -137,8 +137,15 @@ if (metricsEnabled) {
   });
 }
 
-// Trust exactly 2 proxy hops (LB -> Traefik) so req.ip reflects the real client IP
-app.set("trust proxy", 2);
+// Trust N proxy hops so req.ip reflects the real client IP behind ingress/LB.
+// Override via TRUST_PROXY_HOPS (default 2 = LB -> Traefik). Set to 0 for
+// no-proxy deployments. Affects req.protocol detection used by callback URL
+// generation in SSO flows.
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS);
+app.set(
+  "trust proxy",
+  Number.isFinite(TRUST_PROXY_HOPS) ? TRUST_PROXY_HOPS : 2,
+);
 
 // API docs are enabled in non-production by default.
 // In production, opt-in explicitly with ENABLE_API_DOCS=true.

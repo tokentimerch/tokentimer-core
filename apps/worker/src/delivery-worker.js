@@ -3,6 +3,7 @@ import {
   cDelivery,
   cRetry,
   hLatency,
+  gDeliveryLastSuccessUnix,
   gCooldownInEffect,
   gRunnerUp,
   gQueueDueNow,
@@ -1999,6 +2000,19 @@ export async function deliveryWorkerJob() {
         } catch (_err) {
           logger.warn("DB operation failed", { error: _err.message });
         }
+      }
+
+      // Track last successful delivery timestamp from DB (used by ZeroSends48h alert)
+      const lastSuccessRes = await client.query(
+        `SELECT EXTRACT(EPOCH FROM MAX(sent_at))::bigint AS ts
+           FROM alert_delivery_log
+          WHERE status = 'success'`,
+      );
+      try {
+        const ts = lastSuccessRes.rows[0]?.ts;
+        if (ts) gDeliveryLastSuccessUnix.set(Number(ts));
+      } catch (_err) {
+        logger.debug("Metrics recording failed", { error: _err.message });
       }
     });
   } catch (_) {

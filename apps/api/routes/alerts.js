@@ -25,13 +25,29 @@ function intEnv(name, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// Middleware: require user to be a global deployment admin (users.is_admin)
+// Middleware: require user to be a global deployment admin (users.is_admin).
+// The result is cached on `req` for the lifetime of the request so subsequent
+// middlewares (e.g. the SSO featureGate that also needs admin status) reuse
+// the lookup instead of re-querying.
 async function requireAnyAdmin(req, res, next) {
   try {
     if (!req.user?.id)
       return res
         .status(401)
         .json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+    if (req._adminCheckResult !== undefined) {
+      if (req._adminCheckResult === true) return next();
+      return res
+        .status(403)
+        .json({ error: "Admin access required", code: "FORBIDDEN" });
+    }
+    // Trust an already-rehydrated `req.user.is_admin` when present; the
+    // session deserialiser populates it on most routes and saves us a DB
+    // round-trip per admin call.
+    if (req.user.is_admin === true) {
+      req._adminCheckResult = true;
+      return next();
+    }
     const { rows } = await pool.query(
       `SELECT is_admin
          FROM users
@@ -39,10 +55,13 @@ async function requireAnyAdmin(req, res, next) {
         LIMIT 1`,
       [req.user.id],
     );
-    if (rows.length === 0 || rows[0].is_admin !== true)
+    const isAdmin = rows.length > 0 && rows[0].is_admin === true;
+    req._adminCheckResult = isAdmin;
+    if (!isAdmin) {
       return res
         .status(403)
         .json({ error: "Admin access required", code: "FORBIDDEN" });
+    }
     next();
   } catch (_e) {
     logger.warn("Authorization check failed", {
@@ -94,7 +113,39 @@ router.get(
           all.twilio_whatsapp_weekly_digest_content_sid,
         configured: await systemSettings.isWhatsAppAvailable(pool),
       };
-      res.json({ smtp, whatsapp });
+      // Surface any JSONB columns registered by plugins under their
+      // configured response key. Core ships zero registrations.
+      //
+      // Per-column `featureGate(req)` is honoured: a column whose gate
+      // returns false is hidden from the response entirely. Plugins use
+      // this to enforce their own entitlement boundaries without core
+      // needing to know about them.
+      const extras = {};
+      for (const { column, responseKey, featureGate } of systemSettings.listRegisteredJsonColumns()) {
+        if (typeof featureGate === "function") {
+          let allowed = false;
+          try {
+            allowed = Boolean(await featureGate(req));
+          } catch (gateErr) {
+            logger.warn("System settings featureGate threw", {
+              column,
+              error: gateErr.message,
+            });
+            allowed = false;
+          }
+          if (!allowed) continue;
+        }
+        try {
+          extras[responseKey] = await systemSettings.getJsonColumn(pool, column);
+        } catch (jsonErr) {
+          logger.warn("System settings JSON column read failed", {
+            column,
+            error: jsonErr.message,
+          });
+          extras[responseKey] = {};
+        }
+      }
+      res.json({ smtp, whatsapp, ...extras });
     } catch (e) {
       logger.error("System settings fetch error", { error: e.message });
       res.status(500).json({
@@ -113,7 +164,8 @@ router.put(
   requireAnyAdmin,
   async (req, res) => {
     try {
-      const { smtp, whatsapp } = req.body || {};
+      const body = req.body || {};
+      const { smtp, whatsapp } = body;
       const updates = {};
       // Map frontend keys back to DB keys
       if (smtp) {
@@ -157,6 +209,68 @@ router.put(
 
       await systemSettings.saveSettings(pool, updates, req.user.id);
 
+      // Persist any JSONB extras for registered columns. The frontend posts
+      // sections keyed by `responseKey`. Per-column `featureGate(req)`: if
+      // the gate rejects, we refuse the write with 403 to make the
+      // entitlement boundary visible to admins (rather than silently
+      // dropping the payload).
+      const registeredCols = systemSettings.listRegisteredJsonColumns();
+      for (const { responseKey, featureGate } of registeredCols) {
+        const payload = body[responseKey];
+        if (
+          payload &&
+          typeof payload === "object" &&
+          typeof featureGate === "function"
+        ) {
+          let allowed = false;
+          try {
+            allowed = Boolean(await featureGate(req));
+          } catch (gateErr) {
+            logger.warn("System settings featureGate threw on PUT", {
+              column: responseKey,
+              error: gateErr.message,
+            });
+            allowed = false;
+          }
+          if (!allowed) {
+            return res.status(403).json({
+              error: `Configuring '${responseKey}' requires an entitlement not present on this license.`,
+              code: "ENTITLEMENT_MISSING",
+              section: responseKey,
+            });
+          }
+        }
+      }
+      for (const { column, responseKey } of registeredCols) {
+        const payload = body[responseKey];
+        if (payload && typeof payload === "object") {
+          try {
+            await systemSettings.saveJsonColumn(
+              pool,
+              column,
+              payload,
+              req.user.id,
+              // Strict mode: a typo in the payload (e.g. `audienceee`) now
+              // surfaces as a 400 instead of being silently dropped.
+              { strictKeys: true },
+            );
+          } catch (jsonErr) {
+            if (jsonErr.code === "JSON_COLUMN_UNKNOWN_KEYS") {
+              return res.status(400).json({
+                error: jsonErr.message,
+                code: jsonErr.code,
+                section: responseKey,
+                unknownKeys: jsonErr.unknownKeys,
+              });
+            }
+            logger.warn("System settings JSON column write failed", {
+              column,
+              error: jsonErr.message,
+            });
+          }
+        }
+      }
+
       const all = await systemSettings.getAllSettings(pool);
       const smtpResult = {
         host: all.smtp_host,
@@ -186,7 +300,31 @@ router.put(
           all.twilio_whatsapp_weekly_digest_content_sid,
         configured: await systemSettings.isWhatsAppAvailable(pool),
       };
-      res.json({ smtp: smtpResult, whatsapp: whatsappResult });
+      const extrasResult = {};
+      for (const { column, responseKey, featureGate } of registeredCols) {
+        if (typeof featureGate === "function") {
+          let allowed = false;
+          try {
+            allowed = Boolean(await featureGate(req));
+          } catch (_) {
+            allowed = false;
+          }
+          if (!allowed) continue;
+        }
+        try {
+          extrasResult[responseKey] = await systemSettings.getJsonColumn(
+            pool,
+            column,
+          );
+        } catch (_) {
+          extrasResult[responseKey] = {};
+        }
+      }
+      res.json({
+        smtp: smtpResult,
+        whatsapp: whatsappResult,
+        ...extrasResult,
+      });
     } catch (e) {
       logger.error("System settings save error", { error: e.message });
       res.status(500).json({

@@ -373,9 +373,19 @@ config:
   adminEmail: ""          # required (unless existingSecret is set)
   adminPassword: ""       # auto-generated if empty
   adminName: "Administrator"
+  # Set to true to skip automatic admin creation (e.g. when users are managed via SSO).
+  disableAdminBootstrap: false
   nodeEnv: "production"        # set to "development" for debug/testing
   baseUrl: "http://localhost:8080"
   apiUrl: "http://localhost:4000"
+
+  # Number of trusted reverse-proxy hops in front of the API. Affects how
+  # Express resolves req.ip and req.protocol (used by callback URL
+  # generation and rate-limit keys).
+  #   0 = no proxy in front of the API
+  #   1 = single ingress / reverse proxy
+  #   2 = LB -> ingress (default, matches typical K8s ingress + Service LB)
+  trustProxyHops: 2
 
   # Fallback when workspace has no custom thresholds (workspace DB > env > code).
   alertThresholds: "30,14,7,1,0"
@@ -393,6 +403,10 @@ smtp:
   existingSecret: ""
   fromEmail: ""
   fromName: ""
+  # Force SSL (auto-detected for port 465 when unset).
+  secure: ""              # "true" | "false" | ""
+  # Require STARTTLS upgrade on plaintext ports.
+  requireTls: ""          # "true" | "false" | ""
 
 # -- Twilio WhatsApp (optional) -----------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
@@ -452,6 +466,21 @@ networkPolicy:
   enabled: false
   ingressNamespace: ""      # e.g. "ingress-nginx"
   monitoringNamespace: ""   # e.g. "monitoring"
+  # Destination CIDRs for outbound traffic from api and worker pods.
+  # Defaults allow all (0.0.0.0/0) to preserve out-of-the-box behaviour.
+  # Override to restrict outbound traffic to known endpoints (internal SMTP
+  # relay, allowlisted OAuth/SAML providers, webhook destinations, etc.).
+  # Set a list to empty ([]) to disable that protocol's egress entirely.
+  egress:
+    # SMTP egress (ports 25, 465, 587). Used by api and worker pods to send
+    # email alerts and digests.
+    smtpCidrs:
+      - 0.0.0.0/0
+    # HTTPS egress (port 443). Used by api for OAuth/SAML callbacks and
+    # external integrations, and by workers for outbound webhooks
+    # (Slack, Discord, Teams, Twilio).
+    httpsCidrs:
+      - 0.0.0.0/0
 
 # -- Pod Security (shared defaults) --------------------------------------------
 podSecurityContext:
