@@ -8,6 +8,7 @@
 const bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
 const { canonicalizeEmail } = require("../db/models/User");
+const { logger } = require("../utils/logger");
 
 function normalizeEnvCredential(value) {
   if (typeof value !== "string") return "";
@@ -35,7 +36,7 @@ async function bootstrapAdmin(pool) {
     const userCount = usersResult.rows[0].count;
 
     if (userCount > 0) {
-      console.log("Users already exist, skipping admin bootstrap");
+      logger.info("Users already exist, skipping admin bootstrap");
       return { created: false, admin: null };
     }
 
@@ -48,11 +49,8 @@ async function bootstrapAdmin(pool) {
     const adminName = normalizeEnvCredential(rawAdminName) || "Administrator";
 
     if (!adminEmail || !adminPassword) {
-      console.error(
-        "CRITICAL: No users exist and ADMIN_EMAIL/ADMIN_PASSWORD not set!",
-      );
-      console.error(
-        "Set ADMIN_EMAIL and ADMIN_PASSWORD environment variables to create the initial admin.",
+      logger.error(
+        "CRITICAL: No users exist and ADMIN_EMAIL/ADMIN_PASSWORD not set. Set ADMIN_EMAIL and ADMIN_PASSWORD to create the initial admin.",
       );
       throw new Error("Admin credentials required for initial setup");
     }
@@ -63,13 +61,13 @@ async function bootstrapAdmin(pool) {
     }
 
     if (rawAdminEmail && rawAdminEmail !== adminEmail) {
-      console.warn("ADMIN_EMAIL normalized from environment value");
+      logger.warn("ADMIN_EMAIL normalized from environment value");
     }
     if (rawAdminPassword && rawAdminPassword !== adminPassword) {
-      console.warn("ADMIN_PASSWORD normalized from environment value");
+      logger.warn("ADMIN_PASSWORD normalized from environment value");
     }
 
-    console.log("Creating initial admin user...");
+    logger.info("Creating initial admin user...");
 
     // Hash password
     const passwordHash = await bcrypt.hash(adminPassword, 12);
@@ -108,20 +106,17 @@ async function bootstrapAdmin(pool) {
       [workspaceId],
     );
 
-    console.log("Initial admin user created successfully");
-    console.log(`   Email: ${adminEmail}`);
-    console.log(
-      `   Login at: ${process.env.APP_URL || "http://localhost:5173"}/login`,
+    logger.info("Initial admin user created successfully", {
+      email: adminEmail,
+      loginUrl: `${process.env.APP_URL || "http://localhost:5173"}/login`,
+    });
+    logger.warn(
+      "IMPORTANT: Remove ADMIN_PASSWORD from environment after first login. The admin can invite other users from the dashboard.",
     );
-    console.log("");
-    console.log(
-      "IMPORTANT: Remove ADMIN_PASSWORD from environment after first login!",
-    );
-    console.log("   The admin can invite other users from the dashboard.");
 
     return { created: true, admin };
   } catch (error) {
-    console.error("Failed to bootstrap admin:", error.message);
+    logger.error("Failed to bootstrap admin", { error: error.message });
     throw error;
   }
 }
