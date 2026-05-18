@@ -1,61 +1,193 @@
 {{- if .Values.postgresql.cloudnative.enabled }}
+{{- $cnpg := .Values.postgresql.cloudnative -}}
+{{- $pgConfig := default dict $cnpg.postgresql -}}
+{{- $bootstrap := default dict $cnpg.bootstrap -}}
+{{- $mon := default dict $cnpg.monitoring -}}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: {{ include "tokentimer.fullname" . }}-pg
   labels:
     {{- include "tokentimer.labels" . | nindent 4 }}
+    {{- with $cnpg.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $cnpg.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  instances: {{ .Values.postgresql.cloudnative.instances }}
-  imageName: {{ .Values.postgresql.cloudnative.imageName }}
-  primaryUpdateStrategy: {{ .Values.postgresql.cloudnative.primaryUpdateStrategy }}
+  instances: {{ $cnpg.instances }}
+  imageName: {{ $cnpg.imageName | quote }}
+  primaryUpdateStrategy: {{ $cnpg.primaryUpdateStrategy }}
+  maxSyncReplicas: {{ $cnpg.maxSyncReplicas }}
+  minSyncReplicas: {{ $cnpg.minSyncReplicas }}
+
+  {{- if hasKey $cnpg "enableSuperuserAccess" }}
+  enableSuperuserAccess: {{ $cnpg.enableSuperuserAccess }}
+  {{- end }}
+  {{- if hasKey $cnpg "enablePdb" }}
+  enablePDB: {{ $cnpg.enablePdb }}
+  {{- end }}
+  {{- if hasKey $cnpg "logLevel" }}
+  logLevel: {{ $cnpg.logLevel }}
+  {{- end }}
+  {{- if hasKey $cnpg "primaryUpdateMethod" }}
+  primaryUpdateMethod: {{ $cnpg.primaryUpdateMethod }}
+  {{- end }}
+  {{- if hasKey $cnpg "failoverDelay" }}
+  failoverDelay: {{ $cnpg.failoverDelay }}
+  {{- end }}
+  {{- if hasKey $cnpg "switchoverDelay" }}
+  switchoverDelay: {{ $cnpg.switchoverDelay }}
+  {{- end }}
+  {{- if hasKey $cnpg "startDelay" }}
+  startDelay: {{ $cnpg.startDelay }}
+  {{- end }}
+  {{- if hasKey $cnpg "stopDelay" }}
+  stopDelay: {{ $cnpg.stopDelay }}
+  {{- end }}
+  {{- if hasKey $cnpg "smartShutdownTimeout" }}
+  smartShutdownTimeout: {{ $cnpg.smartShutdownTimeout }}
+  {{- end }}
+  {{- if hasKey $cnpg "postgresUID" }}
+  postgresUID: {{ $cnpg.postgresUID }}
+  {{- end }}
+  {{- if hasKey $cnpg "postgresGID" }}
+  postgresGID: {{ $cnpg.postgresGID }}
+  {{- end }}
+  {{- if hasKey $cnpg "priorityClassName" }}
+  priorityClassName: {{ $cnpg.priorityClassName | quote }}
+  {{- end }}
+  {{- if hasKey $cnpg "imagePullPolicy" }}
+  imagePullPolicy: {{ $cnpg.imagePullPolicy }}
+  {{- end }}
+  {{- if hasKey $cnpg "livenessProbeTimeout" }}
+  livenessProbeTimeout: {{ $cnpg.livenessProbeTimeout }}
+  {{- end }}
 
   bootstrap:
     initdb:
       database: {{ .Values.postgresql.auth.database }}
       owner: {{ .Values.postgresql.auth.username }}
-      {{- if .Values.postgresql.auth.existingSecret }}
-      secret:
-        name: {{ .Values.postgresql.auth.existingSecret }}
-      {{- else }}
-      secret:
-        name: {{ include "tokentimer.fullname" . }}-pg-secret
+      {{- with $bootstrap.encoding }}
+      encoding: {{ . }}
       {{- end }}
-
-  storage:
-    size: {{ .Values.postgresql.cloudnative.storage.size }}
-    {{- if .Values.postgresql.cloudnative.storage.storageClass }}
-    storageClass: {{ .Values.postgresql.cloudnative.storage.storageClass | quote }}
+      {{- with $bootstrap.localeCType }}
+      localeCType: {{ . }}
+      {{- end }}
+      {{- with $bootstrap.localeCollate }}
+      localeCollate: {{ . }}
+      {{- end }}
+      secret:
+        name: {{ include "tokentimer.pgSecretName" . }}
+    {{- with $bootstrap.recovery }}
+    recovery:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $bootstrap.pgBaseBackup }}
+    pg_basebackup:
+      {{- toYaml . | nindent 6 }}
     {{- end }}
 
-  {{- with .Values.postgresql.cloudnative.walStorage }}
+  storage:
+    size: {{ $cnpg.storage.size }}
+    {{- if $cnpg.storage.storageClass }}
+    storageClass: {{ $cnpg.storage.storageClass | quote }}
+    {{- end }}
+    {{- if hasKey $cnpg.storage "resizeInUseVolumes" }}
+    resizeInUseVolumes: {{ $cnpg.storage.resizeInUseVolumes }}
+    {{- end }}
+    {{- with $cnpg.storage.pvcTemplate }}
+    pvcTemplate:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+
+  {{- with $cnpg.walStorage }}
   walStorage:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
+  superuserSecret:
+    name: {{ default (include "tokentimer.pgSecretName" .) $cnpg.superuserSecret }}
+
   postgresql:
+    {{- if $cnpg.parameters }}
     parameters:
-      max_connections: {{ .Values.postgresql.cloudnative.maxConnections | quote }}
-      shared_buffers: {{ .Values.postgresql.cloudnative.sharedBuffers | quote }}
-      work_mem: {{ .Values.postgresql.cloudnative.workMem | quote }}
-      maintenance_work_mem: {{ .Values.postgresql.cloudnative.maintenanceWorkMem | quote }}
-      {{- with .Values.postgresql.cloudnative.extraParameters }}
+      {{- toYaml $cnpg.parameters | nindent 6 }}
+    {{- else }}
+    parameters:
+      max_connections: {{ $cnpg.maxConnections | quote }}
+      shared_buffers: {{ $cnpg.sharedBuffers | quote }}
+      work_mem: {{ $cnpg.workMem | quote }}
+      maintenance_work_mem: {{ $cnpg.maintenanceWorkMem | quote }}
+      {{- with $cnpg.extraParameters }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
-    {{- with .Values.postgresql.cloudnative.pgHba }}
+    {{- end }}
+    {{- with $cnpg.pgHba }}
     pg_hba:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- with $pgConfig.syncReplicaElectionConstraint }}
+    syncReplicaElectionConstraint:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- if hasKey $pgConfig "promotionTimeout" }}
+    promotionTimeout: {{ $pgConfig.promotionTimeout }}
+    {{- end }}
+    {{- with $pgConfig.synchronous }}
+    synchronous:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $pgConfig.pgIdent }}
+    pg_ident:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $pgConfig.ldap }}
+    ldap:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- if hasKey $pgConfig "enableAlterSystem" }}
+    enableAlterSystem: {{ $pgConfig.enableAlterSystem }}
+    {{- end }}
+    {{- with $pgConfig.extensions }}
+    extensions:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $pgConfig.sharedPreloadLibraries }}
+    shared_preload_libraries:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 
-  {{- if .Values.postgresql.cloudnative.enableSuperuserAccess }}
-  enableSuperuserAccess: true
+  {{- with $cnpg.replicationSlots }}
+  replicationSlots:
+    {{- toYaml . | nindent 4 }}
   {{- end }}
 
-  {{- if .Values.postgresql.cloudnative.backup.enabled }}
+  {{- with $cnpg.probes }}
+  probes:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- if or $mon.podMonitorEnabled (not (empty $mon.spec)) }}
+  monitoring:
+    {{- if $mon.podMonitorEnabled }}
+    enablePodMonitor: true
+    {{- end }}
+    {{- with $mon.spec }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+
+  {{- if $cnpg.backup.enabled }}
   backup:
+    {{- if $cnpg.backup.spec }}
+    {{- toYaml $cnpg.backup.spec | nindent 4 }}
+    {{- else }}
     barmanObjectStore:
-      destinationPath: {{ .Values.postgresql.cloudnative.backup.destinationPath }}
-      {{- with .Values.postgresql.cloudnative.backup.s3 }}
+      destinationPath: {{ $cnpg.backup.destinationPath }}
+      {{- with $cnpg.backup.s3 }}
       {{- if .credentialsSecret }}
       s3Credentials:
         accessKeyId:
@@ -74,27 +206,91 @@ spec:
       wal:
         compression: gzip
         maxParallel: 8
-    retentionPolicy: {{ .Values.postgresql.cloudnative.backup.retentionPolicy }}
+    retentionPolicy: {{ $cnpg.backup.retentionPolicy }}
+    {{- end }}
+    {{- with $cnpg.backup.volumeSnapshot }}
+    volumeSnapshot:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   {{- end }}
 
-  {{- if .Values.postgresql.cloudnative.monitoring.podMonitorEnabled }}
-  monitoring:
-    enablePodMonitor: true
-  {{- end }}
-
-  {{- with .Values.postgresql.cloudnative.resources }}
+  {{- with $cnpg.resources }}
   resources:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
-  {{- with .Values.postgresql.cloudnative.affinity }}
+  {{- with $cnpg.affinity }}
   affinity:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
-  {{- with .Values.postgresql.cloudnative.tolerations }}
-  tolerations:
+  {{- with $cnpg.topologySpreadConstraints }}
+  topologySpreadConstraints:
     {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.plugins }}
+  plugins:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.certificates }}
+  certificates:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.externalClusters }}
+  externalClusters:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.managed }}
+  managed:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.inheritedMetadata }}
+  inheritedMetadata:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.ephemeralVolumeSource }}
+  ephemeralVolumeSource:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.ephemeralVolumesSizeLimit }}
+  ephemeralVolumesSizeLimit:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.replica }}
+  replica:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.env }}
+  env:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.envFrom }}
+  envFrom:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.tablespaces }}
+  tablespaces:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with $cnpg.extraSpec }}
+  {{- toYaml . | nindent 4 }}
   {{- end }}
 
 {{- if not .Values.postgresql.auth.existingSecret }}
@@ -102,7 +298,7 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "tokentimer.fullname" . }}-pg-secret
+  name: {{ include "tokentimer.pgSecretName" . }}
   labels:
     {{- include "tokentimer.labels" . | nindent 4 }}
 type: kubernetes.io/basic-auth

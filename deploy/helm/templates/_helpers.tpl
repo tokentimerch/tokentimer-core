@@ -99,8 +99,16 @@ The value is cached on .Values so both the CNPG Cluster secret and the app
 secret receive the same password within a single render pass.
 On upgrades, the existing secret is read via `lookup` to avoid regenerating.
 */}}
+{{- define "tokentimer.pgSecretName" -}}
+{{- if .Values.postgresql.auth.existingSecret -}}
+{{- .Values.postgresql.auth.existingSecret -}}
+{{- else -}}
+{{- printf "%s-pg-secret" (include "tokentimer.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "tokentimer.cnpgPassword" -}}
-{{- $secretName := printf "%s-pg-secret" (include "tokentimer.fullname" .) -}}
+{{- $secretName := include "tokentimer.pgSecretName" . -}}
 {{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $secretName -}}
 {{- if and $existingSecret $existingSecret.data (index $existingSecret.data "password") -}}
   {{- index $existingSecret.data "password" | b64dec -}}

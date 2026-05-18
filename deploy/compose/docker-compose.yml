@@ -386,9 +386,9 @@ services:
     depends_on:
       - api
     ports:
-      - "${DASHBOARD_PORT:-5173}:80"
+      - "${DASHBOARD_PORT:-5173}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 10s

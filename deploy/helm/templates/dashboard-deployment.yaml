@@ -40,7 +40,7 @@ spec:
           imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: {{ .Values.dashboard.containerPort }}
               protocol: TCP
           {{- with .Values.dashboard.livenessProbe }}
           livenessProbe:
