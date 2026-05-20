@@ -148,6 +148,149 @@ Database host. CloudNativePG exposes <cluster>-rw as the read-write service.
 {{- if .Values.postgresql.cloudnative.enabled }}{{ .Values.postgresql.auth.username }}{{- else }}{{ .Values.postgresql.external.username }}{{- end }}
 {{- end }}
 
+{{/* ---- ConfigMap / Secret checksums (rollout on helm upgrade) ---- */}}
+
+{{/*
+Rendered ConfigMap data keys only (stable input for checksum/config).
+*/}}
+{{- define "tokentimer.configmapData" -}}
+NODE_ENV: {{ .Values.config.nodeEnv | default "production" | quote }}
+APP_URL: {{ .Values.config.baseUrl | quote }}
+API_URL: {{ .Values.config.apiUrl | quote }}
+TRUST_PROXY_HOPS: {{ .Values.config.trustProxyHops | default 2 | quote }}
+{{- if or .Values.postgresql.cloudnative.enabled (not .Values.postgresql.external.existingSecret) }}
+DB_HOST: {{ include "tokentimer.databaseHost" . | quote }}
+DB_PORT: {{ include "tokentimer.databasePort" . | quote }}
+DB_NAME: {{ include "tokentimer.databaseName" . | quote }}
+DB_USER: {{ include "tokentimer.databaseUser" . | quote }}
+{{- if .Values.postgresql.cloudnative.enabled }}
+DB_SSL: "require"
+{{- else if and .Values.postgresql.external.enabled .Values.postgresql.external.sslMode }}
+DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
+{{- end }}
+{{- end }}
+{{- if .Values.config.alertThresholds }}
+ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
+{{- end }}
+{{- if not .Values.config.existingSecret }}
+{{- if not .Values.config.disableAdminBootstrap }}
+ADMIN_EMAIL: {{ .Values.config.adminEmail | required "config.adminEmail is required for initial admin setup (or set config.disableAdminBootstrap=true / config.existingSecret)" | quote }}
+{{- end }}
+ADMIN_NAME: {{ .Values.config.adminName | default "Administrator" | quote }}
+{{- end }}
+{{- if .Values.config.disableAdminBootstrap }}
+DISABLE_ADMIN_BOOTSTRAP: "true"
+{{- end }}
+{{- if .Values.monitoring.metrics.enabled }}
+ENABLE_METRICS: "true"
+{{- end }}
+{{- if .Values.monitoring.metrics.pushgatewayUrl }}
+PUSHGATEWAY_URL: {{ .Values.monitoring.metrics.pushgatewayUrl | quote }}
+{{- end }}
+{{- if not .Values.smtp.existingSecret }}
+{{- if .Values.smtp.host }}
+SMTP_HOST: {{ .Values.smtp.host | quote }}
+{{- end }}
+{{- if .Values.smtp.port }}
+SMTP_PORT: {{ .Values.smtp.port | quote }}
+{{- end }}
+{{- if .Values.smtp.user }}
+SMTP_USER: {{ .Values.smtp.user | quote }}
+{{- end }}
+{{- if .Values.smtp.fromEmail }}
+FROM_EMAIL: {{ .Values.smtp.fromEmail | quote }}
+{{- end }}
+{{- if .Values.smtp.fromName }}
+FROM_EMAIL_NAME: {{ .Values.smtp.fromName | quote }}
+{{- end }}
+{{- if .Values.smtp.secure }}
+SMTP_SECURE: {{ .Values.smtp.secure | quote }}
+{{- end }}
+{{- if .Values.smtp.requireTls }}
+SMTP_REQUIRE_TLS: {{ .Values.smtp.requireTls | quote }}
+{{- end }}
+{{- end }}
+{{- if not .Values.twilio.existingSecret }}
+{{- if .Values.twilio.accountSid }}
+TWILIO_ACCOUNT_SID: {{ .Values.twilio.accountSid | quote }}
+{{- end }}
+{{- if .Values.twilio.whatsappFrom }}
+TWILIO_WHATSAPP_FROM: {{ .Values.twilio.whatsappFrom | quote }}
+{{- end }}
+{{- if .Values.twilio.testContentSid }}
+TWILIO_WHATSAPP_TEST_CONTENT_SID: {{ .Values.twilio.testContentSid | quote }}
+{{- end }}
+{{- if .Values.twilio.alertContentSidExpires }}
+TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES: {{ .Values.twilio.alertContentSidExpires | quote }}
+{{- end }}
+{{- if .Values.twilio.alertContentSidExpired }}
+TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED: {{ .Values.twilio.alertContentSidExpired | quote }}
+{{- end }}
+{{- if .Values.twilio.alertContentSidEndpointDown }}
+TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN: {{ .Values.twilio.alertContentSidEndpointDown | quote }}
+{{- end }}
+{{- if .Values.twilio.alertContentSidEndpointRecovered }}
+TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED: {{ .Values.twilio.alertContentSidEndpointRecovered | quote }}
+{{- end }}
+{{- if .Values.twilio.weeklyDigestContentSid }}
+TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID: {{ .Values.twilio.weeklyDigestContentSid | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "tokentimer.configmapChecksum" -}}
+{{- include "tokentimer.configmapData" . | sha256sum }}
+{{- end -}}
+
+{{/*
+Stable secret inputs (avoids randAlphaNum in checksum/secret during helm template).
+*/}}
+{{- define "tokentimer.secretChecksum" -}}
+{{- dict
+  "sessionSecret" (.Values.config.sessionSecret | default "")
+  "adminPassword" (.Values.config.adminPassword | default "")
+  "pgPassword" (.Values.postgresql.auth.password | default "")
+  "externalPgPassword" (.Values.postgresql.external.password | default "")
+  "smtpPassword" (.Values.smtp.password | default "")
+  "twilioAuthToken" (.Values.twilio.authToken | default "")
+  "existingSecret" (.Values.config.existingSecret | default "")
+  "pgExistingSecret" (.Values.postgresql.auth.existingSecret | default "")
+  "externalPgExistingSecret" (.Values.postgresql.external.existingSecret | default "")
+  "smtpExistingSecret" (.Values.smtp.existingSecret | default "")
+  "twilioExistingSecret" (.Values.twilio.existingSecret | default "")
+  "adminEmail" (.Values.config.adminEmail | default "")
+  "disableAdminBootstrap" .Values.config.disableAdminBootstrap
+  | toYaml | sha256sum }}
+{{- end -}}
+
+{{/*
+Pod annotations that trigger a rolling restart when Helm values or release revision change.
+checksum/helm-release-revision covers parent-chart-only resources (e.g. enterprise SSO ConfigMap).
+*/}}
+{{- define "tokentimer.apiRolloutPodAnnotations" -}}
+checksum/config: {{ include "tokentimer.configmapChecksum" . }}
+checksum/secret: {{ include "tokentimer.secretChecksum" . }}
+checksum/helm-release-revision: {{ .Release.Revision | quote }}
+{{- with .Values.api.envFrom }}
+checksum/api-envfrom: {{ . | toYaml | sha256sum }}
+{{- end }}
+{{- end -}}
+
+{{- define "tokentimer.dashboardRolloutPodAnnotations" -}}
+checksum/config: {{ include "tokentimer.configmapChecksum" . }}
+checksum/dashboard-env: {{ .Values.dashboard.env | toYaml | sha256sum }}
+checksum/helm-release-revision: {{ .Release.Revision | quote }}
+{{- end -}}
+
+{{- define "tokentimer.workerRolloutPodAnnotations" -}}
+checksum/config: {{ include "tokentimer.configmapChecksum" . }}
+checksum/secret: {{ include "tokentimer.secretChecksum" . }}
+checksum/helm-release-revision: {{ .Release.Revision | quote }}
+{{- with .Values.worker.envFrom }}
+checksum/worker-envfrom: {{ . | toYaml | sha256sum }}
+{{- end }}
+{{- end -}}
+
 {{/* ---- Shared pod snippets ---- */}}
 
 {{/*

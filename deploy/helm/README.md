@@ -245,7 +245,13 @@ The chart defaults to a hardened security posture:
 helm upgrade tokentimer oci://ghcr.io/tokentimerch/charts/tokentimer -f my-values.yaml -n tokentimer
 ```
 
-CronJob spec changes are applied on the next scheduled run. Deployments roll automatically via config/secret checksum annotations.
+CronJob spec changes apply on the next scheduled run (job pod template carries the same checksum annotations).
+
+API and dashboard Deployments roll automatically when you `helm upgrade`:
+- `checksum/config` and `checksum/secret` change when `tokentimer.config`, SMTP, Twilio, or DB-related values change
+- `checksum/helm-release-revision` changes on every upgrade (picks up parent-chart-only ConfigMaps in umbrella charts such as enterprise SSO env)
+
+Pods read ConfigMap/Secret env vars only at start; a rollout is required after changing `config.baseUrl`, `config.apiUrl`, or SSO env.
 
 ## Uninstalling
 
