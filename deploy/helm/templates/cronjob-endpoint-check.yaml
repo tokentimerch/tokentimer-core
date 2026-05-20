@@ -31,10 +31,11 @@ spec:
             {{- with .Values.worker.podLabels }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.worker.podAnnotations }}
           annotations:
+            {{- include "tokentimer.workerRolloutPodAnnotations" . | nindent 12 }}
+            {{- with .Values.worker.podAnnotations }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
         spec:
           restartPolicy: Never
           {{- with .Values.global.imagePullSecrets }}

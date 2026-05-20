@@ -9,6 +9,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-05-19
+
+### Changed
+
+- **Helm chart rollouts on `helm upgrade`.** API, dashboard, and worker Deployments (and CronJob pod templates) now carry `checksum/config` and `checksum/secret` annotations derived from rendered ConfigMap data and stable secret inputs, so pods restart when `tokentimer.config`, SMTP, Twilio, or DB-related values change. Dashboard also checksums `dashboard.env`.
+- **`checksum/helm-release-revision`** on API, dashboard, and workers so umbrella charts (for example enterprise SSO env from a parent ConfigMap) trigger a rollout on every upgrade when subchart Deployments cannot see parent-only resources.
+- **Helm README** documents automatic rollout behavior and notes that env vars are read only at pod start.
+- **Version metadata bumped to 0.5.3** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
 ## [0.5.2] - 2026-05-18
 
 ### Fixed

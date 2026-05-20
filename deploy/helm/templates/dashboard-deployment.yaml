@@ -14,10 +14,11 @@ spec:
       app.kubernetes.io/component: dashboard
   template:
     metadata:
-      {{- with .Values.dashboard.podAnnotations }}
       annotations:
+        {{- include "tokentimer.dashboardRolloutPodAnnotations" . | nindent 8 }}
+        {{- with .Values.dashboard.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "tokentimer.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: dashboard
