@@ -50,4 +50,20 @@ describe('resolveApiBaseUrl', () => {
     window.__ENV__ = { API_URL: 'http://localhost:4000' };
     expect(resolveApiBaseUrl()).to.equal('http://localhost:4000');
   });
+
+  it('does not treat 127.0.0.1 in query string as local API host', () => {
+    Object.defineProperty(window, 'location', {
+      value: {
+        hostname: 'app.example.com',
+        protocol: 'https:',
+      },
+      configurable: true,
+    });
+    window.__ENV__ = {
+      API_URL: 'https://api.example.com/callback?next=127.0.0.1',
+    };
+    expect(resolveApiBaseUrl()).to.equal(
+      'https://api.example.com/callback?next=127.0.0.1'
+    );
+  });
 });

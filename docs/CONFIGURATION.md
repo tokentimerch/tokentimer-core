@@ -51,9 +51,13 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 When `APP_URL` and `API_URL` differ on **HTTPS** (for example dashboard at
 `https://app.example.com` and API at `https://api.example.com`), the API:
 
-- Allows both origins in CORS (plus `API_URL` when set).
-- Sets session and CSRF cookies to `SameSite=None; Secure` automatically (requires
-  `SESSION_COOKIE_DOMAIN` such as `.example.com` so the browser sends cookies to both hosts).
+- Allows both origins in CORS (configured `APP_URL` and `API_URL` only in production;
+  localhost dev origins are omitted unless `ALLOW_LOCAL_DEV_CORS=true`).
+- Sets session and CSRF cookies to `SameSite=None; Secure` on the API host.
+  Host-only cookies (no `SESSION_COOKIE_DOMAIN`) are enough for credentialed
+  `withCredentials` calls from the dashboard to `api.example.com`. Set
+  `SESSION_COOKIE_DOMAIN` only when you intentionally need a parent-domain cookie
+  shared across multiple subdomains (broader scope; weaker isolation).
 
 **HTTP split-host** (including LAN IPs or internal DNS without TLS) does **not** use
 `SameSite=None`; cookies stay `Lax` because `None` requires `Secure` and is often blocked.
@@ -62,9 +66,9 @@ Use HTTPS for split-host production, or put UI and API behind one origin (ingres
 **Docker Compose** (`http://localhost:5173` + `http://localhost:4000`) and **Helm
 port-forward** (`http://localhost:8080` + `http://localhost:4000`) keep `SameSite=Lax`
 (same-site across ports on local HTTP). For plain HTTP + `NODE_ENV=production`, set
-`SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` if the browser rejects `Secure` cookies.
-- Expects a shared parent cookie domain via `SESSION_COOKIE_DOMAIN` (for example
-  `.example.com`) so the browser sends the session cookie to both hosts.
+`SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` only when **both** `APP_URL` and
+`API_URL` are local HTTP (`localhost` / `127.0.0.1`); the flag is ignored on
+internet-facing HTTPS URLs.
 
 Same-host installs (single ingress hostname for UI and API) can leave
 `SESSION_COOKIE_DOMAIN` unset. Helm defaults often use `baseUrl: http://localhost:8080`
@@ -97,8 +101,9 @@ the origins users and integrations actually use in the browser.
 | `REQUIRE_EMAIL_VERIFICATION`               | Require verified email before access                                            | `true`                                 | API auth     |
 | `TWO_FACTOR_ENABLED`                       | Enable 2FA features                                                             | `true`                                 | API auth     |
 | `SESSION_MAX_AGE`                          | Session max age in ms                                                           | `86400000`                             | API auth     |
-| `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookie only for local non-TLS production troubleshooting | `false`                                | API auth     |
-| `SESSION_COOKIE_DOMAIN`                    | Parent domain for session/CSRF cookies when `APP_URL` and `API_URL` differ (e.g. `.example.com`) | `unset`                                | API auth     |
+| `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookies in production only when `APP_URL` and `API_URL` are both local HTTP (`localhost` / `127.0.0.1`); ignored otherwise | `false`                                | API auth     |
+| `SESSION_COOKIE_DOMAIN`                    | Optional parent domain for session/CSRF cookies (e.g. `.example.com`) when you need cookies shared across subdomains; not required for typical split-host API calls | `unset`                                | API auth     |
+| `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
 | `CSRF_ENABLED`                             | Enable CSRF protection                                                          | `true`                                 | API security |
 | `MIN_PASSWORD_LENGTH`                      | Minimum password length                                                         | `8`                                    | API auth     |
 | `REQUIRE_UPPERCASE`                        | Enforce uppercase in passwords                                                  | `true`                                 | API auth     |

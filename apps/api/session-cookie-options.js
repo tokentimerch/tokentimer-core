@@ -51,13 +51,20 @@ function shouldUseCrossOriginCookies(apiOrigin, appOrigin) {
 }
 
 function resolveProductionSecure(env) {
-  const isProductionEnvironment =
+  const isProduction =
     (env.NODE_ENV || "").trim().toLowerCase() === "production";
-  const sessionCookieSecureLocalhostOverride =
+  if (!isProduction) return false;
+
+  const override =
     parseBooleanEnv(env.SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE) === true;
-  const allowInsecureLocalProdCookie =
-    isProductionEnvironment && sessionCookieSecureLocalhostOverride;
-  return isProductionEnvironment && !allowInsecureLocalProdCookie;
+  if (!override) return true;
+
+  const { apiOrigin, appOrigin } = resolveEffectiveOrigins(env);
+  if (isLocalHttpOrigin(apiOrigin) && isLocalHttpOrigin(appOrigin)) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -143,11 +150,20 @@ const LOCAL_DEV_CORS_ORIGINS = [
 
 function buildCorsOrigins(env = process.env) {
   const { apiOrigin, appOrigin } = resolveEffectiveOrigins(env);
-  const origins = new Set([...LOCAL_DEV_CORS_ORIGINS]);
+  const origins = new Set();
+
   origins.add(appOrigin || "http://localhost:5173");
   if (apiOrigin) {
     origins.add(apiOrigin);
   }
+
+  const isProd = (env.NODE_ENV || "").trim().toLowerCase() === "production";
+  if (!isProd || parseBooleanEnv(env.ALLOW_LOCAL_DEV_CORS) === true) {
+    for (const origin of LOCAL_DEV_CORS_ORIGINS) {
+      origins.add(origin);
+    }
+  }
+
   return [...origins];
 }
 
@@ -157,8 +173,10 @@ module.exports = {
   resolveCsrfCookieName,
   buildCorsOrigins,
   resolveEffectiveOrigins,
+  resolveProductionSecure,
   normalizeOrigin,
   isLocalHttpOrigin,
   isHttpsOrigin,
   shouldUseCrossOriginCookies,
+  LOCAL_DEV_CORS_ORIGINS,
 };

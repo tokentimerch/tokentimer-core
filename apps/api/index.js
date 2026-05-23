@@ -180,41 +180,19 @@ if (apiDocsEnabled) {
 const APP_URL = process.env.APP_URL || "http://localhost:5173";
 const isProductionEnvironment =
   (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
-const parseBooleanEnv = (value) => {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "true") return true;
-  if (normalized === "false") return false;
-  return null;
-};
-const sessionCookieSecureLocalhostOverride =
-  parseBooleanEnv(process.env.SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE);
-// Opt-in only: set SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true for plain-HTTP /
-// localhost installs in production (e.g. port-forward). Never enable on internet-facing HTTPS.
-const allowInsecureLocalProdCookie =
-  isProductionEnvironment && sessionCookieSecureLocalhostOverride === true;
 const {
   resolveSessionCookieOptions,
   resolveCsrfCookieName,
   buildCorsOrigins,
-  resolveEffectiveOrigins,
-  shouldUseCrossOriginCookies,
+  resolveProductionSecure,
 } = require("./session-cookie-options.js");
+const allowInsecureLocalProdCookie =
+  isProductionEnvironment && !resolveProductionSecure(process.env);
 const sessionCookieOptions = resolveSessionCookieOptions(process.env);
 const csrfCookieName = resolveCsrfCookieName(
   process.env,
   sessionCookieOptions,
 );
-const { apiOrigin: startupApiOrigin, appOrigin: startupAppOrigin } =
-  resolveEffectiveOrigins(process.env);
-if (
-  shouldUseCrossOriginCookies(startupApiOrigin, startupAppOrigin) &&
-  !sessionCookieOptions.domain
-) {
-  logger.warn(
-    "HTTPS split-host without SESSION_COOKIE_DOMAIN: session cookies will not be shared between APP_URL and API_URL",
-  );
-}
 
 const { requireAuth, enforceEmailVerification } = require("./middleware/auth");
 
@@ -253,22 +231,20 @@ app.use(
 );
 
 // 2. CORS with strict configuration (include API_URL for split-host dashboard → API)
-app.use(
-  cors({
-    origin: buildCorsOrigins(process.env),
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "X-CSRF-Token",
-    ],
-    maxAge: 86400, // 24 hours
-  }),
-);
-
-app.options(/.*/, cors());
+const corsOptions = {
+  origin: buildCorsOrigins(process.env),
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "X-CSRF-Token",
+  ],
+  maxAge: 86400, // 24 hours
+};
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 // 3. Request size limits
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)

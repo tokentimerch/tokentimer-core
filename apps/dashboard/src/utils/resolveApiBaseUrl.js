@@ -1,6 +1,17 @@
 /**
  * Resolve API base URL for browser requests (runtime env.js, Vite, local dev, ingress).
  */
+
+function pointsToLocalhostUrl(value) {
+  try {
+    const parsed = new URL(String(value));
+    const host = parsed.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 export function resolveApiBaseUrl() {
   const runtimeUrl =
     typeof window !== 'undefined' && window.__ENV__
@@ -19,13 +30,11 @@ export function resolveApiBaseUrl() {
   const configuredUrl = runtimeUrl || viteUrl;
 
   if (configuredUrl) {
-    const pointsToLocalhost = /(^http:\/\/localhost|127\.0\.0\.1)/i.test(
-      String(configuredUrl)
-    );
-    if (!isLocalHost && pointsToLocalhost) {
+    const pointsToLocal = pointsToLocalhostUrl(configuredUrl);
+    if (!isLocalHost && pointsToLocal) {
       return '';
     }
-    if (isLocalHost && pointsToLocalhost) {
+    if (isLocalHost && pointsToLocal) {
       try {
         const parsed = new URL(String(configuredUrl));
         const port =
@@ -43,3 +52,5 @@ export function resolveApiBaseUrl() {
   }
   return '';
 }
+
+export { pointsToLocalhostUrl };

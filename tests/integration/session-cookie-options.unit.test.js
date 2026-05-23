@@ -118,6 +118,16 @@ describe("session-cookie-options", () => {
       expect(cookie.sameSite).to.equal("lax");
       expect(cookie.secure).to.equal(false);
     });
+    it("ignores SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE on public HTTPS", () => {
+      const cookie = resolveSessionCookieOptions({
+        NODE_ENV: "production",
+        API_URL: "https://api.example.com",
+        APP_URL: "https://app.example.com",
+        SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: "true",
+      });
+      expect(cookie.secure).to.equal(true);
+      expect(cookie.sameSite).to.equal("none");
+    });
   });
 
   describe("resolveCsrfCookieName", () => {
@@ -210,5 +220,24 @@ describe("session-cookie-options", () => {
       });
       expect(origins).to.include("http://localhost:4000");
     });
+    it("omits localhost dev origins in production unless ALLOW_LOCAL_DEV_CORS", () => {
+      const origins = buildCorsOrigins({
+        NODE_ENV: "production",
+        APP_URL: "https://app.example.com",
+        API_URL: "https://api.example.com",
+      });
+      expect(origins).to.not.include("http://localhost:5173");
+      expect(origins).to.not.include("http://127.0.0.1:4000");
+    });
+
+    it("allows localhost dev origins in production when ALLOW_LOCAL_DEV_CORS=true", () => {
+      const origins = buildCorsOrigins({
+        NODE_ENV: "production",
+        APP_URL: "https://app.example.com",
+        API_URL: "https://api.example.com",
+        ALLOW_LOCAL_DEV_CORS: "true",
+      });
+      expect(origins).to.include("http://localhost:5173");
+    });  
   });
 });
