@@ -207,7 +207,7 @@ describe("ensureInitialWorkspaceForUser (shared default workspace)", () => {
     );
   });
 
-  it("grants workspace admin when joining user is system admin", async () => {
+  it("joins existing Default as workspace_manager even when user is system admin (0.6.0 hardening)", async () => {
     const queryLog = [];
     const pool = {
       query: async (sql) => {
@@ -226,6 +226,8 @@ describe("ensureInitialWorkspaceForUser (shared default workspace)", () => {
           if (text.includes("FROM workspaces") && text.includes("LOWER")) {
             return { rowCount: 1, rows: [{ id: "ws-default" }] };
           }
+          // resolveJoinRole no longer reads is_admin, but if anything queries
+          // it we still return true to prove the value cannot be promoted.
           if (text.includes("is_admin FROM users")) {
             return { rowCount: 1, rows: [{ is_admin: true }] };
           }
@@ -240,13 +242,39 @@ describe("ensureInitialWorkspaceForUser (shared default workspace)", () => {
       "Admin User",
     );
 
-    const join = queryLog.find(
+    const membershipInserts = queryLog.filter(
       (q) =>
-        q.tx &&
-        q.text.includes("INSERT INTO workspace_memberships") &&
-        q.params?.[2] === "admin",
+        q.tx && q.text.includes("INSERT INTO workspace_memberships"),
     );
-    assert.ok(join);
+    assert.strictEqual(
+      membershipInserts.length,
+      1,
+      "exactly one membership insert is expected for the default workspace join",
+    );
+    const join = membershipInserts[0];
+    assert.strictEqual(join.params?.[1], "ws-default");
+    assert.strictEqual(
+      join.params?.[2],
+      "workspace_manager",
+      "system admin joining existing Default workspace must NOT be promoted to workspace admin",
+    );
+
+    const adminPromotion = membershipInserts.find(
+      (q) => q.params?.[2] === "admin",
+    );
+    assert.strictEqual(
+      adminPromotion,
+      undefined,
+      "system admin must never receive workspace admin role automatically",
+    );
+
+    // Belt-and-braces: ensureInitialWorkspaceForUser must no longer consult
+    // users.is_admin to derive a join role for the shared Default workspace.
+    assert.strictEqual(
+      queryLog.some((q) => q.text.includes("is_admin FROM users")),
+      false,
+      "resolveJoinRole must not read users.is_admin in 0.6.0",
+    );
   });
 
   it("joins the sole existing workspace on legacy single-workspace installs", async () => {

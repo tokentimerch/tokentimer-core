@@ -30,7 +30,44 @@ On subsequent user registration or first login (when not joining via invitation)
 - If **Default workspace** already exists, they join it.
 - If exactly one workspace exists (legacy installs), they join that workspace.
 - Otherwise a new **Default workspace** is created.
-- Workspace role: **admin** for the creator or system admins; **workspace_manager** for everyone else.
+- Workspace role: **admin** (workspace owner) only for the user who **creates** a new Default workspace; **workspace_manager** for everyone who joins an existing Default workspace (including system admins).
+
+## System admin vs workspace owner
+
+TokenTimer separates **installation-wide administration** from **workspace ownership**. They use different database fields and are granted through different paths.
+
+| | System admin | Workspace owner |
+|--|--------------|-----------------|
+| **Stored as** | `users.is_admin = TRUE` | `workspace_memberships.role = 'admin'` |
+| **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, Enterprise SSO admin APIs) | One workspace (delete workspace, transfer tokens, org-scoped audit for that workspace) |
+| **Dashboard** | **System Settings** nav (when `session.user.isAdmin`) | **Workspaces** owner actions (rename, delete, transfer tokens) |
+| **How to grant** | **Workspaces → Members → System admin** toggle (system admins only), or Enterprise SSO `admin` group mapping | Automatic when **creating** a workspace; not assignable from Members tab |
+| **How many** | Multiple system admins supported | One owner per workspace in normal operation (creator at provision time) |
+
+**Important:** Granting system admin to a second user does **not** make them workspace owner on the shared Default workspace. They remain **manager** there unless they separately created that workspace.
+
+### Default workspace on join
+
+When a user without membership logs in (local or SSO):
+
+1. Pending invitations are accepted first.
+2. Otherwise they join the installation **Default workspace** (or the sole legacy workspace).
+3. Join role is always **workspace_manager** when Default already exists, even if `users.is_admin = TRUE`.
+4. Join role is **admin** only when this login creates a brand-new Default workspace (empty install).
+
+### What you cannot do from the UI
+
+- **Invite** someone as workspace owner (`admin` membership is rejected by the API).
+- **Promote** an existing member to workspace owner via the role dropdown (only Viewer and Manager).
+- **Demote or remove** a workspace owner via the Members tab (API blocks changes to `admin` membership rows).
+
+To add another workspace owner today you would need a direct database change; the product intentionally supports a single owner per workspace until [v1.0.0](ROADMAP.md#v100----rbac-and-role-model-cleanup) adds co-owner management.
+
+### Granting a second system admin
+
+A system admin can open **Workspaces → Members**, find any member, and enable **System admin**. That sets `users.is_admin = TRUE` only. The member keeps their current workspace role (typically **manager** on Default). They gain System Settings and admin API access immediately (session reloads `is_admin` on each request).
+
+The last system admin cannot demote themselves.
 
 ### Step 3: Remove Admin Password
 
@@ -273,6 +310,14 @@ VALUES ('admin@company.com', '$2b$12$...', 'Admin', 'local', TRUE);
 ### Q: Can invited users invite others?
 
 **A**: Admins and workspace managers can invite with viewer or manager roles. System admins can grant or revoke installation-wide admin (`is_admin`) from **Workspaces → Members** using the **System admin** toggle.
+
+### Q: Does system admin imply workspace owner on Default?
+
+**A**: No. System admin (`users.is_admin`) and workspace owner (`workspace_memberships.role = 'admin'`) are independent. SSO or manual system-admin grants do not promote users to workspace owner. Users joining an existing Default workspace always get **workspace_manager**, including system admins. Only the user who creates Default on an empty install becomes workspace owner automatically.
+
+### Q: Can I make a second workspace owner on Default?
+
+**A**: Not through the dashboard or public API today. Workspace owner is assigned at workspace creation only. You can grant a second user **system admin** from **Workspaces → Members**, which gives installation-wide settings access but not workspace-owner powers (delete workspace, transfer tokens, etc.). Multiple workspace owners per workspace are planned for [v1.0.0](../ROADMAP.md#v100----rbac-and-role-model-cleanup).
 
 ## Contact
 

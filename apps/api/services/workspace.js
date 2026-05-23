@@ -230,20 +230,11 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
   }
 }
 
-async function resolveJoinRole(db, userId) {
-  try {
-    const adminCheck = await db.query(
-      "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
-      [userId],
-    );
-    if (adminCheck.rows[0]?.is_admin) {
-      return "admin";
-    }
-  } catch (_err) {
-    logger.warn("Admin check failed for default workspace join role", {
-      error: _err.message,
-    });
-  }
+function resolveJoinRole(_db, _userId) {
+  // Join role for the shared Default workspace when it already exists.
+  // users.is_admin is installation-wide and does not grant workspace admin here.
+  // The creator branch in ensureInitialWorkspaceForUser still assigns admin when
+  // the Default workspace is first created; all later automatic joins are manager.
   return "workspace_manager";
 }
 

@@ -1726,6 +1726,44 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/admin/users/{userId}/system-admin:
+    patch:
+      tags: [Account]
+      summary: Grant or revoke system admin
+      operationId: setSystemAdmin
+      description: Sets installation-wide system admin (`users.is_admin`) for a user. Requires an authenticated system admin. The last system admin cannot demote themselves.
+      parameters:
+        - $ref: "#/components/parameters/userIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_admin]
+              properties:
+                is_admin:
+                  type: boolean
+      responses:
+        "200":
+          description: System admin flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  is_admin:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/admin/system-settings:
     get:
       tags: [Account]

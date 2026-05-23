@@ -198,7 +198,103 @@ describe("Admin System Settings", function () {
     });
   });
 
+  describe("System admin access is not coupled to workspace admin role (0.6.0)", () => {
+    let systemAdminUser, systemAdminCookie;
+    let managerOnlyUser, managerOnlyCookie;
+    let sharedWorkspaceId;
+
+    before(async () => {
+      // Create a user, mark them as installation-wide system admin via DB,
+      // but only as workspace_manager on the workspace. This mirrors the
+      // post-hardening state where SSO-driven users.is_admin=TRUE no longer
+      // implies workspace admin on the shared Default workspace.
+      systemAdminUser = await TestUtils.createVerifiedTestUser();
+      const sys = await TestUtils.loginTestUser(
+        systemAdminUser.email,
+        systemAdminUser.password,
+      );
+      systemAdminCookie = sys.cookie;
+      await TestUtils.execQuery(
+        "UPDATE users SET is_admin = TRUE WHERE id = $1",
+        [systemAdminUser.id],
+      );
+
+      // Find the workspace the user already has (createVerifiedTestUser seeds
+      // one for them as admin) and demote them to workspace_manager so the
+      // ONLY route to /api/admin/system-settings is the system-admin flag.
+      const wsRow = await TestUtils.execQuery(
+        "SELECT id FROM workspaces WHERE created_by = $1 LIMIT 1",
+        [systemAdminUser.id],
+      );
+      sharedWorkspaceId = wsRow.rows[0].id;
+      await TestUtils.execQuery(
+        `UPDATE workspace_memberships
+            SET role = 'workspace_manager'
+          WHERE user_id = $1
+            AND workspace_id = $2`,
+        [systemAdminUser.id, sharedWorkspaceId],
+      );
+
+      // Control user: workspace_manager somewhere, NOT a system admin.
+      managerOnlyUser = await TestUtils.createVerifiedTestUser();
+      const mgr = await TestUtils.loginTestUser(
+        managerOnlyUser.email,
+        managerOnlyUser.password,
+      );
+      managerOnlyCookie = mgr.cookie;
+      const mgrWs = await TestUtils.execQuery(
+        "SELECT id FROM workspaces WHERE created_by = $1 LIMIT 1",
+        [managerOnlyUser.id],
+      );
+      if (mgrWs.rowCount > 0) {
+        await TestUtils.execQuery(
+          `UPDATE workspace_memberships
+              SET role = 'workspace_manager'
+            WHERE user_id = $1
+              AND workspace_id = $2`,
+          [managerOnlyUser.id, mgrWs.rows[0].id],
+        );
+      }
+    });
+
+    it("allows users.is_admin=TRUE with Default workspace role workspace_manager to GET /api/admin/system-settings", async () => {
+      // Sanity-check the precondition the test is asserting: the system admin
+      // user really is workspace_manager (not admin) on the workspace.
+      const role = await TestUtils.execQuery(
+        `SELECT role FROM workspace_memberships
+          WHERE user_id = $1 AND workspace_id = $2`,
+        [systemAdminUser.id, sharedWorkspaceId],
+      );
+      expect(role.rows[0].role).to.equal("workspace_manager");
+
+      // The endpoint must let them in because is_admin gates it, not the
+      // workspace role.
+      const res = await request(BASE)
+        .get("/api/admin/system-settings")
+        .set("Cookie", systemAdminCookie)
+        .expect(200);
+      expect(res.body).to.have.property("smtp");
+      expect(res.body).to.have.property("whatsapp");
+    });
+
+    it("rejects a workspace_manager who is NOT a system admin with 403 (control)", async () => {
+      const res = await request(BASE)
+        .get("/api/admin/system-settings")
+        .set("Cookie", managerOnlyCookie)
+        .expect(403);
+      expect(res.body.code).to.equal("FORBIDDEN");
+    });
+  });
+
   describe("PATCH /api/admin/users/:userId/system-admin", () => {
+    it("rejects non-admin callers", async () => {
+      await request(BASE)
+        .patch(`/api/admin/users/${adminUser.id}/system-admin`)
+        .set("Cookie", regularCookie)
+        .send({ is_admin: true })
+        .expect(403);
+    });
+
     it("grants system admin to another user", async () => {
       const res = await request(BASE)
         .patch(`/api/admin/users/${regularUser.id}/system-admin`)
@@ -213,14 +309,6 @@ describe("Admin System Settings", function () {
         [regularUser.id],
       );
       expect(row.rows[0].is_admin).to.equal(true);
-    });
-
-    it("rejects non-admin callers", async () => {
-      await request(BASE)
-        .patch(`/api/admin/users/${adminUser.id}/system-admin`)
-        .set("Cookie", regularCookie)
-        .send({ is_admin: true })
-        .expect(403);
     });
   });
 });

@@ -206,7 +206,7 @@ const MobileNav = ({
   onNavigateToLanding,
   canSeeAudit,
   canSeeWorkspaces,
-  isAdminAny,
+  isSystemAdmin,
   isViewerOnly,
 }) => {
   const navigate = useNavigate();
@@ -387,7 +387,7 @@ const MobileNav = ({
                   Audit
                 </Button>
               )}
-              {isAdminAny && (
+              {isSystemAdmin && (
                 <Button
                   variant='ghost'
                   justifyContent='start'
@@ -541,7 +541,7 @@ const Navigation = ({
   const [_sections, setSections] = useState([]);
   const [_currentPlan, setCurrentPlan] = useState('oss');
   const [_accountPlan, setAccountPlan] = useState('oss');
-  const [isAdminAny, setIsAdminAny] = useState(false);
+  const isSystemAdmin = user?.isAdmin === true;
   const [hasManagerOrAdminAny, setHasManagerOrAdminAny] = useState(false);
   const [isViewerOnly, setIsViewerOnly] = useState(false);
   const [canSeeAudit, setCanSeeAudit] = useState(false);
@@ -582,8 +582,10 @@ const Navigation = ({
           list.push({
             id: 'smtp-not-configured',
             kind: 'warning',
-            text: 'SMTP is not configured. Email notifications will not be sent.',
-            href: '/system-settings',
+            text: isSystemAdmin
+              ? 'SMTP is not configured. Email notifications will not be sent.'
+              : 'SMTP is not configured. Ask a system administrator to configure email delivery.',
+            href: isSystemAdmin ? '/system-settings' : null,
           });
         }
         if (allDisabled) {
@@ -610,7 +612,7 @@ const Navigation = ({
     return () => {
       cancelled = true;
     };
-  }, [user, currentWorkspace?.id]);
+  }, [user, currentWorkspace?.id, isSystemAdmin]);
 
   // Load workspaces, account plan, and sections for switchers
   useEffect(() => {
@@ -632,7 +634,6 @@ const Navigation = ({
         const managerAny = adminAny || roles.includes('workspace_manager');
         const viewerOnly =
           items.length > 0 && !adminAny && !roles.includes('workspace_manager');
-        setIsAdminAny(adminAny);
         setHasManagerOrAdminAny(managerAny);
         setIsViewerOnly(viewerOnly);
         const showAudit = items.length ? managerAny : true;
@@ -725,7 +726,6 @@ const Navigation = ({
           items.length > 0 &&
           !adminAny2 &&
           !roles.includes('workspace_manager');
-        setIsAdminAny(adminAny2);
         setHasManagerOrAdminAny(managerAny2);
         setIsViewerOnly(viewerOnly2);
         setCanSeeAudit(items.length ? managerAny2 : true);
@@ -831,7 +831,6 @@ const Navigation = ({
           items.length > 0 &&
           !adminAny3 &&
           !roles.includes('workspace_manager');
-        setIsAdminAny(adminAny3);
         setHasManagerOrAdminAny(managerAny3);
         setIsViewerOnly(viewerOnly3);
         setCanSeeAudit(items.length ? managerAny3 : true);
@@ -1087,8 +1086,8 @@ const Navigation = ({
                 Workspaces
               </AccessibleButton>
             )}
-            {/* System Settings: visible only for admins */}
-            {user && isAdminAny && (
+            {/* System Settings: visible only for installation-wide system admins */}
+            {user && isSystemAdmin && (
               <AccessibleButton
                 variant='ghost'
                 size='md'
@@ -1154,33 +1153,46 @@ const Navigation = ({
                   </Box>
                 ) : (
                   <>
-                    {notifications.map(n => (
-                      <MenuItem
-                        key={n.id}
-                        onClick={() => {
-                          try {
-                            if (n && typeof n.onClick === 'function')
-                              return n.onClick();
-                            if (n && n.href) return navigate(n.href);
-                          } catch (_) {}
-                          return navigate('/preferences');
-                        }}
-                        _hover={{
-                          bg: primaryHoverBg,
-                        }}
-                      >
-                        <VStack align='start' spacing='0'>
-                          <Text fontSize='sm' fontWeight='medium'>
-                            ⚠️ {n.text}
-                          </Text>
-                          <Text fontSize='xs' color={gray400}>
-                            {n.id === 'smtp-not-configured'
-                              ? 'Go to System Settings to configure SMTP.'
-                              : 'Go to Preferences to enable a notification channel.'}
-                          </Text>
-                        </VStack>
-                      </MenuItem>
-                    ))}
+                    {notifications.map(n => {
+                      const isClickable =
+                        (n && typeof n.onClick === 'function') ||
+                        Boolean(n?.href);
+                      let subText = 'Go to Preferences to enable a notification channel.';
+                      if (n.id === 'smtp-not-configured') {
+                        subText = n.href
+                          ? 'Go to System Settings to configure SMTP.'
+                          : 'Contact a system administrator to configure SMTP.';
+                      }
+                      return (
+                        <MenuItem
+                          key={n.id}
+                          onClick={() => {
+                            try {
+                              if (n && typeof n.onClick === 'function')
+                                return n.onClick();
+                              if (n && n.href) return navigate(n.href);
+                            } catch (_) {}
+                            if (isClickable) {
+                              return navigate('/preferences');
+                            }
+                            return undefined;
+                          }}
+                          _hover={{
+                            bg: isClickable ? primaryHoverBg : 'transparent',
+                          }}
+                          cursor={isClickable ? 'pointer' : 'default'}
+                        >
+                          <VStack align='start' spacing='0'>
+                            <Text fontSize='sm' fontWeight='medium'>
+                              ⚠️ {n.text}
+                            </Text>
+                            <Text fontSize='xs' color={gray400}>
+                              {subText}
+                            </Text>
+                          </VStack>
+                        </MenuItem>
+                      );
+                    })}
                   </>
                 )}
               </MenuList>
@@ -1230,7 +1242,7 @@ const Navigation = ({
         onNavigateToLanding={onNavigateToLanding}
         canSeeAudit={canSeeAudit}
         canSeeWorkspaces={canSeeWorkspaces}
-        isAdminAny={isAdminAny}
+        isSystemAdmin={isSystemAdmin}
         isViewerOnly={isViewerOnly}
       />
     </>
