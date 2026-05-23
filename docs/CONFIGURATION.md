@@ -33,9 +33,48 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 | `OPENAPI_SPEC_PATH` | Optional absolute path to OpenAPI YAML           | `unset (auto-discovery)`        | API docs serving       |
 | `PUBLIC_BASE_URL`   | Public URL used for webhook signature validation | `unset (falls back to API_URL)` | API webhook auth       |
 
+**Helm vs Compose vs runtime**
+
+| Layer | `APP_URL` | `API_URL` when unset in your config |
+| ----- | --------- | ------------------------------------- |
+| Helm (`config.baseUrl` / `apiUrl`) | `baseUrl` | `apiUrl` if set, else **`baseUrl`** (same host) |
+| Helm stock `values.yaml` | `http://localhost:8080` | `http://localhost:4000` (both set explicitly) |
+| Docker Compose (`.env`) | `${APP_URL:-http://localhost:5173}` | `${API_URL:-http://localhost:4000}` (no cross-fallback in compose files) |
+| API process (env missing) | `http://localhost:5173` | `API_URL`, else **`APP_URL`**, else `http://localhost:4000` |
+
 > [!WARNING]
 > In local `http://localhost` with `NODE_ENV=production`, browser does not persist/send the secure session cookie for auth flow.
 > Use HTTPS in front of API and dashboard (reverse proxy with TLS), otherwise secure cookies are expected to fail in local HTTP.
+
+### Split-host deployments (dashboard and API on different origins)
+
+When `APP_URL` and `API_URL` differ on **HTTPS** (for example dashboard at
+`https://app.example.com` and API at `https://api.example.com`), the API:
+
+- Allows both origins in CORS (configured `APP_URL` and `API_URL` only in production;
+  localhost dev origins are omitted unless `ALLOW_LOCAL_DEV_CORS=true`).
+- Sets session and CSRF cookies to `SameSite=None; Secure` on the API host.
+  Host-only cookies (no `SESSION_COOKIE_DOMAIN`) are enough for credentialed
+  `withCredentials` calls from the dashboard to `api.example.com`. Set
+  `SESSION_COOKIE_DOMAIN` only when you intentionally need a parent-domain cookie
+  shared across multiple subdomains (broader scope; weaker isolation).
+
+**HTTP split-host** (including LAN IPs or internal DNS without TLS) does **not** use
+`SameSite=None`; cookies stay `Lax` because `None` requires `Secure` and is often blocked.
+Use HTTPS for split-host production, or put UI and API behind one origin (ingress).
+
+**Docker Compose** (`http://localhost:5173` + `http://localhost:4000`) and **Helm
+port-forward** (`http://localhost:8080` + `http://localhost:4000`) keep `SameSite=Lax`
+(same-site across ports on local HTTP). For plain HTTP + `NODE_ENV=production`, set
+`SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` only when **both** `APP_URL` and
+`API_URL` are local HTTP (`localhost` / `127.0.0.1`); the flag is ignored on
+internet-facing HTTPS URLs.
+
+Same-host installs (single ingress hostname for UI and API) can leave
+`SESSION_COOKIE_DOMAIN` unset. Helm defaults often use `baseUrl: http://localhost:8080`
+and `apiUrl: http://localhost:4000`; Compose maps the dashboard to host port `5173`
+by default (`APP_URL=http://localhost:5173`). Always set `APP_URL` and `API_URL` to
+the origins users and integrations actually use in the browser.
 
 ## Database and pooling
 
@@ -62,7 +101,9 @@ Defaults come from code fallbacks in `apps/*` and `packages/config/*`, then from
 | `REQUIRE_EMAIL_VERIFICATION`               | Require verified email before access                                            | `true`                                 | API auth     |
 | `TWO_FACTOR_ENABLED`                       | Enable 2FA features                                                             | `true`                                 | API auth     |
 | `SESSION_MAX_AGE`                          | Session max age in ms                                                           | `86400000`                             | API auth     |
-| `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookie only for local non-TLS production troubleshooting | `false`                                | API auth     |
+| `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookies in production only when `APP_URL` and `API_URL` are both local HTTP (`localhost` / `127.0.0.1`); ignored otherwise | `false`                                | API auth     |
+| `SESSION_COOKIE_DOMAIN`                    | Optional parent domain for session/CSRF cookies (e.g. `.example.com`) when you need cookies shared across subdomains; not required for typical split-host API calls | `unset`                                | API auth     |
+| `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
 | `CSRF_ENABLED`                             | Enable CSRF protection                                                          | `true`                                 | API security |
 | `MIN_PASSWORD_LENGTH`                      | Minimum password length                                                         | `8`                                    | API auth     |
 | `REQUIRE_UPPERCASE`                        | Enforce uppercase in passwords                                                  | `true`                                 | API auth     |

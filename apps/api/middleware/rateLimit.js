@@ -2,8 +2,11 @@ const rateLimit = require("express-rate-limit");
 const { ipKeyGenerator } = require("express-rate-limit");
 const slowDown = require("express-slow-down");
 const { logger } = require("../utils/logger");
+const { getRuntimeLabels } = require("../config/runtime-labels");
 const { parseLimits } = require("../services/planLimits");
 const { normalizeRootDomain } = require("../services/domainChecker");
+
+const { rateLabel, plan: runtimePlan, limitsKey } = getRuntimeLabels();
 
 function intEnv(name, fallback) {
   const raw = process.env[name];
@@ -176,7 +179,9 @@ const emailVerificationLimiter = rateLimit({
   },
 });
 
-const API_LIMITS = parseLimits(process.env.PLAN_API_LIMITS, { oss: 6000 });
+const API_LIMIT_DEFAULTS = { oss: 6000, [limitsKey]: 6000 };
+const API_LIMITS = parseLimits(process.env.PLAN_API_LIMITS, API_LIMIT_DEFAULTS);
+const apiLimitMax = API_LIMITS[limitsKey] ?? API_LIMITS.oss ?? 6000;
 
 function createApiLimiter(max, label) {
   return rateLimit({
@@ -206,7 +211,7 @@ function createApiLimiter(max, label) {
         logger.warn("RATE_LIMIT_EXCEEDED", {
           type: `api_user_${label}`,
           userId: req.user.id,
-          plan: "oss",
+          plan: runtimePlan,
           ip: ipKeyGenerator(req),
           userAgent: req.get("User-Agent"),
         });
@@ -225,8 +230,9 @@ function createApiLimiter(max, label) {
   });
 }
 
-const ossLimiter = createApiLimiter(API_LIMITS.oss, "oss");
-const planAwareApiLimiter = (req, res, next) => ossLimiter(req, res, next);
+const defaultApiLimiter = createApiLimiter(apiLimitMax, rateLabel);
+const planAwareApiLimiter = (req, res, next) =>
+  defaultApiLimiter(req, res, next);
 
 const testApiLimiter = rateLimit({
   windowMs: intEnv("TEST_API_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),

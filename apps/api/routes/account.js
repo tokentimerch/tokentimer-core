@@ -2,6 +2,9 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { requireAuth } = require("../middleware/auth");
 const { getApiLimiter } = require("../middleware/rateLimit");
+const {
+  resolveClearSessionCookieOptions,
+} = require("../session-cookie-options.js");
 const bcrypt = require("bcryptjs");
 
 const router = require("express").Router();
@@ -179,8 +182,10 @@ router.delete(
 
       await client.query("COMMIT");
 
-      // Clear the session cookie first
-      res.clearCookie("sessionId");
+      res.clearCookie(
+        "sessionId",
+        resolveClearSessionCookieOptions(process.env),
+      );
 
       // Logout and destroy session properly through Passport.js
       req.logout((err) => {

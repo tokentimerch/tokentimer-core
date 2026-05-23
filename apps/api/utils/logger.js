@@ -1,5 +1,8 @@
 const winston = require("winston");
 const client = require("prom-client");
+const { getRuntimeLabels } = require("../config/runtime-labels");
+
+const SERVICE_NAME = getRuntimeLabels().service;
 
 // Environment detection
 const isDev =
@@ -40,7 +43,7 @@ const logger = winston.createLogger({
     winston.format.errors({ stack: true }),
     safeJsonFormat(),
   ),
-  defaultMeta: { service: "tokentimer-core-api" },
+  defaultMeta: { service: SERVICE_NAME },
   transports: [],
 });
 
@@ -103,7 +106,7 @@ try {
 const origError = logger.error.bind(logger);
 logger.error = (...args) => {
   try {
-    if (cLogError) cLogError.labels("tokentimer-core-api").inc();
+    if (cLogError) cLogError.labels(SERVICE_NAME).inc();
   } catch (_) {}
   return origError(...args);
 };

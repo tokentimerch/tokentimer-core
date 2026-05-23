@@ -1,6 +1,8 @@
 # Public OSS integration suite
 
 # Auth and account
+tests/integration/session-cookie-options.unit.test.js
+tests/integration/runtime-labels.unit.test.js
 tests/integration/auth.test.js
 tests/integration/auth-invite-reset.integration.test.js
 tests/integration/auth-session-invalidation.integration.test.js

@@ -3,7 +3,10 @@ const { logger } = require("../utils/logger");
 
 const normalizeUrl = (value) => String(value || "").replace(/\/$/, "");
 const APP_URL = normalizeUrl(process.env.APP_URL) || "http://localhost:5173";
-const API_URL = normalizeUrl(process.env.API_URL) || "http://localhost:4000";
+const API_URL =
+  normalizeUrl(process.env.API_URL) ||
+  normalizeUrl(process.env.APP_URL) ||
+  "http://localhost:4000";
 
 // Core: no usage limits. All features available.
 const TOKEN_LIMITS = parseLimits(process.env.PLAN_TOKEN_LIMITS, {

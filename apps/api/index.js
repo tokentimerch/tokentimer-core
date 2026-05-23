@@ -180,31 +180,19 @@ if (apiDocsEnabled) {
 const APP_URL = process.env.APP_URL || "http://localhost:5173";
 const isProductionEnvironment =
   (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
-const parseBooleanEnv = (value) => {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "true") return true;
-  if (normalized === "false") return false;
-  return null;
-};
-const sessionCookieSecureLocalhostOverride =
-  parseBooleanEnv(process.env.SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE) === true;
-const configuredPublicUrls = [
-  process.env.API_URL?.trim(),
-  process.env.APP_URL?.trim(),
-  process.env.PUBLIC_BASE_URL?.trim(),
-].filter(Boolean);
-const hasLocalhostOrLoopbackUrl = configuredPublicUrls.some((url) =>
-  /^https?:\/\/(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(url),
-);
-const hasNonHttpsUrl = configuredPublicUrls.some((url) => /^http:\/\//i.test(url));
-const localInsecureUrlDetected = hasLocalhostOrLoopbackUrl || hasNonHttpsUrl;
+const {
+  resolveSessionCookieOptions,
+  resolveCsrfCookieName,
+  buildCorsOrigins,
+  resolveProductionSecure,
+} = require("./session-cookie-options.js");
 const allowInsecureLocalProdCookie =
-  isProductionEnvironment &&
-  sessionCookieSecureLocalhostOverride &&
-  localInsecureUrlDetected;
-const sessionCookieSecure = isProductionEnvironment && !allowInsecureLocalProdCookie;
-
+  isProductionEnvironment && !resolveProductionSecure(process.env);
+const sessionCookieOptions = resolveSessionCookieOptions(process.env);
+const csrfCookieName = resolveCsrfCookieName(
+  process.env,
+  sessionCookieOptions,
+);
 
 const { requireAuth, enforceEmailVerification } = require("./middleware/auth");
 
@@ -242,28 +230,21 @@ app.use(
   }),
 );
 
-// 2. CORS with strict configuration
-app.use(
-  cors({
-    origin: [
-      APP_URL,
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-    ], // Support multiple origins
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "X-CSRF-Token",
-    ],
-    maxAge: 86400, // 24 hours
-  }),
-);
-
-app.options(/.*/, cors());
+// 2. CORS with strict configuration (include API_URL for split-host dashboard → API)
+const corsOptions = {
+  origin: buildCorsOrigins(process.env),
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "X-CSRF-Token",
+  ],
+  maxAge: 86400, // 24 hours
+};
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 // 3. Request size limits
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
@@ -281,13 +262,7 @@ app.use(
     secret: process.env.SESSION_SECRET,
     resave: true, // Changed to true to ensure session is saved
     saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      // Use 'lax' to preserve session across top-level redirects
-      sameSite: "lax",
-      secure: sessionCookieSecure,
-      maxAge: 2 * 60 * 60 * 1000, // 2 hours (reduced from 7 days for security)
-    },
+    cookie: sessionCookieOptions,
     // Security enhancements
     rolling: true, // Reset expiration on activity
     genid: () => {
@@ -572,12 +547,6 @@ app.post(
 );
 
 // CSRF Protection using Double Submit Cookie pattern (replaces deprecated csurf)
-// __Host- prefix requires Secure flag; fall back to plain name when running
-// production mode over plain HTTP (SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE).
-const csrfCookieName =
-  process.env.NODE_ENV === "production" && sessionCookieSecure
-    ? "__Host-psifi.x-csrf-token"
-    : "x-csrf-token";
 const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
   getSecret: () => {
     if (!process.env.SESSION_SECRET) {
@@ -587,17 +556,16 @@ const { generateToken: generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
   },
   cookieName: csrfCookieName,
   cookieOptions: {
-    httpOnly: true,
-    secure: sessionCookieSecure,
-    sameSite: "lax",
+    ...sessionCookieOptions,
     path: "/",
   },
   getTokenFromRequest: (req) => req.headers["x-csrf-token"],
 });
 
-// CSRF token endpoint
+// CSRF token endpoint — always rotate (overwrite) so stale cookies after secret
+// rotation or cookie-name changes cannot 403 this route (csrf-csrf validateOnReuse).
 app.get("/api/csrf-token", (req, res) => {
-  const csrfToken = generateCsrfToken(req, res);
+  const csrfToken = generateCsrfToken(req, res, true, false);
   res.json({ csrfToken });
 });
 
@@ -768,12 +736,10 @@ function validateStartupConfig() {
   const hasNonHttpsUrlFromStartup = configuredUrls.some((url) => /^http:\/\//i.test(url));
 
   if (allowInsecureLocalProdCookie) {
-    logger.warn(
-      "SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true: secure session cookie is disabled for local non-TLS production troubleshooting only.",
+    logger.info(
+      "SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true: session and CSRF cookies use Secure=false (local HTTP testing only).",
     );
-  }
-
-  if (
+  } else if (
     nodeEnv === "production" &&
     !allowInsecureLocalProdCookie &&
     (hasLocalUrl || hasNonHttpsUrlFromStartup)

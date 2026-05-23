@@ -383,6 +383,8 @@ services:
         VITE_API_URL: ${API_URL:-http://localhost:4000}
     container_name: tokentimer-dashboard
     restart: unless-stopped
+    environment:
+      API_URL: ${API_URL:-http://localhost:4000}
     depends_on:
       - api
     ports:
