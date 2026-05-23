@@ -41,8 +41,12 @@ describe("Workspaces lifecycle and membership integration", function () {
   });
 
   after(async () => {
-    await TestUtils.cleanupTestUser(ownerUser.email, ownerSession.cookie);
-    await TestUtils.cleanupTestUser(memberUser.email, memberSession.cookie);
+    if (ownerSession?.cookie) {
+      await TestUtils.cleanupTestUser(ownerUser.email, ownerSession.cookie);
+    }
+    if (memberSession?.cookie) {
+      await TestUtils.cleanupTestUser(memberUser.email, memberSession.cookie);
+    }
   });
 
   it("invite lifecycle: create and resend invitation for existing user", async () => {

@@ -1,4 +1,4 @@
-const { logger } = require("../utils/logger");
+const { logger, resolveClientIp } = require("../utils/logger");
 
 /**
  * Comprehensive authentication middleware.
@@ -41,14 +41,14 @@ const requireAuth = (req, res, next) => {
     path: req.path,
     authenticated: isAuth,
     userId: req.user?.id,
-    ip: req.ip,
+    ip: resolveClientIp(req),
   });
 
   if (!isAuth) {
     logger.warn("Unauthenticated access attempt", {
       path: req.path,
       method: req.method,
-      ip: req.ip,
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
     });
     return res.status(401).json({ error: "Not authenticated" });
@@ -60,7 +60,7 @@ const requireAuth = (req, res, next) => {
       method: req.method,
       hasUser: !!req.user,
       hasUserId: !!req.user?.id,
-      ip: req.ip,
+      ip: resolveClientIp(req),
     });
     if (typeof req.logout === "function") {
       req.logout(function (err) {
@@ -69,7 +69,7 @@ const requireAuth = (req, res, next) => {
             error: err.message,
             stack: err.stack,
             path: req.path,
-            ip: req.ip,
+            ip: resolveClientIp(req),
           });
         }
       });
@@ -81,7 +81,7 @@ const requireAuth = (req, res, next) => {
     userId: req.user.id,
     path: req.path,
     method: req.method,
-    ip: req.ip,
+    ip: resolveClientIp(req),
   });
 
   // Enforce email verification for local auth users (except in test mode)
@@ -94,7 +94,7 @@ const requireAuth = (req, res, next) => {
       userId: req.user.id,
       email: req.user.email,
       path: req.path,
-      ip: req.ip,
+      ip: resolveClientIp(req),
     });
     return res.status(403).json({
       error: "Email verification required",
@@ -111,7 +111,7 @@ const requireAuth = (req, res, next) => {
       userId: req.user.id,
       email: req.user.email,
       path: req.path,
-      ip: req.ip,
+      ip: resolveClientIp(req),
     });
   }
 
@@ -144,7 +144,7 @@ const enforceEmailVerification = (req, res, next) => {
         userId: req.user.id,
         email: req.user.email,
         path: req.path,
-        ip: req.ip,
+        ip: resolveClientIp(req),
       });
       return res.status(403).json({
         error: "Email verification required",
@@ -161,7 +161,7 @@ const enforceEmailVerification = (req, res, next) => {
         userId: req.user.id,
         email: req.user.email,
         path: req.path,
-        ip: req.ip,
+        ip: resolveClientIp(req),
       });
     }
   }

@@ -2241,4 +2241,76 @@ router.get(
 );
 // Delete user account (GDPR Right to be Forgotten)
 
+router.patch(
+  "/api/admin/users/:userId/system-admin",
+  getApiLimiter(),
+  requireAuth,
+  requireAnyAdmin,
+  async (req, res) => {
+    try {
+      const targetUserId = parseInt(String(req.params.userId || ""), 10);
+      if (!Number.isFinite(targetUserId)) {
+        return res.status(400).json({
+          error: "Invalid user id",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      const { is_admin: nextIsAdmin } = req.body || {};
+      if (typeof nextIsAdmin !== "boolean") {
+        return res.status(400).json({
+          error: "is_admin boolean is required",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      if (targetUserId === req.user.id && nextIsAdmin === false) {
+        const { rows } = await pool.query(
+          "SELECT COUNT(*)::int AS c FROM users WHERE is_admin = TRUE",
+        );
+        if ((rows[0]?.c || 0) <= 1) {
+          return res.status(403).json({
+            error: "Cannot demote the last system admin",
+            code: "FORBIDDEN",
+          });
+        }
+      }
+      const updated = await pool.query(
+        `UPDATE users
+            SET is_admin = $1, updated_at = NOW()
+          WHERE id = $2
+          RETURNING id, is_admin`,
+        [nextIsAdmin, targetUserId],
+      );
+      if (updated.rowCount === 0) {
+        return res.status(404).json({
+          error: "User not found",
+          code: "NOT_FOUND",
+        });
+      }
+      await writeAudit({
+        actorUserId: req.user.id,
+        subjectUserId: targetUserId,
+        action: "SYSTEM_ADMIN_CHANGED",
+        targetType: "user",
+        targetId: targetUserId,
+        channel: null,
+        workspaceId: null,
+        metadata: { is_admin: nextIsAdmin },
+      });
+      return res.json({
+        user_id: targetUserId,
+        is_admin: updated.rows[0].is_admin === true,
+      });
+    } catch (err) {
+      logger.error("Failed to update system admin flag", {
+        error: err.message,
+        targetUserId: req.params.userId,
+      });
+      return res.status(500).json({
+        error: "Failed to update system admin",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 module.exports = router;

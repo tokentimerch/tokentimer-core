@@ -754,13 +754,18 @@ router.patch(
           .json({ error: "Invalid target user", code: "VALIDATION_ERROR" });
       }
       const { role } = req.body || {};
+      const nextRole = String(role || "").toLowerCase();
       if (String(targetUserId) === String(userId)) {
         return res.status(403).json({
           error: "You cannot change your own role",
           code: "FORBIDDEN",
         });
       }
-      // Disallow changing an admin role.
+      if (!["workspace_manager", "viewer"].includes(nextRole)) {
+        return res
+          .status(400)
+          .json({ error: "Invalid role", code: "VALIDATION_ERROR" });
+      }
       const currentRoleRes = await pool.query(
         "SELECT role FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
         [targetUserId, ws.id],
@@ -769,18 +774,14 @@ router.patch(
         currentRoleRes.rows?.[0]?.role || "",
       ).toLowerCase();
       if (currentRole === "admin") {
-        return res
-          .status(403)
-          .json({ error: "Cannot change role of admin", code: "FORBIDDEN" });
+        return res.status(403).json({
+          error: "Workspace admin role cannot be changed here",
+          code: "FORBIDDEN",
+        });
       }
-      if (!["workspace_manager", "viewer"].includes(role))
-        return res
-          .status(400)
-          .json({ error: "Invalid role", code: "VALIDATION_ERROR" });
-      // Prevent changing any role to admin via API
       await pool.query(
         "UPDATE workspace_memberships SET role=$1 WHERE user_id=$2 AND workspace_id=$3",
-        [role, targetUserId, ws.id],
+        [nextRole, targetUserId, ws.id],
       );
       await writeAudit({
         actorUserId: userId,
@@ -788,9 +789,9 @@ router.patch(
         action: "MEMBER_ROLE_CHANGED",
         targetType: "workspace",
         workspaceId: ws.id,
-        metadata: { role },
+        metadata: { role: nextRole },
       });
-      return res.json({ user_id: targetUserId, role });
+      return res.json({ user_id: targetUserId, role: nextRole });
     } catch (err) {
       logger.error("Failed to change role", { error: err.message });
       return res
@@ -876,7 +877,7 @@ router.get(
       );
       const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
       const { rows } = await pool.query(
-        `SELECT wm.user_id, wm.role, u.display_name, u.email
+        `SELECT wm.user_id, wm.role, u.display_name, u.email, u.is_admin
        FROM workspace_memberships wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = $1

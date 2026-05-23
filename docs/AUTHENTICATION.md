@@ -21,21 +21,16 @@ docker compose up -d
 On first startup, TokenTimer will:
 
 1. Detect no users exist
-2. Create admin user with provided credentials
-3. Create default workspace for admin
+2. Create admin user with provided credentials (`is_admin = true`, system admin)
+3. Create the shared **Default workspace** and add the admin as workspace admin
 4. Log admin credentials (email shown, password hidden)
 
-**Output**:
+On subsequent user registration or first login (when not joining via invitation), users without workspace membership are placed on the installation **Default workspace**:
 
-```
-Creating initial admin user...
-Initial admin user created successfully
-   Email: admin@company.com
-   Login at: http://localhost:5173/login
-
-IMPORTANT: Remove ADMIN_PASSWORD from environment after first login!
-   The admin can invite other users from the dashboard.
-```
+- If **Default workspace** already exists, they join it.
+- If exactly one workspace exists (legacy installs), they join that workspace.
+- Otherwise a new **Default workspace** is created.
+- Workspace role: **admin** for the creator or system admins; **workspace_manager** for everyone else.
 
 ### Step 3: Remove Admin Password
 
@@ -57,12 +52,11 @@ docker compose restart
 ### For Admins
 
 1. Login to Dashboard
-2. Go to Workspace Settings > Members
-3. Click "Invite User"
-4. Enter email address and role (Admin, Manager, or Viewer)
-5. Send Invitation
+2. Go to **Workspaces** > select a workspace > **Members**
+3. Invite by email with role **Viewer** or **Manager**
+4. To grant **system admin** (installation-wide access to System Settings and admin APIs), toggle **System admin** on an existing member. Only current system admins see this control.
 
-TokenTimer generates an invitation link and (optionally) emails it to the user.
+**System admin** (`users.is_admin`) is installation-wide. **Workspace manager** controls day-to-day workspace operations (invites, tokens, alert settings). Workspace **owner** (`admin` membership role) is assigned automatically when a workspace is created and is not changed from the Members tab.
 
 ### For Invited Users
 
@@ -101,6 +95,32 @@ If not, an invitation token is created and (optionally) emailed.
 ```
 GET /api/v1/workspaces/:id/members
 ```
+
+### Change Member Role (Admin or Manager)
+
+```
+PATCH /api/v1/workspaces/:id/members/:userId
+Content-Type: application/json
+
+{
+  "role": "workspace_manager"
+}
+```
+
+Allowed roles: `viewer`, `workspace_manager` only. The workspace owner role (`admin` membership) is not assignable via this endpoint.
+
+### Grant or Revoke System Admin (System Admin only)
+
+```
+PATCH /api/admin/users/:userId/system-admin
+Content-Type: application/json
+
+{
+  "is_admin": true
+}
+```
+
+Sets `users.is_admin` (installation-wide). Requires an authenticated system admin. The last system admin cannot demote themselves.
 
 ### Remove Member (Admin or Manager)
 
@@ -252,7 +272,7 @@ VALUES ('admin@company.com', '$2b$12$...', 'Admin', 'local', TRUE);
 
 ### Q: Can invited users invite others?
 
-**A**: Admins and workspace managers can invite. Viewers cannot. Note that invitations can only grant manager or viewer roles (admin role cannot be granted via invite).
+**A**: Admins and workspace managers can invite with viewer or manager roles. System admins can grant or revoke installation-wide admin (`is_admin`) from **Workspaces → Members** using the **System admin** toggle.
 
 ## Contact
 

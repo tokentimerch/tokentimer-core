@@ -42,8 +42,12 @@ describe("Workspace pending invitations list", function () {
       "DELETE FROM workspace_invitations WHERE LOWER(email) = LOWER($1)",
       [pendingEmail],
     );
-    await TestUtils.cleanupTestUser(ownerUser.email, ownerSession.cookie);
-    await TestUtils.cleanupTestUser(outsiderUser.email, outsiderSession.cookie);
+    if (ownerSession?.cookie) {
+      await TestUtils.cleanupTestUser(ownerUser.email, ownerSession.cookie);
+    }
+    if (outsiderSession?.cookie) {
+      await TestUtils.cleanupTestUser(outsiderUser.email, outsiderSession.cookie);
+    }
   });
 
   it("returns pending invitations without leaking the token column", async () => {

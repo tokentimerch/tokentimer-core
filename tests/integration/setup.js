@@ -246,12 +246,29 @@ const TestUtils = {
 
   // Login test user and return session cookie
   loginTestUser: async (email, password) => {
-    const response = await request(TEST_CONFIG.API_URL)
-      .post("/auth/login")
-      .send({
-        email: email,
-        password: password,
-      });
+    const maxAttempts = 5;
+    let response;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      response = await request(TEST_CONFIG.API_URL)
+        .post("/auth/login")
+        .send({
+          email: email,
+          password: password,
+        });
+
+      if (response.status === 429 && attempt < maxAttempts) {
+        const retryAfterSec = Number.parseInt(
+          String(response.headers["retry-after"] || "1"),
+          10,
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(250, retryAfterSec * 1000)),
+        );
+        continue;
+      }
+      break;
+    }
 
     // Login must succeed with 200 status
     if (response.status !== 200) {

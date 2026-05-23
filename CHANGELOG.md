@@ -9,6 +9,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-23
+
+### Added
+
+- **System admin management** — system admins can grant or revoke installation-wide admin (`users.is_admin`) from **Workspaces → Members** via `PATCH /api/admin/users/:userId/system-admin`; session exposes `user.isAdmin`.
+- **Unit tests** — `ensure-default-workspace.test.js` and `bootstrap-default-workspace.test.js` for shared Default workspace provisioning.
+
+### Changed
+
+- **Default workspace provisioning** — bootstrap and first-login provisioning use a shared **Default workspace** instead of per-user personal workspaces (`{name}'s workspace`). New users without membership join the existing default (or the sole workspace on legacy installs); existing personal workspaces are unchanged on upgrade.
+- **Workspace member roles** — Members tab manages viewer/manager only; system admin is a separate toggle (not workspace-scoped `admin` promotion).
+- **`docs/AUTHENTICATION.md`** — documents Default workspace behavior and system admin vs workspace roles.
+- **Version metadata bumped to 0.6.0** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Integration test suite** — login rate limiting no longer exhausts the IP bucket during long runs; `auto-sync-import` expiration assertion handles Postgres date types.
+
 ## [0.5.4] - 2026-05-23
 
 ### Added

@@ -197,4 +197,30 @@ describe("Admin System Settings", function () {
       }
     });
   });
+
+  describe("PATCH /api/admin/users/:userId/system-admin", () => {
+    it("grants system admin to another user", async () => {
+      const res = await request(BASE)
+        .patch(`/api/admin/users/${regularUser.id}/system-admin`)
+        .set("Cookie", adminCookie)
+        .send({ is_admin: true })
+        .expect(200);
+
+      expect(res.body.is_admin).to.equal(true);
+
+      const row = await TestUtils.execQuery(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [regularUser.id],
+      );
+      expect(row.rows[0].is_admin).to.equal(true);
+    });
+
+    it("rejects non-admin callers", async () => {
+      await request(BASE)
+        .patch(`/api/admin/users/${adminUser.id}/system-admin`)
+        .set("Cookie", regularCookie)
+        .send({ is_admin: true })
+        .expect(403);
+    });
+  });
 });
