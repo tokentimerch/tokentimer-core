@@ -1382,8 +1382,8 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   <AlertIcon />
                   <AlertDescription fontSize='xs'>
                     This list is capped at {domainCheckerCapCount} hostnames per
-                    discovery run. Names beyond that cap are not stored or shown,
-                    so import is limited to this table.
+                    discovery run. Names beyond that cap are not stored or
+                    shown, so import is limited to this table.
                   </AlertDescription>
                 </Alert>
               )}
