@@ -9,6 +9,36 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-23
+
+### Added
+
+- **`session-cookie-options.js`** — shared session/CSRF cookie and CORS origin resolution for split `APP_URL` / `API_URL` (`SameSite`, `Secure`, `SESSION_COOKIE_DOMAIN`, localhost override, logout `clearCookie` parity).
+- **`runtime-labels.js`** — API log and rate-limit labels from `TT_MODE` / `.tokentimer-variant` (enterprise vs core) with optional env overrides.
+- **Dashboard `resolveApiBaseUrl.js`** — local dev rewrites configured `localhost` API URLs to the page hostname (`127.0.0.1` vs `localhost`).
+- **Tests** — Mocha unit suites for session cookies and runtime labels (in core integration suite); Vitest for `resolveApiBaseUrl`; integration logout asserts matching `sessionId` clear-cookie attributes.
+- **Startup warning** when HTTPS split-host is configured without `SESSION_COOKIE_DOMAIN`.
+
+### Fixed
+
+- **Docker Compose login on localhost** — split HTTP ports (`5173` + `4000`, or Helm port-forward `8080` + `4000`) stay `SameSite=Lax` instead of `SameSite=None; Secure` (blocked as third-party cookies in strict browsers).
+- **Logout and account deletion** — `clearCookie("sessionId")` matches express-session options (`sameSite`, `secure`, `domain`); no hard-coded `SameSite=Strict`.
+- **`API_URL` fallback in cookie/CORS logic** — missing `API_URL` falls back to `APP_URL`, aligned with `constants.js` and Helm same-origin installs.
+- **`__Host-` CSRF cookie** — disabled when `SESSION_COOKIE_DOMAIN` is set (Host-prefix cookies cannot include `Domain`).
+- **Integration test drift** — `auto-sync-import.test.js` expects HTTP `201` on `POST /api/v1/integrations/import` and uses the test stack `SESSION_SECRET` for worker bearer auth (was mismatched hard-coded secret).
+
+### Changed
+
+- **API logger and rate limiter** use `getRuntimeLabels()` instead of hard-coded `tokentimer-core-api` / `oss`.
+- **Compose** — dashboard service receives `API_URL` for runtime `env.js`; **Helm** — `API_URL` defaults to `baseUrl` when `apiUrl` is omitted.
+- **`docs/CONFIGURATION.md`** — split-host cookies, Helm vs Compose vs runtime URL table, HTTP vs HTTPS behaviour.
+- **Domain checker UI** — removed outdated Pro/Team badge copy from the SSL monitor modal.
+- **Version metadata bumped to 0.5.4** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Security
+
+- **pnpm override `qs@6.15.2`** — addresses [GHSA-q8mj-m7cp-5q26](https://github.com/advisories/GHSA-q8mj-m7cp-5q26) (moderate DoS in `qs.stringify` via Express).
+
 ## [0.5.3] - 2026-05-19
 
 ### Changed

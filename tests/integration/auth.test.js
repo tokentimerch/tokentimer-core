@@ -156,6 +156,16 @@ describe("Authentication Integration Tests", () => {
         .expect(200);
 
       expect(response.body.message).to.equal("logged out successfully");
+
+      const setCookie = response.headers["set-cookie"];
+      expect(setCookie).to.exist;
+      const cleared = Array.isArray(setCookie)
+        ? setCookie.find((c) => String(c).startsWith("sessionId="))
+        : setCookie;
+      expect(cleared).to.exist;
+      const lowered = String(cleared).toLowerCase();
+      expect(lowered).to.not.include("samesite=strict");
+      expect(lowered).to.match(/samesite=(lax|none)/);
     });
   });
 });

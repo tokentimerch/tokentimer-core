@@ -19,7 +19,11 @@ const crypto = require("crypto");
 const { TestUtils, request, expect } = require("./setup");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
-const WORKER_SECRET = "auto-sync-import-test-secret";
+// Must match API/worker SESSION_SECRET in docker-compose.test.yml / .env.test
+const WORKER_SECRET =
+  process.env.WORKER_API_KEY ||
+  process.env.SESSION_SECRET ||
+  "test-session-secret-key";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -157,7 +161,7 @@ describe("Auto-sync import deduplication — with location", function () {
           },
         ],
       })
-      .expect(200);
+      .expect(201);
 
     expect(res.body.created).to.be.an("array").with.length(1);
     expect(res.body.updated).to.be.an("array").with.length(0);
@@ -182,7 +186,7 @@ describe("Auto-sync import deduplication — with location", function () {
           },
         ],
       })
-      .expect(200);
+      .expect(201);
 
     expect(res.body.created).to.be.an("array").with.length(0);
     expect(res.body.updated).to.be.an("array").with.length(1);
@@ -212,7 +216,7 @@ describe("Auto-sync import deduplication — with location", function () {
           },
         ],
       })
-      .expect(200);
+      .expect(201);
 
     expect(res.body.created).to.be.an("array").with.length(1);
     expect(await tokenCount(workspaceId)).to.equal(2);
@@ -251,7 +255,7 @@ describe("Auto-sync import deduplication — without location", function () {
       .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
       .set("Cookie", session.cookie)
       .send({ items: [{ name: "no-location-key", type: "api_key", category: "key_secret" }] })
-      .expect(200);
+      .expect(201);
 
     expect(await tokenCount(workspaceId)).to.equal(1);
   });
@@ -265,7 +269,7 @@ describe("Auto-sync import deduplication — without location", function () {
       .post(`/api/v1/integrations/import?workspace_id=${workspaceId}`)
       .set("Cookie", session.cookie)
       .send({ items: [{ name: "no-location-key", type: "api_key", category: "key_secret" }] })
-      .expect(200);
+      .expect(201);
 
     expect(res.body.created).to.be.an("array").with.length(1);
     expect(await tokenCount(workspaceId)).to.equal(2);
@@ -397,7 +401,7 @@ describe("Auto-sync worker behaviours", function () {
           },
         ],
       })
-      .expect(200);
+      .expect(201);
 
     expect(res.body.created).to.be.an("array").with.length(1);
   });

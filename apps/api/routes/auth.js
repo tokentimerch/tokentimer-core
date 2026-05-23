@@ -37,32 +37,10 @@ const verifyOtp =
   _otplib.verify ||
   _otplib.authenticator?.verify ||
   _otplib.default?.authenticator?.verify;
-const isProductionEnvironment =
-  (process.env.NODE_ENV || "").trim().toLowerCase() === "production";
-const parseBooleanEnv = (value) => {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "true") return true;
-  if (normalized === "false") return false;
-  return null;
-};
-const sessionCookieSecureLocalhostOverride =
-  parseBooleanEnv(process.env.SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE) === true;
-const configuredPublicUrls = [
-  process.env.API_URL?.trim(),
-  process.env.APP_URL?.trim(),
-  process.env.PUBLIC_BASE_URL?.trim(),
-].filter(Boolean);
-const hasLocalhostOrLoopbackUrl = configuredPublicUrls.some((url) =>
-  /^https?:\/\/(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(url),
-);
-const hasNonHttpsUrl = configuredPublicUrls.some((url) => /^http:\/\//i.test(url));
-const localInsecureUrlDetected = hasLocalhostOrLoopbackUrl || hasNonHttpsUrl;
-const allowInsecureLocalProdCookie =
-  isProductionEnvironment &&
-  sessionCookieSecureLocalhostOverride &&
-  localInsecureUrlDetected;
-const sessionCookieSecure = isProductionEnvironment && !allowInsecureLocalProdCookie;
+const {
+  resolveClearSessionCookieOptions,
+} = require("../session-cookie-options.js");
+const clearSessionCookieOptions = resolveClearSessionCookieOptions(process.env);
 
 const router = require("express").Router();
 
@@ -1409,14 +1387,7 @@ router.post("/api/logout", getApiLimiter(), (req, res) => {
         logger.warn("Audit write failed", { error: _err.message });
       }
 
-      // Clear the session cookie in both dev and prod settings
-      const cookieOptions = {
-        httpOnly: true,
-        sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-        secure: sessionCookieSecure,
-        path: "/",
-      };
-      res.clearCookie("sessionId", cookieOptions);
+      res.clearCookie("sessionId", clearSessionCookieOptions);
       res.json({ success: true });
     });
   });
@@ -1432,14 +1403,7 @@ router.post("/auth/logout", getApiLimiter(), (req, res) => {
         stack: err.stack,
       });
     }
-    // Clear the session cookie in both dev and prod settings
-    const cookieOptions = {
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-      secure: sessionCookieSecure,
-      path: "/",
-    };
-    res.clearCookie("sessionId", cookieOptions);
+    res.clearCookie("sessionId", clearSessionCookieOptions);
     res.json({ message: "logged out successfully" });
   });
 });

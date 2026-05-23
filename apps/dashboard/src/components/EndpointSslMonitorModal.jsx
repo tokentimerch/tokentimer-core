@@ -1297,19 +1297,16 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
 
             <Divider />
             <Box>
-              <HStack justify='space-between' align='start' mb={2}>
-                <Box>
-                  <Text fontWeight='semibold' fontSize='sm'>
-                    Domain checker
-                  </Text>
-                  <Text fontSize='xs' color={helpTextColor}>
-                    Discovery is best-effort and limited to publicly available
-                    subdomains seen by passive sources. Then import selected
-                    hosts as SSL tokens and endpoint monitors.
-                  </Text>
-                </Box>
-                <Badge colorScheme='purple'>Pro/Team</Badge>
-              </HStack>
+              <Box mb={2}>
+                <Text fontWeight='semibold' fontSize='sm'>
+                  Domain checker
+                </Text>
+                <Text fontSize='xs' color={helpTextColor}>
+                  Discovery is best-effort and limited to publicly available
+                  subdomains seen by passive sources. Then import selected hosts
+                  as SSL tokens and endpoint monitors.
+                </Text>
+              </Box>
               <HStack spacing={3} align='flex-end' flexWrap='wrap'>
                 <FormControl flex={2} minW='220px'>
                   <FormLabel fontSize='sm'>Root domain</FormLabel>
@@ -1385,9 +1382,8 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   <AlertIcon />
                   <AlertDescription fontSize='xs'>
                     This list is capped at {domainCheckerCapCount} hostnames per
-                    discovery run. Names beyond that cap are not stored or
-                    shown, so import is limited to this table. Team workspaces
-                    can discover more hostnames than Pro workspaces.
+                    discovery run. Names beyond that cap are not stored or shown,
+                    so import is limited to this table.
                   </AlertDescription>
                 </Alert>
               )}

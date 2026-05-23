@@ -12,42 +12,9 @@ import { resetIdentity } from './analytics.js';
 // public pages or 404s look like forced logouts.
 let hasObservedLoggedInSession = false;
 
-// API base URL resolution:
-// - If runtime env.js defines API_URL, use it first
-// - Otherwise if VITE_API_URL is set and not pointing to localhost when we're not on localhost, use it
-// - If running on localhost, default to local backend
-// - Otherwise, use relative paths so ingress can route /api and /auth
-const resolveApiBaseUrl = () => {
-  const runtimeUrl =
-    typeof window !== 'undefined' && window.__ENV__
-      ? window.__ENV__.API_URL
-      : undefined;
-  const viteUrl =
-    typeof import.meta !== 'undefined' && import.meta.env
-      ? import.meta.env.VITE_API_URL
-      : undefined;
-  const isBrowser = typeof window !== 'undefined';
-  const isLocalHost =
-    isBrowser &&
-    (window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1');
+import { resolveApiBaseUrl } from './resolveApiBaseUrl.js';
 
-  const configuredUrl = runtimeUrl || viteUrl;
-
-  if (configuredUrl) {
-    const pointsToLocalhost = /(^http:\/\/localhost|127\.0\.0\.1)/i.test(
-      String(configuredUrl)
-    );
-    if (!isLocalHost && pointsToLocalhost) {
-      return '';
-    }
-    return configuredUrl;
-  }
-
-  if (isLocalHost) return 'http://localhost:4000';
-  return '';
-};
-
+export { resolveApiBaseUrl };
 export const API_BASE_URL = resolveApiBaseUrl();
 
 // Debug: Log environment variables only in development or on local/staging hosts
@@ -82,7 +49,28 @@ const apiClient = axios.create({
 // CSRF token management
 let csrfToken = null;
 
-// Deduplicate identical error toasts within a short time window
+export const resetCsrfToken = () => {
+  csrfToken = null;
+};
+
+// Function to get CSRF token
+const getCsrfToken = async (forceRefresh = false) => {
+  if (forceRefresh) {
+    csrfToken = null;
+  }
+  if (!csrfToken) {
+    try {
+      const response = await apiClient.get('/api/csrf-token', {
+        _suppressLog: true,
+      });
+      const { csrfToken: token } = response.data;
+      csrfToken = token;
+    } catch (error) {
+      logger.warn('Failed to get CSRF token:', error);
+    }
+  }
+  return csrfToken;
+};
 // Keyed by message string to avoid spamming users with repeated identical errors
 const recentlyShownErrorToasts = new Map(); // message -> timestamp
 const ERROR_TOAST_DEDUP_WINDOW_MS = 4000;
@@ -106,22 +94,6 @@ const showErrorToastOnce = message => {
   }
 
   showGlobalError(message);
-};
-
-// Function to get CSRF token
-const getCsrfToken = async () => {
-  if (!csrfToken) {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/csrf-token`, {
-        withCredentials: true,
-      });
-      const { csrfToken: token } = response.data;
-      csrfToken = token;
-    } catch (error) {
-      logger.warn('Failed to get CSRF token:', error);
-    }
-  }
-  return csrfToken;
 };
 
 // Request interceptor for authentication and logging
@@ -231,7 +203,7 @@ apiClient.interceptors.response.use(
       csrfToken = null; // Reset token
 
       // Retry the request with new token
-      const token = await getCsrfToken();
+      const token = await getCsrfToken(true);
       if (token && error.config) {
         error.config.headers['X-CSRF-Token'] = token;
         return apiClient.request(error.config);
@@ -571,6 +543,7 @@ export const authAPI = {
       const response = await apiClient.post(API_ENDPOINTS.LOGIN, credentials);
       if (response?.data?.success || response?.data?.user) {
         hasObservedLoggedInSession = true;
+        resetCsrfToken();
       }
       return response.data;
     } catch (error) {
@@ -591,6 +564,7 @@ export const authAPI = {
       handleApiError(error);
     } finally {
       hasObservedLoggedInSession = false;
+      resetCsrfToken();
     }
   },
 
