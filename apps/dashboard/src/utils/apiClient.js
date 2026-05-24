@@ -533,6 +533,9 @@ export const API_ENDPOINTS = {
     `/api/v1/integrations/import?workspace_id=${encodeURIComponent(id)}`,
   INTEGRATION_CHECK_DUPLICATES: id =>
     `/api/v1/integrations/check-duplicates?workspace_id=${encodeURIComponent(id)}`,
+
+  // System admin (installation-wide)
+  ADMIN_USER_SYSTEM_ADMIN: userId => `/api/admin/users/${userId}/system-admin`,
 };
 
 // Authentication API methods
@@ -1063,6 +1066,23 @@ export const workspaceAPI = {
       try {
         invalidateCache(API_ENDPOINTS.GET_TOKENS);
       } catch (_) {}
+      return res.data;
+    } catch (e) {
+      throw new Error(handleApiError(e));
+    }
+  },
+};
+
+export const adminAPI = {
+  setSystemAdmin: async (userId, isAdmin) => {
+    try {
+      const res = await apiClient.patch(
+        API_ENDPOINTS.ADMIN_USER_SYSTEM_ADMIN(userId),
+        { is_admin: isAdmin }
+      );
+      showSuccessMessage(
+        isAdmin ? 'System admin granted' : 'System admin revoked'
+      );
       return res.data;
     } catch (e) {
       throw new Error(handleApiError(e));

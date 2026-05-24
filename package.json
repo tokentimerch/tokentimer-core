@@ -1,6 +1,6 @@
 {
   "name": "tokentimer-core",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "private": true,
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
@@ -20,6 +20,7 @@
     "lint:api": "pnpm --filter @tokentimer/api lint",
     "lint:worker": "pnpm --filter @tokentimer/worker lint",
     "lint:dashboard": "pnpm --filter @tokentimer/dashboard lint",
+    "test:unit": "node scripts/run-unit-tests.js",
     "test:core": "node scripts/run-tests-local.js core",
     "test:integration": "node scripts/run-integration-suite.js core",
     "test:integration:all": "node scripts/run-integration-suite.js all",
@@ -29,7 +30,7 @@
     "check:contracts:integrity": "node scripts/check-contracts-integrity.js",
     "check:openapi:coverage": "node scripts/check-openapi-runtime-coverage.js",
     "test:baseline": "node scripts/run-baseline.js",
-    "test:ci": "node scripts/run-tests-local.js core",
+    "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",
     "test:ci:all": "NODE_ENV=test pnpm exec mocha tests/integration/**/*.test.js --timeout 60000 --exit --reporter mocha-junit-reporter --reporter-options mochaFile=./test-results/results.xml",
     "test:integration:complete:local": "node scripts/run-local-integration-complete.js",
     "test:local:integration:complete": "node scripts/run-local-integration-complete.js",

@@ -15,6 +15,11 @@ const {
   sendEmail,
   isSMTPConfiguredAsync,
 } = require("../services/emailService");
+const {
+  isActiveSystemAdminRow,
+  countOtherActiveSystemAdmins,
+  lockSystemAdminMutation,
+} = require("../services/systemAdmin");
 
 const router = require("express").Router();
 
@@ -2240,5 +2245,134 @@ router.get(
   },
 );
 // Delete user account (GDPR Right to be Forgotten)
+
+router.patch(
+  "/api/admin/users/:userId/system-admin",
+  getApiLimiter(),
+  requireAuth,
+  requireAnyAdmin,
+  async (req, res) => {
+    try {
+      const targetUserId = parseInt(String(req.params.userId || ""), 10);
+      if (!Number.isFinite(targetUserId)) {
+        return res.status(400).json({
+          error: "Invalid user id",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      const { is_admin: nextIsAdmin } = req.body || {};
+      if (typeof nextIsAdmin !== "boolean") {
+        return res.status(400).json({
+          error: "is_admin boolean is required",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      if (nextIsAdmin === false) {
+        const client = await pool.connect();
+        let responseBody = null;
+        let responseStatus = 200;
+        try {
+          await client.query("BEGIN");
+          await lockSystemAdminMutation(client);
+          const target = await client.query(
+            `SELECT email, display_name, is_admin
+               FROM users
+              WHERE id = $1
+              FOR UPDATE`,
+            [targetUserId],
+          );
+          if (target.rowCount === 0) {
+            await client.query("ROLLBACK");
+            responseStatus = 404;
+            responseBody = {
+              error: "User not found",
+              code: "NOT_FOUND",
+            };
+          } else if (
+            isActiveSystemAdminRow(target.rows[0]) &&
+            (await countOtherActiveSystemAdmins(client, targetUserId)) === 0
+          ) {
+            await client.query("ROLLBACK");
+            responseStatus = 403;
+            responseBody = {
+              error: "Cannot demote the last system admin",
+              code: "FORBIDDEN",
+            };
+          } else {
+            const updated = await client.query(
+              `UPDATE users
+                  SET is_admin = $1, updated_at = NOW()
+                WHERE id = $2
+                RETURNING id, is_admin`,
+              [nextIsAdmin, targetUserId],
+            );
+            await client.query("COMMIT");
+            await writeAudit({
+              actorUserId: req.user.id,
+              subjectUserId: targetUserId,
+              action: "SYSTEM_ADMIN_CHANGED",
+              targetType: "user",
+              targetId: targetUserId,
+              channel: null,
+              workspaceId: null,
+              metadata: { is_admin: nextIsAdmin },
+            });
+            responseBody = {
+              user_id: targetUserId,
+              is_admin: updated.rows[0].is_admin === true,
+            };
+          }
+        } catch (txErr) {
+          try {
+            await client.query("ROLLBACK");
+          } catch (_rollbackErr) {
+            /* connection may already be closed */
+          }
+          throw txErr;
+        } finally {
+          client.release();
+        }
+        return res.status(responseStatus).json(responseBody);
+      }
+
+      const updated = await pool.query(
+        `UPDATE users
+            SET is_admin = $1, updated_at = NOW()
+          WHERE id = $2
+          RETURNING id, is_admin`,
+        [nextIsAdmin, targetUserId],
+      );
+      if (updated.rowCount === 0) {
+        return res.status(404).json({
+          error: "User not found",
+          code: "NOT_FOUND",
+        });
+      }
+      await writeAudit({
+        actorUserId: req.user.id,
+        subjectUserId: targetUserId,
+        action: "SYSTEM_ADMIN_CHANGED",
+        targetType: "user",
+        targetId: targetUserId,
+        channel: null,
+        workspaceId: null,
+        metadata: { is_admin: nextIsAdmin },
+      });
+      return res.json({
+        user_id: targetUserId,
+        is_admin: updated.rows[0].is_admin === true,
+      });
+    } catch (err) {
+      logger.error("Failed to update system admin flag", {
+        error: err.message,
+        targetUserId: req.params.userId,
+      });
+      return res.status(500).json({
+        error: "Failed to update system admin",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
 
 module.exports = router;

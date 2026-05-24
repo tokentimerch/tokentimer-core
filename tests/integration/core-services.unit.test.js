@@ -288,7 +288,7 @@ describe("Core services unit coverage", () => {
   });
 
   describe("services/workspace", () => {
-    it("returns early when user already has personal workspace", async () => {
+    it("returns early when user already has workspace membership", async () => {
       const queryLog = [];
       const pool = {
         query: async (sql, params) => {
@@ -297,13 +297,13 @@ describe("Core services unit coverage", () => {
           if (text.includes("FROM workspace_invitations")) {
             return { rowCount: 0, rows: [] };
           }
-          if (text.includes("SELECT DISTINCT role FROM workspace_memberships")) {
-            return { rowCount: 0, rows: [] };
-          }
-          if (text.includes("SELECT 1 FROM workspaces WHERE created_by")) {
+          if (text.includes("FROM workspace_memberships WHERE user_id")) {
             return { rowCount: 1, rows: [{}] };
           }
           return { rowCount: 0, rows: [] };
+        },
+        connect: async () => {
+          throw new Error("should not open transaction");
         },
       };
       let auditCalls = 0;
@@ -328,7 +328,7 @@ describe("Core services unit coverage", () => {
       expect(auditCalls).to.equal(0);
     });
 
-    it("accepts invitations and bootstraps personal workspace when missing", async () => {
+    it("accepts invitations and skips default workspace when membership exists", async () => {
       const queryLog = [];
       const pool = {
         query: async (sql, params) => {
@@ -339,23 +339,21 @@ describe("Core services unit coverage", () => {
             return {
               rowCount: 1,
               rows: [
-                { id: "inv-1", workspace_id: "ws-invite", role: "member" },
+                {
+                  id: "inv-1",
+                  workspace_id: "ws-invite",
+                  role: "workspace_manager",
+                },
               ],
             };
           }
-          if (text.includes("SELECT DISTINCT role FROM workspace_memberships")) {
-            return { rowCount: 0, rows: [] };
-          }
-          if (text.includes("SELECT 1 FROM workspaces WHERE created_by")) {
-            return { rowCount: 0, rows: [] };
-          }
-          if (text.includes("SELECT id FROM workspace_contacts")) {
-            return { rowCount: 0, rows: [] };
-          }
-          if (text.includes("INSERT INTO workspace_contacts")) {
-            return { rowCount: 1, rows: [{ id: "contact-1" }] };
+          if (text.includes("FROM workspace_memberships WHERE user_id")) {
+            return { rowCount: 1, rows: [{}] };
           }
           return { rowCount: 1, rows: [] };
+        },
+        connect: async () => {
+          throw new Error("should not open transaction");
         },
       };
 
@@ -387,19 +385,7 @@ describe("Core services unit coverage", () => {
             "INSERT INTO workspaces (id, name, plan, created_by)",
           ),
         ),
-      ).to.equal(true);
-      expect(
-        queryLog.some((q) =>
-          q.text.includes(
-            "INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)",
-          ),
-        ),
-      ).to.equal(true);
-      expect(
-        queryLog.some((q) =>
-          q.text.includes("UPDATE workspace_settings SET contact_groups"),
-        ),
-      ).to.equal(true);
+      ).to.equal(false);
       expect(auditCalls).to.be.greaterThan(0);
     });
   });

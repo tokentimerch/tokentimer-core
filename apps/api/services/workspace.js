@@ -2,9 +2,12 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("./audit");
 
+const DEFAULT_WORKSPACE_NAME = "Default workspace";
+const INSTALLATION_DEFAULT_LOCK_KEY = 0x5454_5744; // TTWD
+
 /**
  * Ensure a user has initial workspace context.
- * Accepts any pending invitations, then creates a default workspace if none exists.
+ * Accepts pending invitations, then ensures membership on the installation default workspace.
  * Idempotent - safe to call on every login.
  *
  * @param {string} userId - The user's ID
@@ -85,123 +88,138 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
       }
     }
 
-    // In core, only admins get a default workspace.
-    // Non-admin users (managers, viewers) only belong to workspaces they were invited to.
-    try {
-      const rolesResult = await pool.query(
-        `SELECT DISTINCT role FROM workspace_memberships WHERE user_id = $1`,
-        [userId],
-      );
-      const roles = rolesResult.rows.map((r) => r.role);
-      if (roles.length > 0 && !roles.includes("admin")) {
-        logger.debug("Non-admin user; skipping personal default workspace", {
-          userId,
-        });
-        return;
-      }
-    } catch (_err) {
-      logger.warn("Role check failed, proceeding with workspace creation", {
-        error: _err.message,
-      });
+    const membershipCheck = await pool.query(
+      `SELECT 1 FROM workspace_memberships WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (membershipCheck.rowCount > 0) {
+      return;
     }
 
-    // Idempotency: skip if user already owns a workspace
-    let hasWorkspace = false;
+    const client = await pool.connect();
+    let workspaceId;
+    let created = false;
+    let joinRole = "admin";
     try {
-      const chk = await pool.query(
-        `SELECT 1 FROM workspaces WHERE created_by = $1 LIMIT 1`,
-        [userId],
-      );
-      hasWorkspace = chk.rowCount > 0;
-    } catch (_err) {
-      logger.warn("DB operation failed", { error: _err.message });
-    }
-    if (hasWorkspace) return;
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock($1)", [
+        INSTALLATION_DEFAULT_LOCK_KEY,
+      ]);
 
-    const wsId = require("crypto").randomUUID();
-    const first = (displayName || emailLc || "User").split(" ")[0];
-    const wsName = `${first}'s workspace`;
-    await pool.query(
-      "INSERT INTO workspaces (id, name, plan, created_by) VALUES ($1,$2,'oss',$3)",
-      [wsId, wsName, userId],
-    );
-    await pool.query(
-      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by) VALUES ($1,$2,'admin',$1) ON CONFLICT DO NOTHING`,
-      [userId, wsId],
-    );
-    try {
-      await pool.query(
-        `INSERT INTO workspace_settings (workspace_id, email_alerts_enabled) VALUES ($1, TRUE) ON CONFLICT (workspace_id) DO UPDATE SET email_alerts_enabled = TRUE`,
-        [wsId],
+      const existing = await client.query(
+        `SELECT id
+           FROM workspaces
+          WHERE LOWER(TRIM(name)) = LOWER($1)
+          ORDER BY created_at ASC
+          LIMIT 1
+          FOR UPDATE`,
+        [DEFAULT_WORKSPACE_NAME],
       );
-    } catch (_err) {
-      logger.warn("DB operation failed", { error: _err.message });
-    }
-    try {
-      const parts = String(displayName || "")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-      const ownerFirst = parts[0] || "Owner";
-      const ownerLast = parts.slice(1).join(" ");
-      const emailLower = (userEmail || "").trim().toLowerCase();
-      if (emailLower) {
-        const existing = await pool.query(
-          `SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND LOWER(details->>'email') = $2 LIMIT 1`,
-          [wsId, emailLower],
+      if (existing.rowCount > 0) {
+        workspaceId = existing.rows[0].id;
+      } else {
+        const allWorkspaces = await client.query(
+          `SELECT id FROM workspaces ORDER BY created_at ASC FOR UPDATE`,
         );
-        let contactId = existing.rows?.[0]?.id || null;
-        if (!contactId) {
-          const ins = await pool.query(
-            `INSERT INTO workspace_contacts (workspace_id, first_name, last_name, phone_e164, details, created_by) VALUES ($1,$2,$3,NULL,$4,$5) RETURNING id`,
-            [
-              wsId,
-              String(ownerFirst).trim(),
-              String(ownerLast || "").trim(),
-              JSON.stringify({ email: emailLower }),
-              userId,
-            ],
-          );
-          contactId = ins.rows?.[0]?.id || null;
-        }
-        try {
-          if (contactId) {
-            const groupId = "default_admin";
-            const group = [
-              {
-                id: groupId,
-                name: "Default admin email",
-                email_contact_ids: [String(contactId)],
-              },
-            ];
-            await pool.query(
-              `UPDATE workspace_settings SET contact_groups = $2::jsonb, default_contact_group_id = $3 WHERE workspace_id = $1 AND (contact_groups IS NULL OR jsonb_array_length(contact_groups) = 0)`,
-              [wsId, JSON.stringify(group), groupId],
-            );
-          }
-        } catch (_err) {
-          logger.warn("DB operation failed", { error: _err.message });
+        if (allWorkspaces.rowCount === 1) {
+          workspaceId = allWorkspaces.rows[0].id;
         }
       }
-    } catch (_err) {
-      logger.warn("DB operation failed", { error: _err.message });
+
+      if (!workspaceId) {
+        workspaceId = require("crypto").randomUUID();
+        await client.query(
+          "INSERT INTO workspaces (id, name, plan, created_by) VALUES ($1,$2,'oss',$3)",
+          [workspaceId, DEFAULT_WORKSPACE_NAME, userId],
+        );
+        try {
+          await client.query(
+            "UPDATE workspaces SET is_personal_default = FALSE WHERE id = $1",
+            [workspaceId],
+          );
+        } catch (_err) {
+          logger.debug("is_personal_default column update skipped", {
+            error: _err.message,
+          });
+        }
+        created = true;
+        joinRole = "admin";
+      } else {
+        joinRole = await resolveJoinRole(client, userId);
+      }
+
+      await client.query(
+        `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+         VALUES ($1,$2,$3,$1)
+         ON CONFLICT (user_id, workspace_id) DO NOTHING`,
+        [userId, workspaceId, joinRole],
+      );
+
+      await client.query("COMMIT");
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      client.release();
     }
-    try {
-      await writeAudit({
-        actorUserId: userId,
-        subjectUserId: userId,
-        action: "WORKSPACE_CREATED",
-        targetType: "workspace",
-        targetId: null,
-        channel: null,
-        workspaceId: wsId,
-        metadata: { name: wsName, kind: "personal_default" },
-      });
-    } catch (_err) {
-      logger.warn("Audit write failed (WORKSPACE_CREATED)", {
-        error: _err.message,
-        stack: _err.stack,
-      });
+
+    if (created) {
+      try {
+        await pool.query(
+          `INSERT INTO workspace_settings (workspace_id, email_alerts_enabled)
+           VALUES ($1, TRUE)
+           ON CONFLICT (workspace_id) DO UPDATE SET email_alerts_enabled = TRUE`,
+          [workspaceId],
+        );
+      } catch (_err) {
+        logger.warn("DB operation failed", { error: _err.message });
+      }
+      try {
+        await seedCreatorContact(workspaceId, userId, userEmail, displayName);
+      } catch (_err) {
+        logger.warn("DB operation failed", { error: _err.message });
+      }
+      try {
+        await writeAudit({
+          actorUserId: userId,
+          subjectUserId: userId,
+          action: "WORKSPACE_CREATED",
+          targetType: "workspace",
+          targetId: null,
+          channel: null,
+          workspaceId,
+          metadata: {
+            name: DEFAULT_WORKSPACE_NAME,
+            kind: "installation_default",
+          },
+        });
+      } catch (_err) {
+        logger.warn("Audit write failed (WORKSPACE_CREATED)", {
+          error: _err.message,
+          stack: _err.stack,
+        });
+      }
+    } else {
+      try {
+        await writeAudit({
+          actorUserId: userId,
+          subjectUserId: userId,
+          action: "WORKSPACE_MEMBERSHIP_ACCEPTED",
+          targetType: "workspace",
+          targetId: null,
+          channel: null,
+          workspaceId,
+          metadata: { role: joinRole, kind: "installation_default" },
+        });
+      } catch (_err) {
+        logger.warn("Audit write failed (installation default join)", {
+          error: _err.message,
+        });
+      }
     }
   } catch (err) {
     logger.error("ensureInitialWorkspaceForUser failed", {
@@ -212,4 +230,60 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
   }
 }
 
-module.exports = { ensureInitialWorkspaceForUser };
+function resolveJoinRole(_db, _userId) {
+  // Join role for the shared Default workspace when it already exists.
+  // users.is_admin is installation-wide and does not grant workspace admin here.
+  // The creator branch in ensureInitialWorkspaceForUser still assigns admin when
+  // the Default workspace is first created; all later automatic joins are manager.
+  return "workspace_manager";
+}
+
+async function seedCreatorContact(workspaceId, userId, userEmail, displayName) {
+  const parts = String(displayName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const ownerFirst = parts[0] || "Owner";
+  const ownerLast = parts.slice(1).join(" ");
+  const emailLower = (userEmail || "").trim().toLowerCase();
+  if (!emailLower) return;
+
+  const existing = await pool.query(
+    `SELECT id FROM workspace_contacts WHERE workspace_id = $1 AND LOWER(details->>'email') = $2 LIMIT 1`,
+    [workspaceId, emailLower],
+  );
+  let contactId = existing.rows?.[0]?.id || null;
+  if (!contactId) {
+    const ins = await pool.query(
+      `INSERT INTO workspace_contacts (workspace_id, first_name, last_name, phone_e164, details, created_by)
+       VALUES ($1,$2,$3,NULL,$4,$5) RETURNING id`,
+      [
+        workspaceId,
+        String(ownerFirst).trim(),
+        String(ownerLast || "").trim(),
+        JSON.stringify({ email: emailLower }),
+        userId,
+      ],
+    );
+    contactId = ins.rows?.[0]?.id || null;
+  }
+  if (contactId) {
+    const groupId = "default_admin";
+    const group = [
+      {
+        id: groupId,
+        name: "Default admin email",
+        email_contact_ids: [String(contactId)],
+      },
+    ];
+    await pool.query(
+      `UPDATE workspace_settings
+          SET contact_groups = $2::jsonb, default_contact_group_id = $3
+        WHERE workspace_id = $1
+          AND (contact_groups IS NULL OR jsonb_array_length(contact_groups) = 0)`,
+      [workspaceId, JSON.stringify(group), groupId],
+    );
+  }
+}
+
+module.exports = { ensureInitialWorkspaceForUser, DEFAULT_WORKSPACE_NAME };

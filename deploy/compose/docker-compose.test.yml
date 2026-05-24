@@ -63,6 +63,9 @@ services:
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=SecureTest123!@#
       - ADMIN_NAME=Test Admin
+      # Integration suite performs hundreds of successful logins from one IP
+      - LOGIN_RATE_LIMIT_MAX=10000
+      - LOGIN_EMAIL_RATE_LIMIT_MAX=10000
       # Delivery windows (wide open for tests)
       - DELIVERY_WINDOW_DEFAULT_START=00:00
       - DELIVERY_WINDOW_DEFAULT_END=23:59

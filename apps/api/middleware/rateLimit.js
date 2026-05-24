@@ -1,7 +1,7 @@
 const rateLimit = require("express-rate-limit");
 const { ipKeyGenerator } = require("express-rate-limit");
 const slowDown = require("express-slow-down");
-const { logger } = require("../utils/logger");
+const { logger, resolveClientIp } = require("../utils/logger");
 const { getRuntimeLabels } = require("../config/runtime-labels");
 const { parseLimits } = require("../services/planLimits");
 const { normalizeRootDomain } = require("../services/domainChecker");
@@ -53,16 +53,16 @@ const loginLimiter = rateLimit({
   message: "Too many login attempts, please try again later.",
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false,
+  skipSuccessfulRequests: isDevOrTest,
   keyGenerator: (req) => {
-    const ip = ipKeyGenerator(req);
+    const ip = resolveClientIp(req) || ipKeyGenerator(req);
     logger.info("Rate limiting key generated", { type: "login", ip });
     return ip;
   },
   handler: (req, res) => {
     logger.warn("RATE_LIMIT_EXCEEDED", {
       type: "login",
-      ip: ipKeyGenerator(req),
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
     });
     res
@@ -87,7 +87,7 @@ const loginEmailLimiter = rateLimit({
     logger.warn("RATE_LIMIT_EXCEEDED", {
       type: "login_email",
       email: normalizeEmail(req.body?.email) || null,
-      ip: ipKeyGenerator(req),
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
     });
     res.status(429).json({
@@ -105,14 +105,14 @@ const passwordResetLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   keyGenerator: (req) => {
-    const ip = ipKeyGenerator(req);
+    const ip = resolveClientIp(req) || ipKeyGenerator(req);
     logger.info("Rate limiting key generated", { type: "password_reset", ip });
     return ip;
   },
   handler: (req, res) => {
     logger.warn("RATE_LIMIT_EXCEEDED", {
       type: "password_reset",
-      ip: ipKeyGenerator(req),
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
     });
     res.status(429).json({
@@ -134,7 +134,7 @@ const passwordResetEmailLimiter = rateLimit({
     logger.warn("RATE_LIMIT_EXCEEDED", {
       type: "password_reset_email",
       email: normalizeEmail(req.body?.email) || null,
-      ip: ipKeyGenerator(req),
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
     });
     res.status(429).json({
@@ -160,7 +160,7 @@ const emailVerificationLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
-    const ip = ipKeyGenerator(req);
+    const ip = resolveClientIp(req) || ipKeyGenerator(req);
     logger.info("Rate limiting key generated", {
       type: "email_verification",
       ip,
@@ -170,7 +170,7 @@ const emailVerificationLimiter = rateLimit({
   handler: (req, res) => {
     logger.warn("RATE_LIMIT_EXCEEDED", {
       type: "email_verification",
-      ip: ipKeyGenerator(req),
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
     });
     res.status(429).json({
@@ -199,7 +199,7 @@ function createApiLimiter(max, label) {
         });
         return `user-${req.user.id}`;
       }
-      const ip = ipKeyGenerator(req);
+      const ip = resolveClientIp(req) || ipKeyGenerator(req);
       logger.info("Rate limiting key generated", {
         type: `api_ip_${label}`,
         ip,
@@ -212,13 +212,13 @@ function createApiLimiter(max, label) {
           type: `api_user_${label}`,
           userId: req.user.id,
           plan: runtimePlan,
-          ip: ipKeyGenerator(req),
+          ip: resolveClientIp(req),
           userAgent: req.get("User-Agent"),
         });
       } else {
         logger.warn("RATE_LIMIT_EXCEEDED", {
           type: `api_ip_${label}`,
-          ip: ipKeyGenerator(req),
+          ip: resolveClientIp(req),
           userAgent: req.get("User-Agent"),
         });
       }
@@ -249,7 +249,7 @@ const testApiLimiter = rateLimit({
       });
       return `user-${req.user.id}`;
     }
-    const ip = ipKeyGenerator(req);
+    const ip = resolveClientIp(req) || ipKeyGenerator(req);
     logger.info("Rate limiting key generated", { type: "test_api_ip", ip });
     return ip;
   },
@@ -258,13 +258,13 @@ const testApiLimiter = rateLimit({
       logger.warn("RATE_LIMIT_EXCEEDED", {
         type: "test_api_user",
         userId: req.user.id,
-        ip: ipKeyGenerator(req),
+        ip: resolveClientIp(req),
         userAgent: req.get("User-Agent"),
       });
     } else {
       logger.warn("RATE_LIMIT_EXCEEDED", {
         type: "test_api_ip",
-        ip: ipKeyGenerator(req),
+        ip: resolveClientIp(req),
         userAgent: req.get("User-Agent"),
       });
     }
@@ -305,7 +305,7 @@ const domainCheckerLookupLimiter = rateLimit({
       type: "domain_checker_lookup",
       userId: req.user?.id || null,
       workspaceId: req.workspace?.id || req.params?.id || null,
-      ip: ipKeyGenerator(req),
+      ip: resolveClientIp(req),
       userAgent: req.get("User-Agent"),
       retryAfterSeconds,
     });

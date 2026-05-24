@@ -21,21 +21,53 @@ docker compose up -d
 On first startup, TokenTimer will:
 
 1. Detect no users exist
-2. Create admin user with provided credentials
-3. Create default workspace for admin
+2. Create admin user with provided credentials (`is_admin = true`, system admin)
+3. Create the shared **Default workspace** and add the admin as workspace admin
 4. Log admin credentials (email shown, password hidden)
 
-**Output**:
+On subsequent user registration or first login (when not joining via invitation), users without workspace membership are placed on the installation **Default workspace**:
 
-```
-Creating initial admin user...
-Initial admin user created successfully
-   Email: admin@company.com
-   Login at: http://localhost:5173/login
+- If **Default workspace** already exists, they join it.
+- If exactly one workspace exists (legacy installs), they join that workspace.
+- Otherwise a new **Default workspace** is created.
+- Workspace role: **admin** (workspace owner) only for the user who **creates** a new Default workspace; **workspace_manager** for everyone who joins an existing Default workspace (including system admins).
 
-IMPORTANT: Remove ADMIN_PASSWORD from environment after first login!
-   The admin can invite other users from the dashboard.
-```
+## System admin vs workspace owner
+
+TokenTimer separates **installation-wide administration** from **workspace ownership**. They use different database fields and are granted through different paths.
+
+| | System admin | Workspace owner |
+|--|--------------|-----------------|
+| **Stored as** | `users.is_admin = TRUE` | `workspace_memberships.role = 'admin'` |
+| **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, Enterprise SSO admin APIs) | One workspace (delete workspace, transfer tokens, org-scoped audit for that workspace) |
+| **Dashboard** | **System Settings** nav (when `session.user.isAdmin`) | **Workspaces** owner actions (rename, delete, transfer tokens) |
+| **How to grant** | **Workspaces → Members → System admin** toggle (system admins only), or Enterprise SSO `admin` group mapping | Automatic when **creating** a workspace; not assignable from Members tab |
+| **How many** | Multiple system admins supported | One owner per workspace in normal operation (creator at provision time) |
+
+**Important:** Granting system admin to a second user does **not** make them workspace owner on the shared Default workspace. They remain **manager** there unless they separately created that workspace.
+
+### Default workspace on join
+
+When a user without membership logs in (local or SSO):
+
+1. Pending invitations are accepted first.
+2. Otherwise they join the installation **Default workspace** (or the sole legacy workspace).
+3. Join role is always **workspace_manager** when Default already exists, even if `users.is_admin = TRUE`.
+4. Join role is **admin** only when this login creates a brand-new Default workspace (empty install).
+
+### What you cannot do from the UI
+
+- **Invite** someone as workspace owner (`admin` membership is rejected by the API).
+- **Promote** an existing member to workspace owner via the role dropdown (only Viewer and Manager).
+- **Demote or remove** a workspace owner via the Members tab (API blocks changes to `admin` membership rows).
+
+To add another workspace owner today you would need a direct database change; the product intentionally supports a single owner per workspace until [v1.0.0](ROADMAP.md#v100----rbac-and-role-model-cleanup) adds co-owner management.
+
+### Granting a second system admin
+
+A system admin can open **Workspaces → Members**, find any member, and enable **System admin**. That sets `users.is_admin = TRUE` only. The member keeps their current workspace role (typically **manager** on Default). They gain System Settings and admin API access immediately (session reloads `is_admin` on each request).
+
+The last system admin cannot demote themselves.
 
 ### Step 3: Remove Admin Password
 
@@ -57,12 +89,11 @@ docker compose restart
 ### For Admins
 
 1. Login to Dashboard
-2. Go to Workspace Settings > Members
-3. Click "Invite User"
-4. Enter email address and role (Admin, Manager, or Viewer)
-5. Send Invitation
+2. Go to **Workspaces** > select a workspace > **Members**
+3. Invite by email with role **Viewer** or **Manager**
+4. To grant **system admin** (installation-wide access to System Settings and admin APIs), toggle **System admin** on an existing member. Only current system admins see this control.
 
-TokenTimer generates an invitation link and (optionally) emails it to the user.
+**System admin** (`users.is_admin`) is installation-wide. **Workspace manager** controls day-to-day workspace operations (invites, tokens, alert settings). Workspace **owner** (`admin` membership role) is assigned automatically when a workspace is created and is not changed from the Members tab.
 
 ### For Invited Users
 
@@ -101,6 +132,32 @@ If not, an invitation token is created and (optionally) emailed.
 ```
 GET /api/v1/workspaces/:id/members
 ```
+
+### Change Member Role (Admin or Manager)
+
+```
+PATCH /api/v1/workspaces/:id/members/:userId
+Content-Type: application/json
+
+{
+  "role": "workspace_manager"
+}
+```
+
+Allowed roles: `viewer`, `workspace_manager` only. The workspace owner role (`admin` membership) is not assignable via this endpoint.
+
+### Grant or Revoke System Admin (System Admin only)
+
+```
+PATCH /api/admin/users/:userId/system-admin
+Content-Type: application/json
+
+{
+  "is_admin": true
+}
+```
+
+Sets `users.is_admin` (installation-wide). Requires an authenticated system admin. The last system admin cannot demote themselves.
 
 ### Remove Member (Admin or Manager)
 
@@ -252,7 +309,15 @@ VALUES ('admin@company.com', '$2b$12$...', 'Admin', 'local', TRUE);
 
 ### Q: Can invited users invite others?
 
-**A**: Admins and workspace managers can invite. Viewers cannot. Note that invitations can only grant manager or viewer roles (admin role cannot be granted via invite).
+**A**: Admins and workspace managers can invite with viewer or manager roles. System admins can grant or revoke installation-wide admin (`is_admin`) from **Workspaces → Members** using the **System admin** toggle.
+
+### Q: Does system admin imply workspace owner on Default?
+
+**A**: No. System admin (`users.is_admin`) and workspace owner (`workspace_memberships.role = 'admin'`) are independent. SSO or manual system-admin grants do not promote users to workspace owner. Users joining an existing Default workspace always get **workspace_manager**, including system admins. Only the user who creates Default on an empty install becomes workspace owner automatically.
+
+### Q: Can I make a second workspace owner on Default?
+
+**A**: Not through the dashboard or public API today. Workspace owner is assigned at workspace creation only. You can grant a second user **system admin** from **Workspaces → Members**, which gives installation-wide settings access but not workspace-owner powers (delete workspace, transfer tokens, etc.). Multiple workspace owners per workspace are planned for [v1.0.0](../ROADMAP.md#v100----rbac-and-role-model-cleanup).
 
 ## Contact
 

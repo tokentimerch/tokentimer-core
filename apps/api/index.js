@@ -25,7 +25,7 @@ const swaggerJsdoc = require("swagger-jsdoc");
 const swaggerUi = require("swagger-ui-express");
 const client = require("prom-client");
 const { doubleCsrf } = require("csrf-csrf");
-const { logger } = require("./utils/logger.js");
+const { logger, resolveClientIp } = require("./utils/logger.js");
 const { writeAudit } = require("./services/audit");
 const {
   loadWorkspace,
@@ -331,46 +331,32 @@ app.use(
 // Get current session (before CSRF protection)
 app.get("/api/session", (req, res) => {
   try {
-    logger.info("Session endpoint called");
-    logger.info("Headers:", req.headers);
-    logger.info("Session ID:", req.sessionID);
-    logger.info("Is authenticated:", req.isAuthenticated());
-    logger.info("Has user:", !!req.user);
-    logger.info("User ID:", req.user?.id);
+    const authenticated =
+      typeof req.isAuthenticated === "function" ? req.isAuthenticated() : false;
 
-    logger.info("Session check detailed", {
-      authenticated: req.isAuthenticated(),
+    logger.info("Session check", {
+      authenticated,
       hasUser: !!req.user,
-      userId: req.user?.id,
-      sessionID: req.sessionID,
+      userId: req.user?.id ?? null,
+      sessionId: req.sessionID ?? null,
       cookies: req.headers.cookie ? "present" : "missing",
-      ip: req.ip,
+      ip: resolveClientIp(req),
     });
 
-    if (!req.isAuthenticated()) {
-      logger.info("User not authenticated");
+    if (!authenticated) {
       return res.json({ loggedIn: false });
     }
 
     if (!req.user) {
-      logger.info("No user object in request");
       return res.json({ loggedIn: false });
     }
 
     if (!req.user.id) {
-      logger.info("User object missing ID", { user: req.user });
+      logger.warn("Session user missing id", { sessionId: req.sessionID ?? null });
       return res.json({ loggedIn: false });
     }
 
     const displayEmail = req.user.email_original || req.user.email;
-    logger.info("Valid session found", {
-      userId: req.user.id,
-      email: displayEmail,
-      authMethod: req.user.auth_method,
-      emailVerified: req.user.email_verified,
-      sessionID: req.sessionID,
-      ip: req.ip,
-    });
 
     res.json({
       loggedIn: true,
@@ -384,6 +370,7 @@ app.get("/api/session", (req, res) => {
         emailVerified: !!req.user.email_verified,
         needsVerification: !req.user.email_verified,
         twoFactorEnabled: !!req.user.two_factor_enabled,
+        isAdmin: req.user.is_admin === true,
       },
     });
   } catch (error) {

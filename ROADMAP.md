@@ -5,7 +5,7 @@ Engineering health and quality targets, tracked alongside the
 These items are worked on in parallel with feature development and may
 ship in any release -- version numbers below are targets, not hard gates.
 
-Last updated: 2026-04-01
+Last updated: 2026-05-23
 
 ---
 
@@ -50,15 +50,18 @@ Last updated: 2026-04-01
 ### Testing
 
 - [ ] Frontend line coverage from 10% to 25% (apiClient.js, Workspaces.jsx, Account.jsx)
-- [ ] Unit tests for API services (rbac.js, planLimits.js, emailService.js)
-- [ ] Unit tests for worker shared logic (thresholds.js, contactGroups.js)
+- [x] Unit tests for `emailService.js` (`tests/integration/email-service.unit.test.js`)
+- [x] Contract / unit coverage for `planLimits.js` (`tests/contract/limits-policy.test.js`, `core-services.unit.test.js`)
+- [ ] Unit tests for `rbac.js`
+- [ ] Unit tests for worker shared logic (`thresholds.js`, `contactGroups.js`)
 - [ ] Helm test hook for post-install smoke test (GET /health)
 - [ ] Make frontend coverage job fail CI (currently continue-on-error: true)
+- [ ] Relocate `*.unit.test.js` files from `tests/integration/` into `tests/unit/` (in progress: 2 files moved; 18 `*.unit.test.js` still under `tests/integration/`)
 
 ### CI / supply chain
 
-- [ ] Restore container image scanning (Trivy or Grype) once ecosystem stabilizes
-- [ ] Upload SARIF results to GitHub Code Scanning when GHAS is available
+- [x] Restore container image scanning with Grype (Trivy remains disabled; CI pins Grype v0.112.0, `--fail-on high --only-fixed`, `.grype.yaml` ignore list)
+- [ ] Upload SARIF results to GitHub Code Scanning when GHAS is available (Grype emits SARIF and CI uploads scan artifacts today; Security tab upload still commented pending GHAS)
 
 ### Observability
 
@@ -92,7 +95,7 @@ Last updated: 2026-04-01
 - [ ] Migrate react-query to @tanstack/react-query v5
 - [ ] Standardize ESLint to flat config across all packages
 - [ ] Add Prettier config for API and Worker code (dashboard-only today)
-- [ ] Separate co-located unit tests from tests/integration/ into tests/unit/
+- [ ] Separate co-located unit tests from tests/integration/ into tests/unit/ (in progress; see Near-term Testing)
 - [ ] Progressively enable jsx-a11y rules (currently disabled in dashboard eslint config)
 
 ---
@@ -116,13 +119,40 @@ Last updated: 2026-04-01
 
 ---
 
+## v1.0.0 -- RBAC and role model cleanup
+
+Target release for breaking or structural RBAC changes deferred from the 0.6.x
+shared Default workspace work. See also `docs/AUTHENTICATION.md` (system admin vs
+workspace owner).
+
+### Workspace roles
+
+- [ ] **Multiple workspace owners** -- allow more than one `admin` membership per
+  workspace (promote/demote co-owners from **Workspaces → Members**, demote or
+  transfer ownership safely, sole-owner guards on account deletion). Today only
+  the workspace creator gets `admin`; the API rejects invites and role changes
+  to `admin`.
+- [ ] `is_installation_default` column on workspaces (explicit Default workspace
+  marker instead of name matching).
+- [ ] Remove `created_by` implicit-owner fallbacks in `rbac.js` once co-owner
+  management exists.
+
+### Attribution and APIs
+
+- [ ] Alert, usage, audit, transfer-tokens, and weekly-digest attribution aligned
+  with the cleaned role model (system admin vs workspace owner vs manager).
+- [ ] OpenAPI role model cleanup (`admin` vs system admin naming, documented
+  grants).
+
+---
+
 ## Metrics
 
 | Metric | Current | Near-term target | Long-term target |
 |---|---|---|---|
 | Backend line coverage | ~50% | 55% | 65% |
 | Frontend line coverage | 10.9% | 25% | 40% |
-| API unit test files | 0 | 5+ | 10+ |
+| API unit test files | 20 (`tests/unit/` + `tests/integration/*.unit.test.js`) | 5+ (done) | 10+ |
 | Swallowed catches (frontend) | 30+ | 10 | 0 |
 | Integration tests (Docker + k8s) | 530/530 | 530/530 | 530/530 |
 | Helm chart examples validated | 3/3 | 3/3 | 3/3 |

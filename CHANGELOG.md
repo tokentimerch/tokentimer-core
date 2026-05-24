@@ -9,6 +9,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-23
+
+### Added
+
+- **System admin management** — system admins can grant or revoke installation-wide admin (`users.is_admin`) from **Workspaces → Members** via `PATCH /api/admin/users/:userId/system-admin`; session exposes `user.isAdmin`.
+- **Unit tests** — `ensure-default-workspace.test.js` and `bootstrap-default-workspace.test.js` for shared Default workspace provisioning.
+- **Regression tests** — `ensure-default-workspace.test.js` asserts system admins joining existing Default get `workspace_manager` (never `admin`); `admin-system-settings.test.js` asserts system admin with Default `workspace_manager` can still reach `GET /api/admin/system-settings`.
+
+### Changed
+
+- **Default workspace provisioning** — bootstrap and first-login provisioning use a shared **Default workspace** instead of per-user personal workspaces (`{name}'s workspace`). New users without membership join the existing default (or the sole workspace on legacy installs); existing personal workspaces are unchanged on upgrade.
+- **Workspace member roles** — Members tab manages viewer/manager only; system admin is a separate toggle (not workspace-scoped `admin` promotion).
+- **Dashboard navigation** — the **System Settings** entry (desktop and mobile) and the SMTP-not-configured notification link are now gated on `session.user.isAdmin` instead of workspace `admin` role, matching the API's `requireSystemAdmin` check on `/api/admin/system-settings`.
+- **`docs/AUTHENTICATION.md`** — documents Default workspace behavior and system admin vs workspace roles.
+- **Version metadata bumped to 0.6.0** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **System Settings nav visibility for SSO admins.** Dashboard previously hid the System Settings link whenever the session user lacked a workspace `admin` membership, even though `users.is_admin = TRUE` already authorised the API endpoint. The link is now driven by the session `isAdmin` flag and the SMTP warning routes there only for system admins (non-admins see read-only guidance to contact a system administrator).
+- **Integration test suite** — login rate limiting no longer exhausts the IP bucket during long runs; `auto-sync-import` expiration assertion handles Postgres date types.
+- **Account deletion vs last system admin.** `DELETE /api/account` blocks when the caller is the last active system administrator, clears `is_admin` during GDPR anonymization, and counts only live admins (excluding tombstoned `@example.invalid` accounts). System-admin demotion uses the same active-admin definition under a shared Postgres advisory lock to prevent concurrent delete/demote races from leaving zero active admins.
+- **Release test path** — `pnpm run test:unit` runs `tests/unit/` via `scripts/run-unit-tests.js` (Node 24 CI cannot use `node --test tests/unit` as a directory); `test:ci` and `scripts/run-tests.sh` run unit tests before the integration suite; CI backend quality job runs unit tests on every push.
+
+### Security
+
+- **Default-workspace privilege-escalation hardening (pre-release).** `apps/api/services/workspace.js#resolveJoinRole` no longer reads `users.is_admin` when deciding the join role for the shared Default workspace; every automatic join after the workspace exists is `workspace_manager`. This prevents `users.is_admin = TRUE` (including the SSO bootstrap-admin group path) from being silently promoted to a workspace `admin` membership on the shared Default workspace during first-login provisioning. The first user who creates the Default workspace is still its workspace admin (creator branch unchanged), and bootstrap still seeds the bootstrap admin as workspace admin on the workspace it creates. No repair migration is shipped because 0.6.0 has not been released yet.
+
 ## [0.5.4] - 2026-05-23
 
 ### Added

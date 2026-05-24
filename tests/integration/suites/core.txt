@@ -7,6 +7,7 @@ tests/integration/auth.test.js
 tests/integration/auth-invite-reset.integration.test.js
 tests/integration/auth-session-invalidation.integration.test.js
 tests/integration/account.test.js
+tests/integration/account-last-system-admin.test.js
 tests/integration/account-settings-display.test.js
 tests/integration/two-factor-disable.test.js
 

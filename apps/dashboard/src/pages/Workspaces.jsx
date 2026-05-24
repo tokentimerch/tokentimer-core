@@ -18,6 +18,7 @@ import {
   Td,
   Badge,
   Checkbox,
+  Switch,
   useColorModeValue,
   AlertDialog,
   AlertDialogBody,
@@ -29,10 +30,25 @@ import {
 import { FiEdit2, FiCheck, FiX } from 'react-icons/fi';
 import Navigation from '../components/Navigation';
 import SEO from '../components/SEO.jsx';
-import apiClient, { API_ENDPOINTS, workspaceAPI } from '../utils/apiClient';
+import apiClient, {
+  API_ENDPOINTS,
+  workspaceAPI,
+  adminAPI,
+} from '../utils/apiClient';
 import { logger } from '../utils/logger';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { showWarning, showError } from '../utils/toast.js';
+
+const MEMBER_ROLE_LABELS = {
+  admin: 'Workspace owner',
+  workspace_manager: 'Manager',
+  viewer: 'Viewer',
+};
+
+const MEMBER_ROLE_OPTIONS = [
+  { value: 'viewer', label: MEMBER_ROLE_LABELS.viewer },
+  { value: 'workspace_manager', label: MEMBER_ROLE_LABELS.workspace_manager },
+];
 
 export default function Workspaces({
   session,
@@ -186,6 +202,7 @@ export default function Workspaces({
       currentWorkspace.role === 'workspace_manager');
   const _isViewer = currentWorkspace && currentWorkspace.role === 'viewer';
   const isAdmin = currentWorkspace && currentWorkspace.role === 'admin';
+  const isSystemAdmin = session?.isAdmin === true;
 
   // Load live account plan once on mount (and after navigation back from checkout)
   React.useEffect(() => {
@@ -658,6 +675,12 @@ export default function Workspaces({
                 </HStack>
               )}
 
+              <Text fontSize='sm' color='gray.500' mb={3}>
+                Workspace roles are viewer or manager. System admins
+                (installation-wide, System Settings access) can be granted
+                below; that is separate from workspace manager.
+              </Text>
+
               <HStack spacing={3} mb={4} flexWrap='wrap'>
                 <Input
                   placeholder='Invite by email'
@@ -673,8 +696,8 @@ export default function Workspaces({
                   maxW={{ base: '100%', sm: '220px' }}
                   isDisabled={!canManage}
                 >
-                  <option value='viewer'>viewer</option>
-                  <option value='workspace_manager'>workspace_manager</option>
+                  <option value='viewer'>Viewer</option>
+                  <option value='workspace_manager'>Manager</option>
                 </Select>
                 <Button
                   onClick={async () => {
@@ -704,7 +727,8 @@ export default function Workspaces({
                     <Tr>
                       <Th>Name</Th>
                       <Th>Email</Th>
-                      <Th>Role</Th>
+                      <Th>Workspace role</Th>
+                      {isSystemAdmin ? <Th>System admin</Th> : null}
                       <Th></Th>
                     </Tr>
                   </Thead>
@@ -715,26 +739,16 @@ export default function Workspaces({
                         <Td>{m.email}</Td>
                         <Td>
                           {m.role === 'admin' ? (
-                            <Select
-                              size='sm'
-                              value='admin'
-                              isDisabled
-                              maxW={{ base: '140px', md: 'unset' }}
-                            >
-                              <option value='admin'>admin</option>
-                            </Select>
+                            <Badge colorScheme='purple'>
+                              {MEMBER_ROLE_LABELS.admin}
+                            </Badge>
                           ) : (
                             <Select
                               size='sm'
-                              maxW={{ base: '160px', md: 'unset' }}
+                              maxW={{ base: '180px', md: 'unset' }}
                               value={m.role}
                               isDisabled={
-                                !currentWorkspace ||
-                                (currentWorkspace.role !== 'admin' &&
-                                  currentWorkspace.role !==
-                                    'workspace_manager') ||
-                                m.role === 'admin' ||
-                                m.user_id === session?.id
+                                !canManage || m.user_id === session?.id
                               }
                               onChange={async e => {
                                 if (!currentWorkspace) return;
@@ -745,7 +759,7 @@ export default function Workspaces({
                                 ) {
                                   showWarning(
                                     'Insufficient permissions',
-                                    'Only workspace admins or workspace managers can change member roles.'
+                                    'Only workspace admins or managers can change member roles.'
                                   );
                                   return;
                                 }
@@ -756,11 +770,6 @@ export default function Workspaces({
                                   );
                                   return;
                                 }
-                                // Disallow assigning admin role via UI
-                                if (nextRole === 'admin') {
-                                  showWarning('Admin role cannot be assigned');
-                                  return;
-                                }
                                 await workspaceAPI.changeRole(
                                   currentWorkspace.id,
                                   m.user_id,
@@ -769,13 +778,37 @@ export default function Workspaces({
                                 await reloadMembers(currentWorkspace.id);
                               }}
                             >
-                              <option value='viewer'>viewer</option>
-                              <option value='workspace_manager'>
-                                workspace_manager
-                              </option>
+                              {MEMBER_ROLE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
                             </Select>
                           )}
                         </Td>
+                        {isSystemAdmin ? (
+                          <Td>
+                            <Switch
+                              size='sm'
+                              isChecked={m.is_admin === true}
+                              isDisabled={m.user_id === session?.id}
+                              onChange={async e => {
+                                try {
+                                  await adminAPI.setSystemAdmin(
+                                    m.user_id,
+                                    e.target.checked
+                                  );
+                                  await reloadMembers(currentWorkspace.id);
+                                } catch (err) {
+                                  showError(
+                                    'Failed to update system admin',
+                                    err.message
+                                  );
+                                }
+                              }}
+                            />
+                          </Td>
+                        ) : null}
                         <Td>
                           <Button
                             size='sm'

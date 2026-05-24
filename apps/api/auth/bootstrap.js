@@ -1,14 +1,14 @@
 /**
  * Admin Bootstrap - Initialize first admin user on startup
  *
- * On-premise deployments need a secure way to create the initial admin.
- * This runs on startup and creates the admin if no users exist.
+ * Creates a single shared "Default workspace" for the installation.
  */
 
 const bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
 const { canonicalizeEmail } = require("../db/models/User");
 const { logger } = require("../utils/logger");
+const { DEFAULT_WORKSPACE_NAME } = require("../services/workspace");
 
 function normalizeEnvCredential(value) {
   if (typeof value !== "string") return "";
@@ -29,7 +29,6 @@ function normalizeEnvCredential(value) {
  */
 async function bootstrapAdmin(pool) {
   try {
-    // Check if any users exist
     const usersResult = await pool.query(
       "SELECT COUNT(*)::int as count FROM users",
     );
@@ -40,7 +39,6 @@ async function bootstrapAdmin(pool) {
       return { created: false, admin: null };
     }
 
-    // Get admin credentials from environment
     const rawAdminEmail = process.env.ADMIN_EMAIL;
     const rawAdminPassword = process.env.ADMIN_PASSWORD;
     const rawAdminName = process.env.ADMIN_NAME;
@@ -55,7 +53,6 @@ async function bootstrapAdmin(pool) {
       throw new Error("Admin credentials required for initial setup");
     }
 
-    // Validate password strength
     if (adminPassword.length < 8) {
       throw new Error("ADMIN_PASSWORD must be at least 8 characters");
     }
@@ -69,12 +66,9 @@ async function bootstrapAdmin(pool) {
 
     logger.info("Creating initial admin user...");
 
-    // Hash password
     const passwordHash = await bcrypt.hash(adminPassword, 12);
-
     const canonicalEmail = canonicalizeEmail(adminEmail);
 
-    // Create admin user
     const userResult = await pool.query(
       `INSERT INTO users (email, email_original, password_hash, display_name, auth_method, email_verified, is_admin)
        VALUES ($1, $2, $3, $4, 'local', TRUE, TRUE)
@@ -84,22 +78,29 @@ async function bootstrapAdmin(pool) {
 
     const admin = userResult.rows[0];
 
-    // Create admin workspace
     const workspaceId = uuidv4();
     await pool.query(
       `INSERT INTO workspaces (id, name, plan, created_by)
        VALUES ($1, $2, 'oss', $3)`,
-      [workspaceId, `${adminName}'s Workspace`, admin.id],
+      [workspaceId, DEFAULT_WORKSPACE_NAME, admin.id],
     );
+    try {
+      await pool.query(
+        "UPDATE workspaces SET is_personal_default = FALSE WHERE id = $1",
+        [workspaceId],
+      );
+    } catch (_err) {
+      logger.debug("is_personal_default column update skipped", {
+        error: _err.message,
+      });
+    }
 
-    // Add admin as workspace admin
     await pool.query(
       `INSERT INTO workspace_memberships (user_id, workspace_id, role)
        VALUES ($1, $2, 'admin')`,
       [admin.id, workspaceId],
     );
 
-    // Create workspace settings
     await pool.query(
       `INSERT INTO workspace_settings (workspace_id, delivery_window_start, delivery_window_end, delivery_window_tz)
        VALUES ($1, '00:00', '23:59', 'UTC')`,

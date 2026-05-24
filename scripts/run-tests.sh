@@ -158,6 +158,19 @@ fi
 
 # ---- run mocha ----------------------------------------------
 echo ""
+echo "==> Running unit tests..."
+set +e
+node scripts/run-unit-tests.js 2>&1 | tee -a "$LOG_FILE"
+UNIT_EXIT=${PIPESTATUS[0]}
+set -e
+if [ "$UNIT_EXIT" -ne 0 ]; then
+  TEST_EXIT_CODE=$UNIT_EXIT
+  echo ""
+  echo "=== Unit tests failed with exit code: ${UNIT_EXIT} ==="
+  exit ${UNIT_EXIT}
+fi
+
+echo ""
 SUITE_NAME="${TT_TEST_SUITE:-core}"
 echo "==> Running integration tests (suite: ${SUITE_NAME})..."
 set +e
