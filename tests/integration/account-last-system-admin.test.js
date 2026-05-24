@@ -1,13 +1,28 @@
 const { TestUtils, request, expect } = require("./test-server");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+const BOOTSTRAP_ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL || "admin@localhost.local";
 
 describe("Account deletion vs last system admin", () => {
+  after(async () => {
+    await TestUtils.execQuery(
+      "UPDATE users SET is_admin = TRUE WHERE LOWER(email) = LOWER($1)",
+      [BOOTSTRAP_ADMIN_EMAIL],
+    );
+  });
+
   it("blocks deletion when user is the last active system admin", async () => {
     const soleAdmin = await TestUtils.createVerifiedTestUser();
+    // Fresh installs bootstrap a system admin; demote everyone else so this
+    // user is genuinely the last active system admin for the assertion.
+    await TestUtils.execQuery("UPDATE users SET is_admin = FALSE WHERE id <> $1", [
+      soleAdmin.id,
+    ]);
     await TestUtils.execQuery("UPDATE users SET is_admin = TRUE WHERE id = $1", [
       soleAdmin.id,
     ]);
+
     const session = await TestUtils.loginTestUser(
       soleAdmin.email,
       "SecureTest123!@#",
