@@ -1157,7 +1157,8 @@ const Navigation = ({
                       const isClickable =
                         (n && typeof n.onClick === 'function') ||
                         Boolean(n?.href);
-                      let subText = 'Go to Preferences to enable a notification channel.';
+                      let subText =
+                        'Go to Preferences to enable a notification channel.';
                       if (n.id === 'smtp-not-configured') {
                         subText = n.href
                           ? 'Go to System Settings to configure SMTP.'

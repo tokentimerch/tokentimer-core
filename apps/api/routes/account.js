@@ -6,6 +6,10 @@ const {
   resolveClearSessionCookieOptions,
 } = require("../session-cookie-options.js");
 const bcrypt = require("bcryptjs");
+const {
+  isActiveSystemAdminRow,
+  countOtherActiveSystemAdmins,
+} = require("../services/systemAdmin");
 
 const router = require("express").Router();
 
@@ -27,9 +31,36 @@ router.delete(
 
       // Lock the user row for the duration of the transaction
       const _ures = await client.query(
-        "SELECT email FROM users WHERE id = $1 FOR UPDATE",
+        "SELECT email, display_name, is_admin FROM users WHERE id = $1 FOR UPDATE",
         [userId],
       );
+      if (_ures.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error: "User not found",
+          code: "NOT_FOUND",
+        });
+      }
+
+      const lockedUser = _ures.rows[0];
+      if (isActiveSystemAdminRow(lockedUser)) {
+        const otherActiveAdmins = await countOtherActiveSystemAdmins(
+          client,
+          userId,
+        );
+        if (otherActiveAdmins === 0) {
+          await client.query("ROLLBACK");
+          logger.warn(
+            "Account deletion blocked: user is the last active system admin",
+            { userId },
+          );
+          return res.status(409).json({
+            error:
+              "You are the last system administrator. Grant system admin to another user before deleting your account.",
+            code: "LAST_SYSTEM_ADMIN",
+          });
+        }
+      }
 
       // Remove sessions where passport.user equals this userId
       await client.query(
@@ -139,6 +170,7 @@ router.delete(
            reset_token_expires = NULL,
            two_factor_enabled = FALSE,
            two_factor_secret = NULL,
+           is_admin = FALSE,
            updated_at = NOW()
          WHERE id = $4`,
         [anonEmail, "Deleted Account", dummyHash, userId],

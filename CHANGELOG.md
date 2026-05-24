@@ -30,6 +30,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **System Settings nav visibility for SSO admins.** Dashboard previously hid the System Settings link whenever the session user lacked a workspace `admin` membership, even though `users.is_admin = TRUE` already authorised the API endpoint. The link is now driven by the session `isAdmin` flag and the SMTP warning routes there only for system admins (non-admins see read-only guidance to contact a system administrator).
 - **Integration test suite** — login rate limiting no longer exhausts the IP bucket during long runs; `auto-sync-import` expiration assertion handles Postgres date types.
 
+### Fixed
+
+- **Account deletion vs last system admin.** `DELETE /api/account` now blocks when the caller is the last active system administrator, clears `is_admin` during GDPR anonymization, and counts only live admins (excluding tombstoned `@example.invalid` accounts). The system-admin demotion guard uses the same active-admin definition.
+- **Release test path** — `pnpm run test:unit` runs `tests/unit/` (Default workspace hardening and system-admin helpers); `test:ci` and `scripts/run-tests.sh` run unit tests before the integration suite; CI backend quality job runs unit tests on every push.
+
 ### Security
 
 - **Default-workspace privilege-escalation hardening (pre-release).** `apps/api/services/workspace.js#resolveJoinRole` no longer reads `users.is_admin` when deciding the join role for the shared Default workspace; every automatic join after the workspace exists is `workspace_manager`. This prevents `users.is_admin = TRUE` (including the SSO bootstrap-admin group path) from being silently promoted to a workspace `admin` membership on the shared Default workspace during first-login provisioning. The first user who creates the Default workspace is still its workspace admin (creator branch unchanged), and bootstrap still seeds the bootstrap admin as workspace admin on the workspace it creates. No repair migration is shipped because 0.6.0 has not been released yet.

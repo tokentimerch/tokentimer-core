@@ -15,6 +15,7 @@ const {
   sendEmail,
   isSMTPConfiguredAsync,
 } = require("../services/emailService");
+const { countActiveSystemAdmins } = require("../services/systemAdmin");
 
 const router = require("express").Router();
 
@@ -2263,10 +2264,8 @@ router.patch(
         });
       }
       if (targetUserId === req.user.id && nextIsAdmin === false) {
-        const { rows } = await pool.query(
-          "SELECT COUNT(*)::int AS c FROM users WHERE is_admin = TRUE",
-        );
-        if ((rows[0]?.c || 0) <= 1) {
+        const activeAdminCount = await countActiveSystemAdmins(pool);
+        if (activeAdminCount <= 1) {
           return res.status(403).json({
             error: "Cannot demote the last system admin",
             code: "FORBIDDEN",

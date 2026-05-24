@@ -30,7 +30,11 @@ import {
 import { FiEdit2, FiCheck, FiX } from 'react-icons/fi';
 import Navigation from '../components/Navigation';
 import SEO from '../components/SEO.jsx';
-import apiClient, { API_ENDPOINTS, workspaceAPI, adminAPI } from '../utils/apiClient';
+import apiClient, {
+  API_ENDPOINTS,
+  workspaceAPI,
+  adminAPI,
+} from '../utils/apiClient';
 import { logger } from '../utils/logger';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { showWarning, showError } from '../utils/toast.js';
@@ -744,8 +748,7 @@ export default function Workspaces({
                               maxW={{ base: '180px', md: 'unset' }}
                               value={m.role}
                               isDisabled={
-                                !canManage ||
-                                m.user_id === session?.id
+                                !canManage || m.user_id === session?.id
                               }
                               onChange={async e => {
                                 if (!currentWorkspace) return;
