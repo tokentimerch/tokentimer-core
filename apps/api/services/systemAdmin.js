@@ -1,5 +1,8 @@
 "use strict";
 
+/** Postgres advisory lock key for system-admin mutations (TTSA). */
+const SYSTEM_ADMIN_LOCK_KEY = 0x5454_5341;
+
 /** SQL predicate for a live system administrator (excludes GDPR tombstones). */
 const ACTIVE_SYSTEM_ADMIN_WHERE = `
   is_admin = TRUE
@@ -13,6 +16,10 @@ function isActiveSystemAdminRow(row) {
   if (email.endsWith("@example.invalid")) return false;
   if (row.display_name === "Deleted Account") return false;
   return true;
+}
+
+async function lockSystemAdminMutation(client) {
+  await client.query("SELECT pg_advisory_xact_lock($1)", [SYSTEM_ADMIN_LOCK_KEY]);
 }
 
 async function countActiveSystemAdmins(queryable) {
@@ -31,8 +38,10 @@ async function countOtherActiveSystemAdmins(queryable, userId) {
 }
 
 module.exports = {
+  SYSTEM_ADMIN_LOCK_KEY,
   ACTIVE_SYSTEM_ADMIN_WHERE,
   isActiveSystemAdminRow,
+  lockSystemAdminMutation,
   countActiveSystemAdmins,
   countOtherActiveSystemAdmins,
 };

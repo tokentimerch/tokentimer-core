@@ -9,6 +9,7 @@ const bcrypt = require("bcryptjs");
 const {
   isActiveSystemAdminRow,
   countOtherActiveSystemAdmins,
+  lockSystemAdminMutation,
 } = require("../services/systemAdmin");
 
 const router = require("express").Router();
@@ -28,6 +29,7 @@ router.delete(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await lockSystemAdminMutation(client);
 
       // Lock the user row for the duration of the transaction
       const _ures = await client.query(

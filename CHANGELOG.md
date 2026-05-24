@@ -29,11 +29,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **System Settings nav visibility for SSO admins.** Dashboard previously hid the System Settings link whenever the session user lacked a workspace `admin` membership, even though `users.is_admin = TRUE` already authorised the API endpoint. The link is now driven by the session `isAdmin` flag and the SMTP warning routes there only for system admins (non-admins see read-only guidance to contact a system administrator).
 - **Integration test suite** — login rate limiting no longer exhausts the IP bucket during long runs; `auto-sync-import` expiration assertion handles Postgres date types.
-
-### Fixed
-
-- **Account deletion vs last system admin.** `DELETE /api/account` now blocks when the caller is the last active system administrator, clears `is_admin` during GDPR anonymization, and counts only live admins (excluding tombstoned `@example.invalid` accounts). The system-admin demotion guard uses the same active-admin definition.
-- **Release test path** — `pnpm run test:unit` runs `tests/unit/` (Default workspace hardening and system-admin helpers); `test:ci` and `scripts/run-tests.sh` run unit tests before the integration suite; CI backend quality job runs unit tests on every push.
+- **Account deletion vs last system admin.** `DELETE /api/account` blocks when the caller is the last active system administrator, clears `is_admin` during GDPR anonymization, and counts only live admins (excluding tombstoned `@example.invalid` accounts). System-admin demotion uses the same active-admin definition under a shared Postgres advisory lock to prevent concurrent delete/demote races from leaving zero active admins.
+- **Release test path** — `pnpm run test:unit` runs `tests/unit/` via `scripts/run-unit-tests.js` (Node 24 CI cannot use `node --test tests/unit` as a directory); `test:ci` and `scripts/run-tests.sh` run unit tests before the integration suite; CI backend quality job runs unit tests on every push.
 
 ### Security
 

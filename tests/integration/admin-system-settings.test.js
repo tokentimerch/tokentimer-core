@@ -287,6 +287,12 @@ describe("Admin System Settings", function () {
   });
 
   describe("PATCH /api/admin/users/:userId/system-admin", () => {
+    afterEach(async () => {
+      await TestUtils.execQuery("UPDATE users SET is_admin = TRUE WHERE id = $1", [
+        adminUser.id,
+      ]);
+    });
+
     it("rejects non-admin callers", async () => {
       await request(BASE)
         .patch(`/api/admin/users/${adminUser.id}/system-admin`)
@@ -309,6 +315,43 @@ describe("Admin System Settings", function () {
         [regularUser.id],
       );
       expect(row.rows[0].is_admin).to.equal(true);
+    });
+
+    it("allows demoting a system admin when another active system admin exists", async () => {
+      const demoteTarget = await TestUtils.createVerifiedTestUser();
+      await TestUtils.execQuery("UPDATE users SET is_admin = TRUE WHERE id = $1", [
+        demoteTarget.id,
+      ]);
+
+      const res = await request(BASE)
+        .patch(`/api/admin/users/${demoteTarget.id}/system-admin`)
+        .set("Cookie", adminCookie)
+        .send({ is_admin: false })
+        .expect(200);
+
+      expect(res.body.is_admin).to.equal(false);
+    });
+
+    it("blocks self-demoting the last active system admin", async () => {
+      const soleAdmin = await TestUtils.createVerifiedTestUser();
+      await TestUtils.execQuery("UPDATE users SET is_admin = FALSE WHERE id <> $1", [
+        soleAdmin.id,
+      ]);
+      await TestUtils.execQuery("UPDATE users SET is_admin = TRUE WHERE id = $1", [
+        soleAdmin.id,
+      ]);
+      const session = await TestUtils.loginTestUser(
+        soleAdmin.email,
+        soleAdmin.password,
+      );
+
+      const res = await request(BASE)
+        .patch(`/api/admin/users/${soleAdmin.id}/system-admin`)
+        .set("Cookie", session.cookie)
+        .send({ is_admin: false })
+        .expect(403);
+
+      expect(res.body.code).to.equal("FORBIDDEN");
     });
   });
 });

@@ -4,8 +4,10 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const {
   isActiveSystemAdminRow,
+  lockSystemAdminMutation,
   countActiveSystemAdmins,
   countOtherActiveSystemAdmins,
+  SYSTEM_ADMIN_LOCK_KEY,
 } = require("../../apps/api/services/systemAdmin");
 
 describe("systemAdmin helpers", () => {
@@ -34,6 +36,21 @@ describe("systemAdmin helpers", () => {
       }),
       false,
     );
+  });
+
+  it("acquires pg_advisory_xact_lock for system-admin mutations", async () => {
+    const queries = [];
+    const client = {
+      query: async (sql, params) => {
+        queries.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+
+    await lockSystemAdminMutation(client);
+    assert.strictEqual(queries.length, 1);
+    assert.match(queries[0].sql, /pg_advisory_xact_lock/);
+    assert.strictEqual(queries[0].params[0], SYSTEM_ADMIN_LOCK_KEY);
   });
 
   it("counts active system admins excluding tombstones", async () => {

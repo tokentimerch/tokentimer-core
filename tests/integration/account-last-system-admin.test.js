@@ -36,6 +36,37 @@ describe("Account deletion vs last system admin", () => {
     expect(res.body.code).to.equal("LAST_SYSTEM_ADMIN");
   });
 
+  it("does not count tombstoned is_admin users as other active admins", async () => {
+    const soleAdmin = await TestUtils.createVerifiedTestUser();
+    const tombstone = await TestUtils.createVerifiedTestUser();
+    await TestUtils.execQuery("UPDATE users SET is_admin = FALSE WHERE id <> $1", [
+      soleAdmin.id,
+    ]);
+    await TestUtils.execQuery("UPDATE users SET is_admin = TRUE WHERE id = $1", [
+      soleAdmin.id,
+    ]);
+    await TestUtils.execQuery(
+      `UPDATE users
+          SET email = $1,
+              display_name = 'Deleted Account',
+              is_admin = TRUE
+        WHERE id = $2`,
+      [`deleted+${tombstone.id}@example.invalid`, tombstone.id],
+    );
+
+    const session = await TestUtils.loginTestUser(
+      soleAdmin.email,
+      "SecureTest123!@#",
+    );
+
+    const res = await request(BASE)
+      .delete("/api/account")
+      .set("Cookie", session.cookie)
+      .expect(409);
+
+    expect(res.body.code).to.equal("LAST_SYSTEM_ADMIN");
+  });
+
   it("clears is_admin when a system admin deletes their account and another admin exists", async () => {
     const adminA = await TestUtils.createVerifiedTestUser();
     const adminB = await TestUtils.createVerifiedTestUser();

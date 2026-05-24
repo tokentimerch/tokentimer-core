@@ -15,7 +15,11 @@ const {
   sendEmail,
   isSMTPConfiguredAsync,
 } = require("../services/emailService");
-const { countActiveSystemAdmins } = require("../services/systemAdmin");
+const {
+  isActiveSystemAdminRow,
+  countOtherActiveSystemAdmins,
+  lockSystemAdminMutation,
+} = require("../services/systemAdmin");
 
 const router = require("express").Router();
 
@@ -2263,15 +2267,74 @@ router.patch(
           code: "VALIDATION_ERROR",
         });
       }
-      if (targetUserId === req.user.id && nextIsAdmin === false) {
-        const activeAdminCount = await countActiveSystemAdmins(pool);
-        if (activeAdminCount <= 1) {
-          return res.status(403).json({
-            error: "Cannot demote the last system admin",
-            code: "FORBIDDEN",
-          });
+      if (nextIsAdmin === false) {
+        const client = await pool.connect();
+        let responseBody = null;
+        let responseStatus = 200;
+        try {
+          await client.query("BEGIN");
+          await lockSystemAdminMutation(client);
+          const target = await client.query(
+            `SELECT email, display_name, is_admin
+               FROM users
+              WHERE id = $1
+              FOR UPDATE`,
+            [targetUserId],
+          );
+          if (target.rowCount === 0) {
+            await client.query("ROLLBACK");
+            responseStatus = 404;
+            responseBody = {
+              error: "User not found",
+              code: "NOT_FOUND",
+            };
+          } else if (
+            isActiveSystemAdminRow(target.rows[0]) &&
+            (await countOtherActiveSystemAdmins(client, targetUserId)) === 0
+          ) {
+            await client.query("ROLLBACK");
+            responseStatus = 403;
+            responseBody = {
+              error: "Cannot demote the last system admin",
+              code: "FORBIDDEN",
+            };
+          } else {
+            const updated = await client.query(
+              `UPDATE users
+                  SET is_admin = $1, updated_at = NOW()
+                WHERE id = $2
+                RETURNING id, is_admin`,
+              [nextIsAdmin, targetUserId],
+            );
+            await client.query("COMMIT");
+            await writeAudit({
+              actorUserId: req.user.id,
+              subjectUserId: targetUserId,
+              action: "SYSTEM_ADMIN_CHANGED",
+              targetType: "user",
+              targetId: targetUserId,
+              channel: null,
+              workspaceId: null,
+              metadata: { is_admin: nextIsAdmin },
+            });
+            responseBody = {
+              user_id: targetUserId,
+              is_admin: updated.rows[0].is_admin === true,
+            };
+          }
+        } catch (txErr) {
+          try {
+            await client.query("ROLLBACK");
+          } catch (_rollbackErr) {
+            /* connection may already be closed */
+          }
+          throw txErr;
+        } finally {
+          client.release();
         }
+        return res.status(responseStatus).json(responseBody);
       }
+
       const updated = await pool.query(
         `UPDATE users
             SET is_admin = $1, updated_at = NOW()

@@ -428,7 +428,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       const res = await apiClient.post(
         `/api/v1/workspaces/${ctxWorkspaceId}/domains/${domainId}/check`
       );
-      const data = res.data;
+      const {data} = res;
       if (data.status === 'healthy') {
         showSuccessMessage(`Healthy (${data.responseMs}ms)`);
       } else {
