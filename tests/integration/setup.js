@@ -333,6 +333,23 @@ const TestUtils = {
     return create.body.id || create.body?.workspace?.id || create.body?.id;
   },
 
+  // Create a dedicated workspace for isolation (avoids shared Default workspace pollution)
+  ensureDedicatedTestWorkspace: async (cookie, label = "Test WS") => {
+    const base = TEST_CONFIG.API_URL;
+    const create = await request(base)
+      .post("/api/v1/workspaces")
+      .set("Cookie", cookie)
+      .send({ name: `${label} ${Date.now()}` });
+    const workspaceId =
+      create.body.id || create.body?.workspace?.id || create.body?.id;
+    if (!workspaceId) {
+      throw new Error(
+        `Failed to create dedicated test workspace: ${JSON.stringify(create.body)}`,
+      );
+    }
+    return workspaceId;
+  },
+
   // Supertest agent for session-bound flows
   newAgent: async () => {
     return request.agent(TEST_CONFIG.API_URL);

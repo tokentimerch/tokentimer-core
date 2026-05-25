@@ -96,7 +96,7 @@ router.post(
   },
   loadWorkspace,
   requireWorkspaceMembership,
-  authorize("workspace.update"),
+  authorize("whatsapp.test"),
   async (req, res) => {
     try {
       const { phone_e164 } = req.body || {};

@@ -175,6 +175,66 @@ describe('Dashboard page smoke tests', () => {
     );
   });
 
+  it('renders SSO audit metadata in Audit route', async () => {
+    workspaceListMock.mockResolvedValue({
+      items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
+    });
+    alertGetAuditEventsMock.mockResolvedValue([
+      {
+        id: 'ev-sso-1',
+        occurred_at: new Date().toISOString(),
+        action: 'LOGIN_SUCCESS',
+        actor_display_name: 'Test User',
+        workspace_name: 'Workspace',
+        metadata: {
+          method: 'saml',
+          provider_slug: 'entra',
+          protocol: 'saml',
+          idp_groups_seen: 2,
+          idp_groups_sample: ['TokenTimer-Admins', 'TokenTimer-Users'],
+          matched_groups: ['TokenTimer-Admins'],
+          is_admin_resolved: true,
+          is_admin_after_login: true,
+          admin_granted: true,
+          workspace_grants_count: 3,
+          workspace_revocations_count: 0,
+        },
+      },
+    ]);
+
+    renderWithProviders(<Audit {...baseProps} />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Provider: entra/)).toBeInTheDocument()
+    );
+    expect(screen.getByText(/Observed groups:/)).toBeInTheDocument();
+    expect(screen.getByText(/System admin after login: yes/)).toBeInTheDocument();
+  });
+
+  it('shows organization scope for system admins on Audit route', async () => {
+    workspaceListMock.mockResolvedValue({
+      items: [{ id: 'ws-1', name: 'Workspace', role: 'viewer' }],
+    });
+    alertGetAuditEventsMock.mockResolvedValue([]);
+
+    renderWithProviders(
+      <Audit
+        {...baseProps}
+        session={{
+          ...baseProps.session,
+          isAdmin: true,
+        }}
+      />
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('Audit Log')).toBeInTheDocument()
+    );
+    expect(
+      screen.getByRole('option', { name: 'Organization (admin)' })
+    ).toBeInTheDocument();
+  });
+
   it('renders Account route fallback when session is missing', async () => {
     renderWithProviders(<Account session={null} onAccountDeleted={vi.fn()} />);
     expect(screen.getByText('Account Settings')).toBeInTheDocument();

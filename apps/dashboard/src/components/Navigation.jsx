@@ -636,7 +636,7 @@ const Navigation = ({
           items.length > 0 && !adminAny && !roles.includes('workspace_manager');
         setHasManagerOrAdminAny(managerAny);
         setIsViewerOnly(viewerOnly);
-        const showAudit = items.length ? managerAny : true;
+        const showAudit = isSystemAdmin || (items.length ? managerAny : true);
         const showWorkspaces = items.length ? managerAny : true;
         setCanSeeAudit(showAudit);
         setCanSeeWorkspaces(showWorkspaces);

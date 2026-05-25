@@ -19,6 +19,87 @@ const Token = require("../db/models/Token");
 
 const router = require("express").Router();
 
+function isSystemAdminUser(user) {
+  return user?.is_admin === true;
+}
+
+async function loadOrganizationAuditRows({
+  userId,
+  systemAdmin = false,
+  limit,
+  offset = null,
+  since = null,
+  actionFilter = null,
+  searchQuery = null,
+}) {
+  let query = `SELECT ae.id,
+          ae.occurred_at AS occurred_at,
+          ae.actor_user_id,
+          u.display_name AS actor_display_name,
+          ae.subject_user_id,
+          ae.action,
+          ae.target_type,
+          ae.target_id,
+          ae.channel,
+          ae.metadata,
+          COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid) AS workspace_id,
+          w.name AS workspace_name
+     FROM audit_events ae
+     LEFT JOIN users u ON u.id = ae.actor_user_id
+     LEFT JOIN workspaces w ON w.id = COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid)`;
+  const params = [];
+  let paramIndex = 1;
+
+  if (systemAdmin) {
+    query += " WHERE 1=1";
+  } else {
+    const ws = await pool.query(
+      "SELECT workspace_id FROM workspace_memberships WHERE user_id=$1 AND role='admin'",
+      [userId],
+    );
+    const wsIds = ws.rows.map((r) => r.workspace_id);
+    if (wsIds.length === 0) {
+      return [];
+    }
+    query +=
+      " WHERE (ae.workspace_id = ANY($1) OR (ae.metadata->>'workspaceId')::uuid = ANY($1))";
+    params.push(wsIds);
+    paramIndex++;
+  }
+
+  if (since) {
+    query += ` AND ae.occurred_at >= $${paramIndex}`;
+    params.push(since);
+    paramIndex++;
+  }
+
+  if (actionFilter) {
+    query += ` AND ae.action = $${paramIndex}`;
+    params.push(actionFilter);
+    paramIndex++;
+  }
+
+  if (searchQuery) {
+    query += ` AND (ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
+    const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
+    params.push(`%${escapedSearch}%`);
+    paramIndex++;
+  }
+
+  query += " ORDER BY ae.occurred_at DESC";
+  query += ` LIMIT $${paramIndex}`;
+  params.push(limit);
+  paramIndex++;
+
+  if (offset != null) {
+    query += ` OFFSET $${paramIndex}`;
+    params.push(offset);
+  }
+
+  const { rows } = await pool.query(query, params);
+  return rows;
+}
+
 // --- ACCOUNT MANAGEMENT ROUTES ---
 
 // Export user data (GDPR compliance)
@@ -400,68 +481,38 @@ router.get(
         ? String(req.query.query).trim()
         : null;
 
+      try {
+        if (!isSystemAdminUser(req.user)) {
+          const roleCheck = await pool.query(
+            `SELECT 1 FROM workspace_memberships
+           WHERE user_id = $1
+           AND role IN ('admin', 'workspace_manager')
+           LIMIT 1`,
+            [req.user.id],
+          );
+          if (roleCheck.rowCount === 0) {
+            return res.status(403).json({
+              error: "Forbidden: audit export requires manager, admin, or system admin role",
+            });
+          }
+        }
+      } catch (_err) {
+        logger.warn("Audit export role check failed", { error: _err.message });
+        return res.status(503).json({ error: "Audit export temporarily unavailable" });
+      }
+
       // Core: organization scope is available to all users (no plan gating)
 
       let items = [];
       if (scope === "organization") {
-        // Admins can export organization-wide audit (across their admin workspaces)
-        const ws = await pool.query(
-          "SELECT workspace_id FROM workspace_memberships WHERE user_id=$1 AND role='admin'",
-          [req.user.id],
-        );
-        const wsIds = ws.rows.map((r) => r.workspace_id);
-        if (wsIds.length === 0) {
-          items = [];
-        } else {
-          const params = [wsIds, limit];
-          const whereClauses = [];
-          let paramIndex = 3;
-
-          if (since) {
-            whereClauses.push(`ae.occurred_at >= $${paramIndex}`);
-            params.push(since);
-            paramIndex++;
-          }
-          if (actionFilter) {
-            whereClauses.push(`ae.action = $${paramIndex}`);
-            params.push(actionFilter);
-            paramIndex++;
-          }
-          if (searchQuery) {
-            whereClauses.push(
-              `(ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`,
-            );
-            const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
-            params.push(`%${escapedSearch}%`);
-            paramIndex++;
-          }
-
-          const whereClause =
-            whereClauses.length > 0 ? ` AND ${whereClauses.join(" AND ")}` : "";
-
-          const { rows } = await pool.query(
-            `SELECT ae.id,
-                    ae.occurred_at AS occurred_at,
-                    ae.actor_user_id,
-                    u.display_name AS actor_display_name,
-                    ae.subject_user_id,
-                    ae.action,
-                    ae.target_type,
-                    ae.target_id,
-                    ae.channel,
-                    ae.metadata,
-                    COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid) AS workspace_id,
-                    w.name AS workspace_name
-               FROM audit_events ae
-               LEFT JOIN users u ON u.id = ae.actor_user_id
-               LEFT JOIN workspaces w ON w.id = COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid)
-              WHERE (ae.workspace_id = ANY($1) OR (ae.metadata->>'workspaceId')::uuid = ANY($1))${whereClause}
-              ORDER BY ae.occurred_at DESC
-              LIMIT $2`,
-            params,
-          );
-          items = rows;
-        }
+        items = await loadOrganizationAuditRows({
+          userId: req.user.id,
+          systemAdmin: isSystemAdminUser(req.user),
+          limit,
+          since,
+          actionFilter,
+          searchQuery,
+        });
       } else if (scope === "workspace" && workspaceIdParam) {
         // Check membership and role
         const m = await pool.query(
@@ -893,61 +944,35 @@ router.get(
       // Core: no paid plan gating; access is role-based.
       // Audit access requires manager or admin role in at least one workspace.
       try {
-        const roleCheck = await pool.query(
-          `SELECT 1 FROM workspace_memberships
-         WHERE user_id = $1
-         AND role IN ('admin', 'workspace_manager')
-         LIMIT 1`,
-          [req.user.id],
-        );
-        if (roleCheck.rowCount === 0) {
-          return res
-            .status(403)
-            .json({ error: "Forbidden: audit requires manager or admin role" });
+        if (!isSystemAdminUser(req.user)) {
+          const roleCheck = await pool.query(
+            `SELECT 1 FROM workspace_memberships
+           WHERE user_id = $1
+           AND role IN ('admin', 'workspace_manager')
+           LIMIT 1`,
+            [req.user.id],
+          );
+          if (roleCheck.rowCount === 0) {
+            return res.status(403).json({
+              error: "Forbidden: audit requires manager, admin, or system admin role",
+            });
+          }
         }
       } catch (_err) {
-        logger.warn("Audit write failed", { error: _err.message });
+        logger.warn("Audit events role check failed", { error: _err.message });
+        return res.status(503).json({ error: "Audit events temporarily unavailable" });
       }
 
       if (scope === "organization") {
-        // Admins can view organization-wide audit (across their admin workspaces)
-        const ws = await pool.query(
-          "SELECT workspace_id FROM workspace_memberships WHERE user_id=$1 AND role='admin'",
-          [req.user.id],
-        );
-        const wsIds = ws.rows.map((r) => r.workspace_id);
-        if (wsIds.length === 0) return res.json([]);
-
-        let query = `SELECT ae.id, ae.occurred_at, ae.actor_user_id, ae.subject_user_id, ae.action,
-                ae.target_type, ae.target_id, ae.channel, ae.metadata,
-                u.display_name AS actor_display_name,
-                COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid) AS workspace_id,
-                w.name AS workspace_name
-         FROM audit_events ae
-         LEFT JOIN users u ON u.id = ae.actor_user_id
-         LEFT JOIN workspaces w ON w.id = COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid)
-         WHERE (ae.workspace_id = ANY($1) OR (ae.metadata->>'workspaceId')::uuid = ANY($1))`;
-
-        const params = [wsIds, limit, offset];
-        let paramIndex = 4;
-
-        if (actionFilter) {
-          query += ` AND ae.action = $${paramIndex}`;
-          params.push(actionFilter);
-          paramIndex++;
-        }
-
-        if (searchQuery) {
-          query += ` AND (ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
-          const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
-          params.push(`%${escapedSearch}%`);
-          paramIndex++;
-        }
-
-        query += ` ORDER BY ae.occurred_at DESC LIMIT $2 OFFSET $3`;
-
-        const rows = await pool.query(query, params);
-        return res.json(rows.rows);
+        const rows = await loadOrganizationAuditRows({
+          userId: req.user.id,
+          systemAdmin: isSystemAdminUser(req.user),
+          limit,
+          offset,
+          actionFilter,
+          searchQuery,
+        });
+        return res.json(rows);
       }
 
       // Default: user-only view (backwards-compatible)

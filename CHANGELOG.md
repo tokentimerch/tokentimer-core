@@ -9,6 +9,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-25
+
+### Added
+
+- **System-admin organization audit** — users with `users.is_admin` can view and export the full organization audit log (not limited to workspaces where they hold `admin`); Audit UI shows SSO login and membership-sync metadata.
+- **System-admin workspace sync on local login** — `POST /auth/login` and `POST /auth/verify-2fa` call `ensureInitialWorkspaceForUser`, which upserts `workspace_manager` on every workspace for system admins (upgrades existing `viewer`/`admin` memberships).
+- **Integration tests** — `audit-system-admin-org-scope.test.js`, `csrf-worker-exemption.test.js`.
+
+### Changed
+
+- **Dashboard audit access** — Audit nav and `/audit` route allow system admins (`session.isAdmin`) in addition to workspace admins and managers.
+- **Test WhatsApp authorization** — `POST /api/test-whatsapp` now requires `whatsapp.test` (minimum role `workspace_manager`) instead of `workspace.update` (`admin`), matching 0.6.0 role semantics.
+- **Version metadata bumped to 0.6.1** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Auto-sync and worker API calls blocked by CSRF** — recent CSRF hardening required a token on all `/api` mutations; background worker requests (e.g. auto-sync import via `Authorization: Bearer WORKER_API_KEY`) had no session cookie and were rejected. Shared `internal-worker-auth` and `csrf-exempt` middleware restore the authenticated worker bypass; `requireAuth` accepts the same bearer.
+- **Test WhatsApp 403 for workspace managers** — managers and workspace managers on the shared Default workspace were denied because the route required workspace `admin`.
+- **Audit authorization fail-closed** — role-check errors on audit list/export now return **503** instead of continuing with a partial filter.
+- **System-admin workspace sync skipped** — `ensureInitialWorkspaceForUser` no longer returns early when the user already has memberships, so system-admin workspace upserts run on every login.
+- **Integration test suite (0.6.0 alignment)** — dedicated test workspaces for isolation on shared Default installs; audit cleanup respects immutable `audit_events`; import expiration assertions use PostgreSQL `::text` cast (avoids JS timezone drift on `DATE`); alert queue tests seed email contact groups required by queue-manager.
+
 ## [0.6.0] - 2026-05-23
 
 ### Added

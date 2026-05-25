@@ -268,12 +268,12 @@ describe("ensureInitialWorkspaceForUser (shared default workspace)", () => {
       "system admin must never receive workspace admin role automatically",
     );
 
-    // Belt-and-braces: ensureInitialWorkspaceForUser must no longer consult
-    // users.is_admin to derive a join role for the shared Default workspace.
+    // Belt-and-braces: resolveJoinRole / default-workspace join must not read
+    // users.is_admin (post-provisioning ensureSystemAdminWorkspaceAccess may).
     assert.strictEqual(
-      queryLog.some((q) => q.text.includes("is_admin FROM users")),
+      queryLog.some((q) => q.tx && q.text.includes("is_admin FROM users")),
       false,
-      "resolveJoinRole must not read users.is_admin in 0.6.0",
+      "default-workspace join must not read users.is_admin in 0.6.0",
     );
   });
 

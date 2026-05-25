@@ -29,6 +29,7 @@ const actionPolicy = {
   "workspace.view": "viewer",
   "workspace.create": "viewer",
   "workspace.update": "admin",
+  "whatsapp.test": "workspace_manager",
   "workspace.delete": "admin",
   "membership.invite": "workspace_manager",
   "membership.change_role": "workspace_manager",
