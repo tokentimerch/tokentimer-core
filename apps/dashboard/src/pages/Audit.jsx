@@ -515,7 +515,9 @@ export default function Audit({
       if (md.idp_groups_seen != null)
         parts.push(`IdP groups seen: ${md.idp_groups_seen}`);
       if (Array.isArray(md.idp_groups_sample)) {
-        parts.push(`Observed groups: ${formatArrayValue(md.idp_groups_sample)}`);
+        parts.push(
+          `Observed groups: ${formatArrayValue(md.idp_groups_sample)}`
+        );
       }
       if (Array.isArray(md.configured_admin_idp_groups)) {
         parts.push(
