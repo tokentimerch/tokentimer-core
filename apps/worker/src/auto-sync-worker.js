@@ -1,9 +1,12 @@
 /**
- * Auto-Sync Worker
+ * Auto-Sync Worker (Core)
  *
  * Processes scheduled integration scans from auto_sync_configs.
  * Picks up configs where next_sync_at <= NOW() and enabled = TRUE,
  * runs the corresponding scan, imports results, and updates status.
+ *
+ * Core edition supports github and gitlab only. Enterprise replaces this
+ * file via src/worker/auto-sync-worker.js in tokentimer-enterprise.
  */
 
 import { pool, withClient } from "./db.js";
@@ -16,6 +19,7 @@ import {
 } from "./metrics.js";
 import crypto from "crypto";
 import axios from "axios";
+import { isAutoSyncProviderAllowed } from "./auto-sync-providers.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
 const KDF_SALT = "tokentimer-settings-encryption";
@@ -209,194 +213,151 @@ async function runAutoSync() {
         } = config;
         logger.info(`Syncing ${provider} for workspace ${workspace_id}`);
 
-      try {
-        // Decrypt credentials
-        const credJson = decrypt(credentials_encrypted);
-        if (!credJson) {
-          throw new Error("Failed to decrypt credentials");
-        }
-        const creds = JSON.parse(credJson);
-
-        // Validate that required credential fields are present before hitting
-        // the scan endpoint, so missing-field errors surface with clear context
-        // rather than an opaque 400 from the downstream API.
-        const REQUIRED_CRED_FIELDS = {
-          github: ["token"],
-          gitlab: ["token"],
-          aws: ["accessKeyId", "secretAccessKey"],
-          azure: ["token"],
-          "azure-ad": ["token"],
-          gcp: ["projectId", "accessToken"],
-          vault: ["address", "token"],
-        };
-        const missing = (REQUIRED_CRED_FIELDS[provider] || []).filter(
-          (f) => !creds[f],
-        );
-        if (missing.length > 0) {
-          const detail = missing.map((f) =>
-            f in creds ? `${f} (empty)` : `${f} (absent)`,
+        // Guard against stale rows (e.g. restored from an enterprise backup).
+        // Core rejects providers outside the github/gitlab allowlist without
+        // calling the scan API.
+        if (!isAutoSyncProviderAllowed(provider)) {
+          const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
+          const message = `Auto-sync for ${provider} is not available in this edition.`;
+          await client.query(
+            `UPDATE auto_sync_configs
+             SET last_sync_at = NOW(), last_sync_status = 'failed', last_sync_error = $1,
+                 next_sync_at = $2, updated_at = NOW()
+             WHERE id = $3`,
+            [message, nextSync, id],
           );
-          throw new Error(
-            `Invalid credentials for ${provider}: ${detail.join(", ")}. ` +
-              `Re-save the auto-sync config with valid credentials.`,
+          logger.warn(message, { workspace_id, provider });
+          cAutoSync.inc({ provider, status: "failure" });
+          gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
+          return;
+        }
+
+        try {
+          // Decrypt credentials
+          const credJson = decrypt(credentials_encrypted);
+          if (!credJson) {
+            throw new Error("Failed to decrypt credentials");
+          }
+          const creds = JSON.parse(credJson);
+
+          // Validate that required credential fields are present before hitting
+          // the scan endpoint, so missing-field errors surface with clear context
+          // rather than an opaque 400 from the downstream API.
+          const REQUIRED_CRED_FIELDS = {
+            github: ["token"],
+            gitlab: ["token"],
+          };
+          const missing = (REQUIRED_CRED_FIELDS[provider] || []).filter(
+            (f) => !creds[f],
           );
-        }
+          if (missing.length > 0) {
+            const detail = missing.map((f) =>
+              f in creds ? `${f} (empty)` : `${f} (absent)`,
+            );
+            throw new Error(
+              `Invalid credentials for ${provider}: ${detail.join(", ")}. ` +
+                `Re-save the auto-sync config with valid credentials.`,
+            );
+          }
 
-        // Call the API's scan endpoint via HTTP
-        const apiUrl = process.env.API_URL || "http://api:4000";
-        const workerKey =
-          process.env.WORKER_API_KEY || process.env.SESSION_SECRET;
-        const authHeaders = workerKey
-          ? { Authorization: `Bearer ${workerKey}` }
-          : {};
-        let scanUrl;
-        let scanBody;
+          // Call the API's scan endpoint via HTTP
+          const apiUrl = process.env.API_URL || "http://api:4000";
+          const workerKey =
+            process.env.WORKER_API_KEY || process.env.SESSION_SECRET;
+          const authHeaders = workerKey
+            ? { Authorization: `Bearer ${workerKey}` }
+            : {};
+          let scanUrl;
+          let scanBody;
 
-        switch (provider) {
-          case "github":
-            scanUrl = `${apiUrl}/api/v1/integrations/github/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              baseUrl: creds.baseUrl || "https://api.github.com",
-              token: creds.token,
-              include: scan_params?.include || {
-                tokens: true,
-                sshKeys: true,
-                deployKeys: true,
-                secrets: true,
-              },
-              maxItems: scan_params?.maxItems || 500,
-            };
-            break;
-          case "gitlab":
-            scanUrl = `${apiUrl}/api/v1/integrations/gitlab/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              baseUrl: creds.baseUrl || "https://gitlab.com",
-              token: creds.token,
-              include: scan_params?.include || { tokens: true, keys: true },
-              maxItems: scan_params?.maxItems || 500,
-              filters: scan_params?.filters || {},
-            };
-            break;
-          case "aws":
-            scanUrl = `${apiUrl}/api/v1/integrations/aws/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              accessKeyId: creds.accessKeyId,
-              secretAccessKey: creds.secretAccessKey,
-              sessionToken: creds.sessionToken || null,
-              region: creds.region || scan_params?.region || "us-east-1",
-              include: scan_params?.include || {
-                secrets: true,
-                iam: true,
-                certificates: true,
-              },
-              maxItems: scan_params?.maxItems || 500,
-            };
-            break;
-          case "azure":
-            scanUrl = `${apiUrl}/api/v1/integrations/azure/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              vaultUrl: creds.vaultUrl,
-              token: creds.token,
-              include: scan_params?.include || {
-                secrets: true,
-                certificates: true,
-                keys: true,
-              },
-              maxItems: scan_params?.maxItems || 500,
-            };
-            break;
-          case "azure-ad":
-            scanUrl = `${apiUrl}/api/v1/integrations/azure-ad/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              token: creds.token,
-              include: scan_params?.include || {
-                applications: true,
-                servicePrincipals: true,
-              },
-              maxItems: scan_params?.maxItems || 500,
-            };
-            break;
-          case "gcp":
-            scanUrl = `${apiUrl}/api/v1/integrations/gcp/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              projectId: creds.projectId,
-              accessToken: creds.accessToken,
-              include: scan_params?.include || { secrets: true },
-              maxItems: scan_params?.maxItems || 500,
-            };
-            break;
-          case "vault":
-            scanUrl = `${apiUrl}/api/v1/integrations/vault/scan?workspace_id=${workspace_id}`;
-            scanBody = {
-              address: creds.address,
-              token: creds.token,
-              include: scan_params?.include || { kv: true, pki: true },
-              maxItemsPerMount: scan_params?.maxItemsPerMount || 250,
-              pathPrefix: scan_params?.pathPrefix || null,
-            };
-            break;
-          default:
-            throw new Error(`Unknown provider: ${provider}`);
-        }
+          switch (provider) {
+            case "github":
+              scanUrl = `${apiUrl}/api/v1/integrations/github/scan?workspace_id=${workspace_id}`;
+              scanBody = {
+                baseUrl: creds.baseUrl || "https://api.github.com",
+                token: creds.token,
+                include: scan_params?.include || {
+                  tokens: true,
+                  sshKeys: true,
+                  deployKeys: true,
+                  secrets: true,
+                },
+                maxItems: scan_params?.maxItems || 500,
+              };
+              break;
+            case "gitlab":
+              scanUrl = `${apiUrl}/api/v1/integrations/gitlab/scan?workspace_id=${workspace_id}`;
+              scanBody = {
+                baseUrl: creds.baseUrl || "https://gitlab.com",
+                token: creds.token,
+                include: scan_params?.include || { tokens: true, keys: true },
+                maxItems: scan_params?.maxItems || 500,
+                filters: scan_params?.filters || {},
+              };
+              break;
+            default:
+              throw new Error(`Unknown provider: ${provider}`);
+          }
 
-        // 1. Scan: discover items from the provider
-        const scanResponse = await axios.post(scanUrl, scanBody, {
-          timeout: 120000,
-          headers: authHeaders,
-        });
-        const scanResult = scanResponse.data;
-        const itemsCount = scanResult?.items?.length || 0;
+          // 1. Scan: discover items from the provider
+          const scanResponse = await axios.post(scanUrl, scanBody, {
+            timeout: 120000,
+            headers: authHeaders,
+          });
+          const scanResult = scanResponse.data;
+          const itemsCount = scanResult?.items?.length || 0;
 
-        // 2. Import: delegate to the existing import endpoint so deduplication,
-        //    sanitization, type validation, and audit logging are identical to
-        //    what a user gets when importing manually from the dashboard.
-        if (itemsCount > 0) {
-          const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
-          await axios.post(
-            importUrl,
-            { items: scanResult.items },
-            { timeout: 60000, headers: authHeaders },
+          // 2. Import: delegate to the existing import endpoint so deduplication,
+          //    sanitization, type validation, and audit logging are identical to
+          //    what a user gets when importing manually from the dashboard.
+          if (itemsCount > 0) {
+            const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
+            await axios.post(
+              importUrl,
+              { items: scanResult.items },
+              { timeout: 60000, headers: authHeaders },
+            );
+          }
+
+          // Update config: success
+          const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
+          await client.query(
+            `UPDATE auto_sync_configs
+             SET last_sync_at = NOW(), last_sync_status = 'success', last_sync_error = NULL,
+                 last_sync_items_count = $1, next_sync_at = $2, updated_at = NOW()
+             WHERE id = $3`,
+            [itemsCount, nextSync, id],
+          );
+
+          cAutoSync.inc({ provider, status: "success" });
+          cAutoSyncItems.inc({ provider }, itemsCount);
+          gAutoSyncLastRun.set({ provider, status: "success" }, Date.now() / 1000);
+          logger.info(`Auto-sync ${provider} completed: ${itemsCount} items`, {
+            workspace_id,
+          });
+        } catch (syncErr) {
+          logger.error(`Auto-sync ${provider} failed`, {
+            workspace_id,
+            error: syncErr?.message || String(syncErr),
+            httpStatus: syncErr?.response?.status,
+            httpBody: syncErr?.response?.data,
+            stack: syncErr?.stack,
+          });
+
+          cAutoSync.inc({ provider, status: "failure" });
+          gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
+          // Update config: failed
+          const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
+          await client.query(
+            `UPDATE auto_sync_configs
+             SET last_sync_at = NOW(), last_sync_status = 'failed',
+                 last_sync_error = $1, next_sync_at = $2, updated_at = NOW()
+             WHERE id = $3`,
+            [String(syncErr?.message || syncErr).substring(0, 1000), nextSync, id],
           );
         }
-
-        // Update config: success
-        const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
-        await client.query(
-          `UPDATE auto_sync_configs
-           SET last_sync_at = NOW(), last_sync_status = 'success', last_sync_error = NULL,
-               last_sync_items_count = $1, next_sync_at = $2, updated_at = NOW()
-           WHERE id = $3`,
-          [itemsCount, nextSync, id],
-        );
-
-        cAutoSync.inc({ provider, status: "success" });
-        cAutoSyncItems.inc({ provider }, itemsCount);
-        gAutoSyncLastRun.set({ provider, status: "success" }, Date.now() / 1000);
-        logger.info(`Auto-sync ${provider} completed: ${itemsCount} items`, {
-          workspace_id,
-        });
-      } catch (syncErr) {
-        logger.error(`Auto-sync ${provider} failed`, {
-          workspace_id,
-          error: syncErr?.message || String(syncErr),
-          httpStatus: syncErr?.response?.status,
-          httpBody: syncErr?.response?.data,
-          stack: syncErr?.stack,
-        });
-
-        cAutoSync.inc({ provider, status: "failure" });
-        gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
-        // Update config: failed
-        const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
-        await client.query(
-          `UPDATE auto_sync_configs
-           SET last_sync_at = NOW(), last_sync_status = 'failed',
-               last_sync_error = $1, next_sync_at = $2, updated_at = NOW()
-           WHERE id = $3`,
-          [String(syncErr?.message || syncErr).substring(0, 1000), nextSync, id],
-        );
-      }
-    }));
+      }),
+    );
 
     // Commit all status updates and release the FOR UPDATE locks atomically.
     await client.query("COMMIT");

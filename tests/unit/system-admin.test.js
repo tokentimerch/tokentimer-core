@@ -7,6 +7,7 @@ const {
   lockSystemAdminMutation,
   countActiveSystemAdmins,
   countOtherActiveSystemAdmins,
+  ensureSystemAdminWorkspaceAccess,
   SYSTEM_ADMIN_LOCK_KEY,
 } = require("../../apps/api/services/systemAdmin");
 
@@ -69,5 +70,37 @@ describe("systemAdmin helpers", () => {
     assert.strictEqual(await countOtherActiveSystemAdmins(queryable, 9), 1);
     assert.match(queries[0].sql, /@example\.invalid/);
     assert.match(queries[0].sql, /Deleted Account/);
+  });
+
+  it("ensureSystemAdminWorkspaceAccess upgrades viewer but preserves workspace admin", async () => {
+    let upsertSql = "";
+    const queryable = {
+      query: async (sql) => {
+        if (sql.includes("SELECT is_admin")) {
+          return { rows: [{ is_admin: true }] };
+        }
+        upsertSql = sql;
+        return { rowCount: 2, rows: [{ workspace_id: "ws-a" }] };
+      },
+    };
+
+    const result = await ensureSystemAdminWorkspaceAccess(queryable, 9);
+    assert.strictEqual(result.applied, 2);
+    assert.match(upsertSql, /WHEN workspace_memberships\.role = 'viewer'/);
+    assert.doesNotMatch(upsertSql, /'admin'/);
+  });
+
+  it("ensureSystemAdminWorkspaceAccess no-ops for non-admin users", async () => {
+    const queryable = {
+      query: async (sql) => {
+        if (sql.includes("SELECT is_admin")) {
+          return { rows: [{ is_admin: false }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+
+    const result = await ensureSystemAdminWorkspaceAccess(queryable, 9);
+    assert.strictEqual(result.applied, 0);
   });
 });

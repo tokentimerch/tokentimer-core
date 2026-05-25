@@ -81,6 +81,36 @@ async function checkDuplicatesForItems(items, workspaceId) {
   return new Set();
 }
 
+export function buildAwsAutoSyncPayload({
+  accessKeyId,
+  secretAccessKey,
+  awsRegion,
+  awsDetectedRegions = [],
+}) {
+  const scanMode =
+    awsRegion === 'all-regions'
+      ? 'all-regions'
+      : awsRegion === 'global'
+        ? 'global'
+        : 'single';
+  const region = scanMode === 'single' ? awsRegion || 'us-east-1' : 'us-east-1';
+
+  return {
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      region,
+    },
+    scanParams: {
+      scanMode,
+      region,
+      detectedRegions:
+        scanMode === 'all-regions' ? [...awsDetectedRegions] : [],
+      maxItems: 500,
+    },
+  };
+}
+
 const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   {
     workspaceId,
@@ -97,6 +127,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    initialAutoSyncScanParams = null,
   },
   ref
 ) {
@@ -121,6 +152,21 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsAws.size);
   }, [selectedRowsAws.size, onSelectionChange]);
+
+  React.useEffect(() => {
+    if (!initialAutoSyncScanParams) return;
+    const sp = initialAutoSyncScanParams;
+    if (sp.scanMode === 'all-regions' || sp.region === 'all-regions') {
+      setAwsRegion('all-regions');
+    } else if (sp.scanMode === 'global' || sp.region === 'global') {
+      setAwsRegion('global');
+    } else if (sp.region) {
+      setAwsRegion(sp.region);
+    }
+    if (Array.isArray(sp.detectedRegions)) {
+      setAwsDetectedRegions(sp.detectedRegions);
+    }
+  }, [initialAutoSyncScanParams]);
 
   const detectAwsRegions = async () => {
     onError && onError(null);
@@ -344,17 +390,13 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
   React.useImperativeHandle(ref, () => ({
     importSelected: importAwsSelected,
     getSelectedCount: () => selectedRowsAws.size,
-    getCredentials: () => ({
-      credentials: {
+    getCredentials: () =>
+      buildAwsAutoSyncPayload({
         accessKeyId: awsAccessKeyId,
         secretAccessKey: awsSecretAccessKey,
-        region: awsRegion || 'us-east-1',
-      },
-      scanParams: {
-        region: awsRegion || 'us-east-1',
-        include: { secrets: true, iam: true, certificates: true },
-      },
-    }),
+        awsRegion,
+        awsDetectedRegions,
+      }),
   }));
 
   return (

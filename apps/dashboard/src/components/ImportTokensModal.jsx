@@ -65,7 +65,9 @@ import CopyableCodeBlock from './CopyableCodeBlock';
 import ImportVaultForm from './imports/ImportVaultForm';
 import ImportGitLabForm from './imports/ImportGitLabForm';
 import ImportGitHubForm from './imports/ImportGitHubForm';
-import ImportAWSForm from './imports/ImportAWSForm';
+import ImportAWSForm, {
+  buildAwsAutoSyncPayload,
+} from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
 
@@ -895,6 +897,8 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
   const [awsSecretAccessKey, _setAwsSecretAccessKey] = React.useState('');
   const [awsRegion, setAwsRegion] = React.useState('us-east-1');
   const [_awsDetectedRegions, _setAwsDetectedRegions] = React.useState([]);
+  const [awsAutoSyncScanParams, setAwsAutoSyncScanParams] =
+    React.useState(null);
   const [_awsDetectionResults, _setAwsDetectionResults] = React.useState(null);
   const [_awsIamInfo, _setAwsIamInfo] = React.useState(null);
   const [_awsDetecting, _setAwsDetecting] = React.useState(false);
@@ -1017,7 +1021,20 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
               if (sp.pathPrefix !== undefined) setPathPrefix(sp.pathPrefix);
               break;
             case 'aws':
-              if (sp.region) setAwsRegion(sp.region);
+              if (
+                sp.scanMode === 'all-regions' ||
+                sp.region === 'all-regions'
+              ) {
+                setAwsRegion('all-regions');
+              } else if (sp.scanMode === 'global' || sp.region === 'global') {
+                setAwsRegion('global');
+              } else if (sp.region) {
+                setAwsRegion(sp.region);
+              }
+              if (Array.isArray(sp.detectedRegions)) {
+                _setAwsDetectedRegions(sp.detectedRegions);
+              }
+              setAwsAutoSyncScanParams(sp);
               break;
             case 'azure':
               if (sp.vaultUrl) setAzureVaultUrl(sp.vaultUrl);
@@ -1034,6 +1051,8 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
               if (sp.projectId) setGcpProjectId(sp.projectId);
               break;
           }
+        } else if (source === 'aws') {
+          setAwsAutoSyncScanParams(null);
         }
       } catch (_) {
         setAutoSyncConfig(false);
@@ -1101,15 +1120,17 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
       }
       case 'aws': {
         const formCreds = awsFormRef.current?.getCredentials();
-        credentials = formCreds?.credentials ?? {
-          accessKeyId: awsAccessKeyId,
-          secretAccessKey: awsSecretAccessKey,
-          region: awsRegion || 'us-east-1',
-        };
-        scanParams = formCreds?.scanParams ?? {
-          region: awsRegion || 'us-east-1',
-          include: { secrets: true, iam: true, certificates: true },
-        };
+        if (formCreds) {
+          credentials = formCreds.credentials;
+          scanParams = formCreds.scanParams;
+        } else {
+          ({ credentials, scanParams } = buildAwsAutoSyncPayload({
+            accessKeyId: awsAccessKeyId,
+            secretAccessKey: awsSecretAccessKey,
+            awsRegion,
+            awsDetectedRegions: _awsDetectedRegions,
+          }));
+        }
         break;
       }
       case 'azure': {
@@ -2118,6 +2139,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
               {source === 'aws' ? (
                 <ImportAWSForm
                   ref={awsFormRef}
+                  initialAutoSyncScanParams={awsAutoSyncScanParams}
                   workspaceId={workspaceId}
                   onImportComplete={selected => {
                     setIsImporting(false);

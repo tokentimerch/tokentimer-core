@@ -34,6 +34,31 @@ const ALL_AWS_REGIONS = [
   "sa-east-1",
 ];
 
+const DETECT_REQUEST_TIMEOUT_MS = 8000;
+const DETECT_CONNECTION_TIMEOUT_MS = 5000;
+const DETECT_REGION_WALL_MS = 12000;
+const DETECT_REGION_BATCH_SIZE = 5;
+const DETECT_IAM_MAX_USERS_FOR_KEYS = 10;
+const DETECT_IAM_WALL_MS = 20000;
+
+function createDetectRequestHandler() {
+  return {
+    connectionTimeout: DETECT_CONNECTION_TIMEOUT_MS,
+    requestTimeout: DETECT_REQUEST_TIMEOUT_MS,
+    throwOnRequestTimeout: true,
+  };
+}
+
+function withWallClockTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 // AWS integration using AWS SDK
 // Note: Requires AWS SDK packages: @aws-sdk/client-secrets-manager and @aws-sdk/client-iam
 async function scanAWS({
@@ -538,9 +563,7 @@ async function detectAWSRegions({
       const stsClient = new STSClient({
         region: "us-east-1",
         credentials: { accessKeyId, secretAccessKey, sessionToken },
-        requestHandler: {
-          requestTimeout: 10000,
-        },
+        requestHandler: createDetectRequestHandler(),
       });
       const identity = await stsClient.send(new GetCallerIdentityCommand({}));
       logger.info("AWS credentials validated", {
@@ -562,9 +585,7 @@ async function detectAWSRegions({
       const testClient = new SecretsManagerClient({
         region: "us-east-1",
         credentials: { accessKeyId, secretAccessKey, sessionToken },
-        requestHandler: {
-          requestTimeout: 10000,
-        },
+        requestHandler: createDetectRequestHandler(),
       });
       await testClient.send(new ListSecretsCommand({ MaxResults: 1 }));
       logger.info("AWS credentials validated (via Secrets Manager)");
@@ -593,69 +614,63 @@ async function detectAWSRegions({
     }
   }
 
+  const credentials = { accessKeyId, secretAccessKey, sessionToken };
+
   // Check each region in parallel (with concurrency limit)
   const checkRegion = async (region) => {
     let secretCount = 0;
     let certCount = 0;
 
-    // Check Secrets Manager
-    try {
+    const checkSecrets = async () => {
       const client = new SecretsManagerClient({
         region,
-        credentials: { accessKeyId, secretAccessKey, sessionToken },
-        requestHandler: {
-          requestTimeout: 10000, // 10 second timeout for quick detection
-        },
+        credentials,
+        requestHandler: createDetectRequestHandler(),
       });
-
-      // Just list secrets, don't describe them
       const listResponse = await client.send(
         new ListSecretsCommand({ MaxResults: 1 }),
       );
-      secretCount = listResponse.SecretList?.length || 0;
+      return listResponse.SecretList?.length || 0;
+    };
 
-      if (secretCount > 0) {
-        regionsWithSecrets.push(region);
-      }
-    } catch (e) {
-      // Don't throw errors during region scanning - credentials were already validated
-      // Region might not be enabled, lacks permissions, or has other issues
-      // Just log and continue to other regions
+    const checkCertificates = async () => {
+      if (!ACMClient) return 0;
+      const client = new ACMClient({
+        region,
+        credentials,
+        requestHandler: createDetectRequestHandler(),
+      });
+      const listResponse = await client.send(
+        new ListCertificatesCommand({ MaxItems: 1 }),
+      );
+      return listResponse.CertificateSummaryList?.length || 0;
+    };
+
+    const checks = [checkSecrets()];
+    if (ACMClient) checks.push(checkCertificates());
+
+    const settled = await Promise.allSettled(checks);
+    if (settled[0].status === "fulfilled") {
+      secretCount = settled[0].value;
+      if (secretCount > 0) regionsWithSecrets.push(region);
+    } else {
       logger.debug("AWS region Secrets Manager check failed", {
         region,
-        error: e.message,
-        errorName: e.name,
+        error: settled[0].reason?.message,
+        errorName: settled[0].reason?.name,
       });
     }
 
-    // Check ACM Certificates
     if (ACMClient) {
-      try {
-        const client = new ACMClient({
-          region,
-          credentials: { accessKeyId, secretAccessKey, sessionToken },
-          requestHandler: {
-            requestTimeout: 10000, // 10 second timeout for quick detection
-          },
-        });
-
-        // Just list certificates, don't describe them
-        const listResponse = await client.send(
-          new ListCertificatesCommand({ MaxItems: 1 }),
-        );
-        certCount = listResponse.CertificateSummaryList?.length || 0;
-
-        if (certCount > 0) {
-          regionsWithCertificates.push(region);
-        }
-      } catch (e) {
-        // Don't throw errors during region scanning - credentials were already validated
-        // Region might not be enabled, lacks permissions, or has other issues
-        // Just log and continue to other regions
+      const certResult = settled[1];
+      if (certResult?.status === "fulfilled") {
+        certCount = certResult.value;
+        if (certCount > 0) regionsWithCertificates.push(region);
+      } else if (certResult?.status === "rejected") {
         logger.debug("AWS region ACM check failed", {
           region,
-          error: e.message,
-          errorName: e.name,
+          error: certResult.reason?.message,
+          errorName: certResult.reason?.name,
         });
       }
     }
@@ -680,54 +695,66 @@ async function detectAWSRegions({
   };
 
   // Process regions in batches to avoid overwhelming the API
-  const batchSize = 10; // Increased from 5 to speed up detection
-  for (let i = 0; i < ALL_AWS_REGIONS.length; i += batchSize) {
-    const batch = ALL_AWS_REGIONS.slice(i, i + batchSize);
-    await Promise.all(batch.map((region) => checkRegion(region)));
+  for (let i = 0; i < ALL_AWS_REGIONS.length; i += DETECT_REGION_BATCH_SIZE) {
+    const batch = ALL_AWS_REGIONS.slice(i, i + DETECT_REGION_BATCH_SIZE);
+    await Promise.all(
+      batch.map((region) =>
+        withWallClockTimeout(
+          checkRegion(region),
+          DETECT_REGION_WALL_MS,
+          `region ${region}`,
+        ).catch((e) => {
+          logger.debug("AWS region detection skipped", {
+            region,
+            error: e.message,
+          });
+        }),
+      ),
+    );
   }
 
   // Check for IAM users and keys (global - only need to check once)
   if (IAMClient) {
     try {
-      logger.info("Checking for IAM users and access keys (global)");
-      const client = new IAMClient({
-        region: "us-east-1", // IAM is global, but we need to specify a region for the client
-        credentials: { accessKeyId, secretAccessKey, sessionToken },
-        requestHandler: {
-          requestTimeout: 10000, // 10 second timeout
-        },
-      });
-
-      const usersResponse = await client.send(
-        new ListUsersCommand({ MaxItems: 100 }),
-      );
-      const users = usersResponse.Users || [];
-      iamUsersCount = users.length;
-
-      // Count total access keys across all users (limit to first 100 users for quick detection)
-      for (const user of users.slice(0, 100)) {
-        try {
-          const keysResponse = await client.send(
-            new ListAccessKeysCommand({ UserName: user.UserName }),
-          );
-          const keys = keysResponse.AccessKeyMetadata || [];
-          iamKeysCount += keys.length;
-        } catch (e) {
-          logger.debug("Failed to list keys for IAM user", {
-            userName: user.UserName,
-            error: e.message,
+      await withWallClockTimeout(
+        (async () => {
+          logger.info("Checking for IAM users and access keys (global)");
+          const client = new IAMClient({
+            region: "us-east-1",
+            credentials,
+            requestHandler: createDetectRequestHandler(),
           });
-        }
-      }
 
-      logger.info("IAM detection completed", {
-        users: iamUsersCount,
-        keys: iamKeysCount,
-      });
+          const usersResponse = await client.send(
+            new ListUsersCommand({ MaxItems: 100 }),
+          );
+          const users = usersResponse.Users || [];
+          iamUsersCount = users.length;
+
+          for (const user of users.slice(0, DETECT_IAM_MAX_USERS_FOR_KEYS)) {
+            try {
+              const keysResponse = await client.send(
+                new ListAccessKeysCommand({ UserName: user.UserName }),
+              );
+              const keys = keysResponse.AccessKeyMetadata || [];
+              iamKeysCount += keys.length;
+            } catch (e) {
+              logger.debug("Failed to list keys for IAM user", {
+                userName: user.UserName,
+                error: e.message,
+              });
+            }
+          }
+
+          logger.info("IAM detection completed", {
+            users: iamUsersCount,
+            keys: iamKeysCount,
+          });
+        })(),
+        DETECT_IAM_WALL_MS,
+        "IAM detection",
+      );
     } catch (e) {
-      // Don't throw errors during region scanning - credentials were already validated
-      // IAM might lack permissions or have other issues
-      // Just log and continue
       logger.warn("Failed to check IAM users", {
         error: e.message,
         errorName: e.name,

@@ -39,8 +39,8 @@ async function countOtherActiveSystemAdmins(queryable, userId) {
 
 /**
  * Grant workspace_manager on every workspace for installation system admins.
- * On conflict, upgrades workspace admin or viewer to workspace_manager so
- * system admins never retain implicit workspace owner or read-only-only access.
+ * On conflict, upgrades viewer to workspace_manager only. Existing workspace
+ * admin memberships are preserved. Inserts workspace_manager where missing.
  *
  * @returns {{ applied: number }}
  */
@@ -59,7 +59,7 @@ async function ensureSystemAdminWorkspaceAccess(db, userId) {
        FROM workspaces w
      ON CONFLICT (user_id, workspace_id) DO UPDATE
        SET role = CASE
-             WHEN workspace_memberships.role IN ('admin', 'viewer')
+             WHEN workspace_memberships.role = 'viewer'
                THEN 'workspace_manager'
              ELSE workspace_memberships.role
            END

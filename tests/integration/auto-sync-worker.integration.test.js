@@ -71,6 +71,53 @@ describe("Auto-sync worker integration", function () {
     expect(result.rows[0].processed).to.equal(0);
   });
 
+  it("rejects enterprise-only providers without running a scan", async () => {
+    await TestUtils.execQuery(
+      "DELETE FROM auto_sync_configs WHERE workspace_id = $1",
+      [workspaceId],
+    );
+    const creds = encryptCredentials(
+      JSON.stringify({
+        accessKeyId: "AKIATEST",
+        secretAccessKey: "secret",
+      }),
+      workerSecret,
+    );
+
+    const inserted = await TestUtils.execQuery(
+      `INSERT INTO auto_sync_configs
+         (workspace_id, provider, credentials_encrypted, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
+       VALUES
+         ($1, 'aws', $2, 'daily', '00:01', 'UTC', TRUE, NOW() - INTERVAL '5 minutes', $3)
+       RETURNING id`,
+      [workspaceId, creds, testUser.id],
+    );
+    const configId = inserted.rows[0].id;
+
+    await TestUtils.runNode(
+      "node",
+      ["src/auto-sync-worker.js"],
+      "apps/worker",
+      {
+        ...process.env,
+        SESSION_SECRET: workerSecret,
+        API_URL: process.env.TEST_API_URL || "http://localhost:4000",
+        TT_MODE: "enterprise",
+        AUTO_SYNC_PROVIDERS: "aws,github,gitlab",
+      },
+    );
+
+    const row = await TestUtils.execQuery(
+      `SELECT last_sync_status, last_sync_error
+       FROM auto_sync_configs WHERE id = $1`,
+      [configId],
+    );
+    expect(row.rows[0].last_sync_status).to.equal("failed");
+    expect(row.rows[0].last_sync_error).to.match(
+      /not available in this edition/i,
+    );
+  });
+
   it("handles provider failure and keeps idempotency across repeated runs", async () => {
     await TestUtils.execQuery(
       "DELETE FROM auto_sync_configs WHERE workspace_id = $1",
