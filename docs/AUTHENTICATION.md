@@ -315,6 +315,8 @@ VALUES ('admin@company.com', '$2b$12$...', 'Admin', 'local', TRUE);
 
 **A**: No. System admin (`users.is_admin`) and workspace owner (`workspace_memberships.role = 'admin'`) are independent. SSO or manual system-admin grants do not promote users to workspace owner. Users joining an existing Default workspace always get **workspace_manager**, including system admins. Only the user who creates Default on an empty install becomes workspace owner automatically.
 
+System-admin expansion (manual toggle, SSO admin grant, or login provisioning) adds missing `workspace_manager` rows on every workspace and may raise `viewer` to `workspace_manager` where needed. It never downgrades an existing workspace `admin` membership.
+
 ### Q: Can I make a second workspace owner on Default?
 
 **A**: Not through the dashboard or public API today. Workspace owner is assigned at workspace creation only. You can grant a second user **system admin** from **Workspaces → Members**, which gives installation-wide settings access but not workspace-owner powers (delete workspace, transfer tokens, etc.). Multiple workspace owners per workspace are planned for [v1.0.0](../ROADMAP.md#v100----rbac-and-role-model-cleanup).

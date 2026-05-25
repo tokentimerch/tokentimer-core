@@ -9,12 +9,32 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-25
+
+### Added
+
+- **Core auto-sync provider allowlist** — `apps/worker/src/auto-sync-providers.js` hardcodes GitHub and GitLab for the OSS worker; enterprise editions replace this module via file override.
+- **Regression tests** — system-admin preserve-admin unit coverage; auto-sync provider allowlist and AWS integration tests.
+
+### Changed
+
+- **Auto-sync worker** — rejects providers outside the core allowlist with a clear failure metric instead of env-based edition flags.
+- **Dashboard AWS import** — `ImportAWSForm` and `ImportTokensModal` build auto-sync payloads compatible with the all-regions scan API.
+- **Plugin context contract** — documents that `setAutoSyncProviders` is reserved; enterprise enforces provider policy via file overrides in 0.6.x.
+- **Version metadata bumped to 0.6.2** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **System-admin workspace expansion** — `ensureSystemAdminWorkspaceAccess()` no longer downgrades existing workspace `admin` memberships to `workspace_manager`; it inserts missing rows and upgrades `viewer` only. Preserves workspace-owner RBAC for creators who are also system admins.
+- **AWS auto-sync region detection** — `detectAWSRegions()` uses per-region timeouts, batched parallel probes, and IAM key caps so all-regions scans cannot hang indefinitely.
+- **Auto-sync worker AWS payload** — worker builds correct all-regions scan requests instead of passing `region: "all-regions"` to the API.
+
 ## [0.6.1] - 2026-05-25
 
 ### Added
 
 - **System-admin organization audit** — users with `users.is_admin` can view and export the full organization audit log (not limited to workspaces where they hold `admin`); Audit UI shows SSO login and membership-sync metadata.
-- **System-admin workspace sync on local login** — `POST /auth/login` and `POST /auth/verify-2fa` call `ensureInitialWorkspaceForUser`, which upserts `workspace_manager` on every workspace for system admins (upgrades existing `viewer`/`admin` memberships).
+- **System-admin workspace sync on local login** — `POST /auth/login` and `POST /auth/verify-2fa` call `ensureInitialWorkspaceForUser`, which upserts `workspace_manager` on every workspace for system admins (adds missing rows and upgrades existing `viewer` memberships; existing workspace `admin` memberships are preserved).
 - **Integration tests** — `audit-system-admin-org-scope.test.js`, `csrf-worker-exemption.test.js`.
 
 ### Changed

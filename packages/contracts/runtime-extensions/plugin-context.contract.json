@@ -1,6 +1,6 @@
 {
   "contractName": "runtime-extensions.plugin-context",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Expected plugin context hooks exposed by core to runtime extensions.",
   "hooks": {
     "setAuthFeaturesProvider": {
@@ -16,6 +16,7 @@
   },
   "notes": [
     "This artifact defines expected contract shape regardless of current wiring maturity.",
-    "Consumers should feature-detect hook availability before invoking."
+    "Consumers should feature-detect hook availability before invoking.",
+    "As of core 0.6.x, enterprise auto-sync provider policy is enforced via file overrides (admin.js, auto-sync-worker.js); setAutoSyncProviders is not wired in core yet."
   ]
 }

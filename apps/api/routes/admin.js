@@ -81,6 +81,10 @@ function normalizeTokenSectionInput(value) {
 
 const CORE_AUTO_SYNC_PROVIDERS = ["github", "gitlab"];
 
+function isCoreAutoSyncProvider(provider) {
+  return CORE_AUTO_SYNC_PROVIDERS.includes(provider);
+}
+
 /**
  * Convert a local time (HH:MM) in a given IANA timezone to a UTC Date for
  * the given calendar date string (YYYY-MM-DD).
@@ -234,8 +238,7 @@ router.post(
         return res.status(400).json({ error: credError });
       }
       // Check provider is allowed
-      const allowed = CORE_AUTO_SYNC_PROVIDERS;
-      if (!allowed.includes(provider)) {
+      if (!isCoreAutoSyncProvider(provider)) {
         return res.status(403).json({
           error: `Auto-sync for ${provider} is not available in this edition.`,
           code: "FEATURE_NOT_AVAILABLE",
@@ -314,6 +317,20 @@ router.put(
   authorize("auto_sync.manage"),
   async (req, res) => {
     try {
+      const existing = await pool.query(
+        `SELECT provider FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
+        [req.params.configId, req.workspace.id],
+      );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: "Auto-sync config not found" });
+      }
+      if (!isCoreAutoSyncProvider(existing.rows[0].provider)) {
+        return res.status(403).json({
+          error: `Auto-sync for ${existing.rows[0].provider} is not available in this edition.`,
+          code: "FEATURE_NOT_AVAILABLE",
+        });
+      }
+
       const {
         credentials,
         scan_params,
@@ -327,13 +344,6 @@ router.put(
       let idx = 1;
 
       if (credentials !== undefined) {
-        const existing = await pool.query(
-          `SELECT provider FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
-          [req.params.configId, req.workspace.id],
-        );
-        if (existing.rows.length === 0) {
-          return res.status(404).json({ error: "Auto-sync config not found" });
-        }
         const credError = validateAutoSyncCredentials(
           existing.rows[0].provider,
           credentials,
@@ -465,6 +475,25 @@ router.post(
   authorize("auto_sync.manage"),
   async (req, res) => {
     try {
+      const existing = await pool.query(
+        `SELECT id, provider, enabled FROM auto_sync_configs WHERE id = $1 AND workspace_id = $2`,
+        [req.params.configId, req.workspace.id],
+      );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: "Auto-sync config not found" });
+      }
+      if (!existing.rows[0].enabled) {
+        return res
+          .status(404)
+          .json({ error: "Auto-sync config not found or disabled" });
+      }
+      if (!isCoreAutoSyncProvider(existing.rows[0].provider)) {
+        return res.status(403).json({
+          error: `Auto-sync for ${existing.rows[0].provider} is not available in this edition.`,
+          code: "FEATURE_NOT_AVAILABLE",
+        });
+      }
+
       // Mark next_sync_at as NOW so the worker picks it up immediately
       const result = await pool.query(
         `UPDATE auto_sync_configs SET next_sync_at = NOW(), updated_at = NOW()

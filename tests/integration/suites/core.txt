@@ -72,6 +72,8 @@ tests/integration/integrations-route-matrix.test.js
 # Auto-sync worker
 tests/integration/auto-sync.test.js
 tests/integration/auto-sync-worker.integration.test.js
+tests/integration/auto-sync-providers.unit.test.js
+tests/integration/auto-sync-import.test.js
 tests/integration/weekly-digest-worker.integration.test.js
 
 # Audit
