@@ -31,6 +31,7 @@ const {
   loadWorkspace,
   requireWorkspaceMembership,
 } = require("./services/rbac");
+const { createCsrfExemptMiddleware } = require("./middleware/csrf-exempt");
 
 const swaggerOptions = {
   definition: {
@@ -357,6 +358,13 @@ app.get("/api/session", (req, res) => {
     }
 
     const displayEmail = req.user.email_original || req.user.email;
+    const authMethod = req.user.auth_method || "local";
+    const loginMethod =
+      authMethod === "local"
+        ? "email"
+        : ["sso", "saml", "oidc"].includes(authMethod)
+          ? "sso"
+          : authMethod;
 
     res.json({
       loggedIn: true,
@@ -365,8 +373,8 @@ app.get("/api/session", (req, res) => {
         email: displayEmail,
         displayName: req.user.display_name,
         plan: "oss",
-        authMethod: req.user.auth_method || "local",
-        loginMethod: "email",
+        authMethod,
+        loginMethod,
         emailVerified: !!req.user.email_verified,
         needsVerification: !req.user.email_verified,
         twoFactorEnabled: !!req.user.two_factor_enabled,
@@ -558,17 +566,7 @@ app.get("/api/csrf-token", (req, res) => {
 
 // Apply CSRF protection to API routes - Skip in development and test
 if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
-  const csrfExempt = (req, res, next) => {
-    if (
-      req.method === "OPTIONS" ||
-      req.method === "GET" ||
-      req.method === "HEAD"
-    )
-      return next();
-    const path = req.path || "";
-    if (path === "/logout") return next();
-    return doubleCsrfProtection(req, res, next);
-  };
+  const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection);
   app.use("/api", csrfExempt);
 }
 // Apply email verification enforcement to all API routes

@@ -1,4 +1,7 @@
 const { logger, resolveClientIp } = require("../utils/logger");
+const {
+  authenticateInternalWorkerRequest,
+} = require("./internal-worker-auth");
 
 /**
  * Comprehensive authentication middleware.
@@ -8,25 +11,8 @@ const { logger, resolveClientIp } = require("../utils/logger");
  * @param {import("express").NextFunction} next
  */
 const requireAuth = (req, res, next) => {
-  // In test mode, allow manual retry endpoint without session
-  if (
-    process.env.NODE_ENV === "test" &&
-    req.method === "POST" &&
-    /^\/api\/alert-queue\/[0-9]+\/retry$/.test(req.path)
-  ) {
-    return next();
-  }
-
   // Allow internal worker calls authenticated via Bearer token
-  const authHeader = req.get("Authorization") || "";
-  const workerKey = process.env.WORKER_API_KEY || process.env.SESSION_SECRET;
-  if (workerKey && authHeader === `Bearer ${workerKey}`) {
-    req.isWorkerCall = true;
-    req.user = req.user || {
-      id: null,
-      role: "admin",
-      email: "worker@internal",
-    };
+  if (authenticateInternalWorkerRequest(req)) {
     logger.info("Internal worker call authenticated", {
       path: req.path,
       method: req.method,

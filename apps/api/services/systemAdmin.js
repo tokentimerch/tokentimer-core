@@ -37,6 +37,38 @@ async function countOtherActiveSystemAdmins(queryable, userId) {
   return rows[0]?.c || 0;
 }
 
+/**
+ * Grant workspace_manager on every workspace for installation system admins.
+ * On conflict, upgrades workspace admin or viewer to workspace_manager so
+ * system admins never retain implicit workspace owner or read-only-only access.
+ *
+ * @returns {{ applied: number }}
+ */
+async function ensureSystemAdminWorkspaceAccess(db, userId) {
+  const { rows: adminRows } = await db.query(
+    "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
+    [userId],
+  );
+  if (adminRows.length === 0 || adminRows[0].is_admin !== true) {
+    return { applied: 0 };
+  }
+
+  const result = await db.query(
+    `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
+     SELECT $1::int, w.id, 'workspace_manager', NULL
+       FROM workspaces w
+     ON CONFLICT (user_id, workspace_id) DO UPDATE
+       SET role = CASE
+             WHEN workspace_memberships.role IN ('admin', 'viewer')
+               THEN 'workspace_manager'
+             ELSE workspace_memberships.role
+           END
+     RETURNING workspace_id`,
+    [userId],
+  );
+  return { applied: result.rowCount || 0 };
+}
+
 module.exports = {
   SYSTEM_ADMIN_LOCK_KEY,
   ACTIVE_SYSTEM_ADMIN_WHERE,
@@ -44,4 +76,5 @@ module.exports = {
   lockSystemAdminMutation,
   countActiveSystemAdmins,
   countOtherActiveSystemAdmins,
+  ensureSystemAdminWorkspaceAccess,
 };

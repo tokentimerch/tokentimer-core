@@ -1,6 +1,7 @@
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("./audit");
+const { ensureSystemAdminWorkspaceAccess } = require("./systemAdmin");
 
 const DEFAULT_WORKSPACE_NAME = "Default workspace";
 const INSTALLATION_DEFAULT_LOCK_KEY = 0x5454_5744; // TTWD
@@ -92,11 +93,8 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
       `SELECT 1 FROM workspace_memberships WHERE user_id = $1 LIMIT 1`,
       [userId],
     );
-    if (membershipCheck.rowCount > 0) {
-      return;
-    }
-
-    const client = await pool.connect();
+    if (membershipCheck.rowCount === 0) {
+      const client = await pool.connect();
     let workspaceId;
     let created = false;
     let joinRole = "admin";
@@ -221,11 +219,21 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
         });
       }
     }
+    }
   } catch (err) {
     logger.error("ensureInitialWorkspaceForUser failed", {
       userId,
       error: err.message,
       stack: err.stack,
+    });
+  }
+
+  try {
+    await ensureSystemAdminWorkspaceAccess(pool, userId);
+  } catch (_err) {
+    logger.warn("ensureSystemAdminWorkspaceAccess failed after provisioning", {
+      userId,
+      error: _err.message,
     });
   }
 }

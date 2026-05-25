@@ -332,7 +332,7 @@ router.post(
         return res.status(200).json({ requires2FA: true, authMethod: "local" });
       }
 
-      req.login(user, (err) => {
+      req.login(user, async (err) => {
         if (err) {
           logger.error("Login session error", {
             ip: req.ip || req.socket?.remoteAddress,
@@ -340,6 +340,15 @@ router.post(
             userId: user.id,
           });
           return res.status(500).json({ error: "Login failed" });
+        }
+        try {
+          await ensureInitialWorkspaceForUser(
+            user.id,
+            user.email_original || user.email,
+            user.display_name,
+          );
+        } catch (_err) {
+          logger.debug("Non-critical operation failed", { error: _err.message });
         }
         // Audit: login success
         try {
@@ -564,7 +573,7 @@ router.post(
         return res.status(401).json({ error: "Invalid 2FA code" });
       }
 
-      req.login(user, (err) => {
+      req.login(user, async (err) => {
         if (err) {
           logger.error("2FA login session error", {
             error: err.message,
@@ -573,6 +582,16 @@ router.post(
           return res.status(500).json({ error: "Failed to finalize login" });
         }
         delete req.session.pending2FA;
+
+        try {
+          await ensureInitialWorkspaceForUser(
+            user.id,
+            user.email_original || user.email,
+            user.display_name,
+          );
+        } catch (_err) {
+          logger.debug("Non-critical operation failed", { error: _err.message });
+        }
 
         try {
           writeAudit({

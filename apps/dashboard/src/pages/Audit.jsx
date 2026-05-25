@@ -56,6 +56,7 @@ const ACTION_COLORS = {
   LOGIN_SUCCESS: 'green',
   LOGIN_FAILED: 'red',
   LOGIN_SUCCESS_2FA: 'green',
+  MEMBERSHIP_SYNCED_FROM_SSO: 'blue',
 };
 
 // Exhaustive list of all possible audit actions
@@ -65,6 +66,7 @@ const ALL_ACTION_TYPES = [
   'LOGIN_SUCCESS',
   'LOGIN_FAILED',
   'LOGIN_SUCCESS_2FA',
+  'MEMBERSHIP_SYNCED_FROM_SSO',
   'LOGOUT',
   'PASSWORD_CHANGED',
   'PASSWORD_RESET_REQUESTED',
@@ -179,6 +181,8 @@ export default function Audit({
   const cardBg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
   const borderColor = useColorModeValue('gray.400', 'gray.600');
   const emptyTextColor = useColorModeValue('gray.600', 'gray.400');
+  const isSystemAdmin = session?.isAdmin === true;
+  const canViewOrganizationAudit = isSystemAdmin || (isAdminAny && isAdminOrg);
 
   const load = useCallback(
     async (isMore = false) => {
@@ -191,7 +195,7 @@ export default function Audit({
           pageOffsetRef.current = 0;
         }
         setError('');
-        const viewerOnly = !isManagerOrAdminAny && !isAdminAny;
+        const viewerOnly = !isManagerOrAdminAny && !isSystemAdmin;
         // Core: block viewers (no backend calls)
         if (viewerOnly) {
           setEvents([]);
@@ -199,10 +203,7 @@ export default function Audit({
         }
         // Core: non-admins cannot view organization scope
         let effectiveScope = scope;
-        if (!isAdminAny && effectiveScope === 'organization') {
-          effectiveScope = 'workspace';
-        }
-        if (!isAdminOrg && effectiveScope === 'organization') {
+        if (!canViewOrganizationAudit && effectiveScope === 'organization') {
           effectiveScope = 'workspace';
         }
         const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
@@ -240,6 +241,8 @@ export default function Audit({
       isAdminAny,
       actionFilter,
       isAdminOrg,
+      isSystemAdmin,
+      canViewOrganizationAudit,
       query,
     ]
   );
@@ -256,6 +259,8 @@ export default function Audit({
     isAdminAny,
     actionFilter,
     isAdminOrg,
+    isSystemAdmin,
+    canViewOrganizationAudit,
     query,
   ]);
 
@@ -265,7 +270,7 @@ export default function Audit({
       _rolesLoaded &&
       workspaces.length > 0 &&
       !isManagerOrAdminAny &&
-      !isAdminAny
+      !isSystemAdmin
     ) {
       try {
         navigate('/dashboard', { replace: true });
@@ -275,7 +280,7 @@ export default function Audit({
     _rolesLoaded,
     workspaces.length,
     isManagerOrAdminAny,
-    isAdminAny,
+    isSystemAdmin,
     navigate,
   ]);
 
@@ -328,7 +333,7 @@ export default function Audit({
         const adminAny = roles.includes('admin');
         // Core: authorize by role. When list empty allow access (bootstrap admin / list not loaded yet).
         const managerAny = adminAny || roles.includes('workspace_manager');
-        const allow = items.length === 0 ? true : managerAny;
+        const allow = isSystemAdmin || (items.length === 0 ? true : managerAny);
         setAuthorized(allow);
         if (!allow) {
           try {
@@ -336,16 +341,18 @@ export default function Audit({
           } catch (_) {}
         }
       } catch (_) {
-        setAuthorized(false);
-        try {
-          navigate('/dashboard', { replace: true });
-        } catch (_) {}
+        setAuthorized(isSystemAdmin);
+        if (!isSystemAdmin) {
+          try {
+            navigate('/dashboard', { replace: true });
+          } catch (_) {}
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [navigate, isSystemAdmin]);
 
   // Both action filtering and search are now handled by backend, so no client-side filtering needed
   // Events from backend are already filtered based on actionFilter and query parameters
@@ -365,6 +372,14 @@ export default function Audit({
 
   function boolLabel(v) {
     return v ? 'Enabled' : 'Disabled';
+  }
+
+  function formatArrayValue(values, limit = 5) {
+    if (!Array.isArray(values) || values.length === 0) return 'none';
+    return values
+      .slice(0, limit)
+      .map(v => String(v))
+      .join(', ');
   }
 
   function formatWorkspaceSettingsMetadata(ev) {
@@ -485,6 +500,71 @@ export default function Audit({
       if (md.user_agent) parts.push(`User agent: ${md.user_agent}`);
       if (md.email) parts.push(`Email: ${md.email}`);
       return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatSsoLoginMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.method) parts.push(`Method: ${md.method}`);
+      if (md.provider_slug) parts.push(`Provider: ${md.provider_slug}`);
+      if (md.protocol) parts.push(`Protocol: ${md.protocol}`);
+      if (md.idp_groups_seen != null)
+        parts.push(`IdP groups seen: ${md.idp_groups_seen}`);
+      if (Array.isArray(md.idp_groups_sample)) {
+        parts.push(
+          `Observed groups: ${formatArrayValue(md.idp_groups_sample)}`
+        );
+      }
+      if (Array.isArray(md.configured_admin_idp_groups)) {
+        parts.push(
+          `Configured admin groups: ${formatArrayValue(md.configured_admin_idp_groups)}`
+        );
+      }
+      if (Array.isArray(md.matched_groups)) {
+        parts.push(`Matched groups: ${formatArrayValue(md.matched_groups)}`);
+      }
+      if (md.is_admin_resolved != null) {
+        parts.push(
+          `Admin mapping: ${md.is_admin_resolved ? 'matched' : 'not matched'}`
+        );
+      }
+      if (md.is_admin_after_login != null) {
+        parts.push(
+          `System admin after login: ${md.is_admin_after_login ? 'yes' : 'no'}`
+        );
+      }
+      if (md.admin_granted != null) {
+        parts.push(`Admin granted: ${md.admin_granted ? 'yes' : 'no'}`);
+      }
+      if (md.workspace_grants_count != null) {
+        parts.push(`Workspace grants: ${md.workspace_grants_count}`);
+      }
+      if (md.workspace_revocations_count != null) {
+        parts.push(`Workspace revocations: ${md.workspace_revocations_count}`);
+      }
+      return parts.join(' | ');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatSsoMembershipMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.provider_slug) parts.push(`Provider: ${md.provider_slug}`);
+      if (md.change) parts.push(`Change: ${md.change}`);
+      if (md.role) parts.push(`Role: ${md.role}`);
+      if (Array.isArray(md.matched_groups)) {
+        parts.push(`Matched groups: ${formatArrayValue(md.matched_groups)}`);
+      }
+      if (md.previous_role) parts.push(`Previous role: ${md.previous_role}`);
+      if (md.reason) parts.push(`Reason: ${md.reason}`);
+      return parts.join(' | ');
     } catch (_) {
       return '';
     }
@@ -741,6 +821,16 @@ export default function Audit({
       if (formatted) return formatted;
     }
 
+    if (
+      action === 'LOGIN_SUCCESS' &&
+      ['saml', 'oidc', 'sso'].includes(
+        String(ev?.metadata?.method || '').toLowerCase()
+      )
+    ) {
+      const formatted = formatSsoLoginMetadata(ev);
+      if (formatted) return formatted;
+    }
+
     // Authentication events
     if (
       action === 'LOGIN_SUCCESS' ||
@@ -758,6 +848,11 @@ export default function Audit({
       action === 'TWO_FACTOR_DISABLED'
     ) {
       const formatted = formatAuthMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'MEMBERSHIP_SYNCED_FROM_SSO') {
+      const formatted = formatSsoMembershipMetadata(ev);
       if (formatted) return formatted;
     }
 
@@ -882,12 +977,11 @@ export default function Audit({
 
   async function exportJson() {
     try {
-      const effectiveScope =
-        isAdminAny && isAdminOrg
-          ? scope
-          : scope === 'organization'
-            ? 'workspace'
-            : scope;
+      const effectiveScope = canViewOrganizationAudit
+        ? scope
+        : scope === 'organization'
+          ? 'workspace'
+          : scope;
       const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
       const { blob, filename, contentType } = await alertAPI.exportAudit({
         scope: effectiveScope,
@@ -913,12 +1007,11 @@ export default function Audit({
 
   async function exportCsv() {
     try {
-      const effectiveScope =
-        isAdminAny && isAdminOrg
-          ? scope
-          : scope === 'organization'
-            ? 'workspace'
-            : scope;
+      const effectiveScope = canViewOrganizationAudit
+        ? scope
+        : scope === 'organization'
+          ? 'workspace'
+          : scope;
       const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
       const { blob, filename, contentType } = await alertAPI.exportAudit({
         scope: effectiveScope,
@@ -945,7 +1038,7 @@ export default function Audit({
   // UI scope:
   // - Admins: respect selected scope
   // - Non-admins: allow 'user' and 'workspace'; coerce 'organization' to 'workspace'
-  const scopeUI = isAdminAny
+  const scopeUI = canViewOrganizationAudit
     ? scope
     : scope === 'organization'
       ? 'workspace'
@@ -1001,7 +1094,7 @@ export default function Audit({
                   ))}
                 </Select>
                 {/* Scope selector: admins can choose; managers can choose between user/workspace */}
-                {isAdminAny && isAdminOrg ? (
+                {canViewOrganizationAudit ? (
                   <Select
                     value={scope}
                     onChange={e => {

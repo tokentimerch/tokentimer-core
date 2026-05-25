@@ -290,22 +290,16 @@ class TestDataManager {
 
     const tokens = [];
 
-    // Resolve workspace_id for the session once
+    // Resolve a dedicated workspace for this dataset session
     let workspaceId = null;
     try {
       const base = TEST_CONFIG.API_URL;
-      const list = await request(base)
-        .get("/api/v1/workspaces?limit=50&offset=0")
-        .set("Cookie", session.cookie || "");
-      workspaceId = list?.body?.items?.[0]?.id || null;
-      if (!workspaceId) {
-        const create = await request(base)
-          .post("/api/v1/workspaces")
-          .set("Cookie", session.cookie || "")
-          .send({ name: `Test WS ${Date.now()}` });
-        workspaceId =
-          create.body.id || create.body?.workspace?.id || create.body?.id;
-      }
+      const create = await request(base)
+        .post("/api/v1/workspaces")
+        .set("Cookie", session.cookie || "")
+        .send({ name: `Dataset WS ${datasetId}-${Date.now()}` });
+      workspaceId =
+        create.body.id || create.body?.workspace?.id || create.body?.id;
     } catch (_) {}
 
     for (let i = 0; i < tokenCount; i++) {
@@ -325,6 +319,7 @@ class TestDataManager {
           response: response,
           datasetId: datasetId,
           sessionId: session.user.id,
+          workspaceId,
           created: Date.now(),
         };
 

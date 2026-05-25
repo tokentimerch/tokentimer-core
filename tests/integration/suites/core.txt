@@ -76,6 +76,7 @@ tests/integration/weekly-digest-worker.integration.test.js
 
 # Audit
 tests/integration/audit-filtering.test.js
+tests/integration/audit-system-admin-org-scope.test.js
 
 # Schema and utilities
 tests/integration/database-schema.test.js
@@ -110,3 +111,4 @@ tests/integration/admin-system-settings.test.js
 tests/integration/security.test.js
 tests/integration/rate-limit-security.test.js
 tests/integration/csrf-and-rate-limit.test.js
+tests/integration/csrf-worker-exemption.test.js

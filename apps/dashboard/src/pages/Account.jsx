@@ -36,7 +36,34 @@ import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { Link as RouterLink } from 'react-router-dom';
 import { trackEvent } from '../utils/analytics.js';
 
+function resolveLoginMethodDisplay(session) {
+  const providerSlug = session?.ssoProviderSlug;
+  const method = String(session?.authMethod || 'local').toLowerCase();
+  const isSsoSession =
+    providerSlug ||
+    session?.loginMethod === 'sso' ||
+    ['sso', 'saml', 'oidc'].includes(method);
+
+  if (isSsoSession) {
+    const providerLabel = providerSlug
+      ? ` (${providerSlug.replace(/-/g, ' ')})`
+      : '';
+    return {
+      label: `Single Sign-On${providerLabel}`,
+      colorScheme: 'purple',
+    };
+  }
+  if (method === 'local') {
+    return { label: 'Email & Password', colorScheme: 'green' };
+  }
+  if (method === 'google') {
+    return { label: 'Google', colorScheme: 'blue' };
+  }
+  return { label: method, colorScheme: 'gray' };
+}
+
 function Account({ session, onAccountDeleted }) {
+  const loginMethodDisplay = resolveLoginMethodDisplay(session);
   const { selectWorkspace: _selectWorkspace } = useWorkspace();
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -212,8 +239,11 @@ function Account({ session, onAccountDeleted }) {
                   Login Method:
                 </Text>
                 <Spacer display={{ base: 'none', sm: 'block' }} />
-                <Badge colorScheme='green' maxW='fit-content'>
-                  Email & Password
+                <Badge
+                  colorScheme={loginMethodDisplay.colorScheme}
+                  maxW='fit-content'
+                >
+                  {loginMethodDisplay.label}
                 </Badge>
               </Flex>
               <Flex

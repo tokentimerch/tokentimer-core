@@ -15,13 +15,47 @@ describe("Alert Bug Fixes", function () {
   let user;
   let cookie;
   let workspaceId;
+  let emailContactId;
 
   before(async () => {
     await TestEnvironment.setup();
     const u = await TestUtils.createAuthenticatedUser();
     user = u;
     cookie = u.cookie;
-    workspaceId = await TestUtils.ensureTestWorkspace(cookie);
+    workspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      cookie,
+      "Alert Bug Fixes",
+    );
+
+    const contactRes = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/contacts`)
+      .set("Cookie", cookie)
+      .send({
+        first_name: "Alert",
+        last_name: "Tester",
+        details: { email: user.email },
+      })
+      .expect(201);
+    emailContactId = contactRes.body.id;
+
+    await request(BASE)
+      .put(`/api/v1/workspaces/${workspaceId}/alert-settings`)
+      .set("Cookie", cookie)
+      .send({
+        email_alerts_enabled: true,
+        delivery_window_start: "00:00",
+        delivery_window_end: "23:59",
+        delivery_window_tz: "UTC",
+        contact_groups: [
+          {
+            id: "alert-bug-fixes-default",
+            name: "Alert Bug Fixes Default",
+            email_contact_ids: [emailContactId],
+          },
+        ],
+        default_contact_group_id: "alert-bug-fixes-default",
+      })
+      .expect(200);
   });
 
   after(async () => {
@@ -77,7 +111,8 @@ describe("Alert Bug Fixes", function () {
     await request(BASE)
       .put(`/api/v1/workspaces/${workspaceId}/alert-settings`)
       .set("Cookie", cookie)
-      .send({ alert_thresholds: [30, 7, 1, 0, -1, -2] });
+      .send({ alert_thresholds: [30, 7, 1, 0, -1, -2] })
+      .expect(200);
 
     // Create a token that expired 1 day ago
     const expiredDate = new Date();
@@ -198,7 +233,8 @@ describe("Alert Bug Fixes", function () {
     await request(BASE)
       .put(`/api/v1/workspaces/${workspaceId}/alert-settings`)
       .set("Cookie", cookie)
-      .send({ alert_thresholds: [30, 7, 1, 0, -1, -2, -3] });
+      .send({ alert_thresholds: [30, 7, 1, 0, -1, -2, -3] })
+      .expect(200);
 
     // Run queue discovery
     await TestUtils.runNode(

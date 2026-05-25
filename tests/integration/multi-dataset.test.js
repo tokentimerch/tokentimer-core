@@ -150,8 +150,16 @@ describe("Multi-Dataset Test Suite", () => {
       // Test token retrieval for each session
       for (let i = 0; i < scenario.sessions.length; i++) {
         const session = scenario.sessions[i];
+        const userTokens = scenario.tokens.filter(
+          (t) => t.sessionId === session.user.id,
+        );
+        const workspaceId = userTokens[0]?.workspaceId;
+        expect(workspaceId, "scenario tokens should carry workspaceId").to
+          .exist;
+
         const response = await request(TEST_CONFIG.API_URL)
           .get("/api/tokens")
+          .query({ workspace_id: workspaceId })
           .set("Cookie", session.cookie || "");
 
         if (response.status !== 200) {
@@ -167,10 +175,11 @@ describe("Multi-Dataset Test Suite", () => {
         const items = response.body.items || response.body;
         expect(items).to.be.an("array");
 
-        const userTokens = scenario.tokens.filter(
-          (t) => t.sessionId === session.user.id,
+        const scenarioTokenIds = new Set(userTokens.map((t) => t.id));
+        const visibleScenarioTokens = items.filter((t) =>
+          scenarioTokenIds.has(t.id),
         );
-        expect(items).to.have.length(userTokens.length);
+        expect(visibleScenarioTokens).to.have.length(userTokens.length);
       }
 
       logger.info("✅ Token operations tested across multiple datasets");
@@ -293,10 +302,12 @@ describe("Multi-Dataset Test Suite", () => {
       // Verify isolation - users from dataset1 should not see tokens from dataset2
       const response1 = await request(TEST_CONFIG.API_URL)
         .get("/api/tokens")
+        .query({ workspace_id: tokens1[0]?.workspaceId })
         .set("Cookie", sessions1[0].cookie || "");
 
       const response2 = await request(TEST_CONFIG.API_URL)
         .get("/api/tokens")
+        .query({ workspace_id: tokens2[0]?.workspaceId })
         .set("Cookie", sessions2[0].cookie || "");
 
       if (response1.status !== 200) {

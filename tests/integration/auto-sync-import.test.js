@@ -194,10 +194,12 @@ describe("Auto-sync import deduplication — with location", function () {
     // Token count must stay at 1 — no duplicate inserted
     expect(await tokenCount(workspaceId)).to.equal(1);
 
-    // Expiration must have been refreshed (pg returns DATE/TIMESTAMP objects)
-    const tokens = await getTokens(workspaceId);
-    const expirationIso = new Date(tokens[0].expiration).toISOString();
-    expect(expirationIso).to.include(newExpiry);
+    // Expiration must have been refreshed (compare via SQL to avoid JS timezone drift on DATE)
+    const expiryRow = await TestUtils.execQuery(
+      "SELECT expiration::text AS expiration FROM tokens WHERE workspace_id = $1 ORDER BY id LIMIT 1",
+      [workspaceId],
+    );
+    expect(expiryRow.rows[0].expiration).to.equal(newExpiry);
   });
 
   it("POST /api/v1/integrations/import - same name but different location creates a new token", async () => {

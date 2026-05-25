@@ -32,7 +32,10 @@ describe("Contact group default fallback", function () {
     await TestEnvironment.setup();
     user = await TestUtils.createAuthenticatedUser();
     cookie = user.cookie;
-    wsId = await TestUtils.ensureTestWorkspace(cookie);
+    wsId = await TestUtils.ensureDedicatedTestWorkspace(
+      cookie,
+      "Contact Group Fallback",
+    );
   });
 
   after(async () => {
@@ -258,6 +261,10 @@ describe("Contact group default fallback", function () {
       if ([200, 202].includes(res.status)) {
         retryOk = true;
         break;
+      }
+      if (res.status === 403) {
+        await TestUtils.wait(1000 * (attempt + 1));
+        continue;
       }
       if (res.status === 400) {
         // Some runs can return "not retryable" if state changed between checks.

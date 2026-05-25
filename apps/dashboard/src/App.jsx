@@ -153,15 +153,16 @@ function RequireManagerRoute({ session, children }) {
         if (!cancelled) setIsAllowed(false);
         return;
       }
+      const isSystemAdmin = session?.isAdmin === true;
       try {
         const ws = await workspaceAPI.list(50, 0);
         const items = ws?.items || [];
         const roles = items.map(w => String(w.role || '').toLowerCase());
         const hasManagerOrAdmin =
           roles.includes('admin') || roles.includes('workspace_manager');
-        if (!cancelled) setIsAllowed(hasManagerOrAdmin);
+        if (!cancelled) setIsAllowed(isSystemAdmin || hasManagerOrAdmin);
       } catch (_) {
-        if (!cancelled) setIsAllowed(false);
+        if (!cancelled) setIsAllowed(isSystemAdmin);
       }
     })();
     return () => {
