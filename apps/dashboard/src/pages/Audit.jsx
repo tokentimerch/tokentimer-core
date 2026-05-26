@@ -52,6 +52,11 @@ const ACTION_COLORS = {
   ALERT_SENT: 'green',
   ALERT_SEND_FAILED: 'red',
   ALERT_SKIPPED_LIMIT: 'orange',
+  AUTO_SYNC_FAILED: 'red',
+  AUTO_SYNC_CREATED: 'green',
+  AUTO_SYNC_UPDATED: 'blue',
+  AUTO_SYNC_DELETED: 'orange',
+  AUTO_SYNC_TRIGGERED: 'purple',
   LIMIT_REMINDER_SENT: 'purple',
   LOGIN_SUCCESS: 'green',
   LOGIN_FAILED: 'red',
@@ -119,6 +124,11 @@ const ALL_ACTION_TYPES = [
   // Integrations
   'INTEGRATION_SCAN',
   'INTEGRATION_DETECT_REGIONS',
+  'AUTO_SYNC_CREATED',
+  'AUTO_SYNC_UPDATED',
+  'AUTO_SYNC_DELETED',
+  'AUTO_SYNC_TRIGGERED',
+  'AUTO_SYNC_FAILED',
   // WhatsApp
   'WHATSAPP_TEST_SENT',
   'WHATSAPP_TEST_FAILED',
@@ -797,6 +807,22 @@ export default function Audit({
     }
   }
 
+  function formatAutoSyncMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.provider) parts.push(`Provider: ${md.provider}`);
+      if (md.error) parts.push(`Error: ${md.error}`);
+      if (md.http_status != null) parts.push(`HTTP status: ${md.http_status}`);
+      if (md.config_id) parts.push(`Config ID: ${md.config_id}`);
+      if (md.enabled != null)
+        parts.push(`Enabled: ${md.enabled ? 'yes' : 'no'}`);
+      return parts.join(' | ');
+    } catch (_) {
+      return '';
+    }
+  }
+
   function formatMetadata(ev) {
     const action = String(ev?.action || '');
 
@@ -907,12 +933,23 @@ export default function Audit({
       if (formatted) return formatted;
     }
 
-    // Integration events
+    // Integration / auto-sync events
     if (
       action === 'INTEGRATION_SCAN' ||
       action === 'INTEGRATION_DETECT_REGIONS'
     ) {
       const formatted = formatIntegrationMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'AUTO_SYNC_CREATED' ||
+      action === 'AUTO_SYNC_UPDATED' ||
+      action === 'AUTO_SYNC_DELETED' ||
+      action === 'AUTO_SYNC_TRIGGERED' ||
+      action === 'AUTO_SYNC_FAILED'
+    ) {
+      const formatted = formatAutoSyncMetadata(ev);
       if (formatted) return formatted;
     }
 

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.6.2
+  version: 0.7.0
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -2725,6 +2725,47 @@ paths:
                     type: integer
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/notifications:
+    get:
+      tags: [Alerts]
+      summary: List workspace operational notifications
+      operationId: listWorkspaceNotifications
+      description: >-
+        Returns operational notifications for the dashboard bell, including
+        auto-sync failures and alerts waiting for the delivery window.
+        Workspace admins and managers receive provider-specific items; other
+        members receive an empty list.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Notification list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        kind:
+                          type: string
+                          enum: [error, warning, info]
+                        text:
+                          type: string
+                        href:
+                          type: string
+                          nullable: true
+                        provider:
+                          type: string
+                        count:
+                          type: integer
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/alert-settings:

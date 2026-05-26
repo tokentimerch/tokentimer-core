@@ -557,8 +557,13 @@ const Navigation = ({
         return;
       }
       try {
-        const res = await workspaceAPI.getAlertSettings(currentWorkspace.id);
-        const data = res?.data || res || {};
+        const [settingsRes, notificationsRes] = await Promise.all([
+          workspaceAPI.getAlertSettings(currentWorkspace.id),
+          workspaceAPI
+            .getNotifications(currentWorkspace.id)
+            .catch(() => ({ items: [] })),
+        ]);
+        const data = settingsRes?.data || settingsRes || {};
         const emailEnabled = data.email_alerts_enabled === true;
         const webhooks = data.webhook_urls;
         const hasWebhooks = Array.isArray(webhooks) && webhooks.length > 0;
@@ -577,7 +582,29 @@ const Navigation = ({
           return emailIds.length > 0 || waIds.length > 0;
         });
         if (cancelled) return;
+        const currentRole = String(currentWorkspace?.role || '').toLowerCase();
+        const canManageWorkspaceAlerts =
+          isSystemAdmin ||
+          currentRole === 'admin' ||
+          currentRole === 'workspace_manager';
         const list = [];
+        if (canManageWorkspaceAlerts) {
+          const operational = Array.isArray(notificationsRes?.items)
+            ? notificationsRes.items
+            : [];
+          for (const item of operational) {
+            list.push({
+              id: item.id,
+              kind: item.kind === 'error' ? 'error' : 'warning',
+              text: item.text,
+              href: item.href || null,
+            });
+          }
+        }
+        if (!canManageWorkspaceAlerts) {
+          setNotifications(list);
+          return;
+        }
         if (!smtpConfigured) {
           list.push({
             id: 'smtp-not-configured',
@@ -593,6 +620,7 @@ const Navigation = ({
             id: 'alerts-disabled',
             kind: 'warning',
             text: 'Alerts are disabled until a channel is defined.',
+            href: '/preferences',
           });
         }
         if (!hasAnyContact) {
@@ -609,8 +637,16 @@ const Navigation = ({
       }
     }
     load();
+    const refreshNotifications = () => {
+      load();
+    };
+    window.addEventListener('tt:notifications-refresh', refreshNotifications);
     return () => {
       cancelled = true;
+      window.removeEventListener(
+        'tt:notifications-refresh',
+        refreshNotifications
+      );
     };
   }, [user, currentWorkspace?.id, isSystemAdmin]);
 
@@ -1157,13 +1193,22 @@ const Navigation = ({
                       const isClickable =
                         (n && typeof n.onClick === 'function') ||
                         Boolean(n?.href);
-                      let subText =
-                        'Go to Preferences to enable a notification channel.';
-                      if (n.id === 'smtp-not-configured') {
-                        subText = n.href
-                          ? 'Go to System Settings to configure SMTP.'
-                          : 'Contact a system administrator to configure SMTP.';
-                      }
+                      const subText =
+                        n.id === 'smtp-not-configured'
+                          ? n.href
+                            ? 'Go to System Settings to configure SMTP.'
+                            : 'Contact a system administrator to configure SMTP.'
+                          : n.id?.startsWith('auto-sync-failed-')
+                            ? 'Opens Import tokens on the Manage auto-sync tab.'
+                            : n.id === 'alerts-out-of-window'
+                              ? 'View the alert queue on the Usage page.'
+                              : n.id === 'alerts-disabled'
+                                ? 'Go to Preferences to enable a notification channel.'
+                                : n.id === 'no-contacts-defined'
+                                  ? 'Go to Preferences to assign contacts to contact groups.'
+                                  : isClickable
+                                    ? 'Go to Preferences to enable a notification channel.'
+                                    : 'No action available from this notification.';
                       return (
                         <MenuItem
                           key={n.id}
@@ -1185,7 +1230,7 @@ const Navigation = ({
                         >
                           <VStack align='start' spacing='0'>
                             <Text fontSize='sm' fontWeight='medium'>
-                              ⚠️ {n.text}
+                              {n.kind === 'error' ? '🔴' : '⚠️'} {n.text}
                             </Text>
                             <Text fontSize='xs' color={gray400}>
                               {subText}

@@ -19,7 +19,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.6.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.7.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag
     pullPolicy: IfNotPresent
 
@@ -105,7 +105,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.6.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.7.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -152,7 +152,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.6.2"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.7.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -175,7 +175,7 @@ worker:
     # Alert Discovery -- scans tokens and queues expiry alerts
     discovery:
       enabled: true
-      schedule: "*/5 * * * *" # Every 5 minutes
+      schedule: "*/5 * * * *" # Every 5 min (:00, :05, :10, ...)
       concurrencyPolicy: Forbid
       startingDeadlineSeconds: 300
       successfulJobsHistoryLimit: 3
@@ -192,7 +192,7 @@ worker:
     # Alert Delivery -- processes alert queue and sends notifications
     delivery:
       enabled: true
-      schedule: "*/5 * * * *" # Every 5 minutes
+      schedule: "1/5 * * * *" # 1 min after discovery (:01, :06, :11, ...)
       concurrencyPolicy: Forbid
       startingDeadlineSeconds: 300
       successfulJobsHistoryLimit: 3

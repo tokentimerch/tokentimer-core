@@ -1,6 +1,10 @@
 const { request, expect, TestUtils } = require("./setup");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+const WORKER_SECRET =
+  process.env.WORKER_API_KEY ||
+  process.env.SESSION_SECRET ||
+  "test-session-secret-key";
 
 describe("Integrations route matrix", function () {
   this.timeout(90000);
@@ -64,6 +68,17 @@ describe("Integrations route matrix", function () {
         .send(route.body);
       expect([401, 403]).to.include(res.status);
     }
+  });
+
+  it("allows worker bearer on aws detect-regions without workspace_id", async () => {
+    const res = await request(BASE)
+      .post("/api/v1/integrations/aws/detect-regions")
+      .set("Authorization", `Bearer ${WORKER_SECRET}`)
+      .send({});
+
+    expect(res.status).to.equal(400);
+    expect(res.body.error).to.match(/accessKeyId and secretAccessKey/i);
+    expect(res.body.code).to.not.equal("VIEWER_NOT_ALLOWED");
   });
 
   it("enforces role guard for viewer on import endpoints", async () => {

@@ -13,6 +13,11 @@ const { logger } = require("./logger");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
+// Enterprise baseline runs this core suite against the enterprise API, which
+// correctly allows aws/azure/etc. Skip core-only edition gates in that context.
+const describeCoreEditionGates =
+  process.env.TT_TEST_RUNTIME === "enterprise" ? describe.skip : describe;
+
 // ---------------------------------------------------------------------------
 // 1. Auto-Sync CRUD
 // ---------------------------------------------------------------------------
@@ -90,71 +95,72 @@ describe("Auto-Sync CRUD", function () {
       .expect(401);
   });
 
-  it("POST /auto-sync - should reject enterprise-only providers in core (403)", async () => {
-    const res = await request(BASE)
-      .post(`/api/v1/workspaces/${workspaceId}/auto-sync`)
-      .set("Cookie", session.cookie)
-      .send({
-        provider: "aws",
-        credentials: {
-          accessKeyId: "AKIATEST",
-          secretAccessKey: "secret",
-        },
-        frequency: "daily",
-        schedule_time: "09:00",
-        schedule_tz: "UTC",
-      })
-      .expect(403);
+  describeCoreEditionGates("core edition gates for enterprise-only providers", function () {
+    it("POST /auto-sync - should reject enterprise-only providers in core (403)", async () => {
+      const res = await request(BASE)
+        .post(`/api/v1/workspaces/${workspaceId}/auto-sync`)
+        .set("Cookie", session.cookie)
+        .send({
+          provider: "aws",
+          credentials: {
+            accessKeyId: "AKIATEST",
+            secretAccessKey: "secret",
+          },
+          frequency: "daily",
+          schedule_time: "09:00",
+          schedule_tz: "UTC",
+        })
+        .expect(403);
 
-    expect(res.body).to.have.property("code", "FEATURE_NOT_AVAILABLE");
-    expect(res.body.error).to.match(/not available in this edition/i);
-  });
+      expect(res.body).to.have.property("code", "FEATURE_NOT_AVAILABLE");
+      expect(res.body.error).to.match(/not available in this edition/i);
+    });
 
-  // --- Edition gates for stale DB rows (e.g. restored from enterprise backup) ---
+    // Stale DB rows (e.g. restored from enterprise backup)
+    it("PUT /auto-sync/:id - should reject enterprise-only providers in core (403)", async () => {
+      const inserted = await TestUtils.execQuery(
+        `INSERT INTO auto_sync_configs
+           (workspace_id, provider, credentials_encrypted, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
+         VALUES ($1, 'aws', 'dummy', 'daily', '09:00', 'UTC', TRUE, NOW() + INTERVAL '1 day', $2)
+         RETURNING id`,
+        [workspaceId, testUser.id],
+      );
+      const staleId = inserted.rows[0].id;
 
-  it("PUT /auto-sync/:id - should reject enterprise-only providers in core (403)", async () => {
-    const inserted = await TestUtils.execQuery(
-      `INSERT INTO auto_sync_configs
-         (workspace_id, provider, credentials_encrypted, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
-       VALUES ($1, 'aws', 'dummy', 'daily', '09:00', 'UTC', TRUE, NOW() + INTERVAL '1 day', $2)
-       RETURNING id`,
-      [workspaceId, testUser.id],
-    );
-    const staleId = inserted.rows[0].id;
+      const res = await request(BASE)
+        .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${staleId}`)
+        .set("Cookie", session.cookie)
+        .send({ frequency: "weekly" })
+        .expect(403);
 
-    const res = await request(BASE)
-      .put(`/api/v1/workspaces/${workspaceId}/auto-sync/${staleId}`)
-      .set("Cookie", session.cookie)
-      .send({ frequency: "weekly" })
-      .expect(403);
+      expect(res.body).to.have.property("code", "FEATURE_NOT_AVAILABLE");
 
-    expect(res.body).to.have.property("code", "FEATURE_NOT_AVAILABLE");
+      await TestUtils.execQuery("DELETE FROM auto_sync_configs WHERE id = $1", [
+        staleId,
+      ]);
+    });
 
-    await TestUtils.execQuery("DELETE FROM auto_sync_configs WHERE id = $1", [
-      staleId,
-    ]);
-  });
+    it("POST /auto-sync/:id/run - should reject enterprise-only providers in core (403)", async () => {
+      const inserted = await TestUtils.execQuery(
+        `INSERT INTO auto_sync_configs
+           (workspace_id, provider, credentials_encrypted, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
+         VALUES ($1, 'aws', 'dummy', 'daily', '09:00', 'UTC', TRUE, NOW() + INTERVAL '1 day', $2)
+         RETURNING id`,
+        [workspaceId, testUser.id],
+      );
+      const staleId = inserted.rows[0].id;
 
-  it("POST /auto-sync/:id/run - should reject enterprise-only providers in core (403)", async () => {
-    const inserted = await TestUtils.execQuery(
-      `INSERT INTO auto_sync_configs
-         (workspace_id, provider, credentials_encrypted, frequency, schedule_time, schedule_tz, enabled, next_sync_at, created_by)
-       VALUES ($1, 'aws', 'dummy', 'daily', '09:00', 'UTC', TRUE, NOW() + INTERVAL '1 day', $2)
-       RETURNING id`,
-      [workspaceId, testUser.id],
-    );
-    const staleId = inserted.rows[0].id;
+      const res = await request(BASE)
+        .post(`/api/v1/workspaces/${workspaceId}/auto-sync/${staleId}/run`)
+        .set("Cookie", session.cookie)
+        .expect(403);
 
-    const res = await request(BASE)
-      .post(`/api/v1/workspaces/${workspaceId}/auto-sync/${staleId}/run`)
-      .set("Cookie", session.cookie)
-      .expect(403);
+      expect(res.body).to.have.property("code", "FEATURE_NOT_AVAILABLE");
 
-    expect(res.body).to.have.property("code", "FEATURE_NOT_AVAILABLE");
-
-    await TestUtils.execQuery("DELETE FROM auto_sync_configs WHERE id = $1", [
-      staleId,
-    ]);
+      await TestUtils.execQuery("DELETE FROM auto_sync_configs WHERE id = $1", [
+        staleId,
+      ]);
+    });
   });
 
   // --- GET list ---

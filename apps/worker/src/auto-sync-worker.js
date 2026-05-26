@@ -20,6 +20,10 @@ import {
 import crypto from "crypto";
 import axios from "axios";
 import { isAutoSyncProviderAllowed } from "./auto-sync-providers.js";
+import {
+  formatAutoSyncError,
+  recordAutoSyncFailure,
+} from "./shared/autoSyncFailure.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
 const KDF_SALT = "tokentimer-settings-encryption";
@@ -210,6 +214,8 @@ async function runAutoSync() {
           frequency,
           schedule_time,
           schedule_tz,
+          last_sync_status: previousStatus,
+          created_by: createdBy,
         } = config;
         logger.info(`Syncing ${provider} for workspace ${workspace_id}`);
 
@@ -219,13 +225,15 @@ async function runAutoSync() {
         if (!isAutoSyncProviderAllowed(provider)) {
           const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
           const message = `Auto-sync for ${provider} is not available in this edition.`;
-          await client.query(
-            `UPDATE auto_sync_configs
-             SET last_sync_at = NOW(), last_sync_status = 'failed', last_sync_error = $1,
-                 next_sync_at = $2, updated_at = NOW()
-             WHERE id = $3`,
-            [message, nextSync, id],
-          );
+          await recordAutoSyncFailure(client, {
+            configId: id,
+            workspaceId: workspace_id,
+            provider,
+            createdBy,
+            previousStatus,
+            errorMessage: message,
+            nextSync,
+          });
           logger.warn(message, { workspace_id, provider });
           cAutoSync.inc({ provider, status: "failure" });
           gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
@@ -346,15 +354,17 @@ async function runAutoSync() {
 
           cAutoSync.inc({ provider, status: "failure" });
           gAutoSyncLastRun.set({ provider, status: "failure" }, Date.now() / 1000);
-          // Update config: failed
           const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
-          await client.query(
-            `UPDATE auto_sync_configs
-             SET last_sync_at = NOW(), last_sync_status = 'failed',
-                 last_sync_error = $1, next_sync_at = $2, updated_at = NOW()
-             WHERE id = $3`,
-            [String(syncErr?.message || syncErr).substring(0, 1000), nextSync, id],
-          );
+          await recordAutoSyncFailure(client, {
+            configId: id,
+            workspaceId: workspace_id,
+            provider,
+            createdBy,
+            previousStatus,
+            errorMessage: formatAutoSyncError(syncErr),
+            httpStatus: syncErr?.response?.status || null,
+            nextSync,
+          });
         }
       }),
     );

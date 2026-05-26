@@ -502,6 +502,7 @@ export const API_ENDPOINTS = {
   WORKSPACE_INVITATION: (id, invitationId) =>
     `/api/v1/workspaces/${id}/invitations/${invitationId}`,
   WORKSPACE_ALERT_SETTINGS: id => `/api/v1/workspaces/${id}/alert-settings`,
+  WORKSPACE_NOTIFICATIONS: id => `/api/v1/workspaces/${id}/notifications`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
   // Vault integration (workspace_id required for scan)
   VAULT_SCAN: workspaceId =>
@@ -1036,6 +1037,16 @@ export const workspaceAPI = {
     try {
       const res = await apiClient.get(
         API_ENDPOINTS.WORKSPACE_ALERT_SETTINGS(id)
+      );
+      return res.data;
+    } catch (e) {
+      throw new Error(handleApiError(e));
+    }
+  },
+  getNotifications: async id => {
+    try {
+      const res = await apiClient.get(
+        API_ENDPOINTS.WORKSPACE_NOTIFICATIONS(id)
       );
       return res.data;
     } catch (e) {

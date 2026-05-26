@@ -534,6 +534,80 @@ router.post(
   },
 );
 
+// Operational notifications for the dashboard bell (auto-sync failures, deferred alerts)
+router.get(
+  "/api/v1/workspaces/:id/notifications",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  async (req, res) => {
+    try {
+      const roleRes = await pool.query(
+        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+        [req.workspace.id, req.user.id],
+      );
+      const role = roleRes.rows?.[0]?.role || null;
+      const isPrivileged =
+        role === "admin" || role === "workspace_manager";
+
+      const items = [];
+
+      if (isPrivileged) {
+        const failedSync = await pool.query(
+          `SELECT provider, last_sync_error, last_sync_at
+           FROM auto_sync_configs
+           WHERE workspace_id = $1 AND enabled = TRUE AND last_sync_status = 'failed'
+           ORDER BY last_sync_at DESC NULLS LAST`,
+          [req.workspace.id],
+        );
+        for (const row of failedSync.rows) {
+          const provider = row.provider || "integration";
+          const errText = String(row.last_sync_error || "Unknown error").trim();
+          items.push({
+            id: `auto-sync-failed-${provider}`,
+            kind: "error",
+            text: `Auto-sync failed for ${provider}: ${errText}`,
+            href: `/dashboard?import=${encodeURIComponent(provider)}&autoSyncManage=1`,
+            provider,
+          });
+        }
+
+        const deferred = await pool.query(
+          `SELECT COUNT(*)::int AS count
+           FROM alert_queue aq
+           JOIN tokens t ON t.id = aq.token_id
+           WHERE t.workspace_id = $1
+             AND aq.status = 'pending'
+             AND aq.error_message = 'OUT_OF_WINDOW'`,
+          [req.workspace.id],
+        );
+        const deferredCount = deferred.rows?.[0]?.count || 0;
+        if (deferredCount > 0) {
+          items.push({
+            id: "alerts-out-of-window",
+            kind: "info",
+            text:
+              deferredCount === 1
+                ? "1 alert waiting for delivery window"
+                : `${deferredCount} alerts waiting for delivery window`,
+            href: "/usage",
+            count: deferredCount,
+          });
+        }
+      }
+
+      res.json({ items });
+    } catch (e) {
+      logger.error("Workspace notifications error", {
+        error: e.message,
+        workspaceId: req.workspace.id,
+      });
+      res.status(500).json({ error: "Failed to load notifications" });
+    }
+  },
+);
+
 // ============================================================
 // ENDPOINT (SSL) MONITORING ENDPOINTS
 // ============================================================

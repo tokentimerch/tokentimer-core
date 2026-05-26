@@ -96,6 +96,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     extractQuotaFromError,
     contactGroups,
     onSelectionChange,
+    autoSyncManageMode = false,
   },
   ref
 ) {
@@ -245,30 +246,32 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
 
   return (
     <VStack align='stretch' spacing={3}>
-      <Box>
-        <Text fontSize='sm' color={helpTextColor}>
-          Scans GitHub for tokens, secrets, SSH keys or deploy tokens. The
-          read-only PAT is used for scanning and stored encrypted if auto-sync
-          is enabled.
-        </Text>
-        <Text fontSize='sm' mt={1}>
-          <ChakraLink
-            onClick={() =>
-              window.open(
-                'https://tokentimer.ch/docs/tokens#import-github',
-                '_blank',
-                'noopener,noreferrer'
-              )
-            }
-            cursor='pointer'
-            color='blue.500'
-            textDecoration='underline'
-            isExternal
-          >
-            Learn more about importing from GitHub →
-          </ChakraLink>
-        </Text>
-      </Box>
+      {!autoSyncManageMode ? (
+        <Box>
+          <Text fontSize='sm' color={helpTextColor}>
+            Scans GitHub for tokens, secrets, SSH keys or deploy tokens. The
+            read-only PAT is used for scanning and stored encrypted if auto-sync
+            is enabled.
+          </Text>
+          <Text fontSize='sm' mt={1}>
+            <ChakraLink
+              onClick={() =>
+                window.open(
+                  'https://tokentimer.ch/docs/tokens#import-github',
+                  '_blank',
+                  'noopener,noreferrer'
+                )
+              }
+              cursor='pointer'
+              color='blue.500'
+              textDecoration='underline'
+              isExternal
+            >
+              Learn more about importing from GitHub →
+            </ChakraLink>
+          </Text>
+        </Box>
+      ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
         <Box minW='280px'>
           <Text fontSize='sm' mb={1}>
@@ -302,17 +305,19 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             </InputRightElement>
           </InputGroup>
         </Box>
-        <Button
-          colorScheme='blue'
-          onClick={doGithubScan}
-          isLoading={isScanning}
-        >
-          Scan
-        </Button>
+        {!autoSyncManageMode ? (
+          <Button
+            colorScheme='blue'
+            onClick={doGithubScan}
+            isLoading={isScanning}
+          >
+            Scan
+          </Button>
+        ) : null}
       </HStack>
       <Box border='1px solid' borderColor={borderColor} borderRadius='md' p={3}>
         <Text fontSize='sm' fontWeight='medium' mb={3}>
-          Scan Filters
+          {autoSyncManageMode ? 'Sync filters' : 'Scan Filters'}
         </Text>
         <VStack align='stretch' spacing={2}>
           <Checkbox
@@ -345,7 +350,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           </Checkbox>
         </VStack>
       </Box>
-      {githubSummary.length > 0 && (
+      {!autoSyncManageMode && githubSummary.length > 0 && (
         <Box
           border='1px solid'
           borderColor={borderColor}
@@ -368,7 +373,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           </VStack>
         </Box>
       )}
-      {githubItems.length > 0 && (
+      {!autoSyncManageMode && githubItems.length > 0 && (
         <>
           <IntegrationImportTable
             items={githubItems}

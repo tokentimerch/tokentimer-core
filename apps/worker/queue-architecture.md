@@ -75,7 +75,7 @@ Schedules are configurable via Helm values (`worker.cronjobs.*`) or Docker Compo
 | Job | Default schedule | Helm value |
 |-----|-----------------|------------|
 | Alert Discovery | `*/5 * * * *` | `worker.cronjobs.discovery.schedule` |
-| Alert Delivery | `*/5 * * * *` | `worker.cronjobs.delivery.schedule` |
+| Alert Delivery | `1/5 * * * *` | `worker.cronjobs.delivery.schedule` |
 | Weekly Digest | `0 9 * * 1` | `worker.cronjobs.weeklyDigest.schedule` |
 | Endpoint Check | `*/1 * * * *` | `worker.cronjobs.endpointCheck.schedule` |
 | Auto Sync | `0 * * * *` | `worker.cronjobs.autoSync.schedule` |
@@ -91,7 +91,7 @@ Day 1 - Token expires in 30 days:
   Queues alert: status='pending', channels=['email','slack']
   Audit: ALERT_QUEUED
 
-5 minutes later:
+1 minute later:
   Delivery Job runs
   Finds pending alert
   Sends email: success
