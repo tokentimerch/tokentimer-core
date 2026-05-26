@@ -8,6 +8,7 @@ import {
   ModalBody,
   ModalFooter,
   Button,
+  ButtonGroup,
   Box,
   VStack,
   HStack,
@@ -38,6 +39,7 @@ import {
   Select,
   FormControl,
   FormLabel,
+  Divider,
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
 import apiClient, {
@@ -716,7 +718,55 @@ function _getGCPItemDetails(item) {
   return details;
 }
 
-export default function ImportTokensModal({ isOpen, onClose, onImported }) {
+function dispatchNotificationsRefresh() {
+  try {
+    window.dispatchEvent(new CustomEvent('tt:notifications-refresh'));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+const AUTO_SYNC_POLL_INTERVAL_MS = 3000;
+const AUTO_SYNC_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+async function pollAutoSyncAfterRun({
+  workspaceId,
+  provider,
+  baselineLastSyncAt,
+  onUpdate,
+  isCancelled,
+}) {
+  const deadline = Date.now() + AUTO_SYNC_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (isCancelled()) return 'cancelled';
+    await new Promise(resolve =>
+      setTimeout(resolve, AUTO_SYNC_POLL_INTERVAL_MS)
+    );
+    if (isCancelled()) return 'cancelled';
+    const res = await apiClient.get(
+      `/api/v1/workspaces/${workspaceId}/auto-sync`
+    );
+    const configs = res.data?.items || [];
+    const cfg = configs.find(c => c.provider === provider) || false;
+    onUpdate(cfg);
+    if (!cfg || !cfg.id) return 'missing';
+    const completed =
+      cfg.last_sync_at &&
+      String(cfg.last_sync_at) !== String(baselineLastSyncAt ?? '');
+    if (completed) {
+      return cfg.last_sync_status || 'unknown';
+    }
+  }
+  return 'timeout';
+}
+
+export default function ImportTokensModal({
+  isOpen,
+  onClose,
+  onImported,
+  openRequest,
+  onOpenRequestHandled,
+}) {
   const { workspaceId } = useWorkspace();
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
@@ -948,6 +998,8 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
   // Auto-sync state
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
   const [savingAutoSync, setSavingAutoSync] = React.useState(false);
+  const [runningAutoSyncNow, setRunningAutoSyncNow] = React.useState(false);
+  const autoSyncPollCancelRef = React.useRef(false);
 
   // Available providers in core
   const CORE_AUTO_SYNC_PROVIDERS = ['github', 'gitlab'];
@@ -956,6 +1008,27 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
   const autoSyncTokenPlaceholder = hasAutoSync
     ? 'Credentials saved for auto-sync'
     : null;
+  const [integrationSubTab, setIntegrationSubTab] = React.useState('scan');
+  const [pendingManageTab, setPendingManageTab] = React.useState(false);
+  const autoSyncManageMode =
+    integrationSubTab === 'manage' && hasAutoSync && source !== 'file';
+
+  React.useEffect(
+    () => () => {
+      autoSyncPollCancelRef.current = true;
+    },
+    []
+  );
+
+  React.useEffect(() => {
+    if (isOpen) {
+      autoSyncPollCancelRef.current = false;
+      return undefined;
+    }
+    autoSyncPollCancelRef.current = true;
+    setRunningAutoSyncNow(false);
+    return undefined;
+  }, [isOpen]);
 
   // Load auto-sync config when source changes and restore form fields from scan_params
   React.useEffect(() => {
@@ -1059,6 +1132,32 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
       }
     })();
   }, [workspaceId, source]);
+
+  React.useEffect(() => {
+    if (!isOpen || !openRequest?.provider) return;
+    if (openRequest.integrationSubTab === 'manage') {
+      setPendingManageTab(true);
+    }
+    setSource(openRequest.provider);
+    onOpenRequestHandled?.();
+  }, [isOpen, openRequest, onOpenRequestHandled]);
+
+  React.useEffect(() => {
+    if (pendingManageTab) return;
+    setIntegrationSubTab('scan');
+    // Only reset when the provider changes, not when pendingManageTab clears after deep-link
+  }, [source]);
+
+  React.useEffect(() => {
+    if (!pendingManageTab) return;
+    if (autoSyncConfig === false) {
+      setPendingManageTab(false);
+      return;
+    }
+    if (!hasAutoSync) return;
+    setIntegrationSubTab('manage');
+    setPendingManageTab(false);
+  }, [pendingManageTab, hasAutoSync, autoSyncConfig]);
 
   // Build credentials from current form state
   const getAutoSyncCredentials = () => {
@@ -1182,13 +1281,130 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
     Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   );
 
-  const handleEnableAutoSync = () => {
-    if (!workspaceId || source === 'file') return;
-    // Reset defaults when opening
+  React.useEffect(() => {
+    if (integrationSubTab === 'manage' && autoSyncConfig?.id) {
+      setEnableSyncFrequency(autoSyncConfig.frequency || 'daily');
+      setEnableSyncTime(autoSyncConfig.schedule_time || '09:00');
+      setEnableSyncTz(
+        autoSyncConfig.schedule_tz ||
+          Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          'UTC'
+      );
+    }
+  }, [integrationSubTab, autoSyncConfig]);
+
+  const credentialsHasSecrets = (credentials, providerName) => {
+    if (!credentials || typeof credentials !== 'object') return false;
+    switch (providerName) {
+      case 'github':
+      case 'gitlab':
+      case 'vault':
+      case 'azure':
+      case 'azure-ad':
+      case 'gcp':
+        return Boolean(String(credentials.token || '').trim());
+      case 'aws':
+        return Boolean(
+          String(
+            credentials.secretAccessKey || credentials.secret_access_key || ''
+          ).trim()
+        );
+      default:
+        return Object.values(credentials).some(v =>
+          Boolean(String(v || '').trim())
+        );
+    }
+  };
+
+  const openEnableAutoSyncModal = () => {
     setEnableSyncFrequency('daily');
     setEnableSyncTime('09:00');
     setEnableSyncTz(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     onEnableAutoSyncOpen();
+  };
+
+  const handleEnableAutoSync = () => {
+    if (!workspaceId || source === 'file') return;
+    openEnableAutoSyncModal();
+  };
+
+  const handleSaveAutoSyncChanges = async () => {
+    if (!workspaceId || !autoSyncConfig?.id) return;
+    const { credentials, scanParams } = getAutoSyncCredentials();
+    const payload = {
+      frequency: enableSyncFrequency,
+      schedule_time: enableSyncTime,
+      schedule_tz: enableSyncTz,
+    };
+    if (credentialsHasSecrets(credentials, source)) {
+      payload.credentials = credentials;
+      payload.scan_params = scanParams;
+    }
+    setSavingAutoSync(true);
+    try {
+      await apiClient.put(
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}`,
+        payload
+      );
+      const res = await apiClient.get(
+        `/api/v1/workspaces/${workspaceId}/auto-sync`
+      );
+      const configs = res.data?.items || [];
+      setAutoSyncConfig(configs.find(c => c.provider === source) || false);
+      showSuccess(`Auto-sync settings updated for ${source}`);
+    } catch (e) {
+      showWarning(
+        e?.response?.data?.error || 'Failed to update auto-sync settings'
+      );
+    } finally {
+      setSavingAutoSync(false);
+    }
+  };
+
+  const handleRunAutoSyncNow = async () => {
+    if (!workspaceId || !autoSyncConfig?.id) return;
+    const baselineLastSyncAt = autoSyncConfig.last_sync_at || null;
+    autoSyncPollCancelRef.current = false;
+    setRunningAutoSyncNow(true);
+    try {
+      await apiClient.post(
+        `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}/run`
+      );
+      const outcome = await pollAutoSyncAfterRun({
+        workspaceId,
+        provider: source,
+        baselineLastSyncAt,
+        onUpdate: setAutoSyncConfig,
+        isCancelled: () => autoSyncPollCancelRef.current,
+      });
+      if (outcome === 'cancelled') return;
+      if (outcome === 'success' || outcome === 'partial') {
+        showSuccess(`Auto-sync completed (${outcome})`);
+        dispatchNotificationsRefresh();
+        return;
+      }
+      if (outcome === 'failed') {
+        const res = await apiClient.get(
+          `/api/v1/workspaces/${workspaceId}/auto-sync`
+        );
+        const cfg =
+          (res.data?.items || []).find(c => c.provider === source) || null;
+        showWarning(cfg?.last_sync_error || 'Auto-sync failed again');
+        dispatchNotificationsRefresh();
+        return;
+      }
+      if (outcome === 'timeout') {
+        showSuccess(
+          'Sync queued. Status will update when the worker finishes.'
+        );
+        return;
+      }
+      showWarning('Auto-sync config is no longer available');
+    } catch (e) {
+      showWarning(e?.response?.data?.error || 'Failed to queue sync');
+    } finally {
+      setRunningAutoSyncNow(false);
+    }
   };
 
   const confirmEnableAutoSync = async () => {
@@ -1204,13 +1420,13 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
         schedule_time: enableSyncTime,
         schedule_tz: enableSyncTz,
       });
-      // Reload config
+      showSuccess(`Auto-sync enabled for ${source}`);
       const res = await apiClient.get(
         `/api/v1/workspaces/${workspaceId}/auto-sync`
       );
       const configs = res.data?.items || [];
       setAutoSyncConfig(configs.find(c => c.provider === source) || false);
-      showSuccess(`Auto-sync enabled for ${source}`);
+      setIntegrationSubTab('manage');
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to enable auto-sync');
     } finally {
@@ -1238,7 +1454,10 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
         `/api/v1/workspaces/${workspaceId}/auto-sync/${autoSyncConfig.id}`
       );
       setAutoSyncConfig(false);
+      setIntegrationSubTab('scan');
+      setPendingManageTab(false);
       showSuccess(`Auto-sync disabled for ${source}`);
+      dispatchNotificationsRefresh();
     } catch (e) {
       showWarning(e?.response?.data?.error || 'Failed to disable auto-sync');
     } finally {
@@ -1308,6 +1527,8 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
     setAzureDuplicates(new Set());
     setGcpDuplicates(new Set());
     setAzureADDuplicates(new Set());
+    setIntegrationSubTab('scan');
+    setPendingManageTab(false);
   }, []);
 
   const onSelectFile = async e => {
@@ -2005,6 +2226,136 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 </Box>
               </Box>
 
+              {source !== 'file' && hasAutoSync && !isViewer ? (
+                <ButtonGroup size='sm' isAttached variant='outline'>
+                  <Button
+                    colorScheme={
+                      integrationSubTab === 'scan' ? 'blue' : undefined
+                    }
+                    variant={integrationSubTab === 'scan' ? 'solid' : 'outline'}
+                    onClick={() => setIntegrationSubTab('scan')}
+                  >
+                    Scan & Import
+                  </Button>
+                  <Button
+                    colorScheme={
+                      integrationSubTab === 'manage' ? 'blue' : undefined
+                    }
+                    variant={
+                      integrationSubTab === 'manage' ? 'solid' : 'outline'
+                    }
+                    onClick={() => setIntegrationSubTab('manage')}
+                  >
+                    Manage auto-sync
+                  </Button>
+                </ButtonGroup>
+              ) : null}
+
+              {autoSyncManageMode ? (
+                <Box
+                  border='1px solid'
+                  borderColor={borderColor}
+                  borderRadius='md'
+                  p={4}
+                >
+                  <VStack align='stretch' spacing={4}>
+                    {autoSyncConfig.last_sync_status === 'failed' ? (
+                      <Alert status='error' borderRadius='md'>
+                        <AlertIcon />
+                        <Box fontSize='sm'>
+                          <Text fontWeight='semibold'>
+                            Last auto-sync failed
+                          </Text>
+                          {autoSyncConfig.last_sync_error ? (
+                            <Text mt={1}>{autoSyncConfig.last_sync_error}</Text>
+                          ) : null}
+                        </Box>
+                      </Alert>
+                    ) : null}
+                    <Box>
+                      <Text fontSize='sm' fontWeight='semibold' mb={2}>
+                        Status
+                      </Text>
+                      <Text fontSize='sm'>
+                        Provider: {autoSyncConfig.provider}
+                      </Text>
+                      {autoSyncConfig.last_sync_at ? (
+                        <Text fontSize='sm'>
+                          Last sync:{' '}
+                          {new Date(
+                            autoSyncConfig.last_sync_at
+                          ).toLocaleString()}
+                          {autoSyncConfig.last_sync_status
+                            ? ` (${autoSyncConfig.last_sync_status})`
+                            : ''}
+                        </Text>
+                      ) : (
+                        <Text fontSize='sm' color={helpTextColor}>
+                          No sync run yet
+                        </Text>
+                      )}
+                    </Box>
+                    <Divider />
+                    <Box>
+                      <Text fontSize='sm' fontWeight='semibold' mb={3}>
+                        Schedule
+                      </Text>
+                      <VStack align='stretch' spacing={3}>
+                        <HStack spacing={4} align='flex-end' flexWrap='wrap'>
+                          <FormControl flex='1' minW='140px'>
+                            <FormLabel fontSize='sm'>Frequency</FormLabel>
+                            <Select
+                              size='sm'
+                              value={enableSyncFrequency}
+                              onChange={e =>
+                                setEnableSyncFrequency(e.target.value)
+                              }
+                            >
+                              <option value='daily'>Daily</option>
+                              <option value='weekly'>Weekly</option>
+                              <option value='monthly'>Monthly</option>
+                            </Select>
+                          </FormControl>
+                          <FormControl flex='1' minW='140px'>
+                            <FormLabel fontSize='sm'>Time</FormLabel>
+                            <Input
+                              size='sm'
+                              type='time'
+                              value={enableSyncTime}
+                              onChange={e => setEnableSyncTime(e.target.value)}
+                            />
+                          </FormControl>
+                        </HStack>
+                        <FormControl>
+                          <FormLabel fontSize='sm'>Timezone</FormLabel>
+                          <Select
+                            size='sm'
+                            value={enableSyncTz}
+                            onChange={e => setEnableSyncTz(e.target.value)}
+                          >
+                            {timezoneList.map(tz => (
+                              <option key={tz} value={tz}>
+                                {tz.replace(/_/g, ' ')}
+                              </option>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </VStack>
+                    </Box>
+                    <Divider />
+                    <Box>
+                      <Text fontSize='sm' fontWeight='semibold' mb={1}>
+                        Credentials
+                      </Text>
+                      <Text fontSize='sm' color={helpTextColor}>
+                        Enter a new token or API key to rotate stored
+                        credentials. Leave blank to keep the current secret.
+                      </Text>
+                    </Box>
+                  </VStack>
+                </Box>
+              ) : null}
+
               {source === 'file' ? (
                 <>
                   <Box>
@@ -2052,7 +2403,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 </>
               ) : null}
 
-              {source === 'vault' ? (
+              {source === 'vault' && !autoSyncManageMode ? (
                 <ImportVaultForm
                   ref={vaultFormRef}
                   workspaceId={workspaceId}
@@ -2104,6 +2455,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                   isQuotaExceededError={isQuotaExceededError}
                   formatQuotaError={formatQuotaError}
                   extractQuotaFromError={extractQuotaFromError}
+                  autoSyncManageMode={autoSyncManageMode}
                   contactGroups={contactGroups}
                 />
               ) : null}
@@ -2127,6 +2479,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                   borderColor={borderColor}
                   helpTextColor={helpTextColor}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
+                  autoSyncManageMode={autoSyncManageMode}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
                   isQuotaExceededError={isQuotaExceededError}
@@ -2136,7 +2489,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 />
               ) : null}
 
-              {source === 'aws' ? (
+              {source === 'aws' && !autoSyncManageMode ? (
                 <ImportAWSForm
                   ref={awsFormRef}
                   initialAutoSyncScanParams={awsAutoSyncScanParams}
@@ -2165,7 +2518,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 />
               ) : null}
 
-              {source === 'azure' ? (
+              {source === 'azure' && !autoSyncManageMode ? (
                 <ImportAzureForm
                   ref={azureFormRef}
                   workspaceId={workspaceId}
@@ -2193,7 +2546,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 />
               ) : null}
 
-              {source === 'gcp' ? (
+              {source === 'gcp' && !autoSyncManageMode ? (
                 <ImportGCPForm
                   ref={gcpFormRef}
                   workspaceId={workspaceId}
@@ -2221,7 +2574,7 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 />
               ) : null}
 
-              {source === 'azure-ad' ? (
+              {source === 'azure-ad' && !autoSyncManageMode ? (
                 <VStack align='stretch' spacing={3}>
                   <Box>
                     <Text fontSize='sm' color={helpTextColor}>
@@ -2643,6 +2996,36 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 </Box>
               ) : null}
 
+              {autoSyncManageMode && !isViewer ? (
+                <HStack justify='flex-end' spacing={3} pt={2}>
+                  <Button
+                    colorScheme='red'
+                    variant='outline'
+                    onClick={handleDisableAutoSync}
+                    isLoading={savingAutoSync}
+                    isDisabled={runningAutoSyncNow}
+                  >
+                    Disable auto-sync
+                  </Button>
+                  <Button
+                    variant='outline'
+                    onClick={handleRunAutoSyncNow}
+                    isLoading={runningAutoSyncNow}
+                    isDisabled={savingAutoSync}
+                  >
+                    Sync now
+                  </Button>
+                  <Button
+                    colorScheme='blue'
+                    onClick={handleSaveAutoSyncChanges}
+                    isLoading={savingAutoSync}
+                    isDisabled={runningAutoSyncNow}
+                  >
+                    Save changes
+                  </Button>
+                </HStack>
+              ) : null}
+
               {isImporting ? (
                 <Box>
                   <HStack justify='space-between' mb={1}>
@@ -2662,158 +3045,143 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
               ) : null}
             </VStack>
           </ModalBody>
-          <ModalFooter>
-            <HStack>
-              {source === 'file' ? (
-                !isImporting ? (
+          <ModalFooter flexDirection='column' alignItems='stretch' gap={3}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap'>
+              {!autoSyncManageMode ? (
+                source === 'file' ? (
+                  !isImporting ? (
+                    <Button
+                      onClick={onStartImport}
+                      colorScheme='blue'
+                      isDisabled={selectedRowsFile.size === 0}
+                    >
+                      Import {selectedRowsFile.size} selected
+                    </Button>
+                  ) : (
+                    <Button onClick={onCancelImport} variant='outline'>
+                      Cancel
+                    </Button>
+                  )
+                ) : source === 'vault' ? (
                   <Button
-                    onClick={onStartImport}
-                    colorScheme='blue'
-                    isDisabled={selectedRowsFile.size === 0}
+                    onClick={() => {
+                      setIsImporting(true);
+                      vaultFormRef.current?.importSelected();
+                    }}
+                    colorScheme='green'
+                    isDisabled={integrationSelectedCount === 0 || isImporting}
+                    isLoading={isImporting}
                   >
-                    Import {selectedRowsFile.size} selected
+                    Import selected
                   </Button>
-                ) : (
-                  <Button onClick={onCancelImport} variant='outline'>
-                    Cancel
+                ) : source === 'gitlab' ? (
+                  <Button
+                    onClick={() => {
+                      setIsImporting(true);
+                      gitlabFormRef.current?.importSelected();
+                    }}
+                    colorScheme='green'
+                    isDisabled={integrationSelectedCount === 0 || isImporting}
+                    isLoading={isImporting}
+                  >
+                    Import selected
                   </Button>
-                )
-              ) : source === 'vault' ? (
-                <Button
-                  onClick={() => {
-                    setIsImporting(true);
-                    vaultFormRef.current?.importSelected();
-                  }}
-                  colorScheme='green'
-                  isDisabled={integrationSelectedCount === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
-              ) : source === 'gitlab' ? (
-                <Button
-                  onClick={() => {
-                    setIsImporting(true);
-                    gitlabFormRef.current?.importSelected();
-                  }}
-                  colorScheme='green'
-                  isDisabled={integrationSelectedCount === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
-              ) : source === 'github' ? (
-                <Button
-                  onClick={() => {
-                    setIsImporting(true);
-                    githubFormRef.current?.importSelected();
-                  }}
-                  colorScheme='green'
-                  isDisabled={integrationSelectedCount === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
-              ) : source === 'aws' ? (
-                <Button
-                  onClick={() => {
-                    setIsImporting(true);
-                    awsFormRef.current?.importSelected();
-                  }}
-                  colorScheme='green'
-                  isDisabled={integrationSelectedCount === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
-              ) : source === 'azure' ? (
-                <Button
-                  onClick={() => {
-                    setIsImporting(true);
-                    azureFormRef.current?.importSelected();
-                  }}
-                  colorScheme='green'
-                  isDisabled={integrationSelectedCount === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
-              ) : source === 'azure-ad' ? (
-                <Button
-                  onClick={importAzureADSelected}
-                  colorScheme='green'
-                  isDisabled={selectedRowsAzureAD.size === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
-              ) : source === 'gcp' ? (
-                <Button
-                  onClick={() => {
-                    setIsImporting(true);
-                    gcpFormRef.current?.importSelected();
-                  }}
-                  colorScheme='green'
-                  isDisabled={integrationSelectedCount === 0 || isImporting}
-                  isLoading={isImporting}
-                >
-                  Import selected
-                </Button>
+                ) : source === 'github' ? (
+                  <Button
+                    onClick={() => {
+                      setIsImporting(true);
+                      githubFormRef.current?.importSelected();
+                    }}
+                    colorScheme='green'
+                    isDisabled={integrationSelectedCount === 0 || isImporting}
+                    isLoading={isImporting}
+                  >
+                    Import selected
+                  </Button>
+                ) : source === 'aws' ? (
+                  <Button
+                    onClick={() => {
+                      setIsImporting(true);
+                      awsFormRef.current?.importSelected();
+                    }}
+                    colorScheme='green'
+                    isDisabled={integrationSelectedCount === 0 || isImporting}
+                    isLoading={isImporting}
+                  >
+                    Import selected
+                  </Button>
+                ) : source === 'azure' ? (
+                  <Button
+                    onClick={() => {
+                      setIsImporting(true);
+                      azureFormRef.current?.importSelected();
+                    }}
+                    colorScheme='green'
+                    isDisabled={integrationSelectedCount === 0 || isImporting}
+                    isLoading={isImporting}
+                  >
+                    Import selected
+                  </Button>
+                ) : source === 'azure-ad' ? (
+                  <Button
+                    onClick={importAzureADSelected}
+                    colorScheme='green'
+                    isDisabled={selectedRowsAzureAD.size === 0 || isImporting}
+                    isLoading={isImporting}
+                  >
+                    Import selected
+                  </Button>
+                ) : source === 'gcp' ? (
+                  <Button
+                    onClick={() => {
+                      setIsImporting(true);
+                      gcpFormRef.current?.importSelected();
+                    }}
+                    colorScheme='green'
+                    isDisabled={integrationSelectedCount === 0 || isImporting}
+                    isLoading={isImporting}
+                  >
+                    Import selected
+                  </Button>
+                ) : null
               ) : null}
               <Button onClick={onCloseInternal}>Close</Button>
-              {/* Auto-sync button - shown for integration sources */}
-              {source !== 'file' &&
-                !isViewer &&
-                (autoSyncConfig && autoSyncConfig.id ? (
-                  <Tooltip
-                    label={`Syncs ${autoSyncConfig.frequency || 'daily'} at ${autoSyncConfig.schedule_time || '09:00'} ${autoSyncConfig.schedule_tz || 'UTC'}${autoSyncConfig.last_sync_at ? ` | Last: ${new Date(autoSyncConfig.last_sync_at).toLocaleDateString()}` : ''}`}
-                    fontSize='xs'
-                  >
-                    <Button
-                      colorScheme='red'
-                      variant='outline'
-                      onClick={handleDisableAutoSync}
-                      isLoading={savingAutoSync}
-                    >
-                      Disable auto-sync
-                    </Button>
-                  </Tooltip>
-                ) : (
-                  <Tooltip
-                    label={
-                      !isAutoSyncAllowed
-                        ? 'Auto-sync for this provider is not available in this edition'
-                        : !scanSucceededFor.has(source)
-                          ? 'Run a successful scan first to enable auto-sync'
-                          : 'Save current credentials for scheduled automatic scans'
+              {source !== 'file' && !isViewer && !hasAutoSync ? (
+                <Tooltip
+                  label={
+                    !isAutoSyncAllowed
+                      ? 'Auto-sync for this provider is not available in this edition'
+                      : !scanSucceededFor.has(source)
+                        ? 'Run a successful scan first to enable auto-sync'
+                        : 'Save current credentials for scheduled automatic scans'
+                  }
+                  fontSize='xs'
+                >
+                  <Button
+                    colorScheme='blue'
+                    variant='outline'
+                    onClick={handleEnableAutoSync}
+                    isLoading={savingAutoSync}
+                    isDisabled={
+                      !isAutoSyncAllowed || !scanSucceededFor.has(source)
                     }
-                    fontSize='xs'
+                    opacity={
+                      isAutoSyncAllowed && scanSucceededFor.has(source)
+                        ? 1
+                        : 0.5
+                    }
                   >
-                    <Button
-                      colorScheme='blue'
-                      variant='outline'
-                      onClick={handleEnableAutoSync}
-                      isLoading={savingAutoSync}
-                      isDisabled={
-                        !isAutoSyncAllowed || !scanSucceededFor.has(source)
-                      }
-                      opacity={
-                        isAutoSyncAllowed && scanSucceededFor.has(source)
-                          ? 1
-                          : 0.5
-                      }
-                    >
-                      Enable auto-sync
-                      {!isAutoSyncAllowed && ' (unavailable)'}
-                    </Button>
-                  </Tooltip>
-                ))}
+                    Enable auto-sync
+                    {!isAutoSyncAllowed && ' (unavailable)'}
+                  </Button>
+                </Tooltip>
+              ) : null}
             </HStack>
           </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* Enable auto-sync confirmation modal */}
+      {/* Enable auto-sync modal */}
       <Modal
         isOpen={isEnableAutoSyncOpen}
         onClose={onEnableAutoSyncClose}
@@ -2830,7 +3198,8 @@ export default function ImportTokensModal({ isOpen, onClose, onImported }) {
                 <AlertIcon />
                 <Text fontSize='sm'>
                   Your credentials will be encrypted and stored to run scheduled
-                  scans automatically.
+                  scans automatically. You can change the schedule and
+                  credentials later from the Manage auto-sync tab.
                 </Text>
               </Alert>
               <Box p={3} bg={confirmBoxBg} borderRadius='md'>

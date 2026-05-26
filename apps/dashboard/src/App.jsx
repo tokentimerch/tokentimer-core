@@ -5751,7 +5751,29 @@ function DashboardView({
 }
 function ImportTokensButton() {
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [openRequest, setOpenRequest] = useState(null);
   const [_created, setCreated] = useState([]);
+
+  const handleOpenRequestHandled = useCallback(() => {
+    setOpenRequest(null);
+  }, []);
+
+  useEffect(() => {
+    const provider = searchParams.get('import');
+    if (!provider) return;
+    const autoSyncManage = searchParams.get('autoSyncManage') === '1';
+    setOpenRequest({
+      provider,
+      integrationSubTab: autoSyncManage ? 'manage' : 'scan',
+    });
+    onOpen();
+    const next = new URLSearchParams(searchParams);
+    next.delete('import');
+    next.delete('autoSyncManage');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, onOpen, setSearchParams]);
+
   const onImported = newOnes => {
     try {
       if (Array.isArray(newOnes) && newOnes.length > 0) {
@@ -5778,7 +5800,12 @@ function ImportTokensButton() {
       </Button>
       <ImportTokensModal
         isOpen={isOpen}
-        onClose={onClose}
+        onClose={() => {
+          setOpenRequest(null);
+          onClose();
+        }}
+        openRequest={openRequest}
+        onOpenRequestHandled={handleOpenRequestHandled}
         onImported={onImported}
       />
     </>

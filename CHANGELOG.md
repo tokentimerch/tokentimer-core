@@ -9,6 +9,32 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-26
+
+### Added
+
+- **Operational notifications API** — `GET /api/v1/workspaces/:id/notifications` returns dashboard bell items for workspace admins and managers: failed auto-sync configs (with API error text) and alerts waiting for the delivery window (`OUT_OF_WINDOW`).
+- **Auto-sync failure pipeline** — worker `formatAutoSyncError()` surfaces integration API error bodies in `last_sync_error`; `recordAutoSyncFailure()` writes `AUTO_SYNC_FAILED` audit events on the first transition into failed state (no hourly duplicates).
+- **Manage auto-sync tab** — Import modal sub-tabs **Scan & Import** | **Manage auto-sync** when auto-sync is enabled: view failure status, edit schedule, update credentials, disable without separate modals.
+- **Dashboard bell** — Navigation loads operational notifications alongside alert-settings warnings; auto-sync failure items deep-link into Import tokens on the **Manage auto-sync** tab (`?import={provider}&autoSyncManage=1`); deferred alerts link to Usage.
+- **Bell refresh hook** — Navigation listens for `tt:notifications-refresh` so the bell can reload without a full page refresh.
+- **Audit UI** — labels and colours for `AUTO_SYNC_*` actions including `AUTO_SYNC_FAILED`.
+- **Unit tests** — `auto-sync-failure.unit.test.js`, `rbac-require-not-viewer.test.js`.
+
+### Changed
+
+- **Import modal deep-link** — `ImportTokensButton` reads dashboard query params and opens the modal on the correct provider and Manage auto-sync tab when arriving from a bell notification.
+- **Import GitHub/GitLab forms** — `autoSyncManageMode` hides scan UI on the Manage tab while keeping credentials and sync filters visible.
+- **Auto-sync worker** — delegates failure persistence to shared `apps/worker/src/shared/autoSyncFailure.js`.
+- **RBAC** — `requireNotViewer` bypasses viewer check for authenticated worker API calls (`req.isWorkerCall`).
+- **Version metadata bumped to 0.7.0** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Import modal footer** — import action buttons no longer appear on the Manage auto-sync tab.
+- **Import modal reset** — closing the modal resets the integration sub-tab to Scan & Import.
+- **Bell notification UX** — auto-sync failure subtext matches deep-link behaviour; `openRequest` is cleared after the modal consumes it; Manage tab deep-link no longer sticks when auto-sync is not configured for the provider.
+
 ## [0.6.2] - 2026-05-25
 
 ### Added

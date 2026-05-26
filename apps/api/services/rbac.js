@@ -285,6 +285,8 @@ function getIntegrationQuotaInfo(req, res, next) {
  */
 async function requireNotViewer(req, res, next) {
   try {
+    if (req.isWorkerCall) return next();
+
     // Get workspace_id from query if present (for integration endpoints)
     const workspaceId = req.query?.workspace_id || req.body?.workspace_id;
 
