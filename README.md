@@ -36,7 +36,11 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 - **Security-first by design:** TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys.
 
 <p align="center">
-  <img src="docs/assets/dashboard-overview.png" alt="TokenTimer Dashboard Overview" width="800" />
+  <img src="docs/assets/dashboard-workflow.gif" alt="Import, subdomain discovery, and dashboard filtering in TokenTimer" width="800" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/dashboard-teams-ops.gif" alt="Workspaces, audit trail, and alert preferences in TokenTimer" width="800" />
 </p>
 
 <br>
