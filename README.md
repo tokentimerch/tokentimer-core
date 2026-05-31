@@ -32,15 +32,11 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 - **Unified expiration visibility:** Track certificates, tokens, secrets, licenses, subscriptions, and other expiring assets across providers and environments in one place.
 - **Flexible multi-channel alerting:** Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
 - **Native integrations, auto-sync, and automated discovery:** Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
-- **Built for teams and audits:** Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
+- **Built for teams and audits** ([demo](docs/assets/dashboard-teams-ops.gif)): Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
 - **Security-first by design:** TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys.
 
 <p align="center">
   <img src="docs/assets/dashboard-workflow.gif" alt="Import, subdomain discovery, and dashboard filtering in TokenTimer" width="800" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/dashboard-teams-ops.gif" alt="Workspaces, audit trail, and alert preferences in TokenTimer" width="800" />
 </p>
 
 <br>
