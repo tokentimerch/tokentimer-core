@@ -63,6 +63,50 @@ describe("worker runner helpers", () => {
     );
   });
 
+  it("uses safer local defaults for auto-sync and endpoint checks", async () => {
+    const runner = await import(runnerUrl);
+    const autoSync = runner.workerDefinitions["auto-sync"];
+    const endpointCheck = runner.workerDefinitions["endpoint-check"];
+
+    assert.strictEqual(
+      runner.getWorkerConfig(
+        autoSync,
+        { WORKER_RUN_ON_START: "true" },
+        { safeLocalDefaults: true },
+      ).runOnStart,
+      false,
+    );
+    assert.strictEqual(
+      runner.getWorkerConfig(
+        endpointCheck,
+        { WORKER_RUN_ON_START: "true" },
+        { safeLocalDefaults: true },
+      ).runOnStart,
+      false,
+    );
+    assert.strictEqual(
+      runner.getWorkerConfig(
+        autoSync,
+        {
+          WORKER_AUTO_SYNC_RUN_ON_START: "true",
+        },
+        { safeLocalDefaults: true },
+      ).runOnStart,
+      true,
+    );
+  });
+
+  it("parses the safe local defaults option", async () => {
+    const runner = await import(runnerUrl);
+    const parsed = runner.parseRunnerArgs(["all", "--safe-local-defaults"]);
+
+    assert.deepStrictEqual(
+      parsed.workerNames,
+      Object.keys(runner.workerDefinitions),
+    );
+    assert.strictEqual(parsed.safeLocalDefaults, true);
+  });
+
   it("prevents overlapping runs for the same worker", async () => {
     const runner = await import(runnerUrl);
 

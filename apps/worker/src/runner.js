@@ -49,6 +49,7 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_AUTO_SYNC_RUN_ON_START",
     defaultIntervalMs: 300_000,
     runOnStartDefault: true,
+    localDevRunOnStartDefault: false,
     run: createLazyWorkerRun(
       () => import("./auto-sync-worker.js"),
       ({ runAutoSync }) => runAutoSync,
@@ -61,6 +62,7 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_ENDPOINT_CHECK_RUN_ON_START",
     defaultIntervalMs: 60_000,
     runOnStartDefault: true,
+    localDevRunOnStartDefault: false,
     run: createLazyWorkerRun(
       () => import("./endpoint-check-worker.js"),
       ({ runEndpointChecks }) => runEndpointChecks,
@@ -121,10 +123,22 @@ export function resolveWorkerNames(command, definitions = workerDefinitions) {
   return [workerName];
 }
 
-export function getWorkerConfig(worker, env = process.env) {
+export function getWorkerConfig(
+  worker,
+  env = process.env,
+  { safeLocalDefaults = false } = {},
+) {
+  const hasLocalRunOnStartDefault =
+    safeLocalDefaults &&
+    Object.prototype.hasOwnProperty.call(worker, "localDevRunOnStartDefault");
+  const runOnStartDefault = hasLocalRunOnStartDefault
+    ? worker.localDevRunOnStartDefault
+    : worker.runOnStartDefault;
   const runOnStartValue =
     env[worker.runOnStartEnv] ??
-    (worker.runOnStartDefault ? env.WORKER_RUN_ON_START : undefined);
+    (runOnStartDefault && !hasLocalRunOnStartDefault
+      ? env.WORKER_RUN_ON_START
+      : undefined);
 
   return {
     intervalMs: parseIntervalMs(
@@ -134,7 +148,7 @@ export function getWorkerConfig(worker, env = process.env) {
     ),
     runOnStart: parseBoolean(
       runOnStartValue,
-      worker.runOnStartDefault,
+      runOnStartDefault,
       worker.runOnStartEnv,
     ),
   };
@@ -193,10 +207,13 @@ export async function runWorkerOnce(
 export function parseRunnerArgs(args, env = process.env) {
   const positional = [];
   let runOnce = parseBoolean(env.WORKER_RUN_ONCE, false, "WORKER_RUN_ONCE");
+  let safeLocalDefaults = false;
 
   for (const arg of args) {
     if (arg === "--once") {
       runOnce = true;
+    } else if (arg === "--safe-local-defaults") {
+      safeLocalDefaults = true;
     } else if (arg === "--help" || arg === "-h") {
       return { help: true };
     } else if (arg.startsWith("-")) {
@@ -213,6 +230,7 @@ export function parseRunnerArgs(args, env = process.env) {
   return {
     workerNames: resolveWorkerNames(positional[0] || "all"),
     runOnce,
+    safeLocalDefaults,
     exitOnError: parseBoolean(
       env.WORKER_EXIT_ON_ERROR,
       false,
@@ -241,6 +259,7 @@ export function startRunner(
   {
     env = process.env,
     exitOnError = false,
+    safeLocalDefaults = false,
     log = logger,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
@@ -307,7 +326,7 @@ export function startRunner(
 
   for (const name of workerNames) {
     const worker = workerDefinitions[name];
-    const config = getWorkerConfig(worker, env);
+    const config = getWorkerConfig(worker, env, { safeLocalDefaults });
     const state = { running: false };
     states.set(name, state);
 
@@ -349,7 +368,9 @@ export function startRunner(
 
 function printHelp() {
   const workers = Object.keys(workerDefinitions).join(", ");
-  console.log(`Usage: node src/runner.js [worker|all] [--once]\n`);
+  console.log(
+    `Usage: node src/runner.js [worker|all] [--once] [--safe-local-defaults]\n`,
+  );
   console.log(`Workers: ${workers}`);
 }
 
@@ -372,6 +393,7 @@ async function main() {
 
     startRunner(parsed.workerNames, {
       exitOnError: parsed.exitOnError,
+      safeLocalDefaults: parsed.safeLocalDefaults,
     });
   } catch (error) {
     logger.error("worker-runner-start-failure", {

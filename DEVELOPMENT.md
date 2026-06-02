@@ -17,6 +17,11 @@ pnpm run dev
 - Dashboard on http://localhost:5173
 - Worker runner for discovery, delivery, auto-sync, endpoint checks, and weekly digest scheduling
 
+For local development, `pnpm run dev` uses safer worker startup defaults:
+auto-sync and endpoint checks are scheduled, but they do not run immediately on
+startup unless `WORKER_AUTO_SYNC_RUN_ON_START=true` or
+`WORKER_ENDPOINT_CHECK_RUN_ON_START=true` is set.
+
 Stop the full local stack with `Ctrl+C`.
 
 ## Environment
@@ -39,6 +44,11 @@ ADMIN_NAME=Administrator
 
 APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
+
+# Safer local dev defaults: schedule these workers, but do not run them
+# immediately on startup unless explicitly enabled.
+WORKER_AUTO_SYNC_RUN_ON_START=false
+WORKER_ENDPOINT_CHECK_RUN_ON_START=false
 ```
 
 The root `migrate` and `dev:*` scripts load this file before starting package
@@ -129,6 +139,11 @@ WORKER_EXIT_ON_ERROR=false
 
 Weekly digest does not run on start by default. Set
 `WORKER_WEEKLY_DIGEST_RUN_ON_START=true` if you need that behavior.
+
+The worker `dev` script passes `--safe-local-defaults`, so auto-sync and
+endpoint checks do not run on start during local development unless their
+worker-specific `*_RUN_ON_START` variables are set to `true`. The production
+runner defaults and Docker Compose commands are unchanged.
 
 ## Docker Compose
 
