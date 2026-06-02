@@ -284,8 +284,6 @@ export function startRunner(
   const states = new Map();
   const activeRuns = new Set();
   let stopping = false;
-  let sigintHandler;
-  let sigtermHandler;
 
   const invoke = (worker, state, trigger, intervalMs) => {
     if (stopping) return;
@@ -325,8 +323,8 @@ export function startRunner(
     if (stopping) return;
     stopping = true;
     log.info("worker-runner-stopping", { signal });
-    if (sigintHandler) process.off("SIGINT", sigintHandler);
-    if (sigtermHandler) process.off("SIGTERM", sigtermHandler);
+    process.off("SIGINT", sigintHandler);
+    process.off("SIGTERM", sigtermHandler);
 
     for (const timer of timers) clearIntervalFn(timer);
     await Promise.allSettled([...activeRuns]);
@@ -374,8 +372,8 @@ export function startRunner(
     );
   }
 
-  sigintHandler = () => void stop(0, "SIGINT");
-  sigtermHandler = () => void stop(0, "SIGTERM");
+  const sigintHandler = () => void stop(0, "SIGINT");
+  const sigtermHandler = () => void stop(0, "SIGTERM");
   process.once("SIGINT", sigintHandler);
   process.once("SIGTERM", sigtermHandler);
 
