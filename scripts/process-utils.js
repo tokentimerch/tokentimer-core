@@ -22,19 +22,25 @@ function assertSafeWindowsCmdArg(value) {
 }
 
 function spawnCommand(command, args = [], options = {}) {
+  const spawnOptions = {
+    ...options,
+    detached:
+      process.platform === "win32" ? options.detached : options.detached ?? true,
+  };
+
   if (process.platform === "win32" && isPackageManagerCommand(command)) {
     const commandLine = createWindowsPackageManagerCommandLine(command, args);
     return spawn(
       process.env.ComSpec || "cmd.exe",
       ["/d", "/s", "/c", commandLine],
       {
-        ...options,
+        ...spawnOptions,
         windowsHide: true,
       },
     );
   }
 
-  return spawn(command, args, options);
+  return spawn(command, args, spawnOptions);
 }
 
 function killProcessTree(child) {
@@ -53,7 +59,13 @@ function killProcessTree(child) {
     return;
   }
 
-  child.kill("SIGTERM");
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      child.kill("SIGTERM");
+    }
+  }
 }
 
 module.exports = {
