@@ -37,12 +37,20 @@ RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm run build
 FROM nginx:1.28.3-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-# Pin nginx apk (CVE-2026-9256 fixed in 1.28.3-r2 on Alpine 3.23).
+# CVE-2026-9256: pin nginx=1.28.3-r2 (remove unused nginx-module-* first to avoid r1/r2 conflict).
 RUN apk update && apk upgrade --no-cache \
-    && apk add --no-cache nginx=1.28.3-r2
+    && apk del --no-cache \
+        nginx-module-acme \
+        nginx-module-geoip \
+        nginx-module-image-filter \
+        nginx-module-njs \
+        nginx-module-xslt \
+    && apk add --no-cache nginx=1.28.3-r2 \
+    && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r2"
 
 # Create non-root user for Nginx
-RUN addgroup -g 1001 -S nginx-user && \
+RUN mkdir -p /usr/share/nginx/html && \
+    addgroup -g 1001 -S nginx-user && \
     adduser -S nginx-user -u 1001
 
 # Copy built application
