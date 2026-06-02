@@ -105,13 +105,8 @@ pnpm install
 ### 2. Start PostgreSQL
 
 ```bash
-# Using Docker
-docker run -d --name tokentimer-pg \
-  -p 5432:5432 \
-  -e POSTGRES_USER=tokentimer \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=tokentimer \
-  postgres:17
+# Using Docker. This single-line form works in PowerShell, Command Prompt, Bash, and zsh.
+docker run -d --name tokentimer-pg -p 5432:5432 -e POSTGRES_USER=tokentimer -e POSTGRES_PASSWORD=password -e POSTGRES_DB=tokentimer postgres:17
 ```
 
 ### 3. Configure Environment
@@ -151,8 +146,18 @@ pnpm run dev
 This starts:
 
 - API on `http://localhost:4000`
-- Worker (background process)
+- Worker runner with explicit intervals
 - Dashboard on `http://localhost:5173`
+
+Default worker runner intervals:
+
+| Worker | Default interval | Runs on start |
+|--------|------------------|---------------|
+| Alert Discovery | 60 seconds | Yes |
+| Alert Delivery | 30 seconds | Yes |
+| Auto Sync | 5 minutes | Yes |
+| Endpoint Check | 60 seconds | Yes |
+| Weekly Digest | 24 hours | No |
 
 ### 6. Access the Dashboard
 
@@ -271,7 +276,7 @@ open http://localhost:3000
 
 ### 5. Test Alerts
 
-The worker runs every 5 minutes and will:
+The worker runner uses explicit intervals and will:
 
 - Scan tokens for upcoming expirations
 - Queue alerts based on thresholds

@@ -146,7 +146,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["node", "/app/apps/worker/src/queue-manager.js"]
+    command: ["node", "/app/apps/worker/src/runner.js", "discovery"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
 
@@ -168,6 +168,9 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      WORKER_DISCOVERY_INTERVAL_MS: ${WORKER_DISCOVERY_INTERVAL_MS:-60000}
+      WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-true}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
@@ -204,7 +207,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["node", "/app/apps/worker/src/delivery-worker.js"]
+    command: ["node", "/app/apps/worker/src/runner.js", "delivery"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
 
@@ -235,6 +238,9 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      WORKER_DELIVERY_INTERVAL_MS: ${WORKER_DELIVERY_INTERVAL_MS:-30000}
+      WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-true}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
@@ -271,7 +277,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["node", "/app/apps/worker/src/weekly-digest-runner.js"]
+    command: ["node", "/app/apps/worker/src/runner.js", "weekly-digest"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
 
@@ -298,6 +304,9 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      WORKER_WEEKLY_DIGEST_INTERVAL_MS: ${WORKER_WEEKLY_DIGEST_INTERVAL_MS:-86400000}
+      WORKER_WEEKLY_DIGEST_RUN_ON_START: ${WORKER_WEEKLY_DIGEST_RUN_ON_START:-false}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
       # SMTP (optional - configure here or via System Settings UI)
       SMTP_HOST: ${SMTP_HOST:-}
@@ -334,7 +343,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["node", "/app/apps/worker/src/auto-sync-worker.js"]
+    command: ["node", "/app/apps/worker/src/runner.js", "auto-sync"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       DB_HOST: postgres
@@ -348,6 +357,9 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      WORKER_AUTO_SYNC_INTERVAL_MS: ${WORKER_AUTO_SYNC_INTERVAL_MS:-300000}
+      WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-true}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
     volumes: []
 
   # Worker Service - Endpoint (SSL) Check
@@ -362,7 +374,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["node", "/app/apps/worker/src/endpoint-check-worker.js"]
+    command: ["node", "/app/apps/worker/src/runner.js", "endpoint-check"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       DB_HOST: postgres
@@ -373,6 +385,9 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      WORKER_ENDPOINT_CHECK_INTERVAL_MS: ${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-60000}
+      WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-true}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
   # Dashboard (Frontend)
   dashboard:

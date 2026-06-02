@@ -70,15 +70,16 @@ CREATE TABLE alert_delivery_log (
 
 ## Default Schedules
 
-Schedules are configurable via Helm values (`worker.cronjobs.*`) or Docker Compose environment.
+Kubernetes uses CronJobs by default. Docker Compose uses the long-running
+`src/runner.js` process with explicit interval environment variables.
 
-| Job | Default schedule | Helm value |
-|-----|-----------------|------------|
-| Alert Discovery | `*/5 * * * *` | `worker.cronjobs.discovery.schedule` |
-| Alert Delivery | `1/5 * * * *` | `worker.cronjobs.delivery.schedule` |
-| Weekly Digest | `0 9 * * 1` | `worker.cronjobs.weeklyDigest.schedule` |
-| Endpoint Check | `*/1 * * * *` | `worker.cronjobs.endpointCheck.schedule` |
-| Auto Sync | `0 * * * *` | `worker.cronjobs.autoSync.schedule` |
+| Job | Helm CronJob default | Compose runner interval | Runs on start |
+|-----|----------------------|-------------------------|---------------|
+| Alert Discovery | `*/5 * * * *` | `WORKER_DISCOVERY_INTERVAL_MS=60000` (60 seconds) | Yes |
+| Alert Delivery | `1/5 * * * *` | `WORKER_DELIVERY_INTERVAL_MS=30000` (30 seconds) | Yes |
+| Weekly Digest | `0 9 * * 1` | `WORKER_WEEKLY_DIGEST_INTERVAL_MS=86400000` (24 hours) | No |
+| Endpoint Check | `*/1 * * * *` | `WORKER_ENDPOINT_CHECK_INTERVAL_MS=60000` (60 seconds) | Yes |
+| Auto Sync | `0 * * * *` | `WORKER_AUTO_SYNC_INTERVAL_MS=300000` (5 minutes) | Yes |
 
 ## Workflow Examples
 

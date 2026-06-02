@@ -140,6 +140,9 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+      - WORKER_DISCOVERY_INTERVAL_MS=${WORKER_DISCOVERY_INTERVAL_MS:-60000}
+      - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-true}
+      - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,7 +155,7 @@ services:
       - /app/node_modules
       - /app/apps/worker/node_modules
     restart: unless-stopped
-    command: sh -c "pnpm run start:discovery"
+    command: ["node", "src/runner.js", "discovery"]
 
   # Worker - Alert Delivery (sends notifications)
   worker-delivery:
@@ -188,6 +191,9 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_DOWN:-}
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+      - WORKER_DELIVERY_INTERVAL_MS=${WORKER_DELIVERY_INTERVAL_MS:-30000}
+      - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-true}
+      - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -200,7 +206,7 @@ services:
       - /app/node_modules
       - /app/apps/worker/node_modules
     restart: unless-stopped
-    command: sh -c "pnpm run start:delivery"
+    command: ["node", "src/runner.js", "delivery"]
 
   # Worker - Weekly Digest (sends weekly summary emails)
   worker-weekly-digest:
@@ -234,6 +240,9 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRES:-}
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
+      - WORKER_WEEKLY_DIGEST_INTERVAL_MS=${WORKER_WEEKLY_DIGEST_INTERVAL_MS:-86400000}
+      - WORKER_WEEKLY_DIGEST_RUN_ON_START=${WORKER_WEEKLY_DIGEST_RUN_ON_START:-false}
+      - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -246,7 +255,7 @@ services:
       - /app/node_modules
       - /app/apps/worker/node_modules
     restart: unless-stopped
-    command: node src/weekly-digest-runner.js
+    command: ["node", "src/runner.js", "weekly-digest"]
 
   # Worker - Auto Sync (scheduled integration scans)
   worker-auto-sync:
@@ -265,6 +274,9 @@ services:
       - DB_PASSWORD=password
       - SESSION_SECRET=dev_session_secret_change_in_production
       - API_URL=http://api:4000
+      - WORKER_AUTO_SYNC_INTERVAL_MS=${WORKER_AUTO_SYNC_INTERVAL_MS:-300000}
+      - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-true}
+      - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -277,7 +289,7 @@ services:
       - /app/node_modules
       - /app/apps/worker/node_modules
     restart: unless-stopped
-    command: node src/auto-sync-worker.js
+    command: ["node", "src/runner.js", "auto-sync"]
 
   # Worker - Endpoint (SSL) Check (SSL + health monitoring)
   worker-endpoint-check:
@@ -294,6 +306,9 @@ services:
       - DB_NAME=tokentimer
       - DB_USER=tokentimer
       - DB_PASSWORD=password
+      - WORKER_ENDPOINT_CHECK_INTERVAL_MS=${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-60000}
+      - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-true}
+      - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -304,7 +319,7 @@ services:
       - /app/node_modules
       - /app/apps/worker/node_modules
     restart: unless-stopped
-    command: node src/endpoint-check-worker.js
+    command: ["node", "src/runner.js", "endpoint-check"]
 
 volumes:
   postgres_data:

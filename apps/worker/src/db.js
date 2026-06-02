@@ -1,5 +1,14 @@
 import pg from "pg";
 import fs from "fs";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+try {
+  const { loadRootEnv } = require("../../../scripts/load-root-env.js");
+  loadRootEnv();
+} catch {
+  // Docker images do not include repo-level helper scripts; Compose provides env directly.
+}
 
 const { Pool } = pg;
 

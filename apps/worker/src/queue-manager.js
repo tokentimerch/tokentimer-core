@@ -77,11 +77,7 @@ const shutdown = async (signal) => {
   process.exit(0);
 };
 
-// Register signal handlers for graceful shutdown
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-
-export async function queueDiscoveryJob() {
+export async function queueDiscoveryJob({ closePool = true } = {}) {
   const startedAt = Date.now();
   let scanned = 0,
     queued = 0,
@@ -476,8 +472,8 @@ export async function queueDiscoveryJob() {
     logger.warn("DB operation failed", { error: _err.message });
   }
 
-  // Only close pool if not shutting down (shutdown handler will close it)
-  if (!isShuttingDown) {
+  // Only close pool for one-shot execution. Long-running runners keep it open.
+  if (closePool && !isShuttingDown) {
     try {
       await pool.end();
     } catch (err) {
@@ -494,6 +490,9 @@ export async function queueDiscoveryJob() {
 
 // Run queue discovery if this file is executed directly
 if (import.meta.url === new URL(process.argv[1], "file://").href) {
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
   queueDiscoveryJob().catch(async (e) => {
     logger.error(
       JSON.stringify({
