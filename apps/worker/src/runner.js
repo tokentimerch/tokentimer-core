@@ -2,13 +2,20 @@
 import { pathToFileURL } from "url";
 import { pool } from "./db.js";
 import { logger } from "./logger.js";
-import { queueDiscoveryJob } from "./queue-manager.js";
-import { deliveryWorkerJob } from "./delivery-worker.js";
-import { runAutoSync } from "./auto-sync-worker.js";
-import { runEndpointChecks } from "./endpoint-check-worker.js";
-import { weeklyDigestJob } from "./weekly-digest.js";
 
 const POSITIVE_INTEGER_PATTERN = /^\d+$/;
+
+export function createLazyWorkerRun(importModule, selectRun) {
+  let run;
+
+  return async () => {
+    if (!run) {
+      run = selectRun(await importModule());
+    }
+
+    return run();
+  };
+}
 
 export const workerDefinitions = {
   discovery: {
@@ -18,7 +25,10 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_DISCOVERY_RUN_ON_START",
     defaultIntervalMs: 60_000,
     runOnStartDefault: true,
-    run: () => queueDiscoveryJob({ closePool: false }),
+    run: createLazyWorkerRun(
+      () => import("./queue-manager.js"),
+      ({ queueDiscoveryJob }) => () => queueDiscoveryJob({ closePool: false }),
+    ),
   },
   delivery: {
     name: "delivery",
@@ -27,7 +37,10 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_DELIVERY_RUN_ON_START",
     defaultIntervalMs: 30_000,
     runOnStartDefault: true,
-    run: () => deliveryWorkerJob({ closePool: false }),
+    run: createLazyWorkerRun(
+      () => import("./delivery-worker.js"),
+      ({ deliveryWorkerJob }) => () => deliveryWorkerJob({ closePool: false }),
+    ),
   },
   "auto-sync": {
     name: "auto-sync",
@@ -36,7 +49,10 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_AUTO_SYNC_RUN_ON_START",
     defaultIntervalMs: 300_000,
     runOnStartDefault: true,
-    run: runAutoSync,
+    run: createLazyWorkerRun(
+      () => import("./auto-sync-worker.js"),
+      ({ runAutoSync }) => runAutoSync,
+    ),
   },
   "endpoint-check": {
     name: "endpoint-check",
@@ -45,7 +61,10 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_ENDPOINT_CHECK_RUN_ON_START",
     defaultIntervalMs: 60_000,
     runOnStartDefault: true,
-    run: runEndpointChecks,
+    run: createLazyWorkerRun(
+      () => import("./endpoint-check-worker.js"),
+      ({ runEndpointChecks }) => runEndpointChecks,
+    ),
   },
   "weekly-digest": {
     name: "weekly-digest",
@@ -54,7 +73,10 @@ export const workerDefinitions = {
     runOnStartEnv: "WORKER_WEEKLY_DIGEST_RUN_ON_START",
     defaultIntervalMs: 86_400_000,
     runOnStartDefault: false,
-    run: weeklyDigestJob,
+    run: createLazyWorkerRun(
+      () => import("./weekly-digest.js"),
+      ({ weeklyDigestJob }) => weeklyDigestJob,
+    ),
   },
 };
 

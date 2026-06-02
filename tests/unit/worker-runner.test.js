@@ -92,4 +92,34 @@ describe("worker runner helpers", () => {
     assert.strictEqual(firstResult.status, "success");
     assert.strictEqual(state.running, false);
   });
+
+  it("lazy-loads worker modules only when the worker runs", async () => {
+    const runner = await import(runnerUrl);
+    let importCount = 0;
+    let runCount = 0;
+
+    const run = runner.createLazyWorkerRun(
+      async () => {
+        importCount += 1;
+        return {
+          job: () => {
+            runCount += 1;
+            return "done";
+          },
+        };
+      },
+      ({ job }) => job,
+    );
+
+    assert.strictEqual(importCount, 0);
+    assert.strictEqual(runCount, 0);
+
+    assert.strictEqual(await run(), "done");
+    assert.strictEqual(importCount, 1);
+    assert.strictEqual(runCount, 1);
+
+    assert.strictEqual(await run(), "done");
+    assert.strictEqual(importCount, 1);
+    assert.strictEqual(runCount, 2);
+  });
 });
