@@ -40,7 +40,9 @@ RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm --filter @tokentimer/dashboard
 FROM nginx:1.28.3-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-RUN apk update && apk upgrade --no-cache
+# Pin nginx apk (CVE-2026-9256 fixed in 1.28.3-r2 on Alpine 3.23).
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache nginx=1.28.3-r2
 
 # Create non-root nginx user and prepare writable directories
 RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentimer && \
