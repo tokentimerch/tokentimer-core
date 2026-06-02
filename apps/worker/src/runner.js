@@ -204,7 +204,11 @@ export async function runWorkerOnce(
   }
 }
 
-export function parseRunnerArgs(args, env = process.env) {
+export function parseRunnerArgs(
+  args,
+  env = process.env,
+  definitions = workerDefinitions,
+) {
   const positional = [];
   let runOnce = parseBoolean(env.WORKER_RUN_ONCE, false, "WORKER_RUN_ONCE");
   let safeLocalDefaults = false;
@@ -228,7 +232,7 @@ export function parseRunnerArgs(args, env = process.env) {
   }
 
   return {
-    workerNames: resolveWorkerNames(positional[0] || "all"),
+    workerNames: resolveWorkerNames(positional[0] || "all", definitions),
     runOnce,
     safeLocalDefaults,
     exitOnError: parseBoolean(
@@ -239,14 +243,22 @@ export function parseRunnerArgs(args, env = process.env) {
   };
 }
 
-export async function runWorkersOnce(workerNames, { exitOnError = false } = {}) {
+export async function runWorkersOnce(
+  workerNames,
+  {
+    exitOnError = false,
+    definitions = workerDefinitions,
+    log = logger,
+  } = {},
+) {
   const results = [];
   for (const name of workerNames) {
-    const worker = workerDefinitions[name];
+    const worker = definitions[name];
     const state = { running: false };
     results.push(
       await runWorkerOnce(state, worker, {
         exitOnError,
+        log,
         trigger: "once",
       }),
     );
@@ -260,6 +272,9 @@ export function startRunner(
     env = process.env,
     exitOnError = false,
     safeLocalDefaults = false,
+    definitions = workerDefinitions,
+    closePool = () => pool.end(),
+    exitProcess = (exitCode) => process.exit(exitCode),
     log = logger,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
@@ -269,6 +284,8 @@ export function startRunner(
   const states = new Map();
   const activeRuns = new Set();
   let stopping = false;
+  let sigintHandler;
+  let sigtermHandler;
 
   const invoke = (worker, state, trigger, intervalMs) => {
     if (stopping) return;
@@ -308,12 +325,14 @@ export function startRunner(
     if (stopping) return;
     stopping = true;
     log.info("worker-runner-stopping", { signal });
+    if (sigintHandler) process.off("SIGINT", sigintHandler);
+    if (sigtermHandler) process.off("SIGTERM", sigtermHandler);
 
     for (const timer of timers) clearIntervalFn(timer);
     await Promise.allSettled([...activeRuns]);
 
     try {
-      await pool.end();
+      await closePool();
     } catch (error) {
       log.error("worker-runner-pool-close-failure", {
         error: error.message,
@@ -321,11 +340,11 @@ export function startRunner(
       exitCode = exitCode || 1;
     }
 
-    process.exit(exitCode);
+    exitProcess(exitCode);
   }
 
   for (const name of workerNames) {
-    const worker = workerDefinitions[name];
+    const worker = definitions[name];
     const config = getWorkerConfig(worker, env, { safeLocalDefaults });
     const state = { running: false };
     states.set(name, state);
@@ -355,8 +374,10 @@ export function startRunner(
     );
   }
 
-  process.once("SIGINT", () => void stop(0, "SIGINT"));
-  process.once("SIGTERM", () => void stop(0, "SIGTERM"));
+  sigintHandler = () => void stop(0, "SIGINT");
+  sigtermHandler = () => void stop(0, "SIGTERM");
+  process.once("SIGINT", sigintHandler);
+  process.once("SIGTERM", sigtermHandler);
 
   return {
     stop,
