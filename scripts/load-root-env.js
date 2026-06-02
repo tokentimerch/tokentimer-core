@@ -1,11 +1,47 @@
 const fs = require("fs");
 const path = require("path");
 
+function stripInlineComment(value) {
+  let quote = null;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (quote === '"' && char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === "#" && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index).trimEnd();
+    }
+  }
+
+  return value;
+}
+
 function unquote(value) {
+  value = stripInlineComment(value);
   if (value.length < 2) return value;
   const quote = value[0];
   if ((quote !== '"' && quote !== "'") || value[value.length - 1] !== quote) {
-    return value.replace(/\s+#.*$/, "");
+    return value;
   }
 
   const inner = value.slice(1, -1);
