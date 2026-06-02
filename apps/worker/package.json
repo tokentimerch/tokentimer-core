@@ -6,7 +6,7 @@
   "type": "module",
   "main": "src/queue-manager.js",
   "scripts": {
-    "start": "node src/queue-manager.js",
+    "start": "node src/runner.js all",
     "dev": "node src/runner.js all",
     "start:discovery": "node src/queue-manager.js",
     "start:delivery": "node src/delivery-worker.js",

@@ -35,4 +35,4 @@ ENV NODE_ENV=production
 USER tokentimer
 
 # Default command (can be overridden in docker-compose)
-CMD ["node", "apps/worker/src/queue-manager.js"]
+CMD ["node", "apps/worker/src/runner.js", "all"]
