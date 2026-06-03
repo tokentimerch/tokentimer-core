@@ -102,19 +102,13 @@ cd tokentimer-core
 pnpm install
 ```
 
-### 2. Start PostgreSQL
+### 2. Configure Environment
+
+Copy the root example for local development:
 
 ```bash
-# Using Docker
-docker run -d --name tokentimer-pg \
-  -p 5432:5432 \
-  -e POSTGRES_USER=tokentimer \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=tokentimer \
-  postgres:17
+cp .env.example .env
 ```
-
-### 3. Configure Environment
 
 Create `.env` in the root directory:
 
@@ -136,25 +130,37 @@ APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 ```
 
-### 4. Run Migrations
+### 3. Run Migrations
 
 ```bash
 pnpm run migrate
 ```
 
-### 5. Start Development Servers
+### 4. Start Development Servers
 
 ```bash
 pnpm run dev
 ```
 
-This starts:
+This starts PostgreSQL in Docker, then:
 
 - API on `http://localhost:4000`
-- Worker (background process)
+- Worker runner with cron schedules matching the Kubernetes defaults
 - Dashboard on `http://localhost:5173`
 
-### 6. Access the Dashboard
+Default worker runner schedules:
+
+| Worker | Default schedule | Runs on start |
+|--------|------------------|---------------|
+| Alert Discovery | `*/5 * * * *` | No |
+| Alert Delivery | `1/5 * * * *` | No |
+| Auto Sync | `0 * * * *` | No |
+| Endpoint Check | `*/1 * * * *` | No |
+| Weekly Digest | `0 9 * * 1` | No |
+
+Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes.
+
+### 5. Access the Dashboard
 
 Open `http://localhost:5173` in your browser.
 
@@ -271,7 +277,7 @@ open http://localhost:3000
 
 ### 5. Test Alerts
 
-The worker runs every 5 minutes and will:
+The worker runner uses explicit cron schedules and will:
 
 - Scan tokens for upcoming expirations
 - Queue alerts based on thresholds

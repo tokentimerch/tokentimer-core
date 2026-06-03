@@ -30,9 +30,12 @@ RUN chown -R tokentimer:tokentimer /app
 
 # Set environment
 ENV NODE_ENV=production
+ENV TZ=UTC
 
 # Switch to non-root user
 USER tokentimer
 
-# Default command (can be overridden in docker-compose)
-CMD ["node", "apps/worker/src/queue-manager.js"]
+# Default command (can be overridden in docker-compose).
+# Runs all workers in one process when the image starts without an override.
+# Docker Compose runs one worker type per service instead.
+CMD ["node", "apps/worker/src/runner.js", "all"]

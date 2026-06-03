@@ -70,15 +70,31 @@ CREATE TABLE alert_delivery_log (
 
 ## Default Schedules
 
-Schedules are configurable via Helm values (`worker.cronjobs.*`) or Docker Compose environment.
+Kubernetes uses CronJobs by default. Docker Compose and local development use
+the long-running `src/runner.js` process, whose default cron expressions match
+the Helm CronJob schedules.
 
-| Job | Default schedule | Helm value |
-|-----|-----------------|------------|
-| Alert Discovery | `*/5 * * * *` | `worker.cronjobs.discovery.schedule` |
-| Alert Delivery | `1/5 * * * *` | `worker.cronjobs.delivery.schedule` |
-| Weekly Digest | `0 9 * * 1` | `worker.cronjobs.weeklyDigest.schedule` |
-| Endpoint Check | `*/1 * * * *` | `worker.cronjobs.endpointCheck.schedule` |
-| Auto Sync | `0 * * * *` | `worker.cronjobs.autoSync.schedule` |
+| Job | Default cron | Runner override variable | Runs on start |
+|-----|--------------|--------------------------|---------------|
+| Alert Discovery | `*/5 * * * *` | `WORKER_DISCOVERY_CRON` | No |
+| Alert Delivery | `1/5 * * * *` | `WORKER_DELIVERY_CRON` | No |
+| Weekly Digest | `0 9 * * 1` | `WORKER_WEEKLY_DIGEST_CRON` | No |
+| Endpoint Check | `*/1 * * * *` | `WORKER_ENDPOINT_CHECK_CRON` | No |
+| Auto Sync | `0 * * * *` | `WORKER_AUTO_SYNC_CRON` | No |
+
+The runner also supports legacy interval mode for local testing or special
+deployments: set a worker cron variable to `interval`, then configure the
+matching `*_INTERVAL_MS` value. Compose wires each `*_INTERVAL_MS` variable
+through with no default value until you set one in `.env`.
+
+### Supported cron syntax
+
+Five fields: `minute hour day-of-month month day-of-week`.
+
+Supported: `*`, steps (`*/5`, `1/5`), integers, ranges, comma lists, day-of-week
+`0-7` (Sunday).
+
+Not supported: named months/weekdays, `L`, `W`, `#`.
 
 ## Workflow Examples
 

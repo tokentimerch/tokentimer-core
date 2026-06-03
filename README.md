@@ -84,13 +84,18 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 | | |
 |---|---|
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup guide |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full environment variables reference |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
 | [ROADMAP.md](ROADMAP.md) | Engineering roadmap and metrics |
-|| [https://tokentimer.ch/docs#self-hosted](https://tokentimer.ch/docs#self-hosted) | Tool usage online documentation (self-hosted) |
+| [https://tokentimer.ch/docs#self-hosted](https://tokentimer.ch/docs#self-hosted) | Tool usage online documentation (self-hosted) |
+
+**Worker deployment:** Docker Compose runs one worker type per container. The
+worker image default command runs all workers in one process (`runner.js all`).
+See [DEVELOPMENT.md](DEVELOPMENT.md) for scheduling, timezones, and observability.
 
 <br>
 

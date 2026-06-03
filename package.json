@@ -4,10 +4,13 @@
   "private": true,
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
-    "dev": "pnpm run dev:api & pnpm run dev:worker & pnpm run dev:dashboard",
-    "dev:api": "pnpm --filter @tokentimer/api dev",
-    "dev:worker": "pnpm --filter @tokentimer/worker dev",
-    "dev:dashboard": "pnpm --filter @tokentimer/dashboard dev",
+    "dev": "node scripts/dev.js",
+    "dev:noDB": "node scripts/dev.js --no-db",
+    "dev:postgres": "node scripts/run-with-env.js node scripts/start-dev-postgres.js",
+    "dev:ports:check": "node scripts/check-dev-ports.js",
+    "dev:api": "node scripts/run-with-env.js pnpm --filter @tokentimer/api dev",
+    "dev:worker": "node scripts/run-with-env.js pnpm --filter @tokentimer/worker dev",
+    "dev:dashboard": "node scripts/run-with-env.js pnpm --filter @tokentimer/dashboard dev",
     "build": "pnpm run build:api && pnpm run build:worker && pnpm run build:dashboard",
     "build:api": "pnpm --filter @tokentimer/api build",
     "build:worker": "pnpm --filter @tokentimer/worker build",
@@ -15,7 +18,7 @@
     "start": "pnpm run start:api",
     "start:api": "pnpm --filter @tokentimer/api start",
     "start:worker": "pnpm --filter @tokentimer/worker start",
-    "migrate": "pnpm --filter @tokentimer/api migrate",
+    "migrate": "node scripts/run-with-env.js pnpm --filter @tokentimer/api migrate",
     "lint": "pnpm run lint:api && pnpm run lint:worker && pnpm run lint:dashboard",
     "lint:api": "pnpm --filter @tokentimer/api lint",
     "lint:worker": "pnpm --filter @tokentimer/worker lint",
@@ -60,32 +63,6 @@
   "packageManager": "pnpm@10.33.4",
   "engines": {
     "node": ">=22.0.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "tar": "7.5.7",
-      "fast-xml-builder": "1.2.0",
-      "fast-xml-parser": "5.7.3",
-      "minimatch": "9.0.9",
-      "brace-expansion": "2.0.3",
-      "path-to-regexp": "8.4.0",
-      "yaml": "1.10.3",
-      "rollup": "4.60.0",
-      "flatted": "3.4.2",
-      "serialize-javascript": "7.0.5",
-      "picomatch@2": "2.3.2",
-      "picomatch@4": "4.0.4",
-      "ajv@6": "6.14.0",
-      "lodash": "4.18.1",
-      "follow-redirects": "1.16.0",
-      "postcss": "8.5.12",
-      "qs": "6.15.2"
-    },
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp",
-      "@scarf/scarf"
-    ]
   },
   "repository": {
     "type": "git",

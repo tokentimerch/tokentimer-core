@@ -1,4 +1,5 @@
 import { pool, withClient } from "./db.js";
+import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import {
   cDelivery,
   cRetry,
@@ -523,11 +524,7 @@ const shutdown = async (signal) => {
   process.exit(0);
 };
 
-// Register signal handlers for graceful shutdown
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-
-export async function deliveryWorkerJob() {
+export async function deliveryWorkerJob({ closePool = true } = {}) {
   const startedAt = Date.now();
   let processed = 0,
     sent = 0,
@@ -2019,8 +2016,8 @@ export async function deliveryWorkerJob() {
     logger.debug("Metrics recording failed", { error: _.message });
   }
 
-  // Only close pool if not shutting down (shutdown handler will close it)
-  if (!isShuttingDown) {
+  // Only close pool for one-shot execution. Long-running runners keep it open.
+  if (closePool && !isShuttingDown) {
     try {
       await pool.end();
     } catch (err) {
@@ -2047,7 +2044,10 @@ export async function deliveryWorkerJob() {
 }
 
 // Run delivery worker if this file is executed directly
-if (import.meta.url === new URL(process.argv[1], "file://").href) {
+if (isNodeEntrypoint(import.meta.url)) {
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
   deliveryWorkerJob().catch(async (e) => {
     logger.error(
       JSON.stringify({

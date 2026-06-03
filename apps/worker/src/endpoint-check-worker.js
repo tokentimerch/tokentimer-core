@@ -8,6 +8,7 @@
  */
 
 import { pool, withClient } from "./db.js";
+import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import { logger } from "./logger.js";
 import tls from "tls";
 import https from "https";
@@ -525,20 +526,25 @@ async function runEndpointChecks() {
 }
 
 // Entry point
-if (import.meta.url === new URL(process.argv[1], "file://").href) {
-  runEndpointChecks()
-    .catch(async (e) => {
-      logger.error("Endpoint check worker fatal error", {
-        error: e.message,
-        stack: e.stack,
-      });
-      await pool.end();
-      process.exit(1);
-    })
-    .then(async () => {
+if (isNodeEntrypoint(import.meta.url)) {
+  void (async () => {
+    try {
+      await runEndpointChecks();
       await pool.end();
       process.exit(0);
-    });
+    } catch (error) {
+      logger.error("Endpoint check worker fatal error", {
+        error: error.message,
+        stack: error.stack,
+      });
+      try {
+        await pool.end();
+      } catch (_err) {
+        logger.debug("Non-critical operation failed", { error: _err.message });
+      }
+      process.exit(1);
+    }
+  })();
 }
 
 export { runEndpointChecks };
