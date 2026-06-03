@@ -9,6 +9,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-03
+
+### Added
+
+- **Worker runner** — `apps/worker/src/runner.js` long-running scheduler for local development and Docker Compose; reuses one-shot job functions with cron mode aligned to Kubernetes Helm defaults.
+- **Cross-platform dev scripts** — `scripts/dev.js`, `scripts/run-with-env.js`, and `scripts/process-utils.js` make `pnpm run dev` and `pnpm run migrate` work on Windows, WSL, Linux, and macOS.
+- **Zero-config local dev** — `pnpm dev` starts PostgreSQL via `deploy/compose/docker-compose.postgres.yml`, applies local defaults when no root `.env` exists, and runs DB migrations on API startup.
+- **Dev helpers** — `pnpm dev:noDB`, `pnpm dev:postgres`, and `pnpm dev:ports:check` (detects port conflicts with `tokentimer-enterprise` `demo:local` / `dev-mock-api`).
+- **Root `.env.example`** — documents minimum local development variables.
+- **Unit tests** — worker runner, CLI entrypoint detection (`is-node-entrypoint.js`), root env loading, and dev port checks.
+
+### Changed
+
+- **Docker Compose workers** — each worker service runs `runner.js` instead of one-shot scripts in restart loops; cron schedules match Helm (`*/5`, `1/5`, hourly auto-sync, etc.).
+- **Worker Compose env** — `TZ=UTC` on all worker services; `WORKER_*_INTERVAL_MS` wired through with empty defaults (cron default; set `*_CRON=interval` to opt in).
+- **pnpm overrides** — moved from root `package.json` to `pnpm-workspace.yaml`.
+- **Worker default startup** — `pnpm start` / Dockerfile CMD use `runner.js`; one-shot commands remain for tests, CI, and Kubernetes CronJobs.
+- **Integration credential copy** — README and AWS import form clarify that scan credentials are discarded after one-off imports and stored encrypted when auto-sync is enabled.
+- **Version metadata bumped to 0.7.1** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Windows dev shutdown** — `dev.js` and `run-with-env.js` terminate child process trees (`taskkill /t`) with bounded graceful and hard stop timeouts.
+- **Windows worker entrypoints** — `is-node-entrypoint.js` fixes `import.meta.url` main-module detection across path formats.
+- **Root env parsing** — quoted values with inline comments parse correctly in `scripts/load-root-env.js`.
+- **Worker entrypoint races** — auto-sync and endpoint-check scripts use async IIFE + try/catch instead of `.catch().then()` exit races.
+- **Runner cron validation** — `validateCronFeasibility()` rejects impossible expressions; cron lookahead capped to 35 days; 30s shutdown timeout for in-flight runs.
+- **Runner lazy loading** — worker job modules load on first scheduled run, not at process start.
+- **Local dev DB credentials** — Postgres Compose defaults and app env defaults stay in sync when no `.env` is present.
+- **Dashboard Compose nginx** — non-root container can start on nginx 1.28+ by routing temp paths to writable `/var/cache/nginx/*` directories.
+
 ## [0.7.0] - 2026-05-26
 
 ### Added
