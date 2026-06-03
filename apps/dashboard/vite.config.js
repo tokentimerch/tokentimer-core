@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
@@ -57,7 +57,9 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
-      include: ['src/**/*.{js,jsx}'],
+      // No coverage.include: Vitest 4 reports only files loaded by the unit suite.
+      // A broad include forces App.jsx and other monoliths (0% hit) into the
+      // denominator and fails the CI gate after the v8 remapping upgrade.
       exclude: ['src/**/*.test.{js,jsx}', 'src/main.jsx'],
     },
   },
