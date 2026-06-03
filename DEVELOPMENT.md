@@ -7,15 +7,23 @@ Git Bash, WSL, Linux, and macOS.
 
 ```bash
 pnpm install
-pnpm run migrate
 pnpm run dev
 ```
 
-`pnpm run dev` starts:
+Optional: copy `.env.example` to `.env` when you need custom values (without it, local dev defaults apply).
+
+`pnpm run dev` starts PostgreSQL in Docker (when Docker is available), then runs database migrations when the API starts, then:
 
 - API on http://localhost:4000
 - Dashboard on http://localhost:5173
 - Worker runner for discovery, delivery, auto-sync, endpoint checks, and weekly digest scheduling
+
+Use `pnpm run dev:noDB` to skip the Docker PostgreSQL step when you already run the database yourself. Run migrations yourself first:
+
+```bash
+pnpm run migrate
+pnpm run dev:noDB
+```
 
 The worker runner uses **cron mode by default**. `WORKER_*_INTERVAL_MS`
 variables are ignored unless the matching `WORKER_*_CRON` is set to `interval`
@@ -30,15 +38,31 @@ worker-specific variable is set.
 
 Stop the full local stack with `Ctrl+C`.
 
+If the dashboard shows enterprise demo data or a mock API profile switcher, another
+process is still bound to port 4000. The core API only listens after PostgreSQL is
+ready, so `tokentimer-enterprise` `pnpm demo:local` can keep serving mock data on
+`:4000` while core dev is starting.
+
+Check and free the ports:
+
+```bash
+pnpm run dev:ports:check
+pkill -f dev-mock-api/server.js   # from tokentimer-enterprise demo:local
+pnpm run dev
+```
+
 ## Environment
 
-Copy the root example and edit as needed:
+Copy the root example when you need custom values:
 
 ```bash
 cp .env.example .env
 ```
 
-Minimum local development variables:
+`pnpm run dev` works without a root `.env`: it applies the same local defaults as
+`.env.example` and starts PostgreSQL in Docker with matching credentials.
+
+Minimum local development variables (also the defaults when `.env` is absent):
 
 ```bash
 NODE_ENV=development
@@ -70,10 +94,32 @@ scripts.
 
 ## PostgreSQL
 
-Using Docker:
+`pnpm run dev` starts PostgreSQL automatically via Docker Compose
+(`deploy/compose/docker-compose.postgres.yml`) using the `DB_*` values from
+your root `.env`. The container is left running when you stop the dev stack.
+
+Start PostgreSQL on its own:
+
+```bash
+pnpm run dev:postgres
+```
+
+Skip auto-start when the API should connect to an existing database:
+
+```bash
+pnpm run dev:noDB
+```
+
+Manual Docker (alternative to `dev:postgres`):
 
 ```bash
 docker run -d --name tokentimer-pg -p 5432:5432 -e POSTGRES_USER=tokentimer -e POSTGRES_PASSWORD=password -e POSTGRES_DB=tokentimer postgres:17
+```
+
+If PostgreSQL was previously created with different credentials, reset the dev volume:
+
+```bash
+docker compose -f deploy/compose/docker-compose.postgres.yml down -v
 ```
 
 If the container already exists:
@@ -85,8 +131,11 @@ docker start tokentimer-pg
 ## Useful Commands
 
 ```bash
-pnpm run migrate
 pnpm run dev
+pnpm run dev:noDB          # external DB: run `pnpm run migrate` first
+pnpm run dev:postgres
+pnpm run dev:ports:check
+pnpm run migrate           # manual migrations (dev:noDB, CI, or one-off)
 pnpm run dev:api
 pnpm run dev:dashboard
 pnpm run dev:worker

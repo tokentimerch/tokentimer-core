@@ -322,6 +322,9 @@ jobs:
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q
 
+      - name: Validate local dev postgres compose
+        run: DB_PASSWORD=password docker compose -f deploy/compose/docker-compose.postgres.yml config -q
+
   docker_build_and_scan:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest

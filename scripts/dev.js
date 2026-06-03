@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 const { loadRootEnv } = require("./load-root-env");
+const { startDevPostgres } = require("./start-dev-postgres");
+const { assertDevPortsAvailable } = require("./check-dev-ports");
 const {
-  GRACEFUL_SHUTDOWN_MS,
   HARD_SHUTDOWN_MS,
   killProcessTree,
   spawnCommand,
@@ -11,6 +12,7 @@ const {
 const repoRoot = loadRootEnv();
 const children = new Map();
 let shuttingDown = false;
+const skipPostgres = process.argv.includes("--no-db");
 
 const services = [
   {
@@ -38,38 +40,66 @@ function stopAll(exitCode) {
   setTimeout(() => process.exit(exitCode), HARD_SHUTDOWN_MS).unref();
 }
 
-for (const service of services) {
-  console.log(`[dev] starting ${service.name}`);
+function startServices() {
+  for (const service of services) {
+    console.log(`[dev] starting ${service.name}`);
 
-  let child;
-  try {
-    child = spawnCommand("pnpm", service.args, {
-      cwd: repoRoot,
-      env: process.env,
-      stdio: "inherit",
-      windowsHide: true,
+    let child;
+    try {
+      child = spawnCommand("pnpm", service.args, {
+        cwd: repoRoot,
+        env: process.env,
+        stdio: "inherit",
+        windowsHide: true,
+      });
+    } catch (error) {
+      console.error(`[dev] ${service.name} failed to start: ${error.message}`);
+      stopAll(1);
+      break;
+    }
+
+    children.set(service.name, child);
+
+    child.on("error", (error) => {
+      console.error(`[dev] ${service.name} failed to start: ${error.message}`);
+      stopAll(1);
     });
-  } catch (error) {
-    console.error(`[dev] ${service.name} failed to start: ${error.message}`);
-    stopAll(1);
-    break;
+
+    child.on("exit", (code, signal) => {
+      children.delete(service.name);
+      if (shuttingDown) return;
+
+      const detail = signal ? `signal ${signal}` : `code ${code}`;
+      console.error(`[dev] ${service.name} exited with ${detail}`);
+      stopAll(code && code > 0 ? code : 1);
+    });
+  }
+}
+
+async function main() {
+  if (!skipPostgres) {
+    try {
+      startDevPostgres(repoRoot);
+    } catch (error) {
+      console.error(`[dev] ${error.message}`);
+      console.error(
+        "[dev] Use pnpm run dev:noDB if you manage PostgreSQL yourself.",
+      );
+      process.exit(error.exitCode || 1);
+    }
   }
 
-  children.set(service.name, child);
+  try {
+    await assertDevPortsAvailable({
+      apiPort: Number(process.env.PORT || 4000),
+      dashboardPort: Number(process.env.DASHBOARD_PORT || 5173),
+    });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
 
-  child.on("error", (error) => {
-    console.error(`[dev] ${service.name} failed to start: ${error.message}`);
-    stopAll(1);
-  });
-
-  child.on("exit", (code, signal) => {
-    children.delete(service.name);
-    if (shuttingDown) return;
-
-    const detail = signal ? `signal ${signal}` : `code ${code}`;
-    console.error(`[dev] ${service.name} exited with ${detail}`);
-    stopAll(code && code > 0 ? code : 1);
-  });
+  startServices();
 }
 
 process.on("SIGINT", () => {
@@ -80,4 +110,9 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   console.log("[dev] stopping");
   stopAll(0);
+});
+
+main().catch((error) => {
+  console.error(`[dev] ${error.message}`);
+  process.exit(1);
 });

@@ -1,6 +1,21 @@
 const fs = require("fs");
 const path = require("path");
 
+const LOCAL_DEV_DEFAULTS = {
+  NODE_ENV: "development",
+  SESSION_SECRET: "dev_session_secret_change_in_production",
+  DB_HOST: "localhost",
+  DB_PORT: "5432",
+  DB_NAME: "tokentimer",
+  DB_USER: "tokentimer",
+  DB_PASSWORD: "password",
+  ADMIN_EMAIL: "admin@localhost.local",
+  ADMIN_PASSWORD: "AdminPassword123!",
+  ADMIN_NAME: "Administrator",
+  APP_URL: "http://localhost:5173",
+  API_URL: "http://localhost:4000",
+};
+
 function stripInlineComment(value) {
   let quote = null;
   let escaped = false;
@@ -77,9 +92,25 @@ function loadEnvFile(filePath) {
   return true;
 }
 
+function applyLocalDevDefaults() {
+  for (const [key, value] of Object.entries(LOCAL_DEV_DEFAULTS)) {
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+}
+
 function loadRootEnv() {
   const repoRoot = path.resolve(__dirname, "..");
-  loadEnvFile(path.join(repoRoot, ".env"));
+  const envPath = path.join(repoRoot, ".env");
+  const hasEnvFile = loadEnvFile(envPath);
+
+  if (!hasEnvFile) {
+    applyLocalDevDefaults();
+    console.log(
+      "[env] no .env found; using local development defaults (see .env.example)",
+    );
+  }
 
   if (!process.env.VITE_API_URL && process.env.API_URL) {
     process.env.VITE_API_URL = process.env.API_URL;
@@ -89,6 +120,8 @@ function loadRootEnv() {
 }
 
 module.exports = {
+  LOCAL_DEV_DEFAULTS,
+  applyLocalDevDefaults,
   loadEnvFile,
   loadRootEnv,
 };

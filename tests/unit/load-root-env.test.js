@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { loadEnvFile } = require("../../scripts/load-root-env");
+const { loadEnvFile, applyLocalDevDefaults } = require("../../scripts/load-root-env");
 
 function withCleanEnv(keys, callback) {
   const previous = new Map(
@@ -62,5 +62,17 @@ describe("load root env", () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("applies local dev defaults only for unset variables", () => {
+    withCleanEnv(["DB_PASSWORD", "DB_HOST", "SMTP_HOST"], () => {
+      process.env.SMTP_HOST = "mail.example.com";
+
+      applyLocalDevDefaults();
+
+      assert.strictEqual(process.env.DB_PASSWORD, "password");
+      assert.strictEqual(process.env.DB_HOST, "localhost");
+      assert.strictEqual(process.env.SMTP_HOST, "mail.example.com");
+    });
   });
 });

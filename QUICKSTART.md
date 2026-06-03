@@ -102,14 +102,7 @@ cd tokentimer-core
 pnpm install
 ```
 
-### 2. Start PostgreSQL
-
-```bash
-# Using Docker. This single-line form works in PowerShell, Command Prompt, Bash, and zsh.
-docker run -d --name tokentimer-pg -p 5432:5432 -e POSTGRES_USER=tokentimer -e POSTGRES_PASSWORD=password -e POSTGRES_DB=tokentimer postgres:17
-```
-
-### 3. Configure Environment
+### 2. Configure Environment
 
 Copy the root example for local development:
 
@@ -137,19 +130,19 @@ APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 ```
 
-### 4. Run Migrations
+### 3. Run Migrations
 
 ```bash
 pnpm run migrate
 ```
 
-### 5. Start Development Servers
+### 4. Start Development Servers
 
 ```bash
 pnpm run dev
 ```
 
-This starts:
+This starts PostgreSQL in Docker, then:
 
 - API on `http://localhost:4000`
 - Worker runner with cron schedules matching the Kubernetes defaults
@@ -165,7 +158,9 @@ Default worker runner schedules:
 | Endpoint Check | `*/1 * * * *` | No |
 | Weekly Digest | `0 9 * * 1` | No |
 
-### 6. Access the Dashboard
+Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes.
+
+### 5. Access the Dashboard
 
 Open `http://localhost:5173` in your browser.
 

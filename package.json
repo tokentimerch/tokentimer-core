@@ -5,6 +5,9 @@
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
     "dev": "node scripts/dev.js",
+    "dev:noDB": "node scripts/dev.js --no-db",
+    "dev:postgres": "node scripts/run-with-env.js node scripts/start-dev-postgres.js",
+    "dev:ports:check": "node scripts/check-dev-ports.js",
     "dev:api": "node scripts/run-with-env.js pnpm --filter @tokentimer/api dev",
     "dev:worker": "node scripts/run-with-env.js pnpm --filter @tokentimer/worker dev",
     "dev:dashboard": "node scripts/run-with-env.js pnpm --filter @tokentimer/dashboard dev",
