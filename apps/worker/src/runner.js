@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "url";
+import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import { pool } from "./db.js";
 import { logger } from "./logger.js";
 
 const POSITIVE_INTEGER_PATTERN = /^\d+$/;
 const CRON_FIELD_COUNT = 5;
-const CRON_LOOKAHEAD_MINUTES = 366 * 5 * 24 * 60;
+const CRON_LOOKAHEAD_MINUTES = 35 * 24 * 60;
+const SHUTDOWN_TIMEOUT_MS = 30_000;
+const MAX_DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const INTERVAL_SCHEDULE_VALUES = new Set([
   "0",
   "false",
@@ -248,6 +250,26 @@ export function parseCronExpression(expression, envName = "cron") {
   return parsed;
 }
 
+export function validateCronFeasibility(cron) {
+  if (cron.dayOfMonth.unrestricted || cron.month.unrestricted) {
+    return;
+  }
+
+  const months = [...cron.month.values];
+  const days = [...cron.dayOfMonth.values];
+
+  for (const month of months) {
+    const maxDay = MAX_DAYS_IN_MONTH[month - 1];
+    for (const day of days) {
+      if (day <= maxDay) return;
+    }
+  }
+
+  throw new Error(
+    `Cron expression "${cron.expression}" cannot match any calendar date`,
+  );
+}
+
 function cronMatchesDate(cron, date) {
   const dayOfMonthMatches = cron.dayOfMonth.values.has(date.getDate());
   const dayOfWeekMatches = cron.dayOfWeek.values.has(date.getDay());
@@ -273,6 +295,7 @@ export function getNextCronRunAt(expressionOrCron, from = new Date()) {
     typeof expressionOrCron === "string"
       ? parseCronExpression(expressionOrCron)
       : expressionOrCron;
+  validateCronFeasibility(cron);
   const candidate = new Date(from.getTime());
   candidate.setSeconds(0, 0);
   candidate.setMinutes(candidate.getMinutes() + 1);
@@ -284,7 +307,9 @@ export function getNextCronRunAt(expressionOrCron, from = new Date()) {
     candidate.setMinutes(candidate.getMinutes() + 1);
   }
 
-  throw new Error(`No future run found for cron expression "${cron.expression}"`);
+  throw new Error(
+    `No future run found for cron expression "${cron.expression}" within ${CRON_LOOKAHEAD_MINUTES} minutes`,
+  );
 }
 
 export function getWorkerSchedule(worker, env = process.env) {
@@ -471,6 +496,25 @@ export async function runWorkersOnce(
   return results;
 }
 
+async function waitForActiveRuns(activeRuns, log, timeoutMs) {
+  if (activeRuns.size === 0) return;
+
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+  const done = Promise.allSettled([...activeRuns]).then(() => "done");
+  const result = await Promise.race([done, timeout]);
+  clearTimeout(timeoutId);
+
+  if (result === "timeout") {
+    log.error("worker-runner-shutdown-timeout", {
+      activeRuns: activeRuns.size,
+      timeoutMs,
+    });
+  }
+}
+
 export function startRunner(
   workerNames,
   {
@@ -583,7 +627,7 @@ export function startRunner(
       clearTimer(timer);
       removeTimer(timer);
     }
-    await Promise.allSettled([...activeRuns]);
+    await waitForActiveRuns(activeRuns, log, SHUTDOWN_TIMEOUT_MS);
 
     try {
       await closePool();
@@ -694,9 +738,6 @@ async function main() {
   }
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (isNodeEntrypoint(import.meta.url)) {
   void main();
 }

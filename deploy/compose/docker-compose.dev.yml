@@ -116,6 +116,7 @@ services:
     container_name: tokentimer-core-worker-discovery
     environment:
       - NODE_ENV=development
+      - TZ=${TZ:-UTC}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -141,7 +142,7 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
       - "WORKER_DISCOVERY_CRON=${WORKER_DISCOVERY_CRON:-*/5 * * * *}"
-      - WORKER_DISCOVERY_INTERVAL_MS=${WORKER_DISCOVERY_INTERVAL_MS:-60000}
+      - WORKER_DISCOVERY_INTERVAL_MS=${WORKER_DISCOVERY_INTERVAL_MS:-}
       - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}
       - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
@@ -168,6 +169,7 @@ services:
     container_name: tokentimer-core-worker-delivery
     environment:
       - NODE_ENV=development
+      - TZ=${TZ:-UTC}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -193,7 +195,7 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_ENDPOINT_RECOVERED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
       - "WORKER_DELIVERY_CRON=${WORKER_DELIVERY_CRON:-1/5 * * * *}"
-      - WORKER_DELIVERY_INTERVAL_MS=${WORKER_DELIVERY_INTERVAL_MS:-30000}
+      - WORKER_DELIVERY_INTERVAL_MS=${WORKER_DELIVERY_INTERVAL_MS:-}
       - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}
       - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
@@ -220,6 +222,7 @@ services:
     container_name: tokentimer-core-worker-weekly-digest
     environment:
       - NODE_ENV=development
+      - TZ=${TZ:-UTC}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -243,7 +246,7 @@ services:
       - TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED=${TWILIO_WHATSAPP_ALERT_CONTENT_SID_EXPIRED:-}
       - TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID=${TWILIO_WHATSAPP_WEEKLY_DIGEST_CONTENT_SID:-}
       - "WORKER_WEEKLY_DIGEST_CRON=${WORKER_WEEKLY_DIGEST_CRON:-0 9 * * 1}"
-      - WORKER_WEEKLY_DIGEST_INTERVAL_MS=${WORKER_WEEKLY_DIGEST_INTERVAL_MS:-86400000}
+      - WORKER_WEEKLY_DIGEST_INTERVAL_MS=${WORKER_WEEKLY_DIGEST_INTERVAL_MS:-}
       - WORKER_WEEKLY_DIGEST_RUN_ON_START=${WORKER_WEEKLY_DIGEST_RUN_ON_START:-false}
       - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
@@ -270,6 +273,7 @@ services:
     container_name: tokentimer-core-worker-auto-sync
     environment:
       - NODE_ENV=development
+      - TZ=${TZ:-UTC}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
@@ -278,7 +282,7 @@ services:
       - SESSION_SECRET=dev_session_secret_change_in_production
       - API_URL=http://api:4000
       - "WORKER_AUTO_SYNC_CRON=${WORKER_AUTO_SYNC_CRON:-0 * * * *}"
-      - WORKER_AUTO_SYNC_INTERVAL_MS=${WORKER_AUTO_SYNC_INTERVAL_MS:-300000}
+      - WORKER_AUTO_SYNC_INTERVAL_MS=${WORKER_AUTO_SYNC_INTERVAL_MS:-}
       - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}
       - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:
@@ -305,13 +309,14 @@ services:
     container_name: tokentimer-core-worker-endpoint-check
     environment:
       - NODE_ENV=development
+      - TZ=${TZ:-UTC}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=tokentimer
       - DB_USER=tokentimer
       - DB_PASSWORD=password
       - "WORKER_ENDPOINT_CHECK_CRON=${WORKER_ENDPOINT_CHECK_CRON:-*/1 * * * *}"
-      - WORKER_ENDPOINT_CHECK_INTERVAL_MS=${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-60000}
+      - WORKER_ENDPOINT_CHECK_INTERVAL_MS=${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-}
       - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}
       - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:

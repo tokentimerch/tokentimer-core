@@ -1,10 +1,17 @@
 const { spawn } = require("child_process");
 
+const GRACEFUL_SHUTDOWN_MS = 2000;
+const HARD_SHUTDOWN_MS = GRACEFUL_SHUTDOWN_MS + 3000;
+
 function isPackageManagerCommand(command) {
   return /^(pnpm|npm|npx|yarn)$/.test(command);
 }
 
 const WINDOWS_CMD_SAFE_ARG_PATTERN = /^[A-Za-z0-9@._:/=+\-]+$/;
+
+// Intended only for known package-manager invocations with simple args
+// (pnpm --filter @scope/pkg script). Not for arbitrary user-supplied commands,
+// paths with spaces, or shell metacharacters.
 
 function createWindowsPackageManagerCommandLine(command, args = []) {
   return [command, ...args].map(assertSafeWindowsCmdArg).join(" ");
@@ -43,19 +50,26 @@ function spawnCommand(command, args = [], options = {}) {
   return spawn(command, args, spawnOptions);
 }
 
-function killProcessTree(child) {
+function killProcessTree(child, { gracefulMs = GRACEFUL_SHUTDOWN_MS } = {}) {
   if (!child || child.exitCode !== null || !child.pid) return;
 
   if (process.platform === "win32") {
-    const killer = spawn(
-      "taskkill",
-      ["/pid", String(child.pid), "/t", "/f"],
-      {
+    const pid = child.pid;
+    const graceful = spawn("taskkill", ["/pid", String(pid), "/t"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    graceful.on("error", () => {});
+
+    setTimeout(() => {
+      if (child.exitCode !== null) return;
+
+      const force = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
         stdio: "ignore",
         windowsHide: true,
-      },
-    );
-    killer.on("error", () => {});
+      });
+      force.on("error", () => {});
+    }, gracefulMs).unref();
     return;
   }
 
@@ -69,6 +83,8 @@ function killProcessTree(child) {
 }
 
 module.exports = {
+  GRACEFUL_SHUTDOWN_MS,
+  HARD_SHUTDOWN_MS,
   createWindowsPackageManagerCommandLine,
   killProcessTree,
   spawnCommand,

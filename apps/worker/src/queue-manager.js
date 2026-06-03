@@ -1,4 +1,5 @@
 import { pool, withClient } from "./db.js";
+import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import {
   gQueueDepth,
   gQueueDueNow,
@@ -489,7 +490,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
 }
 
 // Run queue discovery if this file is executed directly
-if (import.meta.url === new URL(process.argv[1], "file://").href) {
+if (isNodeEntrypoint(import.meta.url)) {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 

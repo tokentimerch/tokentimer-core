@@ -84,7 +84,17 @@ the Helm CronJob schedules.
 
 The runner also supports legacy interval mode for local testing or special
 deployments: set a worker cron variable to `interval`, then configure the
-matching `*_INTERVAL_MS` value.
+matching `*_INTERVAL_MS` value. Compose wires each `*_INTERVAL_MS` variable
+through with no default value until you set one in `.env`.
+
+### Supported cron syntax
+
+Five fields: `minute hour day-of-month month day-of-week`.
+
+Supported: `*`, steps (`*/5`, `1/5`), integers, ranges, comma lists, day-of-week
+`0-7` (Sunday).
+
+Not supported: named months/weekdays, `L`, `W`, `#`.
 
 ## Workflow Examples
 

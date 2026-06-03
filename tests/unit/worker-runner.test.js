@@ -71,6 +71,17 @@ describe("worker runner helpers", () => {
     );
   });
 
+  it("rejects impossible day-of-month and month combinations quickly", async () => {
+    const runner = await import(runnerUrl);
+    const startedAt = Date.now();
+
+    assert.throws(
+      () => runner.getNextCronRunAt("0 9 31 2 *", new Date(2026, 0, 1)),
+      /cannot match any calendar date/,
+    );
+    assert.ok(Date.now() - startedAt < 100, "expected immediate validation failure");
+  });
+
   it("calculates next runs for the default cron expressions", async () => {
     const runner = await import(runnerUrl);
     const mondayMorning = new Date(2026, 5, 1, 8, 59, 0, 0);

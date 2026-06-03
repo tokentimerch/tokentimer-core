@@ -149,6 +149,7 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "discovery"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
 
       # Database
       DB_HOST: postgres
@@ -169,7 +170,7 @@ services:
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_DISCOVERY_CRON: "${WORKER_DISCOVERY_CRON:-*/5 * * * *}"
-      WORKER_DISCOVERY_INTERVAL_MS: ${WORKER_DISCOVERY_INTERVAL_MS:-60000}
+      WORKER_DISCOVERY_INTERVAL_MS: ${WORKER_DISCOVERY_INTERVAL_MS:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
@@ -211,6 +212,7 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "delivery"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
 
       # Database
       DB_HOST: postgres
@@ -240,7 +242,7 @@ services:
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_DELIVERY_CRON: "${WORKER_DELIVERY_CRON:-1/5 * * * *}"
-      WORKER_DELIVERY_INTERVAL_MS: ${WORKER_DELIVERY_INTERVAL_MS:-30000}
+      WORKER_DELIVERY_INTERVAL_MS: ${WORKER_DELIVERY_INTERVAL_MS:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
@@ -282,6 +284,7 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "weekly-digest"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
 
       # Database
       DB_HOST: postgres
@@ -307,7 +310,7 @@ services:
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_WEEKLY_DIGEST_CRON: "${WORKER_WEEKLY_DIGEST_CRON:-0 9 * * 1}"
-      WORKER_WEEKLY_DIGEST_INTERVAL_MS: ${WORKER_WEEKLY_DIGEST_INTERVAL_MS:-86400000}
+      WORKER_WEEKLY_DIGEST_INTERVAL_MS: ${WORKER_WEEKLY_DIGEST_INTERVAL_MS:-}
       WORKER_WEEKLY_DIGEST_RUN_ON_START: ${WORKER_WEEKLY_DIGEST_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
@@ -349,6 +352,7 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "auto-sync"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-tokentimer}
@@ -361,7 +365,7 @@ services:
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_AUTO_SYNC_CRON: "${WORKER_AUTO_SYNC_CRON:-0 * * * *}"
-      WORKER_AUTO_SYNC_INTERVAL_MS: ${WORKER_AUTO_SYNC_INTERVAL_MS:-300000}
+      WORKER_AUTO_SYNC_INTERVAL_MS: ${WORKER_AUTO_SYNC_INTERVAL_MS:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
     volumes: []
@@ -381,6 +385,7 @@ services:
     command: ["node", "/app/apps/worker/src/runner.js", "endpoint-check"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-tokentimer}
@@ -390,7 +395,7 @@ services:
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
       WORKER_ENDPOINT_CHECK_CRON: "${WORKER_ENDPOINT_CHECK_CRON:-*/1 * * * *}"
-      WORKER_ENDPOINT_CHECK_INTERVAL_MS: ${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-60000}
+      WORKER_ENDPOINT_CHECK_INTERVAL_MS: ${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 

@@ -111,6 +111,12 @@ docker run -d --name tokentimer-pg -p 5432:5432 -e POSTGRES_USER=tokentimer -e P
 
 ### 3. Configure Environment
 
+Copy the root example for local development:
+
+```bash
+cp .env.example .env
+```
+
 Create `.env` in the root directory:
 
 ```bash

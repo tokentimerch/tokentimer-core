@@ -1,4 +1,5 @@
 import { pool, withClient } from "./db.js";
+import { isNodeEntrypoint } from "./is-node-entrypoint.js";
 import {
   cDelivery,
   cRetry,
@@ -2043,7 +2044,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 }
 
 // Run delivery worker if this file is executed directly
-if (import.meta.url === new URL(process.argv[1], "file://").href) {
+if (isNodeEntrypoint(import.meta.url)) {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 

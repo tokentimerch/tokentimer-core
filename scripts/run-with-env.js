@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 const { loadRootEnv } = require("./load-root-env");
-const { killProcessTree, spawnCommand } = require("./process-utils");
+const {
+  GRACEFUL_SHUTDOWN_MS,
+  HARD_SHUTDOWN_MS,
+  killProcessTree,
+  spawnCommand,
+} = require("./process-utils");
 
 loadRootEnv();
 
@@ -32,7 +37,7 @@ function stopChild(signal) {
   console.log(`[run-with-env] received ${signal}, stopping ${command}`);
   killProcessTree(child);
 
-  setTimeout(() => process.exit(0), 1000).unref();
+  setTimeout(() => process.exit(0), HARD_SHUTDOWN_MS).unref();
 }
 
 child.on("error", (error) => {

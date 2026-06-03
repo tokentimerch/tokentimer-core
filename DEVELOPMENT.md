@@ -17,6 +17,10 @@ pnpm run dev
 - Dashboard on http://localhost:5173
 - Worker runner for discovery, delivery, auto-sync, endpoint checks, and weekly digest scheduling
 
+The worker runner uses **cron mode by default**. `WORKER_*_INTERVAL_MS`
+variables are ignored unless the matching `WORKER_*_CRON` is set to `interval`
+(or `0`, `false`, `off`).
+
 The worker runner uses the same cron schedules as the Kubernetes CronJobs by
 default. Jobs wait for their next scheduled run; they do not run immediately on
 startup unless a `*_RUN_ON_START=true` variable is set. For local development,
@@ -28,7 +32,13 @@ Stop the full local stack with `Ctrl+C`.
 
 ## Environment
 
-Create `.env` in the repository root:
+Copy the root example and edit as needed:
+
+```bash
+cp .env.example .env
+```
+
+Minimum local development variables:
 
 ```bash
 NODE_ENV=development
@@ -142,16 +152,42 @@ WORKER_RUN_ON_START=false
 WORKER_EXIT_ON_ERROR=false
 ```
 
-Cron schedules use the process/container timezone. Set `TZ` for Docker
-containers if you need a specific timezone.
+Cron schedules use the process/container timezone. Worker Compose services set
+`TZ: ${TZ:-UTC}`; change `TZ` in `deploy/compose/.env` to shift cron times
+(for example `TZ=Europe/Zurich` for 09:00 local weekly digest).
 
-Set a worker cron variable to `interval` to use the legacy millisecond interval
-mode:
+### Supported cron syntax
+
+The runner accepts standard five-field cron expressions
+(`minute hour day-of-month month day-of-week`):
+
+- `*` any value
+- `*/n` or `n/m` step values
+- exact integers, ranges (`n-m`), and comma-separated lists
+- day-of-week `0-7` where `0` and `7` are Sunday
+
+Not supported: named months or weekdays, `L`, `W`, or `#` modifiers.
+
+Set a worker cron variable to `interval`, `0`, `false`, or `off` to use legacy
+millisecond interval mode instead:
 
 ```bash
 WORKER_DISCOVERY_CRON=interval
 WORKER_DISCOVERY_INTERVAL_MS=60000
 ```
+
+### Worker failure observability
+
+`WORKER_EXIT_ON_ERROR=false` (default) logs job failures and keeps the runner
+process alive so Docker does not restart-loop on transient errors. Monitor worker
+health with:
+
+- structured logs: `worker-runner-job-failure`
+- Prometheus when `ENABLE_METRICS=true` and `PUSHGATEWAY_URL` is set:
+  `runner_up`, `auto_sync_last_run_timestamp`, `weekly_digest_last_run_success`,
+  `alerts_delivery_last_success_unix`, and related counters
+- set `WORKER_EXIT_ON_ERROR=true` to exit the container on the first unhandled
+  job error (Compose `restart: unless-stopped` will recover the process)
 
 Weekly digest does not inherit the global `WORKER_RUN_ON_START` setting. Set
 `WORKER_WEEKLY_DIGEST_RUN_ON_START=true` if you need to run it immediately.
@@ -166,8 +202,13 @@ are intentional.
 ## Docker Compose
 
 Docker Compose uses the long-running worker runner with the same explicit cron
-schedules as Kubernetes. `restart: unless-stopped` is kept only for crash
-recovery, not as the scheduler.
+schedules as Kubernetes. Each worker runs in its own container
+(`worker-discovery`, `worker-delivery`, and so on). The worker image default
+`CMD` runs `runner.js all` in a single process when the image is started without
+an override.
+
+`restart: unless-stopped` is kept only for crash recovery, not as the scheduler.
+Worker containers default to `TZ=UTC` so cron schedules match Helm.
 
 ```bash
 cd deploy/compose

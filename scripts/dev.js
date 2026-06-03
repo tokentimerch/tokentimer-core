@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 const { loadRootEnv } = require("./load-root-env");
-const { killProcessTree, spawnCommand } = require("./process-utils");
+const {
+  GRACEFUL_SHUTDOWN_MS,
+  HARD_SHUTDOWN_MS,
+  killProcessTree,
+  spawnCommand,
+} = require("./process-utils");
 
 const repoRoot = loadRootEnv();
 const children = new Map();
@@ -30,7 +35,7 @@ function stopAll(exitCode) {
     killProcessTree(child);
   }
 
-  setTimeout(() => process.exit(exitCode), 500).unref();
+  setTimeout(() => process.exit(exitCode), HARD_SHUTDOWN_MS).unref();
 }
 
 for (const service of services) {
