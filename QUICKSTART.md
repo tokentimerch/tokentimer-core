@@ -146,18 +146,18 @@ pnpm run dev
 This starts:
 
 - API on `http://localhost:4000`
-- Worker runner with explicit intervals
+- Worker runner with cron schedules matching the Kubernetes defaults
 - Dashboard on `http://localhost:5173`
 
-Default worker runner intervals:
+Default worker runner schedules:
 
-| Worker | Default interval | Runs on start |
+| Worker | Default schedule | Runs on start |
 |--------|------------------|---------------|
-| Alert Discovery | 60 seconds | Yes |
-| Alert Delivery | 30 seconds | Yes |
-| Auto Sync | 5 minutes | Yes |
-| Endpoint Check | 60 seconds | Yes |
-| Weekly Digest | 24 hours | No |
+| Alert Discovery | `*/5 * * * *` | No |
+| Alert Delivery | `1/5 * * * *` | No |
+| Auto Sync | `0 * * * *` | No |
+| Endpoint Check | `*/1 * * * *` | No |
+| Weekly Digest | `0 9 * * 1` | No |
 
 ### 6. Access the Dashboard
 
@@ -276,7 +276,7 @@ open http://localhost:3000
 
 ### 5. Test Alerts
 
-The worker runner uses explicit intervals and will:
+The worker runner uses explicit cron schedules and will:
 
 - Scan tokens for upcoming expirations
 - Queue alerts based on thresholds

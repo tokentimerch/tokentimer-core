@@ -17,10 +17,12 @@ pnpm run dev
 - Dashboard on http://localhost:5173
 - Worker runner for discovery, delivery, auto-sync, endpoint checks, and weekly digest scheduling
 
-For local development, `pnpm run dev` uses safer worker startup defaults:
-auto-sync and endpoint checks are scheduled, but they do not run immediately on
-startup unless `WORKER_AUTO_SYNC_RUN_ON_START=true` or
-`WORKER_ENDPOINT_CHECK_RUN_ON_START=true` is set.
+The worker runner uses the same cron schedules as the Kubernetes CronJobs by
+default. Jobs wait for their next scheduled run; they do not run immediately on
+startup unless a `*_RUN_ON_START=true` variable is set. For local development,
+`pnpm run dev` also uses `--safe-local-defaults`, so auto-sync and endpoint
+checks do not inherit a global `WORKER_RUN_ON_START=true` unless their
+worker-specific variable is set.
 
 Stop the full local stack with `Ctrl+C`.
 
@@ -45,10 +47,12 @@ ADMIN_NAME=Administrator
 APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 
-# Safer local dev defaults: schedule these workers, but do not run them
-# immediately on startup unless explicitly enabled.
-WORKER_AUTO_SYNC_RUN_ON_START=false
-WORKER_ENDPOINT_CHECK_RUN_ON_START=false
+# Optional: override worker cron schedules. Defaults match Kubernetes Helm.
+# WORKER_DISCOVERY_CRON="*/5 * * * *"
+# WORKER_DELIVERY_CRON="1/5 * * * *"
+# WORKER_AUTO_SYNC_CRON="0 * * * *"
+# WORKER_ENDPOINT_CHECK_CRON="*/1 * * * *"
+# WORKER_WEEKLY_DIGEST_CRON="0 9 * * 1"
 ```
 
 The root `migrate` and `dev:*` scripts load this file before starting package
@@ -117,38 +121,53 @@ node apps/worker/src/runner.js all
 node apps/worker/src/runner.js discovery --once
 ```
 
-Intervals are explicit and configurable:
+Schedules are explicit and configurable. Cron defaults match
+`deploy/helm/values.yaml`:
 
-| Worker | Environment variable | Default | Runs on start |
-|--------|----------------------|---------|---------------|
-| Alert Discovery | `WORKER_DISCOVERY_INTERVAL_MS` | `60000` (60 seconds) | Yes |
-| Alert Delivery | `WORKER_DELIVERY_INTERVAL_MS` | `30000` (30 seconds) | Yes |
-| Auto Sync | `WORKER_AUTO_SYNC_INTERVAL_MS` | `300000` (5 minutes) | Yes |
-| Endpoint Check | `WORKER_ENDPOINT_CHECK_INTERVAL_MS` | `60000` (60 seconds) | Yes |
-| Weekly Digest | `WORKER_WEEKLY_DIGEST_INTERVAL_MS` | `86400000` (24 hours) | No |
+| Worker | Cron variable | Default schedule | Runs on start |
+|--------|---------------|------------------|---------------|
+| Alert Discovery | `WORKER_DISCOVERY_CRON` | `*/5 * * * *` | No |
+| Alert Delivery | `WORKER_DELIVERY_CRON` | `1/5 * * * *` | No |
+| Auto Sync | `WORKER_AUTO_SYNC_CRON` | `0 * * * *` | No |
+| Endpoint Check | `WORKER_ENDPOINT_CHECK_CRON` | `*/1 * * * *` | No |
+| Weekly Digest | `WORKER_WEEKLY_DIGEST_CRON` | `0 9 * * 1` | No |
 
 ```bash
-WORKER_DISCOVERY_INTERVAL_MS=60000
-WORKER_DELIVERY_INTERVAL_MS=30000
-WORKER_AUTO_SYNC_INTERVAL_MS=300000
-WORKER_ENDPOINT_CHECK_INTERVAL_MS=60000
-WORKER_WEEKLY_DIGEST_INTERVAL_MS=86400000
-WORKER_RUN_ON_START=true
+WORKER_DISCOVERY_CRON="*/5 * * * *"
+WORKER_DELIVERY_CRON="1/5 * * * *"
+WORKER_AUTO_SYNC_CRON="0 * * * *"
+WORKER_ENDPOINT_CHECK_CRON="*/1 * * * *"
+WORKER_WEEKLY_DIGEST_CRON="0 9 * * 1"
+WORKER_RUN_ON_START=false
 WORKER_EXIT_ON_ERROR=false
 ```
 
-Weekly digest does not run on start by default. Set
-`WORKER_WEEKLY_DIGEST_RUN_ON_START=true` if you need that behavior.
+Cron schedules use the process/container timezone. Set `TZ` for Docker
+containers if you need a specific timezone.
+
+Set a worker cron variable to `interval` to use the legacy millisecond interval
+mode:
+
+```bash
+WORKER_DISCOVERY_CRON=interval
+WORKER_DISCOVERY_INTERVAL_MS=60000
+```
+
+Weekly digest does not inherit the global `WORKER_RUN_ON_START` setting. Set
+`WORKER_WEEKLY_DIGEST_RUN_ON_START=true` if you need to run it immediately.
 
 The worker `dev` script passes `--safe-local-defaults`, so auto-sync and
-endpoint checks do not run on start during local development unless their
-worker-specific `*_RUN_ON_START` variables are set to `true`. The production
-runner defaults and Docker Compose commands are unchanged.
+endpoint checks do not run on start during local development even if
+`WORKER_RUN_ON_START=true` is present. Use the worker-specific
+`WORKER_AUTO_SYNC_RUN_ON_START=true` or
+`WORKER_ENDPOINT_CHECK_RUN_ON_START=true` variables when immediate local runs
+are intentional.
 
 ## Docker Compose
 
-Docker Compose uses the long-running worker runner with explicit intervals.
-`restart: unless-stopped` is kept only for crash recovery, not as the scheduler.
+Docker Compose uses the long-running worker runner with the same explicit cron
+schedules as Kubernetes. `restart: unless-stopped` is kept only for crash
+recovery, not as the scheduler.
 
 ```bash
 cd deploy/compose
@@ -167,9 +186,10 @@ pnpm run dev:dashboard
 
 ## Production Scheduling Model
 
-- Docker Compose: use the long-running worker runner with explicit intervals.
+- Docker Compose: use the long-running worker runner with Kubernetes-matching
+  cron schedules.
 - Kubernetes: keep using CronJobs for periodic one-shot tasks, or deploy the
-  runner as a Deployment when polling workers are preferred.
+  runner as a Deployment when an in-process scheduler is preferred.
 
 The existing one-shot worker scripts are intentionally preserved for Kubernetes
 CronJobs, CI, tests, and manual operations.
