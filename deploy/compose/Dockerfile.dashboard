@@ -54,7 +54,15 @@ RUN apk update && apk upgrade --no-cache \
 
 # Create non-root nginx user and prepare writable directories
 RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentimer && \
-    mkdir -p /var/cache/nginx /var/run /var/log/nginx /usr/share/nginx/html && \
+    mkdir -p \
+        /var/cache/nginx/client_temp \
+        /var/cache/nginx/proxy_temp \
+        /var/cache/nginx/fastcgi_temp \
+        /var/cache/nginx/uwsgi_temp \
+        /var/cache/nginx/scgi_temp \
+        /var/run \
+        /var/log/nginx \
+        /usr/share/nginx/html && \
     chown -R tokentimer:tokentimer /var/cache/nginx /var/run /var/log/nginx /usr/share/nginx/html
 
 # Copy nginx configuration

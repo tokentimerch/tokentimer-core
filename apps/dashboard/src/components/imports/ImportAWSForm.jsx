@@ -404,7 +404,8 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
       <Box>
         <Text fontSize='sm' color={helpTextColor}>
           Scans AWS Secrets Manager and IAM for secrets and access keys.
-          Credentials are used only for this action and not stored.
+          Credentials are used for scanning and stored encrypted if auto-sync is
+          enabled.
         </Text>
         <Text fontSize='sm' mt={1}>
           <ChakraLink
