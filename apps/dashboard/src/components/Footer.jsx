@@ -21,10 +21,14 @@ import {
 /**
  * Footer component with comprehensive navigation and branding
  */
+const DASHBOARD_SIDEBAR_FALLBACK_WIDTH = '56px';
+const DASHBOARD_PAGE_BG = '#090d15';
+
 const Footer = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isLandingPage = location.pathname === '/';
+  const isDashboardPage = location.pathname === '/dashboard';
 
   // Use navigation colors to match the navigation bar
   const { surface: navBgColor } = useBackgroundColors();
@@ -55,6 +59,106 @@ const Footer = () => {
   const footerLinkHoverColor = isLandingPage ? linkHoverLanding : linkHoverApp;
 
   const currentYear = new Date().getFullYear();
+
+  if (isDashboardPage) {
+    const dashboardLinkColor = 'rgba(203, 213, 225, 0.82)';
+    const dashboardLinkHoverColor = 'white';
+    const dashboardLinks = [
+      {
+        label: 'Docs',
+        icon: FiBookOpen,
+        href: 'https://tokentimer.ch/docs#self-hosted',
+        isExternal: true,
+        ariaLabel: 'Documentation (opens online)',
+      },
+      {
+        label: 'Help',
+        icon: FiMail,
+        href: '/help',
+        onClick: e => {
+          e.preventDefault();
+          navigate('/help');
+        },
+        ariaLabel: 'Help and Support',
+      },
+      {
+        label: 'GitHub',
+        icon: FiFileText,
+        href: 'https://github.com/tokentimerch/tokentimer-core',
+        isExternal: true,
+        ariaLabel: 'View source on GitHub',
+      },
+    ];
+
+    return (
+      <Box
+        as='footer'
+        bg={DASHBOARD_PAGE_BG}
+        borderTopWidth='1px'
+        borderColor='rgba(148, 163, 184, 0.12)'
+        w='100%'
+        pl={{
+          base: 4,
+          lg: `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1rem)`,
+          '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
+        }}
+        pr={{ base: 4, lg: 4, '2xl': 5 }}
+        minH='58px'
+        py={2}
+        position='relative'
+        zIndex={1}
+        display='flex'
+        alignItems='center'
+      >
+        <Flex
+          direction={{ base: 'column', md: 'row' }}
+          justify='space-between'
+          align='center'
+          gap={3}
+          w='100%'
+          minW={0}
+        >
+          <Text color='rgba(148, 163, 184, 0.9)' fontSize='xs' noOfLines={1}>
+            (c) {currentYear} TokenTimer - Privacy by Design
+          </Text>
+
+          <HStack
+            spacing={1}
+            flexWrap='wrap'
+            justify={{ base: 'center', md: 'end' }}
+          >
+            {dashboardLinks.map(link => (
+              <Link
+                key={link.label}
+                href={link.href}
+                isExternal={link.isExternal}
+                onClick={link.onClick}
+                color={dashboardLinkColor}
+                _hover={{
+                  textDecoration: 'none',
+                  color: dashboardLinkHoverColor,
+                  bg: 'rgba(30, 41, 59, 0.72)',
+                  borderColor: 'rgba(148, 163, 184, 0.22)',
+                }}
+                fontSize='xs'
+                aria-label={link.ariaLabel}
+                border='1px solid'
+                borderColor='transparent'
+                borderRadius='md'
+                px={3}
+                py={2}
+              >
+                <HStack spacing='2' align='center'>
+                  <Icon as={link.icon} boxSize={3.5} />
+                  <Text>{link.label}</Text>
+                </HStack>
+              </Link>
+            ))}
+          </HStack>
+        </Flex>
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -105,7 +209,7 @@ const Footer = () => {
               color={textColor}
               textAlign={{ base: 'center', md: 'left' }}
             >
-              © {currentYear} TokenTimer — Privacy by Design
+              (c) {currentYear} TokenTimer - Privacy by Design
             </Text>
           </VStack>
 

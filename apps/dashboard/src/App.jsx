@@ -1,5 +1,5 @@
-﻿import { logger } from './utils/logger.js';
-import { getExpiryStatus, getColorFromString } from './styles/colors.js';
+import { logger } from './utils/logger.js';
+import { getColorFromString } from './styles/colors.js';
 
 import {
   useEffect,
@@ -17,7 +17,6 @@ import {
   ChakraProvider,
   ColorModeScript,
   Box,
-  Heading,
   SimpleGrid,
   FormControl,
   FormLabel,
@@ -53,13 +52,16 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
-  Collapse,
   Menu,
   MenuButton,
   MenuList,
   MenuItem,
   Checkbox,
   Portal,
+  InputGroup,
+  InputLeftElement,
+  Divider,
+  Circle,
 } from '@chakra-ui/react';
 import {
   Routes,
@@ -73,15 +75,41 @@ import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
 import {
-  FiDownload,
   FiTrash2,
   FiPlus,
   FiX,
   FiChevronRight,
-  FiGlobe,
+  FiMenu,
   FiExternalLink,
   FiActivity,
+  FiBell,
 } from 'react-icons/fi';
+import {
+  Activity as ActivityIcon,
+  AlertTriangle,
+  BadgeCheck,
+  BookOpen,
+  Building2,
+  CalendarClock,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  Database,
+  Download,
+  Gauge,
+  KeyRound,
+  Layers,
+  LockKeyhole,
+  LogOut,
+  MoreVertical,
+  Moon,
+  Search,
+  Settings,
+  ShieldAlert,
+  Upload,
+  User,
+  PlugZap,
+} from 'lucide-react';
 
 import { theme } from './styles/theme';
 import Navigation from './components/Navigation';
@@ -94,7 +122,6 @@ import { AccessibleSpinner } from './components/Accessibility';
 import TruncatedText from './components/TruncatedText';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
-import { SortableTh } from './components/DashboardHelpers.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import { domainValueToUrl } from './utils/domains.jsx';
 
@@ -111,7 +138,6 @@ import {
   isNeverExpires,
   NEVER_EXPIRES_DATE_VALUE,
 } from './utils/dateUtils';
-import { useDashboardColors } from './hooks/useColors.js';
 import {
   TOUR_MOCK_TOKENS,
   TOUR_MOCK_CONTACT_GROUPS,
@@ -130,7 +156,7 @@ const Usage = lazy(() => import('./pages/Usage'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
-import { WorkspaceProvider } from './utils/WorkspaceContext.jsx';
+import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
 
 // VerifyEmailWrapper component to handle session-based redirects
 function VerifyEmailWrapper({ session }) {
@@ -293,42 +319,254 @@ const TOKEN_CATEGORIES = [
 // Now uses centralized color system from styles/colors.js
 const _getSectionColorScheme = getColorFromString;
 
-/**
- * Return HEX color according to expiry date and status.
- * Matches logic and colors per STYLEGUIDE.md.
- * Now uses centralized color system from styles/colors.js
- */
-// Moved to styles/colors.js for reusability across components
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
-/**
- * Expiry color-status pill. Always uses both color and label, never color alone.
- */
-const ExpiryPill = memo(function ExpiryPill({ expiry }) {
-  const status = getExpiryStatus(expiry);
-  const shadowColor = useColorModeValue(
-    'rgba(0, 0, 0, 0.1)',
-    'rgba(0, 0, 0, 0.3)'
+function getDaysUntilExpiration(expiry) {
+  if (!expiry || isNeverExpires(expiry)) return Number.POSITIVE_INFINITY;
+  const expirationDate = new Date(expiry);
+  if (Number.isNaN(expirationDate.getTime())) return Number.POSITIVE_INFINITY;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  expirationDate.setHours(0, 0, 0, 0);
+  return Math.ceil((expirationDate.getTime() - today.getTime()) / MS_PER_DAY);
+}
+
+function getDashboardStatusMeta(expiry) {
+  const days = getDaysUntilExpiration(expiry);
+  if (days === Number.POSITIVE_INFINITY) {
+    return {
+      key: 'healthy',
+      label: 'Healthy',
+      color: '#22c55e',
+      bg: 'rgba(34, 197, 94, 0.12)',
+    };
+  }
+  if (days < 0) {
+    return {
+      key: 'expired',
+      label: 'Expired',
+      color: '#f43f5e',
+      bg: 'rgba(244, 63, 94, 0.14)',
+    };
+  }
+  if (days <= 7) {
+    return {
+      key: 'critical',
+      label: `${days} days`,
+      color: '#ef4444',
+      bg: 'rgba(239, 68, 68, 0.14)',
+    };
+  }
+  if (days <= 30) {
+    return {
+      key: 'due-soon',
+      label: `${days} days`,
+      color: '#f97316',
+      bg: 'rgba(249, 115, 22, 0.14)',
+    };
+  }
+  return {
+    key: 'healthy',
+    label: `${days} days`,
+    color: '#22c55e',
+    bg: 'rgba(34, 197, 94, 0.12)',
+  };
+}
+
+function formatDaysUntil(expiry) {
+  const days = getDaysUntilExpiration(expiry);
+  if (days === Number.POSITIVE_INFINITY) return 'No expiry';
+  if (days < 0) return `${Math.abs(days)} days overdue`;
+  if (days === 0) return 'Due today';
+  return `${days} days`;
+}
+
+function getTokenLocation(token) {
+  if (Array.isArray(token?.domains) && token.domains.length > 0) {
+    return token.domains[0];
+  }
+  return (
+    token?.location ||
+    token?.vendor ||
+    token?.used_by ||
+    token?.issuer ||
+    token?.section ||
+    '-'
   );
+}
 
+function getTokenOwner(token) {
+  return token?.used_by || token?.contacts || token?.vendor || '-';
+}
+
+function getTokenProvider(token) {
+  return (
+    token?.provider ||
+    token?.source ||
+    token?.source_provider ||
+    token?.integration_provider ||
+    token?.import_provider ||
+    token?.import_source ||
+    token?.category ||
+    'manual'
+  );
+}
+
+const DASHBOARD_CATEGORY_VISUALS = {
+  cert: {
+    icon: BadgeCheck,
+    color: '#3b82f6',
+    bg: 'rgba(59, 130, 246, 0.14)',
+  },
+  key_secret: {
+    icon: KeyRound,
+    color: '#f59e0b',
+    bg: 'rgba(245, 158, 11, 0.14)',
+  },
+  license: {
+    icon: LockKeyhole,
+    color: '#a855f7',
+    bg: 'rgba(168, 85, 247, 0.14)',
+  },
+  general: {
+    icon: Database,
+    color: '#22c55e',
+    bg: 'rgba(34, 197, 94, 0.14)',
+  },
+  default: {
+    icon: Layers,
+    color: '#94a3b8',
+    bg: 'rgba(148, 163, 184, 0.14)',
+  },
+};
+
+const DASHBOARD_SECTION_COLOR_BY_SCHEME = {
+  blue: '#3b82f6',
+  purple: '#a855f7',
+  pink: '#ec4899',
+  red: '#ef4444',
+  orange: '#f97316',
+  yellow: '#eab308',
+  green: '#22c55e',
+  teal: '#14b8a6',
+  cyan: '#06b6d4',
+  gray: '#94a3b8',
+};
+
+const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
+const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
+const DASHBOARD_SIDEBAR_MIN_WIDTH = 56;
+const DASHBOARD_SIDEBAR_MAX_WIDTH = 248;
+const DASHBOARD_SIDEBAR_LABEL_WIDTH = 136;
+const DASHBOARD_SIDEBAR_DEFAULT_WIDTH = DASHBOARD_SIDEBAR_MIN_WIDTH;
+const DASHBOARD_PAGE_BG = '#090d15';
+const DASHBOARD_SURFACE = '#0d131a';
+const DASHBOARD_SURFACE_RAISED = '#0d131a';
+const DASHBOARD_BORDER = 'rgba(100, 116, 139, 0.2)';
+const DASHBOARD_BORDER_STRONG = 'rgba(148, 163, 184, 0.28)';
+const DASHBOARD_MUTED_TEXT = 'rgba(148, 163, 184, 0.92)';
+const ASSET_PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
+
+function clampDashboardSidebarWidth(value) {
+  const width = Number(value);
+  if (!Number.isFinite(width)) return DASHBOARD_SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(
+    DASHBOARD_SIDEBAR_MAX_WIDTH,
+    Math.max(DASHBOARD_SIDEBAR_MIN_WIDTH, Math.round(width))
+  );
+}
+
+function getInitialDashboardSidebarWidth() {
+  try {
+    return clampDashboardSidebarWidth(
+      window.localStorage.getItem(DASHBOARD_SIDEBAR_STORAGE_KEY)
+    );
+  } catch (_) {
+    return DASHBOARD_SIDEBAR_DEFAULT_WIDTH;
+  }
+}
+
+function getCategoryVisual(categoryValue) {
+  return (
+    DASHBOARD_CATEGORY_VISUALS[categoryValue] ||
+    DASHBOARD_CATEGORY_VISUALS.default
+  );
+}
+
+function getSectionAccent(section) {
+  return (
+    DASHBOARD_SECTION_COLOR_BY_SCHEME[section?.scheme] ||
+    DASHBOARD_SECTION_COLOR_BY_SCHEME.gray
+  );
+}
+
+function formatDashboardPercent(count, total) {
+  if (!total) return '0.0%';
+  return `${((count / total) * 100).toFixed(1)}%`;
+}
+
+function DashboardPanel({ title, action, children, ...props }) {
   return (
     <Box
-      as='span'
-      bg={status.color}
-      color={status.textColor}
+      bg={DASHBOARD_SURFACE}
+      border='1px solid'
+      borderColor={DASHBOARD_BORDER}
       borderRadius='md'
-      px={{ base: 2, md: 4 }}
-      py={1}
-      fontWeight={600}
-      fontFamily="'Roboto Mono', Menlo, monospace"
-      fontSize={{ base: 'xs', md: 'sm' }}
-      boxShadow={`0 1px 2px ${shadowColor}`}
-      aria-label={`Expiry status: ${status.label}`}
-      whiteSpace='nowrap'
+      boxShadow='0 16px 48px rgba(0, 0, 0, 0.2)'
+      overflow='hidden'
+      {...props}
     >
-      {status.label}
+      {(title || action) && (
+        <Flex
+          align='center'
+          justify='space-between'
+          px={{ base: 4, md: 5 }}
+          py={3}
+          borderBottom='1px solid'
+          borderColor='rgba(148, 163, 184, 0.13)'
+        >
+          <Text color='white' fontWeight='semibold' fontSize='sm'>
+            {title}
+          </Text>
+          {action}
+        </Flex>
+      )}
+      <Box p={{ base: 4, md: 5 }}>{children}</Box>
     </Box>
   );
-});
+}
+
+function MetricCard({ icon: Icon, label, value, detail, accent }) {
+  return (
+    <Box
+      bg={DASHBOARD_SURFACE_RAISED}
+      border='1px solid'
+      borderColor={DASHBOARD_BORDER}
+      borderRadius='md'
+      p={4}
+      minH='84px'
+      boxShadow='0 14px 42px rgba(0, 0, 0, 0.18)'
+    >
+      <HStack align='center' spacing={3}>
+        <Circle size='38px' bg={`${accent}22`} color={accent} flex='0 0 auto'>
+          <Icon size={19} strokeWidth={2} />
+        </Circle>
+        <Box minW={0}>
+          <Text color='rgba(226, 232, 240, 0.86)' fontSize='sm' lineHeight='1.25'>
+            {label}
+          </Text>
+          <Text color='white' fontSize='2xl' fontWeight='bold' lineHeight='1.1'>
+            {value}
+          </Text>
+          <Text color='rgba(148, 163, 184, 0.88)' fontSize='xs' mt={1}>
+            {detail}
+          </Text>
+        </Box>
+      </HStack>
+    </Box>
+  );
+}
 
 // Helper component for displaying text with tooltip
 // Using shared TruncatedText component from ./components/TruncatedText
@@ -429,9 +667,6 @@ function App() {
   // Token detail modal state
   const [selectedToken, setSelectedToken] = useState(null);
 
-  // Token filtering and sorting state
-  // Deprecated global filters (replaced by per-panel search)
-  const [filters, setFilters] = useState({});
   // Per-category sort configurations (default to expiration ascending)
   const [sortConfigs, setSortConfigs] = useState(() =>
     TOKEN_CATEGORIES.reduce((acc, category) => {
@@ -603,7 +838,6 @@ function App() {
   // Form validation state
   const [formErrors, setFormErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [alertDefaultEmail] = useState(null);
 
   // Duplicate token confirmation state
   const [duplicateTokenInfo, setDuplicateTokenInfo] = useState(null);
@@ -1959,31 +2193,6 @@ function App() {
   };
 
   /**
-   * Handle filter changes
-   */
-  const handleFilterChange = (field, value) => {
-    setFilters(prev => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  /**
-   * Handle sort changes
-   */
-  const handleSort = (key, categoryValue) => {
-    setSortConfigs(prev => {
-      const current = prev[categoryValue] || { key: null, direction: 'asc' };
-      const next = {
-        key,
-        direction:
-          current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
-      };
-      return { ...prev, [categoryValue]: next };
-    });
-  };
-
-  /**
    * Filter and sort tokens
    * Memoized with useCallback to prevent unnecessary re-renders
    */
@@ -2094,22 +2303,6 @@ function App() {
     },
     [sortConfigs]
   );
-
-  /**
-   * Clear all filters
-   */
-  const clearFilters = () => {
-    setFilters({
-      name: '',
-      type: '',
-      vendor: '',
-      issuer: '',
-      location: '',
-      used_by: '',
-      description: '',
-    });
-    // Do not alter per-category sort when clearing filters
-  };
 
   /**
    * Handle account deletion
@@ -2404,17 +2597,11 @@ function App() {
                                   isViewer ? undefined : handleOpenRenew
                                 }
                                 TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-                                ExpiryPill={ExpiryPill}
                                 onOpenTokenModal={handleOpenTokenModal}
                                 onLogout={handleLogout}
                                 onAccountClick={handleHelpAccountClick}
                                 onNavigateToLanding={handleNavigateToLanding}
                                 onAccountDeleted={handleAccountDeleted}
-                                filters={filters}
-                                sortConfigs={sortConfigs}
-                                onFilterChange={handleFilterChange}
-                                onSort={handleSort}
-                                onClearFilters={clearFilters}
                                 getFilteredAndSortedTokens={
                                   getFilteredAndSortedTokens
                                 }
@@ -2423,11 +2610,8 @@ function App() {
                                 welcomeData={welcomeData}
                                 selectedToken={selectedToken}
                                 handleCloseTokenModal={handleCloseTokenModal}
-                                alertDefaultEmail={alertDefaultEmail}
                                 // Thread global filtering/search/sort state into wrapper
-                                searchQuery={searchQuery}
                                 setSearchQuery={setSearchQuery}
-                                serverSort={serverSort}
                                 showProductTour={showProductTour}
                                 setShowProductTour={setShowProductTour}
                                 tourType={tourType}
@@ -2443,10 +2627,8 @@ function App() {
                                 fetchTokensForCategoryReset={
                                   fetchTokensForCategoryReset
                                 }
-                                setOffset={setOffset}
                                 setTokens={setTokens}
                                 isRefreshing={isRefreshing}
-                                categoryOffsets={categoryOffsets}
                                 categoryHasMore={categoryHasMore}
                                 categoryLoading={categoryLoading}
                                 categoryCounts={categoryCounts}
@@ -2766,7 +2948,6 @@ function DashboardWrapper({
   onDeleteToken,
   onOpenRenew,
   TOKEN_CATEGORIES,
-  ExpiryPill,
   onOpenTokenModal,
   onLogout,
   onNavigateToLanding,
@@ -2776,17 +2957,9 @@ function DashboardWrapper({
   welcomeData,
   selectedToken,
   handleCloseTokenModal,
-  filters,
-  onFilterChange,
-  onSort,
-  onClearFilters,
   getFilteredAndSortedTokens,
-  sortConfigs,
-  alertDefaultEmail,
   // Global filtering/search/sort state/handlers from App
-  searchQuery,
   setSearchQuery,
-  serverSort,
   setServerSort,
   selectedCategories,
   setSelectedCategories,
@@ -2794,10 +2967,8 @@ function DashboardWrapper({
   globalFacets,
   fetchGlobalFacets,
   fetchTokensForCategoryReset,
-  setOffset,
   setTokens,
   isRefreshing,
-  categoryOffsets,
   categoryHasMore,
   categoryLoading,
   categoryCounts,
@@ -2870,6 +3041,20 @@ function DashboardWrapper({
     }
   }, [isViewer, setShowProductTour, setTourType, setForceRunTour]);
 
+  const handleAccountClick = () => {
+    setCurrentView('account');
+    const url = new URL(window.location);
+    url.searchParams.set('view', 'account');
+    window.history.pushState({}, '', url);
+  };
+
+  const handleDashboardNavigation = () => {
+    setCurrentView('dashboard');
+    const url = new URL(window.location);
+    url.searchParams.delete('view');
+    window.history.pushState({}, '', url);
+  };
+
   return (
     <div
       style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}
@@ -2879,35 +3064,45 @@ function DashboardWrapper({
         description='Manage your tokens, certificates, and expiring assets'
         noindex
       />
-      <Navigation
-        user={session}
-        onLogout={onLogout}
-        onAccountClick={() => {
-          setCurrentView('account');
-          // Update URL to reflect the account view
-          const url = new URL(window.location);
-          url.searchParams.set('view', 'account');
-          window.history.pushState({}, '', url);
-        }}
-        onNavigateToDashboard={() => {
-          setCurrentView('dashboard');
-          // Clear the view parameter from URL when going to dashboard
-          const url = new URL(window.location);
-          url.searchParams.delete('view');
-          window.history.pushState({}, '', url);
-        }}
-        onNavigateToLanding={onNavigateToLanding}
-      />
+      {currentView === 'dashboard' ? (
+        <Box display={{ base: 'block', lg: 'none' }}>
+          <Navigation
+            user={session}
+            onLogout={onLogout}
+            onAccountClick={handleAccountClick}
+            onNavigateToDashboard={handleDashboardNavigation}
+            onNavigateToLanding={onNavigateToLanding}
+          />
+        </Box>
+      ) : (
+        <Navigation
+          user={session}
+          onLogout={onLogout}
+          onAccountClick={handleAccountClick}
+          onNavigateToDashboard={handleDashboardNavigation}
+          onNavigateToLanding={onNavigateToLanding}
+        />
+      )}
 
       <main
         id='main-content'
         style={{
           flex: 1,
-          padding: 'clamp(1rem, 2vw, 2rem)',
+          padding:
+            currentView === 'dashboard'
+              ? 0
+              : 'clamp(1rem, 1.8vw, 1.75rem)',
           overflowX: 'hidden',
+          background:
+            currentView === 'dashboard' ? DASHBOARD_PAGE_BG : undefined,
         }}
       >
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        <div
+          style={{
+            maxWidth: currentView === 'dashboard' ? 'none' : '1200px',
+            margin: currentView === 'dashboard' ? 0 : '0 auto',
+          }}
+        >
           {currentView === 'dashboard' ? (
             <DashboardView
               _session={session}
@@ -2923,29 +3118,18 @@ function DashboardWrapper({
               onDeleteToken={onDeleteToken}
               onOpenRenew={onOpenRenew}
               TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-              ExpiryPill={ExpiryPill}
               onOpenTokenModal={onOpenTokenModal}
-              filters={filters}
-              onFilterChange={onFilterChange}
-              onSort={onSort}
-              onClearFilters={onClearFilters}
               getFilteredAndSortedTokens={getFilteredAndSortedTokens}
-              sortConfigs={sortConfigs}
-              _alertDefaultEmail={alertDefaultEmail}
               selectedCategories={selectedCategories}
               setSelectedCategories={setSelectedCategories}
               tokenFacets={tokenFacets}
               globalFacets={globalFacets}
               fetchGlobalFacets={fetchGlobalFacets}
               fetchTokensForCategoryReset={fetchTokensForCategoryReset}
-              _setOffset={setOffset}
               _setTokens={setTokens}
-              _searchQuery={searchQuery}
               _setSearchQuery={setSearchQuery}
-              _serverSort={serverSort}
               _setServerSort={setServerSort}
               isRefreshing={isRefreshing}
-              categoryOffsets={categoryOffsets}
               categoryHasMore={categoryHasMore}
               categoryLoading={categoryLoading}
               categoryCounts={categoryCounts}
@@ -2957,6 +3141,8 @@ function DashboardWrapper({
               updateLocationEntry={updateLocationEntry}
               defaultContactGroupId={defaultContactGroupId}
               createTokenNotesFlushRef={createTokenNotesFlushRef}
+              onLogout={onLogout}
+              onAccountClick={handleAccountClick}
             />
           ) : currentView === 'account' ? (
             <Account session={session} onAccountDeleted={onAccountDeleted} />
@@ -3084,7 +3270,7 @@ function DashboardWrapper({
 
 /**
  * Dashboard View Component
- * Note: SortableTh and domain helper functions have been extracted to ./components/DashboardHelpers.jsx
+ * Note: domain helper functions have been extracted to ./components/DashboardHelpers.jsx
  */
 
 const CreateTokenNotesField = memo(function CreateTokenNotesField({
@@ -3153,17 +3339,10 @@ function DashboardView({
   onDeleteToken,
   onOpenRenew,
   TOKEN_CATEGORIES,
-  ExpiryPill,
   onOpenTokenModal,
-  onSort,
-
   getFilteredAndSortedTokens,
-  sortConfigs,
-  _alertDefaultEmail,
   // Added props for global search, sorting, and category filters
-  _searchQuery,
   _setSearchQuery,
-  _serverSort,
   _setServerSort,
   selectedCategories,
   setSelectedCategories,
@@ -3171,7 +3350,6 @@ function DashboardView({
   globalFacets,
   fetchGlobalFacets,
   fetchTokensForCategoryReset,
-  _setOffset,
   _setTokens,
   // Pagination/data controls
   isRefreshing,
@@ -3187,31 +3365,281 @@ function DashboardView({
   updateLocationEntry,
   defaultContactGroupId = '',
   createTokenNotesFlushRef,
+  onLogout,
+  onAccountClick,
 }) {
-  const { colorMode } = useColorMode();
-  const isLight = colorMode === 'light';
+  const navigate = useNavigate();
+  const { workspaceId, selectWorkspace } = useWorkspace();
+  const { toggleColorMode } = useColorMode();
 
   // Move useColorModeValue calls to the top to comply with Rules of Hooks
-  const menuBg = useColorModeValue('gray.100', 'gray.800');
-  const menuBorder = useColorModeValue('gray.400', 'gray.600');
+  const menuBg = useColorModeValue('rgba(15, 23, 42, 0.98)', 'gray.800');
+  const menuBorder = useColorModeValue(
+    'rgba(148, 163, 184, 0.2)',
+    'gray.600'
+  );
   const _popoverBg = useColorModeValue('gray.100', 'gray.800');
   const _popoverBorder = useColorModeValue('gray.400', 'gray.600');
-  const helpTextColor = useColorModeValue('gray.600', 'gray.400');
+  const helpTextColor = useColorModeValue(
+    'rgba(148, 163, 184, 0.86)',
+    'gray.400'
+  );
 
-  // Use reusable dashboard color hooks
-  const {
-    bgColor,
-    borderColor,
-    inputBg,
-    inputBorder,
-    placeholderColor,
-    emptyTextColor,
-    hoverBgColor,
-    thHoverBg,
-    filterLabelColor,
-    mobileCardBg,
-    secondaryTextColor,
-  } = useDashboardColors();
+  const inputBg = useColorModeValue(
+    'rgba(2, 6, 23, 0.58)',
+    'rgba(2, 6, 23, 0.58)'
+  );
+  const inputBorder = useColorModeValue(
+    'rgba(148, 163, 184, 0.24)',
+    'rgba(148, 163, 184, 0.24)'
+  );
+  const placeholderColor = useColorModeValue(
+    'rgba(148, 163, 184, 0.72)',
+    'rgba(148, 163, 184, 0.72)'
+  );
+  const emptyTextColor = useColorModeValue(
+    'rgba(203, 213, 225, 0.82)',
+    'rgba(203, 213, 225, 0.82)'
+  );
+  const hoverBgColor = useColorModeValue(
+    'rgba(30, 41, 59, 0.72)',
+    'rgba(30, 41, 59, 0.72)'
+  );
+  const filterLabelColor = useColorModeValue(
+    'rgba(203, 213, 225, 0.86)',
+    'rgba(203, 213, 225, 0.86)'
+  );
+  const mobileCardBg = useColorModeValue(
+    'rgba(15, 23, 42, 0.92)',
+    'rgba(15, 23, 42, 0.92)'
+  );
+  const secondaryTextColor = useColorModeValue(
+    'rgba(148, 163, 184, 0.9)',
+    'rgba(148, 163, 184, 0.9)'
+  );
+  const pageTextColor = 'rgba(248, 250, 252, 0.96)';
+  const mutedTextColor = DASHBOARD_MUTED_TEXT;
+  const sessionName =
+    _session?.displayName || _session?.name || _session?.email || 'User';
+  const sessionEmail = _session?.email || '';
+  const sessionInitials = String(sessionName)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join('')
+    .toUpperCase();
+  const workspaceName =
+    _session?.workspaceName || _session?.workspace?.name || 'Current Workspace';
+  const workspaceLabel = workspaceName;
+  const isSystemAdmin = _session?.isAdmin === true;
+  const [dashboardWorkspaces, setDashboardWorkspaces] = useState([]);
+  const [dashboardWorkspace, setDashboardWorkspace] = useState(null);
+  const [dashboardCanSeeManagerNav, setDashboardCanSeeManagerNav] =
+    useState(false);
+  const [dashboardNotifications, setDashboardNotifications] = useState([]);
+  const [dashboardSidebarWidth, setDashboardSidebarWidth] = useState(
+    getInitialDashboardSidebarWidth
+  );
+  const dashboardSidebarWidthPx = `${dashboardSidebarWidth}px`;
+  const isDashboardSidebarExpanded =
+    dashboardSidebarWidth >= DASHBOARD_SIDEBAR_LABEL_WIDTH;
+
+  useLayoutEffect(() => {
+    const widthPx = `${dashboardSidebarWidth}px`;
+    document.documentElement.style.setProperty(
+      DASHBOARD_SIDEBAR_WIDTH_CSS_VAR,
+      widthPx
+    );
+    try {
+      window.localStorage.setItem(
+        DASHBOARD_SIDEBAR_STORAGE_KEY,
+        String(dashboardSidebarWidth)
+      );
+      window.dispatchEvent(
+        new CustomEvent('tt:dashboard-sidebar-width', {
+          detail: { width: dashboardSidebarWidth },
+        })
+      );
+    } catch (_) {}
+  }, [dashboardSidebarWidth]);
+
+  const toggleDashboardSidebarWidth = useCallback(() => {
+    setDashboardSidebarWidth(width =>
+      width >= DASHBOARD_SIDEBAR_LABEL_WIDTH
+        ? DASHBOARD_SIDEBAR_MIN_WIDTH
+        : DASHBOARD_SIDEBAR_MAX_WIDTH
+    );
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDashboardWorkspaces() {
+      if (!_session) {
+        if (!cancelled) {
+          setDashboardWorkspaces([]);
+          setDashboardWorkspace(null);
+          setDashboardCanSeeManagerNav(false);
+        }
+        return;
+      }
+
+      try {
+        const ws = await workspaceAPI.list(50, 0);
+        if (cancelled) return;
+        const items = ws?.items || [];
+        const roles = items.map(w => String(w.role || '').toLowerCase());
+        const managerAny =
+          roles.includes('admin') || roles.includes('workspace_manager');
+        let desiredId = workspaceId || null;
+        if (!desiredId) {
+          try {
+            desiredId = localStorage.getItem('tt_last_workspace_id') || null;
+          } catch (_) {
+            desiredId = null;
+          }
+        }
+        const selected =
+          (desiredId && items.find(w => w.id === desiredId)) ||
+          items[0] ||
+          null;
+
+        setDashboardWorkspaces(items);
+        setDashboardWorkspace(selected);
+        setDashboardCanSeeManagerNav(isSystemAdmin || (items.length ? managerAny : true));
+      } catch (_) {
+        if (!cancelled) {
+          setDashboardWorkspaces([]);
+          setDashboardWorkspace(null);
+          setDashboardCanSeeManagerNav(isSystemAdmin);
+        }
+      }
+    }
+
+    loadDashboardWorkspaces();
+    const refresh = () => loadDashboardWorkspaces();
+    window.addEventListener('tt:workspaces-updated', refresh);
+    window.addEventListener('tt:plan-updated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('tt:workspaces-updated', refresh);
+      window.removeEventListener('tt:plan-updated', refresh);
+    };
+  }, [_session, isSystemAdmin, workspaceId]);
+
+  const handleDashboardWorkspaceSelect = workspace => {
+    if (!workspace?.id) return;
+    setDashboardWorkspace(workspace);
+    try {
+      selectWorkspace(workspace.id);
+      localStorage.setItem('tt_last_workspace_id', workspace.id);
+    } catch (_) {}
+    try {
+      window.dispatchEvent(new CustomEvent('tt:workspaces-updated'));
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDashboardNotifications() {
+      if (!_session || !dashboardWorkspace?.id) {
+        if (!cancelled) setDashboardNotifications([]);
+        return;
+      }
+
+      try {
+        const [settingsRes, notificationsRes] = await Promise.all([
+          workspaceAPI.getAlertSettings(dashboardWorkspace.id),
+          workspaceAPI
+            .getNotifications(dashboardWorkspace.id)
+            .catch(() => ({ items: [] })),
+        ]);
+        if (cancelled) return;
+
+        const data = settingsRes?.data || settingsRes || {};
+        const emailEnabled = data.email_alerts_enabled === true;
+        const webhooks = data.webhook_urls;
+        const hasWebhooks = Array.isArray(webhooks) && webhooks.length > 0;
+        const smtpConfigured = data.smtp_configured !== false;
+        const allDisabled = !emailEnabled && !hasWebhooks;
+        const contactGroups = Array.isArray(data.contact_groups)
+          ? data.contact_groups
+          : [];
+        const hasAnyContact = contactGroups.some(group => {
+          const emailIds = Array.isArray(group.email_contact_ids)
+            ? group.email_contact_ids
+            : [];
+          const whatsappIds = Array.isArray(group.whatsapp_contact_ids)
+            ? group.whatsapp_contact_ids
+            : [];
+          return emailIds.length > 0 || whatsappIds.length > 0;
+        });
+        const currentRole = String(dashboardWorkspace?.role || '').toLowerCase();
+        const canManageWorkspaceAlerts =
+          isSystemAdmin ||
+          currentRole === 'admin' ||
+          currentRole === 'workspace_manager';
+        const list = [];
+
+        if (canManageWorkspaceAlerts) {
+          const operational = Array.isArray(notificationsRes?.items)
+            ? notificationsRes.items
+            : [];
+          for (const item of operational) {
+            list.push({
+              id: item.id,
+              kind: item.kind === 'error' ? 'error' : 'warning',
+              text: item.text,
+              href: item.href || null,
+            });
+          }
+        }
+
+        if (!canManageWorkspaceAlerts) {
+          setDashboardNotifications(list);
+          return;
+        }
+
+        if (!smtpConfigured) {
+          list.push({
+            id: 'smtp-not-configured',
+            kind: 'warning',
+            text: isSystemAdmin
+              ? 'SMTP is not configured. Email notifications will not be sent.'
+              : 'SMTP is not configured. Ask a system administrator to configure email delivery.',
+            href: isSystemAdmin ? '/system-settings' : null,
+          });
+        }
+        if (allDisabled) {
+          list.push({
+            id: 'alerts-disabled',
+            kind: 'warning',
+            text: 'Alerts are disabled until a channel is defined.',
+            href: '/preferences',
+          });
+        }
+        if (!hasAnyContact) {
+          list.push({
+            id: 'no-contacts-defined',
+            kind: 'warning',
+            text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
+            href: '/preferences',
+          });
+        }
+        setDashboardNotifications(list);
+      } catch (_) {
+        if (!cancelled) setDashboardNotifications([]);
+      }
+    }
+
+    loadDashboardNotifications();
+    const refresh = () => loadDashboardNotifications();
+    window.addEventListener('tt:notifications-refresh', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('tt:notifications-refresh', refresh);
+    };
+  }, [_session, dashboardWorkspace, isSystemAdmin]);
 
   const commitCreateNotes = useCallback(
     v => {
@@ -3385,6 +3813,13 @@ function DashboardView({
       return { __section: '__all__' };
     }
   });
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [assetSort, setAssetSort] = useState({
+    key: 'expiresAt',
+    direction: 'asc',
+  });
+  const [assetPageSize, setAssetPageSize] = useState(10);
+  const [assetPage, setAssetPage] = useState(1);
 
   const [selectedTokenIds, setSelectedTokenIds] = useState([]);
   const [bulkSectionDrafts, setBulkSectionDrafts] = useState({});
@@ -3420,7 +3855,7 @@ function DashboardView({
     onClose: onDomainModalClose,
   } = useDisclosure();
   // Form collapse state - collapsed by default for cleaner UI
-  const [isFormExpanded, setIsFormExpanded] = useState(false);
+  const [isCreateTokenModalOpen, setCreateTokenModalOpen] = useState(false);
 
   const toggleTokenSelection = tokenId => {
     if (isViewer) return;
@@ -3803,82 +4238,1978 @@ function DashboardView({
     return () => window.removeEventListener('tt:tokens-imported', handler);
   }, [activePanelSection, safeFetchGlobalFacets]);
 
-  return (
-    <Box>
-      <Heading size='lg' mb={8}>
-        Token Management Dashboard
-      </Heading>
+  const categoryByValue = useMemo(
+    () =>
+      TOKEN_CATEGORIES.reduce((acc, category) => {
+        acc[category.value] = category;
+        return acc;
+      }, {}),
+    [TOKEN_CATEGORIES]
+  );
 
-      {/* Token Creation Form (hidden for viewers) - Collapsible */}
-      {!isViewer && (
-        <Box
-          data-tour='add-token-form'
-          bg={bgColor}
-          p={{ base: 4, md: 6 }}
-          borderRadius='lg'
-          boxShadow='sm'
-          border='1px solid'
-          borderColor={borderColor}
-          mb={8}
-          overflow='visible'
-          transition='box-shadow 0.2s ease'
-          _hover={{ boxShadow: 'md' }}
+  const selectedCategoryValues = useMemo(
+    () => (Array.isArray(selectedCategories) ? selectedCategories : []),
+    [selectedCategories]
+  );
+
+  const allLoadedTokens = useMemo(() => {
+    const dedupe = new Map();
+    const source = Array.isArray(tokens) ? tokens.filter(Boolean) : [];
+    for (const token of source) {
+      const key =
+        token.id ??
+        token._id ??
+        `${token.name}-${token.category}-${token.type}-${token.expiresAt}`;
+      dedupe.set(String(key), token);
+    }
+    return Array.from(dedupe.values());
+  }, [tokens]);
+
+  const dashboardSummary = useMemo(() => {
+    const totalFromCounts = Object.values(categoryCounts || {}).reduce(
+      (sum, count) => sum + (Number(count) || 0),
+      0
+    );
+    const total = Math.max(totalFromCounts, allLoadedTokens.length);
+    let expiring7 = 0;
+    let expiring30 = 0;
+    let critical = 0;
+    let expired = 0;
+    let healthy = 0;
+
+    for (const token of allLoadedTokens) {
+      const days = getDaysUntilExpiration(token.expiresAt);
+      if (days < 0) {
+        expired += 1;
+        critical += 1;
+      } else if (days <= 7) {
+        expiring7 += 1;
+        critical += 1;
+      } else if (days <= 30) {
+        expiring30 += 1;
+      } else {
+        healthy += 1;
+      }
+    }
+
+    return {
+      total,
+      expiring7,
+      expiring30,
+      critical,
+      expired,
+      healthy,
+      dueSoon: expiring7 + expiring30,
+    };
+  }, [allLoadedTokens, categoryCounts]);
+
+  const providerSummary = useMemo(() => {
+    const providers = new Map();
+    for (const token of allLoadedTokens) {
+      const provider = String(getTokenProvider(token) || 'manual').trim();
+      const key = provider.toLowerCase();
+      if (!providers.has(key)) {
+        providers.set(key, {
+          name: provider === 'manual' ? 'Manual entries' : provider,
+          count: 0,
+        });
+      }
+      providers.get(key).count += 1;
+    }
+    return Array.from(providers.values()).sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name)
+    );
+  }, [allLoadedTokens]);
+
+  const visibleTokens = useMemo(() => {
+    const sectionParam = panelQueries?.__section || '__all__';
+    const dashboardSearch = panelQueries?.__global || '';
+    const selected =
+      selectedCategoryValues.length > 0
+        ? selectedCategoryValues
+        : TOKEN_CATEGORIES.map(category => category.value);
+    const dedupe = new Map();
+
+    for (const categoryValue of selected) {
+      const category = categoryByValue[categoryValue];
+      if (!category) continue;
+      const categoryTokens = getFilteredAndSortedTokens(
+        tokens,
+        category,
+        dashboardSearch,
+        sectionParam
+      );
+      for (const token of categoryTokens) {
+        const status = getDashboardStatusMeta(token.expiresAt).key;
+        const matchesStatus =
+          statusFilter === 'all' ||
+          statusFilter === status ||
+          (statusFilter === 'due' && status === 'due-soon') ||
+          (statusFilter === 'critical' &&
+            (status === 'critical' || status === 'expired')) ||
+          (statusFilter === 'healthy' && status === 'healthy');
+        if (matchesStatus) dedupe.set(String(token.id), token);
+      }
+    }
+
+    return Array.from(dedupe.values()).sort(
+      (a, b) =>
+        getDaysUntilExpiration(a.expiresAt) -
+          getDaysUntilExpiration(b.expiresAt) ||
+        String(a.name || '').localeCompare(String(b.name || ''))
+    );
+  }, [
+    TOKEN_CATEGORIES,
+    categoryByValue,
+    getFilteredAndSortedTokens,
+    panelQueries,
+    selectedCategoryValues,
+    statusFilter,
+    tokens,
+  ]);
+
+  const statusFilterOptions = useMemo(
+    () => [
+      {
+        value: 'all',
+        label: 'All',
+        count: dashboardSummary.total,
+        color: '#3b82f6',
+      },
+      {
+        value: 'critical',
+        label: 'Critical',
+        count: dashboardSummary.critical,
+        color: '#ef4444',
+      },
+      {
+        value: 'due',
+        label: 'Due Soon',
+        count: dashboardSummary.expiring30,
+        color: '#f97316',
+      },
+      {
+        value: 'healthy',
+        label: 'Healthy',
+        count: dashboardSummary.healthy,
+        color: '#22c55e',
+      },
+      {
+        value: 'expired',
+        label: 'Expired',
+        count: dashboardSummary.expired,
+        color: '#64748b',
+      },
+    ],
+    [dashboardSummary]
+  );
+
+  const categoryFilterOptions = useMemo(
+    () =>
+      TOKEN_CATEGORIES.map(cat => {
+        const facetsCount = (
+          globalFacets?.category ||
+          tokenFacets?.category ||
+          []
+        ).find(f => String(f.category) === cat.value)?.c;
+        const sectionActive =
+          (panelQueries?.__section || '__all__') !== '__all__';
+
+        const count =
+          typeof facetsCount === 'number'
+            ? facetsCount
+            : sectionActive || selectedCategoryValues.length > 0
+              ? (() => {
+                  const sec = panelQueries?.__section;
+                  const norm = v =>
+                    String(v || '')
+                      .trim()
+                      .toLowerCase();
+                  if (sec === '__none__') {
+                    return allLoadedTokens.filter(
+                      t =>
+                        t.category === cat.value &&
+                        (!t.section ||
+                          (Array.isArray(t.section) &&
+                            t.section.length === 0) ||
+                          String(t.section).trim() === '')
+                    ).length;
+                  }
+                  const wantedList =
+                    (sec || '__all__') === '__all__'
+                      ? []
+                      : String(sec)
+                          .split(',')
+                          .map(s => norm(s))
+                          .filter(Boolean);
+
+                  return allLoadedTokens.filter(t => {
+                    if (t.category !== cat.value) return false;
+                    if (wantedList.length === 0) return true;
+                    const tokenSections = Array.isArray(t.section)
+                      ? t.section.map(s => norm(s))
+                      : [norm(t.section)];
+                    return wantedList.every(w => tokenSections.includes(w));
+                  }).length;
+                })()
+              : typeof categoryCounts?.[cat.value] === 'number'
+                ? categoryCounts[cat.value]
+                : 0;
+
+        return {
+          ...cat,
+          count,
+          active: selectedCategoryValues.includes(cat.value),
+        };
+      }),
+    [
+      TOKEN_CATEGORIES,
+      allLoadedTokens,
+      categoryCounts,
+      globalFacets,
+      panelQueries,
+      selectedCategoryValues,
+      tokenFacets,
+    ]
+  );
+
+  const sectionFilterOptions = useMemo(() => {
+    const norm = v =>
+      String(v || '')
+        .trim()
+        .toLowerCase();
+    const splitAndTrim = val =>
+      String(val || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+    const facetSource = globalFacets?.section || tokenFacets?.section || [];
+    const rawMap = {};
+
+    facetSource.forEach(row => {
+      const labels = splitAndTrim(row.section);
+      if (labels.length === 0) {
+        const key = '';
+        if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
+        rawMap[key].count += row.c || 0;
+        return;
+      }
+      labels.forEach(label => {
+        const key = norm(label);
+        if (!rawMap[key]) rawMap[key] = { name: label, count: 0 };
+        rawMap[key].count = Math.max(rawMap[key].count, row.c || 0);
+      });
+    });
+
+    try {
+      allLoadedTokens.forEach(token => {
+        if (
+          selectedCategoryValues.length > 0 &&
+          !selectedCategoryValues.includes(token.category)
+        ) {
+          return;
+        }
+
+        const currentSection = panelQueries?.__section || '__all__';
+        if (currentSection !== '__all__') {
+          const tokenSections = Array.isArray(token.section)
+            ? token.section.map(s => norm(s))
+            : [norm(token.section)];
+
+          if (currentSection === '__none__') {
+            if (
+              token.section &&
+              (!Array.isArray(token.section) || token.section.length > 0)
+            ) {
+              return;
+            }
+          } else {
+            const wanted = currentSection
+              .split(',')
+              .map(s => norm(s))
+              .filter(Boolean);
+            if (!wanted.every(w => tokenSections.includes(w))) return;
+          }
+        }
+
+        const labels = Array.isArray(token.section)
+          ? token.section.flatMap(s => splitAndTrim(s))
+          : splitAndTrim(token.section);
+
+        if (labels.length === 0) {
+          const key = '';
+          if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
+          return;
+        }
+
+        const uniqueInToken = [...new Set(labels.map(s => norm(s)))];
+        uniqueInToken.forEach(key => {
+          const originalLabel = labels.find(s => norm(s) === key);
+          if (!rawMap[key]) {
+            rawMap[key] = { name: originalLabel, count: 0 };
+          }
+        });
+      });
+    } catch (_) {}
+
+    const raw = Object.values(rawMap);
+    raw.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    const allCount =
+      selectedCategoryValues.length > 0
+        ? selectedCategoryValues.reduce(
+            (sum, cat) => sum + (categoryCounts?.[cat] || 0),
+            0
+          )
+        : Object.values(categoryCounts || {}).reduce(
+            (sum, count) => sum + (count || 0),
+            0
+          );
+
+    return [
+      {
+        name: '__all__',
+        label: 'All sections',
+        count: allCount,
+        scheme: 'blue',
+      },
+      {
+        name: '__none__',
+        label: 'No section',
+        count: rawMap['']?.count || 0,
+        scheme: 'gray',
+      },
+      ...raw
+        .filter(section => (section.name || '').length > 0 && section.count > 0)
+        .map(section => ({
+          name: section.name,
+          label: section.name,
+          count: section.count,
+          scheme: _getSectionColorScheme(section.name),
+        })),
+    ];
+  }, [
+    allLoadedTokens,
+    categoryCounts,
+    globalFacets,
+    panelQueries,
+    selectedCategoryValues,
+    tokenFacets,
+  ]);
+
+  const requestAssetSort = useCallback(key => {
+    const nextSort = {
+      key,
+      direction:
+        assetSort.key === key && assetSort.direction === 'asc' ? 'desc' : 'asc',
+    };
+    setAssetSort(nextSort);
+    setAssetPage(1);
+
+    const serverSortByKey = {
+      expiresAt:
+        nextSort.direction === 'asc' ? 'expiration_asc' : 'expiration_desc',
+      last_used:
+        nextSort.direction === 'asc' ? 'last_used_asc' : 'last_used_desc',
+      name: 'name_asc',
+    };
+    const nextServerSort = serverSortByKey[key];
+    if (nextServerSort && typeof _setServerSort === 'function') {
+      _setServerSort(nextServerSort);
+    }
+  }, [assetSort, _setServerSort]);
+
+  const sortedVisibleTokens = useMemo(() => {
+    const getTypeLabel = token => {
+      const category = categoryByValue[token.category];
+      const type = category?.types?.find(t => t.value === token.type);
+      return type?.label || token.type || '';
+    };
+    const getSortValue = token => {
+      if (assetSort.key === 'category') {
+        return categoryByValue[token.category]?.label || token.category || '';
+      }
+      if (assetSort.key === 'type') return getTypeLabel(token);
+      if (assetSort.key === 'location') return getTokenLocation(token);
+      if (assetSort.key === 'owner') return getTokenOwner(token);
+      if (assetSort.key === 'last_used') {
+        return token.last_used ? new Date(token.last_used).getTime() : 0;
+      }
+      if (assetSort.key === 'expiresAt') {
+        return getDaysUntilExpiration(token.expiresAt);
+      }
+      if (assetSort.key === 'status') {
+        return getDashboardStatusMeta(token.expiresAt).key;
+      }
+      return token.name || '';
+    };
+
+    return visibleTokens.slice().sort((a, b) => {
+      const aValue = getSortValue(a);
+      const bValue = getSortValue(b);
+      const direction = assetSort.direction === 'asc' ? 1 : -1;
+
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return (aValue - bValue) * direction;
+      }
+
+      return (
+        String(aValue).localeCompare(String(bValue), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }) * direction
+      );
+    });
+  }, [assetSort, categoryByValue, visibleTokens]);
+
+  const assetPageCount = Math.max(
+    1,
+    Math.ceil(sortedVisibleTokens.length / assetPageSize)
+  );
+
+  useEffect(() => {
+    setAssetPage(page => Math.min(Math.max(page, 1), assetPageCount));
+  }, [assetPageCount]);
+
+  const paginatedVisibleTokens = useMemo(() => {
+    const start = (assetPage - 1) * assetPageSize;
+    return sortedVisibleTokens.slice(start, start + assetPageSize);
+  }, [assetPage, assetPageSize, sortedVisibleTokens]);
+
+  const assetRangeStart =
+    sortedVisibleTokens.length === 0 ? 0 : (assetPage - 1) * assetPageSize + 1;
+  const assetRangeEnd = Math.min(
+    assetPage * assetPageSize,
+    sortedVisibleTokens.length
+  );
+
+  const selectedVisibleTokenIds = useMemo(() => {
+    const visibleIds = new Set(paginatedVisibleTokens.map(token => token.id));
+    return selectedTokenIds.filter(id => visibleIds.has(id));
+  }, [paginatedVisibleTokens, selectedTokenIds]);
+
+  const loadMoreCategories = useMemo(
+    () =>
+      TOKEN_CATEGORIES.filter(category => categoryHasMore?.[category.value]),
+    [TOKEN_CATEGORIES, categoryHasMore]
+  );
+
+  const getAssetTypeLabel = useCallback(
+    token => {
+      const category = categoryByValue[token?.category];
+      const type = category?.types?.find(t => t.value === token?.type);
+      return type?.label || token?.type || '-';
+    },
+    [categoryByValue]
+  );
+
+  const getCategoryLabel = useCallback(
+    token => categoryByValue[token?.category]?.label || token?.category || '-',
+    [categoryByValue]
+  );
+
+  const renderAssetPaginationControls = () => (
+    <Flex
+      align={{ base: 'stretch', md: 'center' }}
+      justify={{ base: 'space-between', md: 'end' }}
+      direction={{ base: 'column', sm: 'row' }}
+      gap={3}
+      flex='1'
+      minW={0}
+    >
+      <HStack spacing={2}>
+        <Text color={mutedTextColor} fontSize='sm'>
+          Show
+        </Text>
+        <Select
+          size='sm'
+          w='84px'
+          value={assetPageSize}
+          bg={inputBg}
+          borderColor={inputBorder}
+          onChange={event => {
+            setAssetPageSize(Number(event.target.value));
+            setAssetPage(1);
+          }}
         >
-          {/* Collapsible Header */}
-          <Flex
-            align='center'
-            justify='space-between'
-            direction={{ base: 'column', md: 'row' }}
-            gap={{ base: 3, md: 0 }}
-            cursor='pointer'
-            onClick={() => setIsFormExpanded(!isFormExpanded)}
-            py={1}
-            _hover={{ opacity: 0.85 }}
-            transition='opacity 0.15s ease'
+          {ASSET_PAGE_SIZE_OPTIONS.map(size => (
+            <option key={size} value={size}>
+              {size}
+            </option>
+          ))}
+        </Select>
+      </HStack>
+
+      <HStack spacing={3} justify={{ base: 'space-between', sm: 'end' }}>
+        <Text color={mutedTextColor} fontSize='sm' whiteSpace='nowrap'>
+          {assetRangeStart}-{assetRangeEnd} of {sortedVisibleTokens.length}
+        </Text>
+        <HStack spacing={1}>
+          <IconButton
+            aria-label='Previous assets page'
+            icon={<FiChevronRight />}
+            size='sm'
+            variant='ghost'
+            color='rgba(203, 213, 225, 0.9)'
+            isDisabled={assetPage <= 1}
+            onClick={() => setAssetPage(page => Math.max(1, page - 1))}
+            sx={{ svg: { transform: 'rotate(180deg)' } }}
+            _hover={{ bg: 'rgba(30, 41, 59, 0.72)', color: 'white' }}
+          />
+          <Button
+            size='sm'
+            variant='outline'
+            borderColor='rgba(59, 130, 246, 0.38)'
+            color='white'
+            bg='rgba(37, 99, 235, 0.18)'
+            minW='38px'
+          >
+            {assetPage}
+          </Button>
+          <IconButton
+            aria-label='Next assets page'
+            icon={<FiChevronRight />}
+            size='sm'
+            variant='ghost'
+            color='rgba(203, 213, 225, 0.9)'
+            isDisabled={assetPage >= assetPageCount}
+            onClick={() =>
+              setAssetPage(page => Math.min(assetPageCount, page + 1))
+            }
+            _hover={{ bg: 'rgba(30, 41, 59, 0.72)', color: 'white' }}
+          />
+        </HStack>
+      </HStack>
+    </Flex>
+  );
+
+  const attentionTokens = useMemo(
+    () =>
+      allLoadedTokens
+        .filter(token => {
+          const days = getDaysUntilExpiration(token.expiresAt);
+          return days < 0 || days <= 31;
+        })
+        .sort(
+          (a, b) =>
+            getDaysUntilExpiration(a.expiresAt) -
+            getDaysUntilExpiration(b.expiresAt)
+        )
+        .slice(0, 5),
+    [allLoadedTokens]
+  );
+
+  const healthSegments = useMemo(() => {
+    const total = Math.max(dashboardSummary.total, 1);
+    const healthyPercent = (dashboardSummary.healthy / total) * 100;
+    const duePercent = (dashboardSummary.expiring30 / total) * 100;
+    const criticalPercent =
+      (Math.max(dashboardSummary.critical - dashboardSummary.expired, 0) /
+        total) *
+      100;
+    const expiredPercent = (dashboardSummary.expired / total) * 100;
+    return {
+      healthyPercent,
+      duePercent,
+      criticalPercent,
+      expiredPercent,
+      gradient: `conic-gradient(#22c55e 0 ${healthyPercent}%, #f97316 ${healthyPercent}% ${
+        healthyPercent + duePercent
+      }%, #ef4444 ${healthyPercent + duePercent}% ${
+        healthyPercent + duePercent + criticalPercent
+      }%, #64748b ${healthyPercent + duePercent + criticalPercent}% 100%)`,
+    };
+  }, [dashboardSummary]);
+
+  const navigateToDashboard = () => {
+    try {
+      const search = new URLSearchParams(window.location.search);
+      search.delete('view');
+      const qs = search.toString();
+      navigate(`/dashboard${qs ? `?${qs}` : ''}`, { replace: true });
+    } catch (_) {}
+  };
+
+  const renderDashboardSidebar = () => {
+    const menuItems = [
+      {
+        key: 'tokens',
+        label: 'Tokens',
+        icon: Layers,
+        active: true,
+        onClick: navigateToDashboard,
+      },
+      ...(dashboardCanSeeManagerNav
+        ? [
+            {
+              key: 'usage',
+              label: 'Usage',
+              icon: Gauge,
+              onClick: () => navigate('/usage'),
+            },
+            {
+              key: 'docs',
+              label: 'Docs',
+              icon: BookOpen,
+              href: 'https://tokentimer.ch/docs#self-hosted',
+            },
+            {
+              key: 'audit',
+              label: 'Audit',
+              icon: ActivityIcon,
+              onClick: () => navigate('/audit'),
+            },
+            {
+              key: 'workspaces',
+              label: 'Workspaces',
+              icon: Building2,
+              onClick: () => navigate('/workspaces'),
+            },
+          ]
+        : [
+            {
+              key: 'docs',
+              label: 'Docs',
+              icon: BookOpen,
+              href: 'https://tokentimer.ch/docs#self-hosted',
+            },
+          ]),
+      ...(isSystemAdmin
+        ? [
+            {
+              key: 'system',
+              label: 'System',
+              icon: Settings,
+              onClick: () => navigate('/system-settings'),
+            },
+          ]
+        : []),
+    ];
+
+    return (
+      <Box
+        as='aside'
+        display={{ base: 'none', lg: 'flex' }}
+        flex={`0 0 ${dashboardSidebarWidthPx}`}
+        w={dashboardSidebarWidthPx}
+        h='100vh'
+        minH='100vh'
+        maxH='100vh'
+        position='fixed'
+        top='0'
+        bottom='0'
+        left='0'
+        zIndex={20}
+        flexDirection='column'
+        bg={DASHBOARD_PAGE_BG}
+        borderRight='1px solid'
+        borderColor='rgba(148, 163, 184, 0.13)'
+        overflow='hidden'
+        transition='width 160ms ease, flex-basis 160ms ease'
+      >
+        <VStack
+          align={isDashboardSidebarExpanded ? 'stretch' : 'center'}
+          spacing={2}
+          flex='1'
+          h='100%'
+          minH={0}
+          px={isDashboardSidebarExpanded ? 3 : 2}
+          py={3}
+        >
+          <Tooltip
+            label={
+              isDashboardSidebarExpanded ? 'Collapse menu' : 'Expand menu'
+            }
+            placement='right'
+            hasArrow
+          >
+            <IconButton
+              type='button'
+              aria-label={
+                isDashboardSidebarExpanded ? 'Collapse menu' : 'Expand menu'
+              }
+              icon={<FiMenu />}
+              h='38px'
+              w='38px'
+              minW='38px'
+              alignSelf={isDashboardSidebarExpanded ? 'flex-start' : 'center'}
+              variant='ghost'
+              bg='transparent'
+              color='white'
+              border='1px solid'
+              borderColor='rgba(148, 163, 184, 0.12)'
+              borderRadius='md'
+              onClick={toggleDashboardSidebarWidth}
+              _hover={{ bg: 'rgba(37, 99, 235, 0.18)', color: 'white' }}
+            />
+          </Tooltip>
+
+          <Divider
+            w={isDashboardSidebarExpanded ? '100%' : '32px'}
+            borderColor='rgba(148, 163, 184, 0.14)'
+            my={1}
+          />
+
+          <VStack
+            as='nav'
+            aria-label='Dashboard navigation'
+            align={isDashboardSidebarExpanded ? 'stretch' : 'center'}
+            spacing={2}
+            flex='0 0 auto'
+            w='100%'
+          >
+            {menuItems.map(item => {
+              const Icon = item.icon;
+              const navControl = isDashboardSidebarExpanded ? (
+                <Button
+                  as={item.href ? 'a' : 'button'}
+                  href={item.href}
+                  target={item.href ? '_blank' : undefined}
+                  rel={item.href ? 'noopener noreferrer' : undefined}
+                  aria-label={item.label}
+                  leftIcon={<Icon size={17} />}
+                  h='38px'
+                  w='100%'
+                  minW='0'
+                  px={3}
+                  justifyContent='flex-start'
+                  borderRadius='md'
+                  variant='ghost'
+                  color={item.active ? 'white' : 'rgba(203, 213, 225, 0.84)'}
+                  bg={
+                    item.active ? 'rgba(37, 99, 235, 0.26)' : 'transparent'
+                  }
+                  border='1px solid'
+                  borderColor={
+                    item.active ? 'rgba(59, 130, 246, 0.35)' : 'transparent'
+                  }
+                  fontSize='sm'
+                  fontWeight='medium'
+                  _hover={{
+                    bg: item.active
+                      ? 'rgba(37, 99, 235, 0.32)'
+                      : 'rgba(30, 41, 59, 0.78)',
+                    color: 'white',
+                  }}
+                  _active={{ bg: 'rgba(37, 99, 235, 0.3)' }}
+                  onClick={item.onClick || undefined}
+                >
+                  <Text noOfLines={1}>{item.label}</Text>
+                </Button>
+              ) : (
+                <IconButton
+                  as={item.href ? 'a' : 'button'}
+                  href={item.href}
+                  target={item.href ? '_blank' : undefined}
+                  rel={item.href ? 'noopener noreferrer' : undefined}
+                  aria-label={item.label}
+                  icon={<Icon size={18} />}
+                  h='38px'
+                  w='38px'
+                  minW='38px'
+                  borderRadius='md'
+                  variant='ghost'
+                  color={item.active ? 'white' : 'rgba(203, 213, 225, 0.84)'}
+                  bg={
+                    item.active ? 'rgba(37, 99, 235, 0.26)' : 'transparent'
+                  }
+                  border='1px solid'
+                  borderColor={
+                    item.active ? 'rgba(59, 130, 246, 0.35)' : 'transparent'
+                  }
+                  _hover={{
+                    bg: item.active
+                      ? 'rgba(37, 99, 235, 0.32)'
+                      : 'rgba(30, 41, 59, 0.78)',
+                    color: 'white',
+                  }}
+                  _active={{ bg: 'rgba(37, 99, 235, 0.3)' }}
+                  onClick={item.onClick || undefined}
+                />
+              );
+              return (
+                <Tooltip
+                  key={item.key}
+                  label={item.label}
+                  placement='right'
+                  hasArrow
+                  isDisabled={isDashboardSidebarExpanded}
+                >
+                  <Box>{navControl}</Box>
+                </Tooltip>
+              );
+            })}
+          </VStack>
+        </VStack>
+      </Box>
+    );
+  };
+
+  const renderDashboardTopbar = () => (
+    <Flex
+      as='header'
+      display={{ base: 'none', lg: 'flex' }}
+      align='center'
+      justify='space-between'
+      gap={4}
+      minH='54px'
+      px={{ base: 4, lg: 6, '2xl': 8 }}
+      py={2}
+      bg={DASHBOARD_PAGE_BG}
+      borderBottom='1px solid'
+      borderColor='rgba(148, 163, 184, 0.13)'
+      backdropFilter='blur(16px)'
+    >
+      <HStack spacing={3} minW={0}>
+        <Circle
+          size='32px'
+          bg='rgba(37, 99, 235, 0.2)'
+          color='#60a5fa'
+          border='1px solid'
+          borderColor='rgba(59, 130, 246, 0.4)'
+        >
+          <ShieldAlert size={18} />
+        </Circle>
+        <Text color='white' fontWeight='bold' fontSize='lg' noOfLines={1}>
+          TokenTimer
+        </Text>
+      </HStack>
+
+      <HStack spacing={3} display={{ base: 'none', md: 'flex' }} ml='auto'>
+        <Menu placement='bottom-end'>
+          <MenuButton
+            as={Button}
+            rightIcon={<ChevronDown size={15} />}
+            h='36px'
+            minW='260px'
+            px={4}
+            bg='rgba(8, 13, 22, 0.92)'
+            border='1px solid'
+            borderColor={DASHBOARD_BORDER_STRONG}
+            color='white'
+            fontSize='sm'
+            fontWeight='medium'
+            borderRadius='md'
+            isDisabled={dashboardWorkspaces.length === 0}
+            _hover={{ bg: 'rgba(15, 23, 42, 0.96)' }}
+            _active={{ bg: 'rgba(15, 23, 42, 0.96)' }}
+          >
+            <HStack spacing={3} justify='space-between' minW={0}>
+              <Text color={mutedTextColor} fontSize='xs' fontWeight='medium'>
+                Workspace
+              </Text>
+              <Text color='white' fontSize='sm' fontWeight='semibold' noOfLines={1}>
+                {dashboardWorkspace?.name || workspaceLabel}
+              </Text>
+            </HStack>
+          </MenuButton>
+          <Portal>
+            <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+              {dashboardWorkspaces.map(workspace => (
+                <MenuItem
+                  key={workspace.id}
+                  onClick={() => handleDashboardWorkspaceSelect(workspace)}
+                >
+                  {workspace.name}
+                </MenuItem>
+              ))}
+            </MenuList>
+          </Portal>
+        </Menu>
+
+        <Menu placement='bottom-end'>
+          <Box position='relative'>
+            {dashboardNotifications.length > 0 && (
+              <Box
+                position='absolute'
+                top='7px'
+                right='8px'
+                w='7px'
+                h='7px'
+                borderRadius='full'
+                bg='#f87171'
+                zIndex='2'
+              />
+            )}
+            <MenuButton
+              as={IconButton}
+              aria-label='Notifications'
+              icon={<FiBell />}
+              size='sm'
+              variant='ghost'
+              color='rgba(203, 213, 225, 0.92)'
+              borderRadius='md'
+              _hover={{ bg: 'rgba(30, 41, 59, 0.72)', color: 'white' }}
+            />
+          </Box>
+          <Portal>
+            <MenuList
+              zIndex={1500}
+              bg={menuBg}
+              borderColor={menuBorder}
+              minW='280px'
+            >
+              {dashboardNotifications.length === 0 ? (
+                <Box px={3} py={2}>
+                  <Text fontSize='sm' color={mutedTextColor}>
+                    No notifications
+                  </Text>
+                </Box>
+              ) : (
+                dashboardNotifications.map(notification => {
+                  const isClickable = Boolean(notification?.href);
+                  return (
+                    <MenuItem
+                      key={notification.id}
+                      onClick={() => {
+                        if (notification?.href) navigate(notification.href);
+                      }}
+                      cursor={isClickable ? 'pointer' : 'default'}
+                      _hover={{
+                        bg: isClickable
+                          ? 'rgba(30, 41, 59, 0.72)'
+                          : 'transparent',
+                      }}
+                    >
+                      <VStack align='start' spacing={0}>
+                        <Text color='white' fontSize='sm' fontWeight='medium'>
+                          {notification.text}
+                        </Text>
+                        <Text color={mutedTextColor} fontSize='xs'>
+                          {isClickable
+                            ? 'Open related settings'
+                            : 'No action available'}
+                        </Text>
+                      </VStack>
+                    </MenuItem>
+                  );
+                })
+              )}
+            </MenuList>
+          </Portal>
+        </Menu>
+        <IconButton
+          aria-label='Toggle color mode'
+          icon={<Moon size={17} />}
+          size='sm'
+          variant='ghost'
+          color='rgba(203, 213, 225, 0.92)'
+          borderRadius='md'
+          _hover={{ bg: 'rgba(30, 41, 59, 0.72)', color: 'white' }}
+          onClick={toggleColorMode}
+        />
+
+        <Menu placement='bottom-end'>
+          <MenuButton
+            as={Button}
+            variant='ghost'
+            rightIcon={<ChevronDown size={15} />}
+            h='40px'
+            px={2}
+            color='white'
+            _hover={{ bg: 'rgba(30, 41, 59, 0.72)' }}
+            _active={{ bg: 'rgba(30, 41, 59, 0.72)' }}
           >
             <HStack spacing={3}>
-              <Box
-                as='span'
-                transition='transform 0.2s ease'
-                transform={isFormExpanded ? 'rotate(90deg)' : 'rotate(0deg)'}
-                display='flex'
-                alignItems='center'
-              >
-                <FiChevronRight size={18} />
+              <Circle size='34px' bg='#2563eb' color='white' fontSize='sm'>
+                {sessionInitials || 'U'}
+              </Circle>
+              <Box textAlign='left' minW={0} display={{ base: 'none', xl: 'block' }}>
+                <Text color='white' fontSize='sm' fontWeight='semibold' noOfLines={1}>
+                  {sessionName}
+                </Text>
+                <Text color={mutedTextColor} fontSize='xs' noOfLines={1}>
+                  {sessionEmail}
+                </Text>
               </Box>
-              <Heading size='md'>Create New Token</Heading>
-              {!isFormExpanded && (
-                <Badge
-                  colorScheme='blue'
-                  variant='solid'
-                  bg={isLight ? 'blue.100' : 'blue.800'}
-                  color={isLight ? 'blue.700' : 'blue.200'}
-                  fontSize='xs'
-                >
-                  Click to expand
-                </Badge>
-              )}
             </HStack>
-            <HStack
-              spacing={2}
-              wrap='wrap'
-              justify={{ base: 'center', md: 'flex-end' }}
-              align='center'
-              maxW='100%'
-              onClick={e => e.stopPropagation()}
-              position='relative'
-              zIndex={1}
+          </MenuButton>
+          <Portal>
+            <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+              <MenuItem icon={<User size={15} />} onClick={onAccountClick}>
+                Account Settings
+              </MenuItem>
+              {!isViewer && (
+                <MenuItem
+                  icon={<Settings size={15} />}
+                  onClick={() => navigate('/preferences')}
+                >
+                  Preferences
+                </MenuItem>
+              )}
+              <MenuItem icon={<LogOut size={15} />} onClick={onLogout}>
+                Sign Out
+              </MenuItem>
+            </MenuList>
+          </Portal>
+        </Menu>
+      </HStack>
+    </Flex>
+  );
+
+  const renderDashboardWorkspace = () => (
+    <VStack spacing={3} align='stretch' minW={0}>
+        <DashboardPanel title='Asset Inventory'>
+          <VStack spacing={3} align='stretch'>
+            <Flex
+              gap={3}
+              align={{ base: 'stretch', lg: 'center' }}
+              justify='space-between'
+              direction={{ base: 'column', lg: 'row' }}
             >
+              <InputGroup maxW={{ base: '100%', lg: '360px' }} size='sm'>
+                <InputLeftElement pointerEvents='none' h='32px'>
+                  <Search size={16} color='rgba(148, 163, 184, 0.86)' />
+                </InputLeftElement>
+                <Input
+                  value={panelQueries.__global || ''}
+                  onChange={event => {
+                    const nextValue = event.target.value;
+                    setPanelQueries(prev => ({
+                      ...prev,
+                      __global: nextValue,
+                    }));
+                    if (typeof _setSearchQuery === 'function') {
+                      _setSearchQuery(nextValue);
+                    }
+                    setAssetPage(1);
+                  }}
+                  placeholder='Search assets, domains, owners...'
+                  size='sm'
+                  bg={inputBg}
+                  borderColor={inputBorder}
+                  borderRadius='md'
+                  pl='36px'
+                  _placeholder={{ color: placeholderColor }}
+                />
+              </InputGroup>
+              <HStack spacing={2} flexWrap='wrap'>
+                {statusFilterOptions.map(option => {
+                  const active = statusFilter === option.value;
+                  return (
+                    <Button
+                      key={option.value}
+                      size='xs'
+                      variant='outline'
+                      borderRadius='md'
+                      borderColor={
+                        active ? option.color : 'rgba(148, 163, 184, 0.2)'
+                      }
+                      bg={
+                        active
+                          ? `${option.color}24`
+                          : 'rgba(15, 23, 42, 0.58)'
+                      }
+                      color={active ? 'white' : 'rgba(203, 213, 225, 0.9)'}
+                      _hover={{
+                        bg: active
+                          ? `${option.color}30`
+                          : 'rgba(30, 41, 59, 0.74)',
+                      }}
+                      onClick={() => {
+                        setStatusFilter(option.value);
+                        setAssetPage(1);
+                      }}
+                    >
+                      <Circle size='7px' bg={option.color} mr={2} />
+                      {option.label}
+                      <Badge ml={2} bg='whiteAlpha.200' color='inherit'>
+                        {option.count}
+                      </Badge>
+                    </Button>
+                  );
+                })}
+              </HStack>
+            </Flex>
+
+            <Divider borderColor='rgba(148, 163, 184, 0.12)' />
+
+            <Box>
+              <Text fontSize='xs' color={filterLabelColor} mb={2}>
+                Category
+              </Text>
+              <HStack spacing={2} flexWrap='wrap'>
+                {categoryFilterOptions.map(category => {
+                  const { active } = category;
+                  const visual = getCategoryVisual(category.value);
+                  const VisualIcon = visual.icon;
+                  return (
+                    <Button
+                      key={category.value}
+                      size='sm'
+                      variant='outline'
+                      borderRadius='md'
+                      borderColor={
+                        active ? visual.color : `${visual.color}55`
+                      }
+                      bg={
+                        active
+                          ? visual.bg
+                          : `${visual.color}12`
+                      }
+                      color={active ? 'white' : 'rgba(203, 213, 225, 0.9)'}
+                      fontWeight='medium'
+                      _hover={{
+                        bg: active
+                          ? `${visual.color}26`
+                          : `${visual.color}18`,
+                        borderColor: visual.color,
+                      }}
+                      onClick={() => {
+                        setSelectedCategories(active ? [] : [category.value]);
+                        setAssetPage(1);
+                      }}
+                    >
+                      <Box as='span' color={visual.color} display='inline-flex'>
+                        <VisualIcon size={15} />
+                      </Box>
+                      <Text as='span' ml={2}>
+                        {category.label}
+                      </Text>
+                      <Badge ml={2} bg='whiteAlpha.200' color='inherit'>
+                        {category.count}
+                      </Badge>
+                    </Button>
+                  );
+                })}
+              </HStack>
+            </Box>
+
+            <Box>
+              <Text fontSize='xs' color={filterLabelColor} mb={2}>
+                Sections
+              </Text>
+              <HStack spacing={2} flexWrap='wrap'>
+                {sectionFilterOptions.map(section => {
+                  const current = panelQueries.__section || '__all__';
+                  const accent = getSectionAccent(section);
+                  let active = false;
+                  if (section.name === '__all__') {
+                    active = current === '__all__';
+                  } else if (section.name === '__none__') {
+                    active = current === '__none__';
+                  } else {
+                    active = current.split(',').includes(section.name);
+                  }
+                  return (
+                    <Button
+                      key={`section-${section.name || 'none'}`}
+                      size='sm'
+                      variant='outline'
+                      borderRadius='md'
+                      fontWeight='medium'
+                      bg={
+                        active
+                          ? `${accent}22`
+                          : `${accent}10`
+                      }
+                      color={active ? 'white' : 'rgba(203, 213, 225, 0.9)'}
+                      borderColor={
+                        active
+                          ? accent
+                          : `${accent}55`
+                      }
+                      _hover={{
+                        bg: active ? `${accent}28` : `${accent}16`,
+                        borderColor: accent,
+                      }}
+                      onClick={() => {
+                        const currentVal = panelQueries?.__section || '__all__';
+                        let next;
+
+                        if (section.name === '__all__') {
+                          next = '__all__';
+                        } else if (section.name === '__none__') {
+                          next = '__none__';
+                        } else {
+                          let parts =
+                            currentVal === '__all__' ||
+                            currentVal === '__none__'
+                              ? []
+                              : currentVal.split(',').filter(Boolean);
+
+                          if (parts.includes(section.name)) {
+                            parts = parts.filter(
+                              part => part !== section.name
+                            );
+                          } else {
+                            parts.push(section.name);
+                          }
+
+                          next = parts.length > 0 ? parts.join(',') : '__all__';
+                        }
+
+                        setPanelQueries(prev => ({ ...prev, __section: next }));
+                        setAssetPage(1);
+                        try {
+                          const search = new URLSearchParams(
+                            window.location.search
+                          );
+                          if (next === '__all__') search.delete('section');
+                          else search.set('section', next);
+                          const qs = search.toString();
+                          navigate(`/dashboard${qs ? `?${qs}` : ''}`, {
+                            replace: true,
+                          });
+                        } catch (_) {}
+                      }}
+                    >
+                      <Circle size='7px' bg={accent} mr={2} />
+                      {section.label}
+                      <Badge ml={2} bg='whiteAlpha.200' color='inherit'>
+                        {section.count}
+                      </Badge>
+                    </Button>
+                  );
+                })}
+              </HStack>
+            </Box>
+          </VStack>
+        </DashboardPanel>
+
+        <DashboardPanel
+          title='Assets'
+          data-tour='token-list'
+          style={{
+            transition: 'opacity 180ms ease, transform 180ms ease',
+            opacity: isRefreshing ? 0.35 : 1,
+            transform: isRefreshing ? 'scale(0.995)' : 'scale(1)',
+          }}
+        >
+          <Flex
+            align={{ base: 'stretch', md: 'center' }}
+            justify='space-between'
+            direction={{ base: 'column', lg: 'row' }}
+            gap={3}
+            mb={4}
+          >
+            <Text color={mutedTextColor} fontSize='sm' whiteSpace='nowrap'>
+              {sortedVisibleTokens.length} visible
+            </Text>
+            {renderAssetPaginationControls()}
+          </Flex>
+
+          {!isViewer && selectedVisibleTokenIds.length > 0 && (
+            <Flex
+              mb={4}
+              gap={3}
+              align={{ base: 'stretch', md: 'center' }}
+              justify='space-between'
+              direction={{ base: 'column', md: 'row' }}
+              p={3}
+              bg='rgba(30, 41, 59, 0.58)'
+              border='1px solid'
+              borderColor='rgba(148, 163, 184, 0.16)'
+              borderRadius='md'
+            >
+              <Text color='rgba(226, 232, 240, 0.92)' fontSize='sm'>
+                {selectedVisibleTokenIds.length} asset(s) selected
+              </Text>
+              <HStack spacing={2} flexWrap='wrap'>
+                <Button
+                  size='xs'
+                  colorScheme='red'
+                  variant='outline'
+                  leftIcon={<FiTrash2 />}
+                  onClick={handleBulkDelete}
+                >
+                  Delete selected
+                </Button>
+                <Input
+                  size='xs'
+                  w='170px'
+                  placeholder='Section label'
+                  value={bulkSectionDrafts?.__dashboard || ''}
+                  onChange={event =>
+                    setBulkSectionDrafts(prev => ({
+                      ...prev,
+                      __dashboard: event.target.value,
+                    }))
+                  }
+                  bg={inputBg}
+                  borderColor={inputBorder}
+                />
+                <Button
+                  size='xs'
+                  colorScheme='blue'
+                  variant='outline'
+                  onClick={() =>
+                    handleBulkAssignSection(
+                      selectedVisibleTokenIds,
+                      '__dashboard'
+                    )
+                  }
+                >
+                  Assign section
+                </Button>
+              </HStack>
+            </Flex>
+          )}
+
+          {tokensLoading && tokens.length === 0 ? (
+            <Flex justify='center' p={{ base: 4, md: 8 }} overflowX='hidden'>
+              <AccessibleSpinner size='lg' aria-label='Loading tokens' />
+            </Flex>
+          ) : tokens.length === 0 ? (
+            <Text
+              textAlign='center'
+              color={emptyTextColor}
+              p={{ base: 4, md: 8 }}
+            >
+              {isViewer
+                ? 'No tokens in this workspace.'
+                : 'No tokens found. Create your first token above.'}
+            </Text>
+          ) : sortedVisibleTokens.length === 0 ? (
+            <Text
+              textAlign='center'
+              color={emptyTextColor}
+              p={{ base: 4, md: 8 }}
+            >
+              No assets match the current filters.
+            </Text>
+          ) : (
+            <>
+              <Box display={{ base: 'block', lg: 'none' }}>
+                <VStack align='stretch' spacing={3}>
+                  {paginatedVisibleTokens.map(token => {
+                    const status = getDashboardStatusMeta(token.expiresAt);
+                    const visual = getCategoryVisual(token.category);
+                    const VisualIcon = visual.icon;
+                    return (
+                      <Box
+                        key={token.id}
+                        p={4}
+                        bg={mobileCardBg}
+                        border='1px solid'
+                        borderColor='rgba(148, 163, 184, 0.16)'
+                        borderRadius='md'
+                      >
+                        <HStack align='start' justify='space-between' gap={3}>
+                          <HStack align='start' spacing={3} minW={0}>
+                            {!isViewer && (
+                              <Checkbox
+                                mt={1}
+                                isChecked={selectedTokenIds.includes(token.id)}
+                                onChange={() => toggleTokenSelection(token.id)}
+                              />
+                            )}
+                            <Circle
+                              size='36px'
+                              bg={visual.bg}
+                              color={visual.color}
+                              flex='0 0 auto'
+                            >
+                              <VisualIcon size={18} />
+                            </Circle>
+                            <Box minW={0}>
+                              <Text
+                                fontWeight='semibold'
+                                color='white'
+                                wordBreak='break-word'
+                              >
+                                {token.name}
+                              </Text>
+                              <Text color={secondaryTextColor} fontSize='sm'>
+                                {getAssetTypeLabel(token)}
+                              </Text>
+                              <Text
+                                color={mutedTextColor}
+                                fontSize='xs'
+                                noOfLines={1}
+                              >
+                                {getTokenLocation(token)}
+                              </Text>
+                            </Box>
+                          </HStack>
+                          <Badge bg={status.bg} color={status.color}>
+                            {status.label}
+                          </Badge>
+                        </HStack>
+                        <HStack spacing={2} flexWrap='wrap' mt={4}>
+                          <Button
+                            size='sm'
+                            colorScheme='blue'
+                            onClick={() => onOpenTokenModal(token)}
+                          >
+                            Details
+                          </Button>
+                          {!isViewer && (
+                            <>
+                              <Button
+                                size='sm'
+                                colorScheme='teal'
+                                onClick={() => onOpenRenew(token)}
+                              >
+                                Renew
+                              </Button>
+                              <Button
+                                size='sm'
+                                colorScheme='red'
+                                onClick={() => onDeleteToken(token.id)}
+                              >
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                        </HStack>
+                      </Box>
+                    );
+                  })}
+                </VStack>
+              </Box>
+
+              <Box overflowX='auto' display={{ base: 'none', lg: 'block' }}>
+                <Table variant='simple' size='sm'>
+                  <Thead>
+                    <Tr>
+                      {!isViewer && (
+                        <Th w='42px'>
+                          <Checkbox
+                            isChecked={
+                              paginatedVisibleTokens.length > 0 &&
+                              selectedVisibleTokenIds.length ===
+                                paginatedVisibleTokens.length
+                            }
+                            isIndeterminate={
+                              selectedVisibleTokenIds.length > 0 &&
+                              selectedVisibleTokenIds.length <
+                                paginatedVisibleTokens.length
+                            }
+                            onChange={event => {
+                              const ids = paginatedVisibleTokens.map(
+                                token => token.id
+                              );
+                              if (event.target.checked) {
+                                setSelectedTokenIds(prev => [
+                                  ...new Set([...prev, ...ids]),
+                                ]);
+                              } else {
+                                setSelectedTokenIds(prev =>
+                                  prev.filter(id => !ids.includes(id))
+                                );
+                              }
+                            }}
+                          />
+                        </Th>
+                      )}
+                      {[
+                        ['Name', 'name', '210px'],
+                        ['Type', 'type', '160px'],
+                        ['Domain / Location', 'location', '190px'],
+                        ['Owner / Used By', 'owner', '170px'],
+                        ['Last Used', 'last_used', '120px'],
+                        ['Expiration', 'expiresAt', '130px'],
+                        ['Status', 'status', '110px'],
+                      ].map(([label, key, minW]) => (
+                        <Th key={key} minW={minW}>
+                          <Button
+                            variant='ghost'
+                            size='xs'
+                            px={1}
+                            color='rgba(148, 163, 184, 0.95)'
+                            _hover={{
+                              bg: 'rgba(30, 41, 59, 0.72)',
+                              color: 'white',
+                            }}
+                            onClick={() => requestAssetSort(key)}
+                          >
+                            {label}
+                            {assetSort.key === key && (
+                              <Text
+                                as='span'
+                                ml={2}
+                                fontSize='10px'
+                                color='rgba(147, 197, 253, 0.96)'
+                              >
+                                {assetSort.direction === 'asc' ? 'Asc' : 'Desc'}
+                              </Text>
+                            )}
+                          </Button>
+                        </Th>
+                      ))}
+                      <Th textAlign='right' minW='116px'>
+                        Actions
+                      </Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {paginatedVisibleTokens.map(token => {
+                      const status = getDashboardStatusMeta(token.expiresAt);
+                      const visual = getCategoryVisual(token.category);
+                      const VisualIcon = visual.icon;
+                      const location = getTokenLocation(token);
+                      const isDomain =
+                        token.category === 'cert' &&
+                        Array.isArray(token.domains) &&
+                        token.domains.length > 0;
+                      return (
+                        <Tr
+                          key={token.id}
+                          cursor='pointer'
+                          _hover={{ bg: hoverBgColor }}
+                          onClick={event => {
+                            if (event.target.closest('button')) return;
+                            if (event.target.closest('a')) return;
+                            if (event.target.closest('input[type="checkbox"]'))
+                              return;
+                            onOpenTokenModal(token);
+                          }}
+                        >
+                          {!isViewer && (
+                            <Td onClick={event => event.stopPropagation()}>
+                              <Checkbox
+                                isChecked={selectedTokenIds.includes(token.id)}
+                                onChange={() => toggleTokenSelection(token.id)}
+                              />
+                            </Td>
+                          )}
+                          <Td>
+                            <HStack spacing={3} minW={0}>
+                              <Circle
+                                size='32px'
+                                bg={visual.bg}
+                                color={visual.color}
+                                flex='0 0 auto'
+                              >
+                                <VisualIcon size={16} />
+                              </Circle>
+                              <Box minW={0}>
+                                <Text
+                                  color='white'
+                                  fontWeight='medium'
+                                  noOfLines={1}
+                                >
+                                  {token.name}
+                                </Text>
+                                <Text
+                                  color={mutedTextColor}
+                                  fontSize='xs'
+                                  noOfLines={1}
+                                >
+                                  {getCategoryLabel(token)}
+                                </Text>
+                              </Box>
+                            </HStack>
+                          </Td>
+                          <Td>
+                            <TruncatedText
+                              text={getAssetTypeLabel(token)}
+                              maxLines={2}
+                              maxWidth='150px'
+                            />
+                          </Td>
+                          <Td>
+                            {isDomain ? (
+                              <HStack spacing={1} minW={0}>
+                                <Link
+                                  href={domainValueToUrl(location)}
+                                  isExternal
+                                  color='blue.300'
+                                  fontSize='sm'
+                                  noOfLines={1}
+                                  onClick={event => event.stopPropagation()}
+                                >
+                                  {location}
+                                </Link>
+                                <FiExternalLink size={13} />
+                                {token.domains.length > 1 && (
+                                  <Text color={mutedTextColor} fontSize='xs'>
+                                    +{token.domains.length - 1}
+                                  </Text>
+                                )}
+                              </HStack>
+                            ) : (
+                              <TruncatedText
+                                text={location}
+                                maxLines={2}
+                                maxWidth='180px'
+                              />
+                            )}
+                          </Td>
+                          <Td>
+                            <TruncatedText
+                              text={getTokenOwner(token)}
+                              maxLines={2}
+                              maxWidth='160px'
+                            />
+                          </Td>
+                          <Td>
+                            <Text color={mutedTextColor} fontSize='sm'>
+                              {token.last_used
+                                ? formatDate(token.last_used)
+                                : '-'}
+                            </Text>
+                          </Td>
+                          <Td>{formatExpirationDate(token.expiresAt)}</Td>
+                          <Td>
+                            <HStack spacing={2}>
+                              <Badge
+                                bg={status.bg}
+                                color={status.color}
+                                border='1px solid'
+                                borderColor={`${status.color}44`}
+                                borderRadius='md'
+                                px={2}
+                                py={1}
+                              >
+                                <HStack spacing={1}>
+                                  <Circle size='6px' bg={status.color} />
+                                  <Text as='span'>{status.label}</Text>
+                                </HStack>
+                              </Badge>
+                              {token.monitor_health_status && (
+                                <Tooltip
+                                  label={`${
+                                    token.monitor_url || 'Endpoint'
+                                  }: ${token.monitor_health_status}${
+                                    token.monitor_response_ms
+                                      ? ` (${token.monitor_response_ms}ms)`
+                                      : ''
+                                  }`}
+                                >
+                                  <Box as='span' display='inline-flex'>
+                                    <FiActivity
+                                      size={16}
+                                      color={
+                                        token.monitor_health_status ===
+                                        'healthy'
+                                          ? '#22c55e'
+                                          : token.monitor_health_status ===
+                                              'error'
+                                            ? '#e11d48'
+                                            : '#ff6b00'
+                                      }
+                                    />
+                                  </Box>
+                                </Tooltip>
+                              )}
+                            </HStack>
+                          </Td>
+                          <Td textAlign='right'>
+                            <HStack spacing={1} justify='flex-end'>
+                              <Tooltip label='Details'>
+                                <IconButton
+                                  size='sm'
+                                  variant='ghost'
+                                  color='rgba(203, 213, 225, 0.9)'
+                                  aria-label={`Show full details for token ${token.name}`}
+                                  icon={<MoreVertical size={16} />}
+                                  onClick={() => onOpenTokenModal(token)}
+                                />
+                              </Tooltip>
+                              {!isViewer && (
+                                <>
+                                  <Tooltip label='Renew'>
+                                    <IconButton
+                                      size='sm'
+                                      variant='ghost'
+                                      color='rgba(45, 212, 191, 0.95)'
+                                      aria-label={`Renew token ${token.name}`}
+                                      icon={<CalendarClock size={16} />}
+                                      onClick={() => onOpenRenew(token)}
+                                    />
+                                  </Tooltip>
+                                  <Tooltip label='Delete'>
+                                    <IconButton
+                                      size='sm'
+                                      variant='ghost'
+                                      color='rgba(248, 113, 113, 0.95)'
+                                      aria-label={`Delete token ${token.name}`}
+                                      icon={<FiTrash2 />}
+                                      onClick={() => onDeleteToken(token.id)}
+                                    />
+                                  </Tooltip>
+                                </>
+              )}
+                            </HStack>
+                          </Td>
+                        </Tr>
+                      );
+                    })}
+                  </Tbody>
+                </Table>
+              </Box>
+
+              {loadMoreCategories.length > 0 && (
+                <HStack spacing={2} flexWrap='wrap' justify='center' mt={4}>
+                  {loadMoreCategories.map(category => (
+                    <Button
+                      key={category.value}
+                      size='sm'
+                      variant='outline'
+                      borderColor='rgba(148, 163, 184, 0.22)'
+                      color='rgba(226, 232, 240, 0.94)'
+                      _hover={{ bg: 'rgba(30, 41, 59, 0.72)' }}
+                      onClick={() => fetchTokensForCategory(category.value)}
+                      isLoading={!!categoryLoading?.[category.value]}
+                      loadingText='Loading...'
+                    >
+                      Load more {category.label}
+                    </Button>
+                  ))}
+                </HStack>
+              )}
+            </>
+          )}
+        </DashboardPanel>
+
+      <SimpleGrid columns={{ base: 1, xl: 3 }} spacing={3} alignItems='stretch'>
+        <DashboardPanel title='Needs Attention'>
+          {attentionTokens.length === 0 ? (
+            <HStack spacing={3}>
+              <Circle size='38px' bg='rgba(34, 197, 94, 0.14)' color='#22c55e'>
+                <CheckCircle2 size={19} />
+              </Circle>
+              <Box>
+                <Text color='white' fontSize='sm' fontWeight='medium'>
+                  All clear
+                </Text>
+                <Text color={mutedTextColor} fontSize='xs'>
+                  No assets are due soon.
+                </Text>
+              </Box>
+            </HStack>
+          ) : (
+            <VStack align='stretch' spacing={3}>
+              {attentionTokens.map(token => {
+                const status = getDashboardStatusMeta(token.expiresAt);
+                const AttentionIcon =
+                  status.key === 'due-soon' ? Clock3 : AlertTriangle;
+                return (
+                  <HStack key={token.id} spacing={3} align='start'>
+                    <Circle
+                      size='38px'
+                      bg={status.bg}
+                      color={status.color}
+                      flex='0 0 auto'
+                    >
+                      <AttentionIcon size={18} />
+                    </Circle>
+                    <Box minW={0} flex='1'>
+                      <Text
+                        color='white'
+                        fontSize='sm'
+                        fontWeight='medium'
+                        noOfLines={1}
+                      >
+                        {token.name}
+                      </Text>
+                      <Text color={mutedTextColor} fontSize='xs' noOfLines={1}>
+                        {getAssetTypeLabel(token)} - {getTokenOwner(token)}
+                      </Text>
+                    </Box>
+                    <Text
+                      color={status.color}
+                      fontSize='xs'
+                      fontWeight='bold'
+                      textAlign='right'
+                    >
+                      {formatDaysUntil(token.expiresAt)}
+                    </Text>
+                  </HStack>
+                );
+              })}
+            </VStack>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title='Asset Health Overview'>
+          <HStack spacing={5} align='center'>
+            <Circle
+              size='112px'
+              bg={healthSegments.gradient}
+              boxShadow='0 0 0 1px rgba(148, 163, 184, 0.12) inset'
+              flex='0 0 auto'
+            >
+              <Circle size='64px' bg='#0f172a'>
+                <Text color='white' fontWeight='bold'>
+                  {dashboardSummary.total}
+                </Text>
+              </Circle>
+            </Circle>
+            <VStack align='stretch' spacing={2} flex='1'>
+              {[
+                ['Healthy', dashboardSummary.healthy, '#22c55e'],
+                ['Due Soon', dashboardSummary.expiring30, '#f97316'],
+                [
+                  'Critical',
+                  Math.max(
+                    dashboardSummary.critical - dashboardSummary.expired,
+                    0
+                  ),
+                  '#ef4444',
+                ],
+                ['Expired', dashboardSummary.expired, '#64748b'],
+              ].map(([label, count, color]) => (
+                <Flex key={label} justify='space-between' gap={3} fontSize='sm'>
+                  <HStack spacing={2} minW={0}>
+                    <Circle size='8px' bg={color} />
+                    <Text color={mutedTextColor}>{label}</Text>
+                  </HStack>
+                  <Text color='white' fontWeight='medium'>
+                    {count} ({formatDashboardPercent(count, dashboardSummary.total)})
+                  </Text>
+                </Flex>
+              ))}
+            </VStack>
+          </HStack>
+        </DashboardPanel>
+
+        <DashboardPanel title='Integration Sync Status'>
+          {providerSummary.length === 0 ? (
+            <Text color={emptyTextColor} fontSize='sm'>
+              No integrations yet.
+            </Text>
+          ) : (
+            <VStack align='stretch' spacing={3}>
+              {providerSummary.slice(0, 5).map(provider => (
+                <HStack key={provider.name} spacing={3}>
+                  <Circle size='30px' bg='rgba(59, 130, 246, 0.14)' color='#60a5fa'>
+                    <PlugZap size={15} />
+                  </Circle>
+                  <Box flex='1' minW={0}>
+                    <Text color='white' fontSize='sm' noOfLines={1}>
+                      {provider.name}
+                    </Text>
+                    <Text color={mutedTextColor} fontSize='xs'>
+                      {provider.count} asset(s)
+                    </Text>
+                  </Box>
+                  <CheckCircle2 size={16} color='#22c55e' />
+                </HStack>
+              ))}
+            </VStack>
+          )}
+        </DashboardPanel>
+      </SimpleGrid>
+    </VStack>
+  );
+
+  return (
+    <Box
+      color={pageTextColor}
+      minH='100vh'
+      bg={DASHBOARD_PAGE_BG}
+      sx={{
+        '.chakra-form__label': { color: 'rgba(203, 213, 225, 0.9)' },
+        '.chakra-table th': {
+          color: 'rgba(148, 163, 184, 0.92)',
+          borderColor: 'rgba(148, 163, 184, 0.14)',
+          background: 'rgba(8, 13, 22, 0.84)',
+          fontSize: '0.72rem',
+          letterSpacing: '0',
+          textTransform: 'none',
+          paddingTop: '0.55rem',
+          paddingBottom: '0.55rem',
+        },
+        '.chakra-table td': {
+          color: 'rgba(226, 232, 240, 0.94)',
+          borderColor: 'rgba(148, 163, 184, 0.1)',
+          paddingTop: '0.55rem',
+          paddingBottom: '0.55rem',
+        },
+        '.chakra-input, .chakra-select, .chakra-textarea': {
+          color: 'rgba(248, 250, 252, 0.96)',
+        },
+        option: {
+          background: '#0f172a',
+          color: 'white',
+        },
+      }}
+    >
+      <Flex minH='100vh' align='stretch'>
+        {renderDashboardSidebar()}
+        <Box
+          flex='1'
+          minW={0}
+          ml={{ base: 0, lg: dashboardSidebarWidthPx }}
+          transition='margin-left 160ms ease'
+        >
+          {renderDashboardTopbar()}
+          <Box px={{ base: 4, lg: 4, '2xl': 5 }} py={{ base: 5, lg: 3 }}>
+      <SimpleGrid columns={{ base: 1, sm: 2, xl: 5 }} spacing={3} mb={3}>
+        <MetricCard
+          icon={Layers}
+          label='Total Assets'
+          value={dashboardSummary.total}
+          detail='Across all sections'
+          accent='#3b82f6'
+        />
+        <MetricCard
+          icon={Clock3}
+          label='Expiring in 7 days'
+          value={dashboardSummary.expiring7}
+          detail={`${dashboardSummary.total ? ((dashboardSummary.expiring7 / dashboardSummary.total) * 100).toFixed(1) : '0.0'}% of total`}
+          accent='#f59e0b'
+        />
+        <MetricCard
+          icon={CalendarClock}
+          label='Expiring in 30 days'
+          value={dashboardSummary.expiring30}
+          detail={`${dashboardSummary.total ? ((dashboardSummary.expiring30 / dashboardSummary.total) * 100).toFixed(1) : '0.0'}% of total`}
+          accent='#f97316'
+        />
+        <MetricCard
+          icon={ShieldAlert}
+          label='Critical / Expired'
+          value={dashboardSummary.critical}
+          detail={`${dashboardSummary.total ? ((dashboardSummary.critical / dashboardSummary.total) * 100).toFixed(1) : '0.0'}% of total`}
+          accent='#ef4444'
+        />
+        <MetricCard
+          icon={PlugZap}
+          label='Active Integrations'
+          value={providerSummary.length}
+          detail={
+            providerSummary.length > 0
+              ? 'Sources reporting assets'
+              : 'Manual inventory only'
+          }
+          accent='#22c55e'
+        />
+      </SimpleGrid>
+
+      {/* Token creation actions (hidden for viewers) */}
+      {!isViewer && (
+        <>
+          <Box
+            data-tour='add-token-form'
+            bg={DASHBOARD_SURFACE}
+            p={{ base: 4, md: 4 }}
+            borderRadius='md'
+            boxShadow='0 14px 42px rgba(0, 0, 0, 0.18)'
+            border='1px solid'
+            borderColor={DASHBOARD_BORDER}
+            mb={4}
+            overflow='visible'
+          >
+            <HStack
+              spacing={3}
+              flexWrap='wrap'
+              justify='flex-start'
+            >
+              <Button
+                size='sm'
+                colorScheme='blue'
+                leftIcon={<FiPlus />}
+                borderRadius='md'
+                onClick={() => setCreateTokenModalOpen(true)}
+              >
+                Create New Token
+              </Button>
               <Menu placement='bottom-end'>
                 <MenuButton
                   data-tour='export-tokens'
                   as={Button}
-                  leftIcon={<FiDownload />}
+                  leftIcon={<Download size={16} />}
                   size='sm'
                   variant='outline'
-                  minW='fit-content'
-                  maxW={{ base: '100%', sm: 'none' }}
-                  whiteSpace='nowrap'
+                  borderRadius='md'
+                  borderColor={DASHBOARD_BORDER_STRONG}
+                  color='rgba(226, 232, 240, 0.94)'
+                  _hover={{ bg: 'rgba(30, 41, 59, 0.72)', color: 'white' }}
                 >
                   Export tokens
                 </MenuButton>
@@ -3904,23 +6235,35 @@ function DashboardView({
               </Menu>
               <Button
                 size='sm'
-                colorScheme='blue'
                 variant='outline'
-                leftIcon={<FiGlobe />}
+                leftIcon={<ActivityIcon size={16} />}
+                borderRadius='md'
+                borderColor='rgba(59, 130, 246, 0.62)'
+                color='rgba(147, 197, 253, 0.98)'
+                _hover={{ bg: 'rgba(37, 99, 235, 0.16)', color: 'white' }}
                 onClick={onDomainModalOpen}
-                minW='fit-content'
-                aria-label='Endpoint and SSL monitoring (single URL health checks or domain-wide SSL discovery)'
+                aria-label='Endpoint and SSL monitoring'
               >
                 Endpoint & SSL monitor
               </Button>
               <Box data-tour='import-tokens'>
-                <ImportTokensButton />
+                <ImportTokensButton label='Import tokens' />
               </Box>
             </HStack>
-          </Flex>
+          </Box>
 
-          <Collapse in={isFormExpanded} animateOpacity>
-            <Box pt={4}>
+          <Modal
+            isOpen={isCreateTokenModalOpen}
+            onClose={() => setCreateTokenModalOpen(false)}
+            size='6xl'
+            scrollBehavior='inside'
+          >
+            <ModalOverlay />
+            <ModalContent bg={DASHBOARD_SURFACE} border='1px solid' borderColor={DASHBOARD_BORDER}>
+              <ModalHeader color='white'>Create New Token</ModalHeader>
+              <ModalCloseButton color='white' />
+              <ModalBody pb={6}>
+            <Box pt={0}>
               <form onSubmit={onTokenAdd}>
                 <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
                   {/* Name Field */}
@@ -4050,7 +6393,7 @@ function DashboardView({
                     </Select>
                     {isViewer ? (
                       <Text fontSize='xs' color={helpTextColor} mt={1}>
-                        Only workspace managers and admins can set per‑token
+                        Only workspace managers and admins can set per-token
                         contact group.
                       </Text>
                     ) : null}
@@ -4577,1164 +6920,16 @@ function DashboardView({
                 )}
               </form>
             </Box>
-          </Collapse>
-        </Box>
+              </ModalBody>
+            </ModalContent>
+          </Modal>
+        </>
       )}
 
-      <Box mb={6}>
-        <Flex
-          justify='space-between'
-          align={{ base: 'start', md: 'center' }}
-          direction={{ base: 'column', md: 'row' }}
-          gap={4}
-          mb={2}
-        >
-          <Box>
-            {/* Category filter */}
-            <Text fontSize='sm' color={filterLabelColor} mb={1}>
-              Category filter
-            </Text>
+      {renderDashboardWorkspace()}
           </Box>
-        </Flex>
-        <HStack spacing={2} flexWrap='wrap' mb={2}>
-          {TOKEN_CATEGORIES.map(cat => {
-            const isAll = selectedCategories.length === 0;
-            const active = selectedCategories.includes(cat.value);
-            const _visible = isAll || active;
-            // Prefer precomputed counts per category; fallback to facets; finally 0
-            const facetsCount = (
-              globalFacets.category ||
-              tokenFacets.category ||
-              []
-            ).find(f => String(f.category) === cat.value)?.c;
-            const sectionActive =
-              (panelQueries.__section || '__all__') !== '__all__';
-
-            // Priority:
-            // 1. If facets are available, they always reflect the true intersection (server-side)
-            // 2. Fallback to local categoryCounts state
-            // 3. Fallback to 0
-            const count =
-              typeof facetsCount === 'number'
-                ? facetsCount
-                : sectionActive || selectedCategories.length > 0
-                  ? (() => {
-                      const sec = panelQueries.__section;
-                      const norm = v =>
-                        String(v || '')
-                          .trim()
-                          .toLowerCase();
-                      if (sec === '__none__') {
-                        return tokens.filter(
-                          t =>
-                            t.category === cat.value &&
-                            (!t.section ||
-                              (Array.isArray(t.section) &&
-                                t.section.length === 0) ||
-                              String(t.section).trim() === '')
-                        ).length;
-                      }
-                      const wantedList =
-                        (sec || '__all__') === '__all__'
-                          ? []
-                          : String(sec)
-                              .split(',')
-                              .map(s => norm(s))
-                              .filter(Boolean);
-
-                      return tokens.filter(t => {
-                        if (t.category !== cat.value) return false;
-                        if (wantedList.length === 0) return true;
-                        const tokenSections = Array.isArray(t.section)
-                          ? t.section.map(s => norm(s))
-                          : [norm(t.section)];
-                        return wantedList.every(w => tokenSections.includes(w));
-                      }).length;
-                    })()
-                  : typeof categoryCounts?.[cat.value] === 'number'
-                    ? categoryCounts[cat.value]
-                    : 0;
-
-            return (
-              <Button
-                key={cat.value}
-                size='sm'
-                variant={active ? 'solid' : 'outline'}
-                colorScheme={cat.color}
-                fontWeight={active ? 'semibold' : 'medium'}
-                bg={
-                  active
-                    ? `${cat.color}.500`
-                    : isLight
-                      ? `${cat.color}.100`
-                      : `${cat.color}.900`
-                }
-                color={
-                  active
-                    ? 'white'
-                    : isLight
-                      ? `${cat.color}.600`
-                      : `${cat.color}.200`
-                }
-                borderWidth='1px'
-                borderColor={
-                  active
-                    ? `${cat.color}.500`
-                    : isLight
-                      ? `${cat.color}.500`
-                      : `${cat.color}.600`
-                }
-                _hover={{
-                  bg: active
-                    ? `${cat.color}.600`
-                    : isLight
-                      ? `${cat.color}.200`
-                      : `${cat.color}.800`,
-                  borderColor: `${cat.color}.${active ? '600' : '600'}`,
-                }}
-                transition='all 0.15s ease'
-                onClick={() => {
-                  setSelectedCategories(_prev => (active ? [] : [cat.value]));
-                }}
-              >
-                {cat.label}
-                <Badge
-                  ml={2}
-                  variant='solid'
-                  bg={
-                    active
-                      ? 'whiteAlpha.300'
-                      : isLight
-                        ? `${cat.color}.500`
-                        : `${cat.color}.700`
-                  }
-                  color='white'
-                  fontSize='xs'
-                  fontWeight='bold'
-                >
-                  {count}
-                </Badge>
-              </Button>
-            );
-          })}
-        </HStack>
-        {/* Section filter */}
-        <Text fontSize='sm' color={filterLabelColor} mt={4} mb={1}>
-          Section filter
-        </Text>
-        <HStack spacing={2} flexWrap='wrap' mt={3}>
-          {(() => {
-            // Helper to normalize and split strings
-            const norm = v =>
-              String(v || '')
-                .trim()
-                .toLowerCase();
-            const splitAndTrim = val =>
-              String(val || '')
-                .split(',')
-                .map(s => s.trim())
-                .filter(Boolean);
-
-            // 1. Build initial flattened list from backend facets
-            const facetSource =
-              globalFacets.section || tokenFacets.section || [];
-            const rawMap = {};
-
-            facetSource.forEach(r => {
-              const labels = splitAndTrim(r.section);
-              if (labels.length === 0) {
-                const key = '';
-                if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
-                rawMap[key].count += r.c || 0;
-              } else {
-                labels.forEach(l => {
-                  const key = norm(l);
-                  if (!rawMap[key]) rawMap[key] = { name: l, count: 0 };
-                  rawMap[key].count = Math.max(rawMap[key].count, r.c || 0);
-                });
-              }
-            });
-
-            // 2. Merge in sections from current tokens for immediate UI feedback
-            try {
-              tokens.forEach(t => {
-                // IMPORTANT: Only merge sections from tokens that match the current category filter
-                // to avoid showing sections from other categories.
-                if (
-                  selectedCategories.length > 0 &&
-                  !selectedCategories.includes(t.category)
-                ) {
-                  return;
-                }
-
-                // ALSO: Only merge sections from tokens that match the current section filter (AND logic)
-                const currentSection = panelQueries.__section || '__all__';
-                if (currentSection !== '__all__') {
-                  const tokenSections = Array.isArray(t.section)
-                    ? t.section.map(s => norm(s))
-                    : [norm(t.section)];
-
-                  if (currentSection === '__none__') {
-                    if (
-                      t.section &&
-                      (!Array.isArray(t.section) || t.section.length > 0)
-                    )
-                      return;
-                  } else {
-                    const wanted = currentSection
-                      .split(',')
-                      .map(s => norm(s))
-                      .filter(Boolean);
-                    if (!wanted.every(w => tokenSections.includes(w))) {
-                      return;
-                    }
-                  }
-                }
-
-                const labels = Array.isArray(t.section)
-                  ? t.section.flatMap(s => splitAndTrim(s))
-                  : splitAndTrim(t.section);
-
-                if (labels.length === 0) {
-                  const key = '';
-                  if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
-                } else {
-                  const uniqueInToken = [...new Set(labels.map(s => norm(s)))];
-                  uniqueInToken.forEach(key => {
-                    const originalLabel = labels.find(s => norm(s) === key);
-                    if (!rawMap[key])
-                      rawMap[key] = { name: originalLabel, count: 0 };
-                  });
-                }
-              });
-            } catch (_) {}
-
-            const raw = Object.values(rawMap);
-            raw.sort(
-              (a, b) => b.count - a.count || a.name.localeCompare(b.name)
-            );
-
-            const allCount =
-              selectedCategories.length > 0
-                ? selectedCategories.reduce(
-                    (sum, cat) => sum + (categoryCounts[cat] || 0),
-                    0
-                  )
-                : Object.values(categoryCounts).reduce(
-                    (sum, c) => sum + (c || 0),
-                    0
-                  );
-
-            const all = [
-              {
-                name: '__all__',
-                label: 'All sections',
-                count: allCount,
-              },
-              {
-                name: '__none__',
-                label: 'No section',
-                count: rawMap['']?.count || 0,
-              },
-              ...raw
-                .filter(s => (s.name || '').length > 0 && s.count > 0)
-                .map(s => ({ name: s.name, label: s.name, count: s.count })),
-            ];
-            return all.map(s => {
-              const current = panelQueries.__section || '__all__';
-              let active = false;
-              if (s.name === '__all__') {
-                active = current === '__all__';
-              } else if (s.name === '__none__') {
-                active = current === '__none__';
-              } else {
-                active = current.split(',').includes(s.name);
-              }
-              const scheme =
-                s.name === '__none__'
-                  ? 'gray'
-                  : s.name === '__all__'
-                    ? 'blue'
-                    : _getSectionColorScheme(s.name);
-              return (
-                <Button
-                  key={`section-${s.name || 'none'}`}
-                  size='sm'
-                  variant={active ? 'solid' : 'outline'}
-                  colorScheme={scheme}
-                  fontWeight={active ? 'semibold' : 'medium'}
-                  bg={
-                    active
-                      ? `${scheme}.500`
-                      : isLight
-                        ? `${scheme}.100`
-                        : `${scheme}.900`
-                  }
-                  color={
-                    active
-                      ? 'white'
-                      : isLight
-                        ? `${scheme}.600`
-                        : `${scheme}.200`
-                  }
-                  borderWidth='1px'
-                  borderColor={
-                    active
-                      ? `${scheme}.500`
-                      : isLight
-                        ? `${scheme}.500`
-                        : `${scheme}.600`
-                  }
-                  _hover={{
-                    bg: active
-                      ? `${scheme}.600`
-                      : isLight
-                        ? `${scheme}.200`
-                        : `${scheme}.800`,
-                    borderColor: `${scheme}.${active ? '600' : '600'}`,
-                  }}
-                  transition='all 0.15s ease'
-                  onClick={() => {
-                    const currentVal = panelQueries?.__section || '__all__';
-                    let next;
-
-                    if (s.name === '__all__') {
-                      next = '__all__';
-                    } else if (s.name === '__none__') {
-                      next = '__none__';
-                    } else {
-                      // Multi-select logic for specific sections
-                      let parts =
-                        currentVal === '__all__' || currentVal === '__none__'
-                          ? []
-                          : currentVal.split(',').filter(Boolean);
-
-                      if (parts.includes(s.name)) {
-                        parts = parts.filter(p => p !== s.name);
-                      } else {
-                        parts.push(s.name);
-                      }
-
-                      next = parts.length > 0 ? parts.join(',') : '__all__';
-                    }
-
-                    setPanelQueries(prev => ({ ...prev, __section: next }));
-                    // Reflect selection in URL so downstream fetches include section
-                    try {
-                      const search = new URLSearchParams(
-                        window.location.search
-                      );
-                      if (next === '__all__') search.delete('section');
-                      else search.set('section', next);
-                      navigate(`/dashboard?${search.toString()}`, {
-                        replace: true,
-                      });
-                    } catch (_) {}
-                  }}
-                >
-                  {s.label}
-                  <Badge
-                    ml={2}
-                    variant='solid'
-                    bg={
-                      active
-                        ? 'whiteAlpha.300'
-                        : isLight
-                          ? `${scheme}.200`
-                          : `${scheme}.700`
-                    }
-                    color={
-                      active
-                        ? 'white'
-                        : isLight
-                          ? `${scheme}.800`
-                          : `${scheme}.100`
-                    }
-                    fontSize='xs'
-                    fontWeight='bold'
-                  >
-                    {s.count}
-                  </Badge>
-                </Button>
-              );
-            });
-          })()}
-        </HStack>
-        <Box h={4} />
-      </Box>
-
-      {/* Tokens List - Organized by Categories */}
-      {tokensLoading && tokens.length === 0 ? (
-        <Flex justify='center' p={{ base: 4, md: 8 }} overflowX='hidden'>
-          <AccessibleSpinner size='lg' aria-label='Loading tokens' />
-        </Flex>
-      ) : tokens.length === 0 ? (
-        <Text
-          textAlign='center'
-          color={emptyTextColor}
-          p={{ base: 4, md: 8 }}
-          overflowX='hidden'
-        >
-          {isViewer
-            ? 'No tokens in this workspace.'
-            : 'No tokens found. Create your first token above.'}
-        </Text>
-      ) : (
-        <VStack
-          data-tour='token-list'
-          spacing={6}
-          align='stretch'
-          style={{
-            transition: 'opacity 180ms ease, transform 180ms ease',
-            opacity: isRefreshing ? 0.35 : 1,
-            transform: isRefreshing ? 'scale(0.995)' : 'scale(1)',
-          }}
-        >
-          {TOKEN_CATEGORIES.map(category => {
-            const panelSearch =
-              (panelQueries && panelQueries[category.value]) || '';
-            const sectionParam =
-              (panelQueries && panelQueries.__section) || '__all__';
-            const categoryTokens = getFilteredAndSortedTokens(
-              tokens,
-              category,
-              panelSearch,
-              sectionParam
-            );
-
-            // Hide entire panel if a category filter is active and this category is not selected
-            if (
-              Array.isArray(selectedCategories) &&
-              selectedCategories.length > 0 &&
-              !selectedCategories.includes(category.value)
-            ) {
-              return null;
-            }
-
-            return (
-              <Collapse key={category.value} in={true} animateOpacity>
-                <Box
-                  bg={bgColor}
-                  p={{ base: 4, md: 6 }}
-                  borderRadius='lg'
-                  boxShadow='sm'
-                  border='1px solid'
-                  borderColor={borderColor}
-                  borderTopWidth='3px'
-                  borderTopColor={`${category.color}.500`}
-                  transition='all 180ms ease'
-                  overflowX='hidden'
-                  _hover={{ boxShadow: 'md' }}
-                >
-                  <Flex align='center' justify='space-between' mb={4}>
-                    <HStack spacing={4}>
-                      <Heading
-                        size='md'
-                        color={`${category.color}.${isLight ? '600' : '400'}`}
-                      >
-                        {category.label}
-                      </Heading>
-                      {(() => {
-                        const selectedInCategory = selectedTokenIds.filter(id =>
-                          categoryTokens.some(t => t.id === id)
-                        );
-                        if (!isViewer && selectedInCategory.length > 0) {
-                          return (
-                            <HStack spacing={2} flexWrap='nowrap'>
-                              <Button
-                                size='xs'
-                                colorScheme='red'
-                                variant='outline'
-                                leftIcon={<FiTrash2 />}
-                                onClick={handleBulkDelete}
-                              >
-                                Delete ({selectedInCategory.length})
-                              </Button>
-                              <Button
-                                size='xs'
-                                colorScheme='blue'
-                                variant='outline'
-                                onClick={() =>
-                                  handleBulkAssignSection(
-                                    selectedInCategory,
-                                    category.value
-                                  )
-                                }
-                              >
-                                Assign section
-                              </Button>
-                              <Input
-                                size='xs'
-                                maxW='150px'
-                                placeholder='Section label'
-                                value={
-                                  bulkSectionDrafts?.[category.value] || ''
-                                }
-                                onChange={e =>
-                                  setBulkSectionDrafts(prev => ({
-                                    ...prev,
-                                    [category.value]: e.target.value,
-                                  }))
-                                }
-                              />
-                            </HStack>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </HStack>
-                    <Input
-                      value={panelQueries[category.value] || ''}
-                      onChange={e =>
-                        setPanelQueries(prev => ({
-                          ...prev,
-                          [category.value]: e.target.value,
-                        }))
-                      }
-                      placeholder={`Search ${category.label.toLowerCase()}...`}
-                      size='sm'
-                      maxW='260px'
-                      bg={inputBg}
-                      borderColor={borderColor}
-                    />
-                  </Flex>
-
-                  {categoryTokens.length === 0 ? (
-                    <Text color={emptyTextColor} fontSize='sm' py={2}>
-                      No results in this category.
-                    </Text>
-                  ) : (
-                    <>
-                      {/* Mobile: Card list */}
-                      <Box display={{ base: 'block', md: 'none' }}>
-                        <VStack align='stretch' spacing={3}>
-                          {categoryTokens.map(token => {
-                            const type = category.types.find(
-                              t => t.value === token.type
-                            );
-                            return (
-                              <Box
-                                key={token.id}
-                                p={4}
-                                bg={mobileCardBg}
-                                border='1px solid'
-                                borderColor={borderColor}
-                                borderRadius='md'
-                              >
-                                <HStack
-                                  justify='space-between'
-                                  align='start'
-                                  mb={2}
-                                  gap={2}
-                                >
-                                  <Box flex='1' minW='0'>
-                                    <Text
-                                      fontWeight='semibold'
-                                      wordBreak='break-word'
-                                    >
-                                      {token.name}
-                                    </Text>
-                                    <Text
-                                      fontSize='sm'
-                                      color={secondaryTextColor}
-                                      noOfLines={1}
-                                    >
-                                      {type?.label || token.type}
-                                      {token.category === 'cert' &&
-                                      token.domains?.length
-                                        ? ` • ${token.domains.join(', ')}`
-                                        : token.category === 'key_secret' &&
-                                            token.location
-                                          ? ` • ${token.location}`
-                                          : token.category === 'license' &&
-                                              token.vendor
-                                            ? ` • ${token.vendor}`
-                                            : token.category === 'general' &&
-                                                token.used_by
-                                              ? ` • ${token.used_by}`
-                                              : ''}
-                                    </Text>
-                                  </Box>
-                                  <ExpiryPill expiry={token.expiresAt} />
-                                  {token.monitor_health_status && (
-                                    <Tooltip
-                                      label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${token.monitor_response_ms ? ` (${token.monitor_response_ms}ms)` : ''}`}
-                                    >
-                                      <Box as='span' display='inline-flex'>
-                                        <FiActivity
-                                          size={18}
-                                          color={
-                                            token.monitor_health_status ===
-                                            'healthy'
-                                              ? '#22c55e'
-                                              : token.monitor_health_status ===
-                                                  'error'
-                                                ? '#e11d48'
-                                                : '#ff6b00'
-                                          }
-                                        />
-                                      </Box>
-                                    </Tooltip>
-                                  )}
-                                </HStack>
-                                <VStack align='stretch' spacing={2}>
-                                  <Text fontSize='sm' color='gray.600'>
-                                    {isNeverExpires(token.expiresAt)
-                                      ? formatExpirationDate(token.expiresAt)
-                                      : `Expires ${formatDate(token.expiresAt)}`}
-                                  </Text>
-                                  {token.last_used && (
-                                    <Text fontSize='xs' color='gray.500'>
-                                      Last used: {formatDate(token.last_used)}
-                                    </Text>
-                                  )}
-                                  <HStack spacing={2} flexWrap='wrap'>
-                                    <Button
-                                      size='sm'
-                                      colorScheme='blue'
-                                      onClick={() => onOpenTokenModal(token)}
-                                    >
-                                      Details
-                                    </Button>
-                                    {!isViewer && (
-                                      <>
-                                        <Button
-                                          size='sm'
-                                          colorScheme='teal'
-                                          onClick={() => onOpenRenew(token)}
-                                        >
-                                          Renew
-                                        </Button>
-                                        <Button
-                                          size='sm'
-                                          colorScheme='red'
-                                          onClick={() =>
-                                            onDeleteToken(token.id)
-                                          }
-                                        >
-                                          Delete
-                                        </Button>
-                                      </>
-                                    )}
-                                  </HStack>
-                                </VStack>
-                              </Box>
-                            );
-                          })}
-                        </VStack>
-                      </Box>
-
-                      {/* Desktop: Table */}
-                      <Box
-                        overflowX='auto'
-                        display={{ base: 'none', md: 'block' }}
-                      >
-                        <Table
-                          variant='simple'
-                          size='sm'
-                          transition='opacity 160ms ease'
-                          opacity={isRefreshing ? 0.7 : 1}
-                        >
-                          <Thead>
-                            <Tr
-                              borderBottom='2px solid'
-                              borderColor={borderColor}
-                            >
-                              {!isViewer && (
-                                <Th width='40px'>
-                                  <Checkbox
-                                    isChecked={
-                                      categoryTokens.length > 0 &&
-                                      categoryTokens.every(t =>
-                                        selectedTokenIds.includes(t.id)
-                                      )
-                                    }
-                                    isIndeterminate={
-                                      categoryTokens.some(t =>
-                                        selectedTokenIds.includes(t.id)
-                                      ) &&
-                                      !categoryTokens.every(t =>
-                                        selectedTokenIds.includes(t.id)
-                                      )
-                                    }
-                                    onChange={e => {
-                                      const ids = categoryTokens.map(t => t.id);
-                                      if (e.target.checked) {
-                                        setSelectedTokenIds(prev => [
-                                          ...new Set([...prev, ...ids]),
-                                        ]);
-                                      } else {
-                                        setSelectedTokenIds(prev =>
-                                          prev.filter(id => !ids.includes(id))
-                                        );
-                                      }
-                                    }}
-                                  />
-                                </Th>
-                              )}
-                              <SortableTh
-                                minW='100px'
-                                sortKey='name'
-                                sortConfig={sortConfigs[category.value] || {}}
-                                onSort={key => onSort(key, category.value)}
-                                hoverBg={thHoverBg}
-                              >
-                                Name
-                              </SortableTh>
-                              <SortableTh
-                                minW='110px'
-                                sortKey='type'
-                                sortConfig={sortConfigs[category.value] || {}}
-                                onSort={key => onSort(key, category.value)}
-                                hoverBg={thHoverBg}
-                              >
-                                Type
-                              </SortableTh>
-                              {category.value === 'cert' && (
-                                <>
-                                  <SortableTh
-                                    minW='130px'
-                                    sortKey='domains'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Domains
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='100px'
-                                    sortKey='issuer'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Issuer
-                                  </SortableTh>
-                                </>
-                              )}
-                              {category.value === 'key_secret' && (
-                                <>
-                                  <SortableTh
-                                    minW='100px'
-                                    sortKey='location'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Location
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='120px'
-                                    sortKey='used_by'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Used By
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='130px'
-                                    sortKey='privileges'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Privileges
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='90px'
-                                    sortKey='last_used'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Last Used
-                                  </SortableTh>
-                                </>
-                              )}
-                              {category.value === 'license' && (
-                                <>
-                                  <SortableTh
-                                    minW='120px'
-                                    sortKey='vendor'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Vendor
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='130px'
-                                    sortKey='license_type'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    License Type
-                                  </SortableTh>
-                                </>
-                              )}
-                              {category.value === 'general' && (
-                                <>
-                                  <SortableTh
-                                    minW='100px'
-                                    sortKey='location'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Location
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='150px'
-                                    sortKey='used_by'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Used By
-                                  </SortableTh>
-                                </>
-                              )}
-                              <SortableTh
-                                minW='90px'
-                                sortKey='expiresAt'
-                                sortConfig={sortConfigs[category.value] || {}}
-                                onSort={key => onSort(key, category.value)}
-                                hoverBg={thHoverBg}
-                              >
-                                Expiration
-                              </SortableTh>
-                              <Th minW='70px'>Status</Th>
-                              <Th textAlign='center' minW='90px'>
-                                {isViewer ? 'Details' : 'Actions'}
-                              </Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {categoryTokens.map(token => {
-                              const type = category.types.find(
-                                t => t.value === token.type
-                              );
-                              // Get status color for left border accent
-                              const statusInfo = getExpiryStatus(
-                                token.expiresAt
-                              );
-
-                              return (
-                                <Tr
-                                  key={token.id}
-                                  borderBottom='1px solid'
-                                  borderColor={borderColor}
-                                  cursor='pointer'
-                                  onClick={e => {
-                                    // Don't trigger if clicking on buttons or checkboxes
-                                    if (e.target.closest('button')) return;
-                                    if (
-                                      e.target.closest('input[type="checkbox"]')
-                                    )
-                                      return;
-                                    onOpenTokenModal(token);
-                                  }}
-                                  _hover={{
-                                    bg: hoverBgColor,
-                                  }}
-                                  transition='all 0.15s ease'
-                                >
-                                  {!isViewer && (
-                                    <Td
-                                      onClick={e => e.stopPropagation()}
-                                      borderLeft='4px solid'
-                                      borderLeftColor={statusInfo.color}
-                                    >
-                                      <Checkbox
-                                        isChecked={selectedTokenIds.includes(
-                                          token.id
-                                        )}
-                                        onChange={() =>
-                                          toggleTokenSelection(token.id)
-                                        }
-                                      />
-                                    </Td>
-                                  )}
-                                  <Td
-                                    fontWeight='medium'
-                                    {...(isViewer
-                                      ? {
-                                          borderLeft: '4px solid',
-                                          borderLeftColor: statusInfo.color,
-                                        }
-                                      : {})}
-                                  >
-                                    <Text
-                                      wordBreak='break-word'
-                                      whiteSpace='normal'
-                                    >
-                                      {token.name}
-                                    </Text>
-                                  </Td>
-                                  <Td>
-                                    <TruncatedText
-                                      text={type?.label || token.type}
-                                      maxLines={3}
-                                      maxWidth='110px'
-                                    />
-                                  </Td>
-
-                                  {/* Certificate-specific columns */}
-                                  {category.value === 'cert' && (
-                                    <>
-                                      <Td>
-                                        {token.domains &&
-                                        token.domains.length > 0 ? (
-                                          <VStack align='start' spacing={1}>
-                                            <HStack
-                                              spacing={1}
-                                              minW='0'
-                                              w='full'
-                                            >
-                                              <Link
-                                                href={domainValueToUrl(
-                                                  token.domains[0]
-                                                )}
-                                                isExternal
-                                                fontSize='sm'
-                                                color='blue.400'
-                                                textDecoration='underline'
-                                                display='block'
-                                                whiteSpace='normal'
-                                                wordBreak='break-all'
-                                                overflowWrap='anywhere'
-                                                flex='1'
-                                                onClick={e =>
-                                                  e.stopPropagation()
-                                                }
-                                              >
-                                                {token.domains[0]}
-                                              </Link>
-                                              <IconButton
-                                                as='a'
-                                                href={domainValueToUrl(
-                                                  token.domains[0]
-                                                )}
-                                                target='_blank'
-                                                rel='noopener'
-                                                size='xs'
-                                                variant='ghost'
-                                                icon={<FiExternalLink />}
-                                                aria-label='Open domain'
-                                                onClick={e =>
-                                                  e.stopPropagation()
-                                                }
-                                              />
-                                            </HStack>
-                                            {token.domains.length > 1 && (
-                                              <Text
-                                                fontSize='xs'
-                                                color={secondaryTextColor}
-                                              >
-                                                +{token.domains.length - 1} more
-                                              </Text>
-                                            )}
-                                          </VStack>
-                                        ) : (
-                                          <Text color={emptyTextColor}>-</Text>
-                                        )}
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.issuer}
-                                          maxLines={3}
-                                          maxWidth='100px'
-                                        />
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  {/* Key/Secret-specific columns */}
-                                  {category.value === 'key_secret' && (
-                                    <>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.location}
-                                          maxLines={3}
-                                          maxWidth='100px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.used_by}
-                                          maxLines={3}
-                                          maxWidth='120px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.privileges}
-                                          maxLines={3}
-                                          maxWidth='130px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <Text fontSize='xs' color='gray.500'>
-                                          {token.last_used
-                                            ? formatDate(token.last_used)
-                                            : '-'}
-                                        </Text>
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  {/* License-specific columns */}
-                                  {category.value === 'license' && (
-                                    <>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.vendor}
-                                          maxLines={3}
-                                          maxWidth='120px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.license_type}
-                                          maxLines={3}
-                                          maxWidth='130px'
-                                        />
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  {/* General-specific columns */}
-                                  {category.value === 'general' && (
-                                    <>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.location}
-                                          maxLines={3}
-                                          maxWidth='100px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.used_by}
-                                          maxLines={3}
-                                          maxWidth='150px'
-                                        />
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  <Td>
-                                    {formatExpirationDate(token.expiresAt)}
-                                  </Td>
-                                  <Td>
-                                    <HStack spacing={2} align='center'>
-                                      <ExpiryPill expiry={token.expiresAt} />
-                                      {token.monitor_health_status && (
-                                        <Tooltip
-                                          label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${token.monitor_response_ms ? ` (${token.monitor_response_ms}ms)` : ''}`}
-                                        >
-                                          <Box as='span' display='inline-flex'>
-                                            <FiActivity
-                                              size={18}
-                                              color={
-                                                token.monitor_health_status ===
-                                                'healthy'
-                                                  ? '#22c55e'
-                                                  : token.monitor_health_status ===
-                                                      'error'
-                                                    ? '#e11d48'
-                                                    : '#ff6b00'
-                                              }
-                                            />
-                                          </Box>
-                                        </Tooltip>
-                                      )}
-                                    </HStack>
-                                  </Td>
-                                  <Td textAlign='center'>
-                                    <VStack spacing={1} align='center'>
-                                      <Button
-                                        onClick={() => onOpenTokenModal(token)}
-                                        colorScheme='blue'
-                                        size='xs'
-                                        aria-label={`Show full details for token ${token.name}`}
-                                      >
-                                        Details
-                                      </Button>
-                                      {!isViewer && (
-                                        <>
-                                          <Button
-                                            onClick={() => onOpenRenew(token)}
-                                            colorScheme='teal'
-                                            size='xs'
-                                            aria-label={`Renew token ${token.name}`}
-                                          >
-                                            Renew
-                                          </Button>
-                                          <Button
-                                            onClick={() =>
-                                              onDeleteToken(token.id)
-                                            }
-                                            colorScheme='red'
-                                            size='xs'
-                                            aria-label={`Delete token ${token.name}`}
-                                          >
-                                            Delete
-                                          </Button>
-                                        </>
-                                      )}
-                                    </VStack>
-                                  </Td>
-                                </Tr>
-                              );
-                            })}
-                          </Tbody>
-                        </Table>
-                      </Box>
-                    </>
-                  )}
-                  {categoryHasMore?.[category.value] && (
-                    <Flex justify='center' mt={4}>
-                      <Button
-                        size='sm'
-                        onClick={() => fetchTokensForCategory(category.value)}
-                        isLoading={!!categoryLoading?.[category.value]}
-                        loadingText='Loading...'
-                      >
-                        Load more {category.label}
-                      </Button>
-                    </Flex>
-                  )}
-                </Box>
-              </Collapse>
-            );
-          })}
-        </VStack>
-      )}
-
-      {/* Global load more removed in favor of per-category controls */}
+        </Box>
+      </Flex>
 
       <EndpointSslMonitorModal
         isOpen={isDomainModalOpen}
@@ -5749,7 +6944,7 @@ function DashboardView({
     </Box>
   );
 }
-function ImportTokensButton() {
+function ImportTokensButton({ label = 'Import' }) {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [searchParams, setSearchParams] = useSearchParams();
   const [openRequest, setOpenRequest] = useState(null);
@@ -5774,6 +6969,14 @@ function ImportTokensButton() {
     setSearchParams(next, { replace: true });
   }, [searchParams, onOpen, setSearchParams]);
 
+  useEffect(() => {
+    const handleOpenImport = () => onOpen();
+    window.addEventListener('tt:open-import-tokens', handleOpenImport);
+    return () => {
+      window.removeEventListener('tt:open-import-tokens', handleOpenImport);
+    };
+  }, [onOpen]);
+
   const onImported = newOnes => {
     try {
       if (Array.isArray(newOnes) && newOnes.length > 0) {
@@ -5789,14 +6992,18 @@ function ImportTokensButton() {
     <>
       <Button
         onClick={onOpen}
-        colorScheme='purple'
+        leftIcon={<Upload size={16} />}
         variant='outline'
         size='sm'
+        borderRadius='md'
+        borderColor={DASHBOARD_BORDER_STRONG}
+        color='rgba(226, 232, 240, 0.94)'
+        _hover={{ bg: 'rgba(30, 41, 59, 0.72)', color: 'white' }}
         minW='fit-content'
         maxW={{ base: '100%', sm: 'none' }}
         whiteSpace='nowrap'
       >
-        Import tokens
+        {label}
       </Button>
       <ImportTokensModal
         isOpen={isOpen}
