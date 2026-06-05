@@ -72,6 +72,7 @@ function TokenDetailModal({
     contacts: token?.contacts || '',
     description: token?.description || '',
     notes: token?.notes || '',
+    privileges: token?.privileges || '',
     contact_group_id: token?.contact_group_id || '',
   });
 
@@ -112,6 +113,7 @@ function TokenDetailModal({
         contacts: token?.contacts || '',
         description: token?.description || '',
         notes: token?.notes || '',
+        privileges: token?.privileges || '',
         contact_group_id: token?.contact_group_id || '',
       });
     }
@@ -207,6 +209,7 @@ function TokenDetailModal({
         'contacts',
         'description',
         'notes',
+        'privileges',
       ].forEach(k => {
         if (payload[k] !== undefined && String(payload[k]).trim() === '')
           payload[k] = null;
@@ -525,7 +528,6 @@ function TokenDetailModal({
             {renderDateField('Imported At', token.imported_at)}
             {renderDateField('Last Used', token.last_used)}
             {renderDateField('Last Updated', token.updated_at)}
-            {renderField('Privileges/Scopes', token.privileges)}
 
             {/* Category-specific fields */}
             {token.category === 'cert' && (
@@ -677,6 +679,21 @@ function TokenDetailModal({
                       placeholder: 'Application, service',
                     },
                   })}
+                {(isEditing || token.privileges) &&
+                  renderEditable(
+                    'Privileges',
+                    'privileges',
+                    token.privileges,
+                    {
+                      multiline: true,
+                      inputProps: {
+                        maxLength: 5000,
+                        placeholder:
+                          'e.g. read:api, write:registry, secrets:read',
+                        rows: 3,
+                      },
+                    }
+                  )}
                 {(isEditing || token.description) &&
                   renderEditable(
                     'Description',

@@ -651,6 +651,9 @@ const components = {
   Modal: {
     parts: ['overlay', 'dialogContainer', 'dialog'],
     baseStyle: {
+      overlay: {
+        bg: 'blackAlpha.300',
+      },
       dialogContainer: {
         bg: 'transparent',
         backgroundColor: 'transparent',
@@ -668,6 +671,9 @@ const components = {
   AlertDialog: {
     parts: ['overlay', 'dialogContainer', 'dialog'],
     baseStyle: {
+      overlay: {
+        bg: 'blackAlpha.300',
+      },
       dialogContainer: {
         bg: 'transparent',
         backgroundColor: 'transparent',

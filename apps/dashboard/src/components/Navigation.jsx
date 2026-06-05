@@ -58,8 +58,16 @@ const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
   useEffect(() => {
     const handleTourStateChange = event => {
       const { isActive, keepMenuOpen } = event.detail || {};
-      setIsTourActive(isActive && keepMenuOpen);
-      if (isActive && keepMenuOpen) {
+      const tourWantsMenu = Boolean(isActive && keepMenuOpen);
+      setIsTourActive(tourWantsMenu);
+      if (!tourWantsMenu) {
+        return;
+      }
+      // Dashboard shell has its own user menu on lg+; only force-open legacy nav when visible
+      const navMenuButton = document.querySelector('[data-tour="user-menu"]');
+      if (!navMenuButton) return;
+      const rect = navMenuButton.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
         setIsOpen(true);
       }
     };
@@ -1041,14 +1049,14 @@ const Navigation = ({
               Tokens
             </AccessibleButton>
 
-            {/* Usage: only for manager/admin */}
+            {/* Control center: only for manager/admin */}
             {hasManagerOrAdminAny && (
               <AccessibleButton
                 data-tour='usage-nav'
                 variant='ghost'
                 size='md'
                 onClick={() => {
-                  navigate('/usage');
+                  navigate('/control-center');
                 }}
                 bg='transparent'
                 _hover={{
@@ -1056,9 +1064,9 @@ const Navigation = ({
                 }}
                 _focus={{ bg: 'transparent' }}
                 _active={{ bg: 'transparent' }}
-                aria-label='Usage'
+                aria-label='Control center'
               >
-                Usage
+                Control center
               </AccessibleButton>
             )}
 
@@ -1201,7 +1209,7 @@ const Navigation = ({
                           : n.id?.startsWith('auto-sync-failed-')
                             ? 'Opens Import tokens on the Manage auto-sync tab.'
                             : n.id === 'alerts-out-of-window'
-                              ? 'View the alert queue on the Usage page.'
+                              ? 'View the alert queue on the Control center page.'
                               : n.id === 'alerts-disabled'
                                 ? 'Go to Preferences to enable a notification channel.'
                                 : n.id === 'no-contacts-defined'

@@ -1,0 +1,695 @@
+import { useCallback, useLayoutEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Box,
+  Button,
+  Circle,
+  Divider,
+  Flex,
+  HStack,
+  IconButton,
+  Image,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Portal,
+  Text,
+  Tooltip,
+  VStack,
+  Heading,
+  useColorMode,
+  useColorModeValue,
+} from '@chakra-ui/react';
+import { FiBell, FiMenu } from 'react-icons/fi';
+import {
+  Activity as ActivityIcon,
+  BookOpen,
+  Building2,
+  ChevronDown,
+  Gauge,
+  Layers,
+  LogOut,
+  Moon,
+  Settings,
+  User,
+} from 'lucide-react';
+
+const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
+const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
+const DASHBOARD_SIDEBAR_MIN_WIDTH = 56;
+const DASHBOARD_SIDEBAR_MAX_WIDTH = 248;
+const DASHBOARD_SIDEBAR_LABEL_WIDTH = 136;
+const DASHBOARD_SIDEBAR_DEFAULT_WIDTH = DASHBOARD_SIDEBAR_MIN_WIDTH;
+
+function clampDashboardSidebarWidth(value) {
+  const width = Number(value);
+  if (!Number.isFinite(width)) return DASHBOARD_SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(
+    DASHBOARD_SIDEBAR_MAX_WIDTH,
+    Math.max(DASHBOARD_SIDEBAR_MIN_WIDTH, Math.round(width))
+  );
+}
+
+function getInitialDashboardSidebarWidth() {
+  try {
+    return clampDashboardSidebarWidth(
+      window.localStorage.getItem(DASHBOARD_SIDEBAR_STORAGE_KEY)
+    );
+  } catch (_) {
+    return DASHBOARD_SIDEBAR_DEFAULT_WIDTH;
+  }
+}
+
+/** Product tour targets (legacy names kept for Joyride selectors). */
+function dashboardNavTourAttr(itemKey) {
+  if (itemKey === 'tokens') return 'tokens-nav';
+  if (itemKey === 'control-center') return 'usage-nav';
+  if (itemKey === 'docs') return 'docs-nav';
+  return undefined;
+}
+
+export default function DashboardShell({
+  children,
+  dashboardColors,
+  currentPath,
+  sessionName,
+  sessionEmail,
+  sessionInitials,
+  dashboardWorkspaces = [],
+  dashboardWorkspace,
+  workspaceLabel,
+  onWorkspaceSelect,
+  dashboardNotifications = [],
+  onLogout,
+  onAccountClick,
+  isViewer = false,
+  dashboardCanSeeManagerNav = false,
+  isSystemAdmin = false,
+  pageTitle = '',
+}) {
+  const navigate = useNavigate();
+  const { toggleColorMode } = useColorMode();
+
+  const textColor = dashboardColors?.text ?? 'white';
+  const pageBg = dashboardColors?.pageBg ?? 'transparent';
+  const mutedTextColor = dashboardColors?.muted ?? 'rgba(148, 163, 184, 0.92)';
+  const borderColor = dashboardColors?.border ?? 'rgba(148, 163, 184, 0.13)';
+
+  const menuBg = useColorModeValue('white', 'rgba(15, 23, 42, 0.98)');
+  const menuBorder = useColorModeValue('gray.200', 'rgba(148, 163, 184, 0.2)');
+  const appIconFilter = useColorModeValue('none', 'invert(1)');
+  const navInactiveColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.84)'
+  );
+  const navActiveColor = useColorModeValue('blue.700', 'white');
+  const navActiveBg = useColorModeValue('blue.50', 'rgba(37, 99, 235, 0.26)');
+  const navHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.78)');
+  const navActiveBorder = useColorModeValue(
+    'blue.200',
+    'rgba(59, 130, 246, 0.35)'
+  );
+  const navActiveHoverBg = useColorModeValue(
+    'blue.100',
+    'rgba(37, 99, 235, 0.32)'
+  );
+  const chromeHoverBg = useColorModeValue(
+    'gray.100',
+    'rgba(30, 41, 59, 0.72)'
+  );
+  const chromeHoverColor = useColorModeValue('gray.900', 'white');
+  const sidebarToggleColor = useColorModeValue('gray.700', 'white');
+  const sidebarToggleBorder = useColorModeValue(
+    'gray.200',
+    'rgba(148, 163, 184, 0.12)'
+  );
+  const sidebarToggleHoverBg = useColorModeValue(
+    'blue.50',
+    'rgba(37, 99, 235, 0.18)'
+  );
+  const dividerColor = useColorModeValue(
+    'gray.200',
+    'rgba(148, 163, 184, 0.14)'
+  );
+  const workspaceButtonBg = useColorModeValue('white', 'rgba(8, 13, 22, 0.92)');
+  const workspaceButtonHoverBg = useColorModeValue(
+    'gray.50',
+    'rgba(15, 23, 42, 0.96)'
+  );
+  const workspaceNameColor = useColorModeValue('gray.900', 'white');
+  const iconButtonColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.92)'
+  );
+  const chromeBorderStrong = useColorModeValue(
+    'gray.300',
+    'rgba(148, 163, 184, 0.28)'
+  );
+  const logoHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.45)');
+  const pageTitleColor = useColorModeValue('gray.900', 'white');
+
+  const [dashboardSidebarWidth, setDashboardSidebarWidth] = useState(
+    getInitialDashboardSidebarWidth
+  );
+  const dashboardSidebarWidthPx = `${dashboardSidebarWidth}px`;
+  const isDashboardSidebarExpanded =
+    dashboardSidebarWidth >= DASHBOARD_SIDEBAR_LABEL_WIDTH;
+
+  useLayoutEffect(() => {
+    const widthPx = `${dashboardSidebarWidth}px`;
+    document.documentElement.style.setProperty(
+      DASHBOARD_SIDEBAR_WIDTH_CSS_VAR,
+      widthPx
+    );
+    try {
+      window.localStorage.setItem(
+        DASHBOARD_SIDEBAR_STORAGE_KEY,
+        String(dashboardSidebarWidth)
+      );
+      window.dispatchEvent(
+        new CustomEvent('tt:dashboard-sidebar-width', {
+          detail: { width: dashboardSidebarWidth },
+        })
+      );
+    } catch (_) {}
+  }, [dashboardSidebarWidth]);
+
+  const toggleDashboardSidebarWidth = useCallback(() => {
+    setDashboardSidebarWidth(width =>
+      width >= DASHBOARD_SIDEBAR_LABEL_WIDTH
+        ? DASHBOARD_SIDEBAR_MIN_WIDTH
+        : DASHBOARD_SIDEBAR_MAX_WIDTH
+    );
+  }, []);
+
+  const navigateToDashboard = () => {
+    try {
+      const search = new URLSearchParams(window.location.search);
+      search.delete('view');
+      const qs = search.toString();
+      navigate(`/dashboard${qs ? `?${qs}` : ''}`, { replace: true });
+    } catch (_) {}
+  };
+
+  const menuItems = [
+    {
+      key: 'tokens',
+      label: 'Tokens',
+      icon: Layers,
+      active:
+        currentPath === '/dashboard' || currentPath.startsWith('/dashboard'),
+      onClick: navigateToDashboard,
+    },
+    ...(dashboardCanSeeManagerNav
+      ? [
+          {
+            key: 'control-center',
+            label: 'Control center',
+            icon: Gauge,
+            active: currentPath === '/control-center',
+            onClick: () => navigate('/control-center'),
+          },
+          {
+            key: 'docs',
+            label: 'Docs',
+            icon: BookOpen,
+            href: 'https://tokentimer.ch/docs#self-hosted',
+          },
+          {
+            key: 'audit',
+            label: 'Audit',
+            icon: ActivityIcon,
+            active: currentPath === '/audit',
+            onClick: () => navigate('/audit'),
+          },
+          {
+            key: 'workspaces',
+            label: 'Workspaces',
+            icon: Building2,
+            active: currentPath === '/workspaces',
+            onClick: () => navigate('/workspaces'),
+          },
+        ]
+      : [
+          {
+            key: 'docs',
+            label: 'Docs',
+            icon: BookOpen,
+            href: 'https://tokentimer.ch/docs#self-hosted',
+          },
+        ]),
+    ...(isSystemAdmin
+      ? [
+          {
+            key: 'system',
+            label: 'System',
+            icon: Settings,
+            active: currentPath === '/system-settings',
+            onClick: () => navigate('/system-settings'),
+          },
+        ]
+      : []),
+  ];
+
+  return (
+    <Flex minH='100vh' align='stretch'>
+      <Box
+        as='aside'
+        display={{ base: 'none', lg: 'flex' }}
+        flex={`0 0 ${dashboardSidebarWidthPx}`}
+        w={dashboardSidebarWidthPx}
+        h='100vh'
+        minH='100vh'
+        maxH='100vh'
+        position='fixed'
+        top='0'
+        bottom='0'
+        left='0'
+        zIndex={20}
+        flexDirection='column'
+        bg={pageBg}
+        borderRight='1px solid'
+        borderColor={borderColor}
+        overflow='hidden'
+        transition='width 160ms ease, flex-basis 160ms ease'
+      >
+        <Flex direction='column' flex='1' minH={0} w='100%'>
+          <Flex
+            align='center'
+            justify='center'
+            minH='54px'
+            w='100%'
+            px={isDashboardSidebarExpanded ? 3 : 1}
+            flexShrink={0}
+          >
+            <Button
+              type='button'
+              variant='ghost'
+              aria-label='Go to dashboard'
+              onClick={navigateToDashboard}
+              h={isDashboardSidebarExpanded ? '50px' : '48px'}
+              w='100%'
+              minW={0}
+              px={isDashboardSidebarExpanded ? 3 : 0}
+              py={0}
+              justifyContent='center'
+              alignItems='center'
+              flexShrink={0}
+              bg='transparent'
+              borderRadius='md'
+              _hover={{ bg: logoHoverBg }}
+              _active={{ bg: logoHoverBg }}
+            >
+              <Box
+                as={Image}
+                src={
+                  isDashboardSidebarExpanded
+                    ? '/Branding/app-icon.svg'
+                    : '/Branding/favicon.svg'
+                }
+                alt='TokenTimer'
+                h={isDashboardSidebarExpanded ? '42px' : '32px'}
+                w={isDashboardSidebarExpanded ? 'auto' : '32px'}
+                maxW={isDashboardSidebarExpanded ? '200px' : '32px'}
+                objectFit='contain'
+                objectPosition='center'
+                filter={
+                  isDashboardSidebarExpanded ? appIconFilter : 'none'
+                }
+                display='block'
+                flexShrink={0}
+                mx='auto'
+              />
+            </Button>
+          </Flex>
+
+          <Divider w='100%' borderColor={dividerColor} />
+
+          <VStack
+            align='stretch'
+            spacing={2}
+            flex='1'
+            minH={0}
+            px={isDashboardSidebarExpanded ? 3 : 1}
+            py={3}
+            w='100%'
+          >
+            <Tooltip
+              label={
+                isDashboardSidebarExpanded ? 'Collapse menu' : 'Expand menu'
+              }
+              placement='right'
+              hasArrow
+              shouldWrapChildren
+            >
+              <Box display='block' w='100%' alignSelf='stretch'>
+                <Button
+                  type='button'
+                  aria-label={
+                    isDashboardSidebarExpanded ? 'Collapse menu' : 'Expand menu'
+                  }
+                  display='flex'
+                  alignItems='center'
+                  justifyContent='center'
+                  h={isDashboardSidebarExpanded ? '38px' : '40px'}
+                  w='100%'
+                  minW='100%'
+                  maxW='100%'
+                  px={0}
+                  variant='ghost'
+                  bg='transparent'
+                  color={sidebarToggleColor}
+                  border='1px solid'
+                  borderColor={sidebarToggleBorder}
+                  borderRadius='md'
+                  onClick={toggleDashboardSidebarWidth}
+                  _hover={{
+                    bg: sidebarToggleHoverBg,
+                    color: navActiveColor,
+                  }}
+                >
+                  <FiMenu size={isDashboardSidebarExpanded ? 18 : 20} />
+                </Button>
+              </Box>
+            </Tooltip>
+
+          <Divider w='100%' borderColor={dividerColor} my={1} />
+
+          <VStack
+            as='nav'
+            aria-label='Dashboard navigation'
+            align={isDashboardSidebarExpanded ? 'stretch' : 'center'}
+            spacing={2}
+            flex='0 0 auto'
+            w='100%'
+          >
+            {menuItems.map(item => {
+              const Icon = item.icon;
+              const navTourAttr = dashboardNavTourAttr(item.key);
+              const navControl = isDashboardSidebarExpanded ? (
+                <Button
+                  as={item.href ? 'a' : 'button'}
+                  href={item.href}
+                  target={item.href ? '_blank' : undefined}
+                  rel={item.href ? 'noopener noreferrer' : undefined}
+                  aria-label={item.label}
+                  data-tour={navTourAttr}
+                  leftIcon={<Icon size={17} />}
+                  h='38px'
+                  w='100%'
+                  minW='0'
+                  px={3}
+                  justifyContent='flex-start'
+                  borderRadius='md'
+                  variant='ghost'
+                  color={item.active ? navActiveColor : navInactiveColor}
+                  bg={item.active ? navActiveBg : 'transparent'}
+                  border='1px solid'
+                  borderColor={item.active ? navActiveBorder : 'transparent'}
+                  fontSize='sm'
+                  fontWeight='medium'
+                  _hover={{
+                    bg: item.active ? navActiveHoverBg : navHoverBg,
+                    color: item.active ? navActiveColor : chromeHoverColor,
+                  }}
+                  _active={{ bg: navActiveHoverBg }}
+                  onClick={item.onClick || undefined}
+                >
+                  <Text noOfLines={1}>{item.label}</Text>
+                </Button>
+              ) : (
+                <IconButton
+                  as={item.href ? 'a' : 'button'}
+                  href={item.href}
+                  target={item.href ? '_blank' : undefined}
+                  rel={item.href ? 'noopener noreferrer' : undefined}
+                  aria-label={item.label}
+                  data-tour={navTourAttr}
+                  icon={<Icon size={18} />}
+                  h='38px'
+                  w='38px'
+                  minW='38px'
+                  borderRadius='md'
+                  variant='ghost'
+                  color={item.active ? navActiveColor : navInactiveColor}
+                  bg={item.active ? navActiveBg : 'transparent'}
+                  border='1px solid'
+                  borderColor={item.active ? navActiveBorder : 'transparent'}
+                  _hover={{
+                    bg: item.active ? navActiveHoverBg : navHoverBg,
+                    color: item.active ? navActiveColor : chromeHoverColor,
+                  }}
+                  _active={{ bg: navActiveHoverBg }}
+                  onClick={item.onClick || undefined}
+                />
+              );
+              return (
+                <Tooltip
+                  key={item.key}
+                  label={item.label}
+                  placement='right'
+                  hasArrow
+                  isDisabled={isDashboardSidebarExpanded}
+                >
+                  <Box>{navControl}</Box>
+                </Tooltip>
+              );
+            })}
+          </VStack>
+        </VStack>
+        </Flex>
+      </Box>
+
+      <Box
+        flex='1'
+        minW={0}
+        ml={{ base: 0, lg: dashboardSidebarWidthPx }}
+        transition='margin-left 160ms ease'
+      >
+        <Flex
+          as='header'
+          data-dashboard-shell-header='true'
+          display={{ base: 'none', lg: 'flex' }}
+          align='center'
+          justify='space-between'
+          gap={4}
+          minH='54px'
+          px={{ base: 4, lg: 6, '2xl': 8 }}
+          py={2}
+          bg={pageBg}
+          borderBottom='1px solid'
+          borderColor={borderColor}
+          backdropFilter='blur(16px)'
+        >
+          <Box flex='1' minW={0} pr={2}>
+            {pageTitle ? (
+              <Heading
+                as='h1'
+                size='lg'
+                color={pageTitleColor}
+                fontFamily='Archivo, system-ui, sans-serif'
+                fontWeight='bold'
+                letterSpacing='-0.01em'
+                lineHeight='short'
+                noOfLines={1}
+              >
+                {pageTitle}
+              </Heading>
+            ) : null}
+          </Box>
+          <HStack spacing={3} flexShrink={0} display={{ base: 'none', md: 'flex' }}>
+            <Menu placement='bottom-end'>
+              <MenuButton
+                data-tour='workspace-selector'
+                as={Button}
+                rightIcon={<ChevronDown size={15} />}
+                h='36px'
+                minW='260px'
+                px={4}
+                bg={workspaceButtonBg}
+                border='1px solid'
+                borderColor={chromeBorderStrong}
+                color={textColor}
+                fontSize='sm'
+                fontWeight='medium'
+                borderRadius='md'
+                isDisabled={dashboardWorkspaces.length === 0}
+                _hover={{ bg: workspaceButtonHoverBg }}
+                _active={{ bg: workspaceButtonHoverBg }}
+              >
+                <HStack spacing={3} justify='space-between' minW={0}>
+                  <Text color={mutedTextColor} fontSize='xs' fontWeight='medium'>
+                    Workspace
+                  </Text>
+                  <Text
+                    color={workspaceNameColor}
+                    fontSize='sm'
+                    fontWeight='semibold'
+                    noOfLines={1}
+                  >
+                    {dashboardWorkspace?.name || workspaceLabel}
+                  </Text>
+                </HStack>
+              </MenuButton>
+              <Portal>
+                <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+                  {dashboardWorkspaces.map(workspace => (
+                    <MenuItem
+                      key={workspace.id}
+                      onClick={() => onWorkspaceSelect?.(workspace)}
+                    >
+                      {workspace.name}
+                    </MenuItem>
+                  ))}
+                </MenuList>
+              </Portal>
+            </Menu>
+
+            <Menu placement='bottom-end'>
+              <Box position='relative'>
+                {dashboardNotifications.length > 0 && (
+                  <Box
+                    position='absolute'
+                    top='7px'
+                    right='8px'
+                    w='7px'
+                    h='7px'
+                    borderRadius='full'
+                    bg='#f87171'
+                    zIndex='2'
+                  />
+                )}
+                <MenuButton
+                  as={IconButton}
+                  aria-label='Notifications'
+                  icon={<FiBell />}
+                  size='sm'
+                  variant='ghost'
+                  color={iconButtonColor}
+                  borderRadius='md'
+                  _hover={{ bg: chromeHoverBg, color: chromeHoverColor }}
+                />
+              </Box>
+              <Portal>
+                <MenuList
+                  zIndex={1500}
+                  bg={menuBg}
+                  borderColor={menuBorder}
+                  minW='280px'
+                >
+                  {dashboardNotifications.length === 0 ? (
+                    <Box px={3} py={2}>
+                      <Text fontSize='sm' color={mutedTextColor}>
+                        No notifications
+                      </Text>
+                    </Box>
+                  ) : (
+                    dashboardNotifications.map(notification => {
+                      const isClickable = Boolean(notification?.href);
+                      return (
+                        <MenuItem
+                          key={notification.id}
+                          onClick={() => {
+                            if (notification?.href) navigate(notification.href);
+                          }}
+                          cursor={isClickable ? 'pointer' : 'default'}
+                          _hover={{
+                            bg: isClickable ? chromeHoverBg : 'transparent',
+                          }}
+                        >
+                          <VStack align='start' spacing={0}>
+                            <Text
+                              color={textColor}
+                              fontSize='sm'
+                              fontWeight='medium'
+                            >
+                              {notification.text}
+                            </Text>
+                            <Text color={mutedTextColor} fontSize='xs'>
+                              {isClickable
+                                ? 'Open related settings'
+                                : 'No action available'}
+                            </Text>
+                          </VStack>
+                        </MenuItem>
+                      );
+                    })
+                  )}
+                </MenuList>
+              </Portal>
+            </Menu>
+            <IconButton
+              aria-label='Toggle color mode'
+              icon={<Moon size={17} />}
+              size='sm'
+              variant='ghost'
+              color={iconButtonColor}
+              borderRadius='md'
+              _hover={{ bg: chromeHoverBg, color: chromeHoverColor }}
+              onClick={toggleColorMode}
+            />
+
+            <Menu placement='bottom-end'>
+              <MenuButton
+                data-tour='user-menu'
+                as={Button}
+                variant='ghost'
+                rightIcon={<ChevronDown size={15} />}
+                h='40px'
+                px={2}
+                color={textColor}
+                _hover={{ bg: chromeHoverBg }}
+                _active={{ bg: chromeHoverBg }}
+              >
+                <HStack spacing={3}>
+                  <Circle size='34px' bg='#2563eb' color='white' fontSize='sm'>
+                    {sessionInitials || 'U'}
+                  </Circle>
+                  <Box
+                    textAlign='left'
+                    minW={0}
+                    display={{ base: 'none', xl: 'block' }}
+                  >
+                    <Text
+                      color={textColor}
+                      fontSize='sm'
+                      fontWeight='semibold'
+                      noOfLines={1}
+                    >
+                      {sessionName}
+                    </Text>
+                    <Text color={mutedTextColor} fontSize='xs' noOfLines={1}>
+                      {sessionEmail}
+                    </Text>
+                  </Box>
+                </HStack>
+              </MenuButton>
+              <Portal>
+                <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+                  <MenuItem icon={<User size={15} />} onClick={onAccountClick}>
+                    Account Settings
+                  </MenuItem>
+                  {!isViewer && (
+                    <MenuItem
+                      data-tour='preferences-nav'
+                      icon={<Settings size={15} />}
+                      onClick={() => navigate('/preferences')}
+                    >
+                      Preferences
+                    </MenuItem>
+                  )}
+                  <MenuItem icon={<LogOut size={15} />} onClick={onLogout}>
+                    Sign Out
+                  </MenuItem>
+                </MenuList>
+              </Portal>
+            </Menu>
+          </HStack>
+        </Flex>
+
+        {children}
+      </Box>
+    </Flex>
+  );
+}

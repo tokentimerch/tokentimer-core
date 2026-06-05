@@ -17,14 +17,24 @@ import {
   useBackgroundColors,
   useBorderColors,
 } from '../hooks/useColors.js';
+import { useDashboardThemeColors } from '../hooks/useDashboardTheme.js';
 
 /**
  * Footer component with comprehensive navigation and branding
  */
+const DASHBOARD_SIDEBAR_FALLBACK_WIDTH = '56px';
+const DASHBOARD_SHELL_PATHS = new Set(['/dashboard', '/control-center']);
+
+function isDashboardShellPath(pathname) {
+  return DASHBOARD_SHELL_PATHS.has(pathname);
+}
+
 const Footer = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isLandingPage = location.pathname === '/';
+  const isDashboardShellPage = isDashboardShellPath(location.pathname);
+  const dashboardTheme = useDashboardThemeColors();
 
   // Use navigation colors to match the navigation bar
   const { surface: navBgColor } = useBackgroundColors();
@@ -55,6 +65,113 @@ const Footer = () => {
   const footerLinkHoverColor = isLandingPage ? linkHoverLanding : linkHoverApp;
 
   const currentYear = new Date().getFullYear();
+
+  if (isDashboardShellPage) {
+    const {
+      pageBg,
+      muted,
+      border,
+      text: dashboardLinkHoverColor,
+      footerLink: dashboardLinkColor,
+      footerLinkHoverBg,
+      footerLinkHoverBorder,
+    } = dashboardTheme;
+    const dashboardLinks = [
+      {
+        label: 'Docs',
+        icon: FiBookOpen,
+        href: 'https://tokentimer.ch/docs#self-hosted',
+        isExternal: true,
+        ariaLabel: 'Documentation (opens online)',
+      },
+      {
+        label: 'Help',
+        icon: FiMail,
+        href: '/help',
+        onClick: e => {
+          e.preventDefault();
+          navigate('/help');
+        },
+        ariaLabel: 'Help and Support',
+      },
+      {
+        label: 'GitHub',
+        icon: FiFileText,
+        href: 'https://github.com/tokentimerch/tokentimer-core',
+        isExternal: true,
+        ariaLabel: 'View source on GitHub',
+      },
+    ];
+
+    return (
+      <Box
+        as='footer'
+        bg={pageBg}
+        borderTopWidth='1px'
+        borderColor={border}
+        w='100%'
+        pl={{
+          base: 4,
+          lg: `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1rem)`,
+          '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
+        }}
+        pr={{ base: 4, lg: 4, '2xl': 5 }}
+        minH='58px'
+        py={2}
+        position='relative'
+        zIndex={1}
+        display='flex'
+        alignItems='center'
+      >
+        <Flex
+          direction={{ base: 'column', md: 'row' }}
+          justify='space-between'
+          align='center'
+          gap={3}
+          w='100%'
+          minW={0}
+        >
+          <Text color={muted} fontSize='xs' noOfLines={1}>
+            © {currentYear} TokenTimer - Privacy by Design
+          </Text>
+
+          <HStack
+            spacing={1}
+            flexWrap='wrap'
+            justify={{ base: 'center', md: 'end' }}
+          >
+            {dashboardLinks.map(link => (
+              <Link
+                key={link.label}
+                href={link.href}
+                isExternal={link.isExternal}
+                onClick={link.onClick}
+                color={dashboardLinkColor}
+                _hover={{
+                  textDecoration: 'none',
+                  color: dashboardLinkHoverColor,
+                  bg: footerLinkHoverBg,
+                  borderColor: footerLinkHoverBorder,
+                }}
+                fontSize='xs'
+                aria-label={link.ariaLabel}
+                border='1px solid'
+                borderColor='transparent'
+                borderRadius='md'
+                px={3}
+                py={2}
+              >
+                <HStack spacing='2' align='center'>
+                  <Icon as={link.icon} boxSize={3.5} />
+                  <Text>{link.label}</Text>
+                </HStack>
+              </Link>
+            ))}
+          </HStack>
+        </Flex>
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -105,7 +222,7 @@ const Footer = () => {
               color={textColor}
               textAlign={{ base: 'center', md: 'left' }}
             >
-              © {currentYear} TokenTimer — Privacy by Design
+              © {currentYear} TokenTimer - Privacy by Design
             </Text>
           </VStack>
 

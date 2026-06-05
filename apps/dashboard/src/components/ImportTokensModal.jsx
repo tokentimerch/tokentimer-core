@@ -294,25 +294,13 @@ function normalizeRow(raw) {
   return row;
 }
 
-async function dynamicImport(moduleName, cdnUrl) {
-  try {
-    return await import(/* @vite-ignore */ moduleName);
-  } catch (_) {
-    if (cdnUrl) {
-      return await import(/* @vite-ignore */ cdnUrl);
-    }
-    throw _;
-  }
-}
-
 async function parseFile(file) {
   const name = (file && file.name) || '';
   const lower = name.toLowerCase();
 
   if (lower.endsWith('.csv')) {
-    const Papa =
-      (await dynamicImport('papaparse', 'https://esm.sh/papaparse@5.4.1'))
-        .default || (await dynamicImport('papaparse', null));
+    const papaparseMod = await import('papaparse');
+    const Papa = papaparseMod.default ?? papaparseMod;
     return new Promise((resolve, reject) => {
       try {
         Papa.parse(file, {
@@ -390,8 +378,8 @@ async function parseFile(file) {
   }
 
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-    // Load SheetJS from CDN at runtime to avoid bundling vulnerable package into the app
-    const XLSX = await import(/* @vite-ignore */ 'https://esm.sh/xlsx@0.18.5');
+    const xlsxMod = await import('xlsx');
+    const XLSX = xlsxMod.default ?? xlsxMod;
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheetName = wb.SheetNames && wb.SheetNames[0];
@@ -401,10 +389,8 @@ async function parseFile(file) {
   }
 
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
-    const jsyaml = await dynamicImport(
-      'js-yaml',
-      'https://esm.sh/js-yaml@4.1.0'
-    );
+    const jsyamlMod = await import('js-yaml');
+    const jsyaml = jsyamlMod.default ?? jsyamlMod;
     const text = await file.text();
     const doc = jsyaml.load(text);
     if (Array.isArray(doc)) return doc;

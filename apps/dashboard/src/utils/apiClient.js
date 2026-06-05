@@ -503,6 +503,8 @@ export const API_ENDPOINTS = {
     `/api/v1/workspaces/${id}/invitations/${invitationId}`,
   WORKSPACE_ALERT_SETTINGS: id => `/api/v1/workspaces/${id}/alert-settings`,
   WORKSPACE_NOTIFICATIONS: id => `/api/v1/workspaces/${id}/notifications`,
+  WORKSPACE_CONTROL_CENTER_STATS: id =>
+    `/api/v1/workspaces/${id}/control-center/stats`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
   // Vault integration (workspace_id required for scan)
   VAULT_SCAN: workspaceId =>
