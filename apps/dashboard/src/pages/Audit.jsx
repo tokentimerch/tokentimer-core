@@ -4,7 +4,6 @@ import {
   Box,
   Text,
   HStack,
-  Flex,
   Table,
   Thead,
   Tbody,
@@ -1142,16 +1141,19 @@ export default function Audit({ session, onLogout, onAccountClick }) {
             py={{ base: 5, lg: 3 }}
             w='100%'
             minW={0}
+            maxW='100%'
           >
             <Box
               bg={surface}
-              p={6}
+              p={{ base: 4, md: 6 }}
               borderRadius='md'
               boxShadow='sm'
               border='1px solid'
               borderColor={border}
               w='100%'
               minW={0}
+              maxW='100%'
+              overflow='hidden'
             >
               <HStack spacing={3} mb={4} flexWrap='wrap'>
                 <Input
@@ -1173,7 +1175,6 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     </option>
                   ))}
                 </Select>
-                {/* Scope selector: admins can choose; managers can choose between user/workspace */}
                 {canViewOrganizationAudit ? (
                   <Select
                     value={scope}
@@ -1195,7 +1196,6 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     value={scopeUI}
                     onChange={e => {
                       const v = e.target.value;
-                      // Persist only allowed values for non-admins
                       const next = v === 'organization' ? 'workspace' : v;
                       setScope(next);
                       try {
@@ -1208,14 +1208,12 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     <option value='workspace'>This workspace</option>
                   </Select>
                 )}
-                {/* Workspace selector (visible for manager/admin) */}
                 {isManagerOrAdminAny && (
                   <Select
                     value={auditWorkspaceId || workspaceId || ''}
                     onChange={e => {
                       const nextId = e.target.value;
                       setAuditWorkspaceId(nextId);
-                      // If admin was viewing "My actions", switch to workspace scope so selection applies
                       if (isAdminAny && scope !== 'workspace') {
                         try {
                           setScope('workspace');
@@ -1259,110 +1257,121 @@ export default function Audit({ session, onLogout, onAccountClick }) {
               ) : filtered.length === 0 ? (
                 <Text color={muted}>No audit events found.</Text>
               ) : (
-                <Box overflowX='auto' w='100%' minW={0}>
-                  <Table size='sm' variant='simple' w='100%' layout='fixed'>
-                    <Thead>
-                      <Tr>
-                        <Th w={AUDIT_TABLE_COLUMN_WIDTHS.time} textAlign='left'>
-                          Time
-                        </Th>
-                        <Th
-                          w={AUDIT_TABLE_COLUMN_WIDTHS.action}
-                          textAlign='center'
-                        >
-                          Action
-                        </Th>
-                        <Th w={AUDIT_TABLE_COLUMN_WIDTHS.user} textAlign='left'>
-                          User
-                        </Th>
-                        <Th
-                          w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
-                          textAlign='left'
-                        >
-                          Workspace
-                        </Th>
-                        <Th
-                          w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
-                          textAlign='left'
-                        >
-                          Metadata
-                        </Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {filtered.map(ev => (
-                        <Tr key={ev.id}>
-                          <Td
+                <>
+                  <Box overflowX='auto' w='100%' minW={0}>
+                    <Table size='sm' variant='simple' w='100%' layout='fixed'>
+                      <Thead>
+                        <Tr>
+                          <Th
                             w={AUDIT_TABLE_COLUMN_WIDTHS.time}
-                            whiteSpace='nowrap'
-                            textOverflow='ellipsis'
-                            overflow='hidden'
+                            textAlign='left'
                           >
-                            {formatDateTime(ev.occurred_at)}
-                          </Td>
-                          <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action}>
-                            <Flex justify='center'>
+                            Time
+                          </Th>
+                          <Th
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.action}
+                            textAlign='left'
+                          >
+                            Action
+                          </Th>
+                          <Th
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.user}
+                            textAlign='left'
+                          >
+                            User
+                          </Th>
+                          <Th
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
+                            textAlign='left'
+                          >
+                            Workspace
+                          </Th>
+                          <Th
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
+                            textAlign='left'
+                          >
+                            Metadata
+                          </Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {filtered.map(ev => (
+                          <Tr key={ev.id}>
+                            <Td
+                              w={AUDIT_TABLE_COLUMN_WIDTHS.time}
+                              whiteSpace='nowrap'
+                              textOverflow='ellipsis'
+                              overflow='hidden'
+                            >
+                              {formatDateTime(ev.occurred_at)}
+                            </Td>
+                            <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action}>
                               <Badge
                                 colorScheme={ACTION_COLORS[ev.action] || 'gray'}
                                 whiteSpace='normal'
-                                textAlign='center'
+                                textAlign='left'
                                 maxW='100%'
                               >
                                 {ev.action}
                               </Badge>
-                            </Flex>
-                          </Td>
-                          <Td
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.user}
-                            textOverflow='ellipsis'
-                            overflow='hidden'
-                            whiteSpace='nowrap'
-                          >
-                            {ev.actor_display_name || ''}
-                          </Td>
-                          <Td
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
-                            textOverflow='ellipsis'
-                            overflow='hidden'
-                            whiteSpace='nowrap'
-                          >
-                            {ev.workspace_name || ev.workspace_id || ''}
-                          </Td>
-                          <Td
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
-                            wordBreak='break-word'
-                          >
-                            <Box display={{ base: 'none', md: 'block' }}>
-                              <TruncatedText
-                                text={formatMetadata(ev)}
-                                maxLines={3}
-                              />
-                            </Box>
-                            <Box display={{ base: 'block', md: 'none' }}>
-                              <Button
-                                size='xs'
-                                variant='outline'
-                                onClick={() => {
-                                  try {
-                                    const pretty =
-                                      formatMetadata(ev) ||
-                                      (ev.metadata
-                                        ? JSON.stringify(ev.metadata, null, 2)
-                                        : '');
-                                    alert(pretty || '{}');
-                                  } catch (_) {}
-                                }}
-                              >
-                                View
-                              </Button>
-                            </Box>
-                          </Td>
-                        </Tr>
-                      ))}
-                    </Tbody>
-                  </Table>
+                            </Td>
+                            <Td
+                              w={AUDIT_TABLE_COLUMN_WIDTHS.user}
+                              textOverflow='ellipsis'
+                              overflow='hidden'
+                              whiteSpace='nowrap'
+                            >
+                              {ev.actor_display_name || ''}
+                            </Td>
+                            <Td
+                              w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
+                              textOverflow='ellipsis'
+                              overflow='hidden'
+                              whiteSpace='nowrap'
+                            >
+                              {ev.workspace_name || ev.workspace_id || ''}
+                            </Td>
+                            <Td
+                              w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
+                              wordBreak='break-word'
+                            >
+                              <Box display={{ base: 'none', md: 'block' }}>
+                                <TruncatedText
+                                  text={formatMetadata(ev)}
+                                  maxLines={3}
+                                />
+                              </Box>
+                              <Box display={{ base: 'block', md: 'none' }}>
+                                <Button
+                                  size='xs'
+                                  variant='outline'
+                                  onClick={() => {
+                                    try {
+                                      const pretty =
+                                        formatMetadata(ev) ||
+                                        (ev.metadata
+                                          ? JSON.stringify(ev.metadata, null, 2)
+                                          : '');
+                                      alert(pretty || '{}');
+                                    } catch (_) {}
+                                  }}
+                                >
+                                  View
+                                </Button>
+                              </Box>
+                            </Td>
+                          </Tr>
+                        ))}
+                      </Tbody>
+                    </Table>
+                  </Box>
                   {hasMore && (
-                    <Box display='flex' justifyContent='center' mt={6} mb={2}>
+                    <Box
+                      mt={4}
+                      pt={3}
+                      borderTop='1px solid'
+                      borderColor={border}
+                    >
                       <Button
                         onClick={() => load(true)}
                         isLoading={loadingMore}
@@ -1374,7 +1383,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                       </Button>
                     </Box>
                   )}
-                </Box>
+                </>
               )}
             </Box>
           </Box>
