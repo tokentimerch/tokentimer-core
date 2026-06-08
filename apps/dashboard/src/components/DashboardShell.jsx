@@ -267,6 +267,32 @@ export default function DashboardShell({
     }
     setIsUserMenuOpen(false);
   };
+  const userMenuItemStyles = {
+    bg: 'transparent',
+    _hover: { bg: chromeHoverBg },
+    _focus: { bg: chromeHoverBg },
+    _focusVisible: {
+      bg: chromeHoverBg,
+      boxShadow: `inset 0 0 0 1px ${menuBorder}`,
+    },
+    _active: { bg: chromeHoverBg },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: `${chromeHoverBg} !important`,
+      },
+    },
+  };
+  const inactiveMenuItemStyles = {
+    bg: 'transparent',
+    _hover: { bg: 'transparent' },
+    _focus: { bg: 'transparent' },
+    _active: { bg: 'transparent' },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: 'transparent !important',
+      },
+    },
+  };
 
   useLayoutEffect(() => {
     const widthPx = `${dashboardSidebarWidth}px`;
@@ -726,7 +752,7 @@ export default function DashboardShell({
             flexShrink={0}
             display={{ base: 'none', md: 'flex' }}
           >
-            <Menu placement='bottom-end'>
+            <Menu placement='bottom-end' autoSelect={false}>
               <MenuButton
                 data-tour='workspace-selector'
                 as={Button}
@@ -769,6 +795,7 @@ export default function DashboardShell({
                     <MenuItem
                       key={workspace.id}
                       onClick={() => onWorkspaceSelect?.(workspace)}
+                      {...userMenuItemStyles}
                     >
                       {workspace.name}
                     </MenuItem>
@@ -777,7 +804,7 @@ export default function DashboardShell({
               </Portal>
             </Menu>
 
-            <Menu placement='bottom-end'>
+            <Menu placement='bottom-end' autoSelect={false}>
               <Box position='relative'>
                 {dashboardNotifications.length > 0 && (
                   <Box
@@ -825,9 +852,9 @@ export default function DashboardShell({
                             if (notification?.href) navigate(notification.href);
                           }}
                           cursor={isClickable ? 'pointer' : 'default'}
-                          _hover={{
-                            bg: isClickable ? chromeHoverBg : 'transparent',
-                          }}
+                          {...(isClickable
+                            ? userMenuItemStyles
+                            : inactiveMenuItemStyles)}
                         >
                           <VStack align='start' spacing={0}>
                             <Text
@@ -862,6 +889,7 @@ export default function DashboardShell({
             />
 
             <Menu
+              autoSelect={false}
               placement='bottom-end'
               isOpen={isUserMenuOpen}
               onOpen={() => setIsUserMenuOpen(true)}
@@ -908,6 +936,7 @@ export default function DashboardShell({
                   <MenuItem
                     icon={<User size={15} />}
                     onClick={handleAccountClick}
+                    {...userMenuItemStyles}
                   >
                     Account Settings
                   </MenuItem>
@@ -915,10 +944,15 @@ export default function DashboardShell({
                     data-tour='preferences-nav'
                     icon={<Settings size={15} />}
                     onClick={() => navigate('/preferences')}
+                    {...userMenuItemStyles}
                   >
                     Preferences
                   </MenuItem>
-                  <MenuItem icon={<LogOut size={15} />} onClick={onLogout}>
+                  <MenuItem
+                    icon={<LogOut size={15} />}
+                    onClick={onLogout}
+                    {...userMenuItemStyles}
+                  >
                     Sign Out
                   </MenuItem>
                 </MenuList>
@@ -959,7 +993,7 @@ export default function DashboardShell({
             ) : null}
           </Box>
           <HStack spacing={2} flexShrink={0}>
-            <Menu placement='bottom-end'>
+            <Menu placement='bottom-end' autoSelect={false}>
               <MenuButton
                 data-tour='workspace-selector'
                 as={Button}
@@ -989,6 +1023,7 @@ export default function DashboardShell({
                     <MenuItem
                       key={workspace.id}
                       onClick={() => onWorkspaceSelect?.(workspace)}
+                      {...userMenuItemStyles}
                     >
                       {workspace.name}
                     </MenuItem>

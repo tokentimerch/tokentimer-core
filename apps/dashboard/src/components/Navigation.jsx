@@ -53,6 +53,21 @@ const UserMenu = ({ user, onLogout, onAccountClick }) => {
   const menuItemHoverBg = useColorModeValue('blue.50', 'blue.900');
   const signOutColor = useColorModeValue('red.600', 'red.400');
   const signOutHoverBg = useColorModeValue('red.50', 'red.900');
+  const menuItemInteractiveStyles = hoverBg => ({
+    bg: 'transparent',
+    _hover: { bg: hoverBg },
+    _focus: { bg: hoverBg },
+    _focusVisible: {
+      bg: hoverBg,
+      boxShadow: `inset 0 0 0 1px ${menuBorderColor}`,
+    },
+    _active: { bg: hoverBg },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: `${hoverBg} !important`,
+      },
+    },
+  });
 
   // Listen for tour events to keep menu open during tour
   useEffect(() => {
@@ -89,6 +104,7 @@ const UserMenu = ({ user, onLogout, onAccountClick }) => {
 
   return (
     <Menu
+      autoSelect={false}
       isOpen={isOpen}
       onOpen={() => setIsOpen(true)}
       onClose={handleMenuClose}
@@ -161,9 +177,7 @@ const UserMenu = ({ user, onLogout, onAccountClick }) => {
           <MenuItem
             icon={<FiUser />}
             onClick={onAccountClick}
-            _hover={{
-              bg: menuItemHoverBg,
-            }}
+            {...menuItemInteractiveStyles(menuItemHoverBg)}
           >
             Account Settings
           </MenuItem>
@@ -176,9 +190,7 @@ const UserMenu = ({ user, onLogout, onAccountClick }) => {
                 navigate('/preferences');
               }
             }}
-            _hover={{
-              bg: menuItemHoverBg,
-            }}
+            {...menuItemInteractiveStyles(menuItemHoverBg)}
           >
             Preferences
           </MenuItem>
@@ -187,9 +199,7 @@ const UserMenu = ({ user, onLogout, onAccountClick }) => {
             icon={<FiLogOut />}
             onClick={onLogout}
             color={signOutColor}
-            _hover={{
-              bg: signOutHoverBg,
-            }}
+            {...menuItemInteractiveStyles(signOutHoverBg)}
           >
             Sign Out
           </MenuItem>
@@ -538,6 +548,32 @@ const Navigation = ({
   const borderPrimary = useColorModeValue('border.primary', 'border.primary');
   const gray600 = useColorModeValue('gray.600', 'gray.300');
   const gray400 = useColorModeValue('gray.600', 'gray.400');
+  const menuItemInteractiveStyles = hoverBg => ({
+    bg: 'transparent',
+    _hover: { bg: hoverBg },
+    _focus: { bg: hoverBg },
+    _focusVisible: {
+      bg: hoverBg,
+      boxShadow: `inset 0 0 0 1px ${borderColor}`,
+    },
+    _active: { bg: hoverBg },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: `${hoverBg} !important`,
+      },
+    },
+  });
+  const inactiveMenuItemStyles = {
+    bg: 'transparent',
+    _hover: { bg: 'transparent' },
+    _focus: { bg: 'transparent' },
+    _active: { bg: 'transparent' },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: 'transparent !important',
+      },
+    },
+  };
   const imageFilter = useColorModeValue('none', 'invert(1)');
 
   const [notifications, setNotifications] = useState([]);
@@ -984,7 +1020,7 @@ const Navigation = ({
           <HStack spacing='4' display={{ base: 'none', md: 'flex' }}>
             {/* Workspace Switcher */}
             {user && (
-              <Menu>
+              <Menu autoSelect={false}>
                 <MenuButton
                   data-tour='workspace-selector'
                   as={Button}
@@ -1022,6 +1058,7 @@ const Navigation = ({
                           } catch (_) {}
                         } catch (_) {}
                       }}
+                      {...menuItemInteractiveStyles(primaryHoverBg)}
                     >
                       {w.name}
                     </MenuItem>
@@ -1152,7 +1189,7 @@ const Navigation = ({
           {/* Right side actions */}
           <HStack spacing='2' ml='auto'>
             {/* Notifications */}
-            <Menu placement='bottom-end'>
+            <Menu placement='bottom-end' autoSelect={false}>
               <Box position='relative'>
                 {notifications.length > 0 && (
                   <Box
@@ -1229,10 +1266,10 @@ const Navigation = ({
                             }
                             return undefined;
                           }}
-                          _hover={{
-                            bg: isClickable ? primaryHoverBg : 'transparent',
-                          }}
                           cursor={isClickable ? 'pointer' : 'default'}
+                          {...(isClickable
+                            ? menuItemInteractiveStyles(primaryHoverBg)
+                            : inactiveMenuItemStyles)}
                         >
                           <VStack align='start' spacing='0'>
                             <Text fontSize='sm' fontWeight='medium'>
