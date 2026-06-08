@@ -182,20 +182,20 @@ export default function DashboardShell({
     'gray.200',
     'rgba(148, 163, 184, 0.14)'
   );
-  const workspaceButtonBg = useColorModeValue(
-    'blue.50',
-    'rgba(8, 13, 22, 0.92)'
-  );
-  const workspaceButtonHoverBg = useColorModeValue(
-    'blue.100',
-    'rgba(15, 23, 42, 0.96)'
-  );
-  const workspaceButtonBorder = useColorModeValue(
-    'gray.400',
-    'rgba(148, 163, 184, 0.28)'
-  );
-  const workspaceNameColor = useColorModeValue('gray.900', 'white');
-  const workspaceLabelColor = useColorModeValue('gray.700', mutedTextColor);
+  const workspaceButtonBg = isDarkMode
+    ? 'rgba(8, 13, 22, 0.92)'
+    : (dashboardColors?.inputBg ?? 'white');
+  const workspaceButtonHoverBg = isDarkMode
+    ? 'rgba(15, 23, 42, 0.96)'
+    : '#f8fafc';
+  const workspaceButtonBorder = isDarkMode
+    ? 'rgba(148, 163, 184, 0.28)'
+    : borderColor;
+  const workspaceButtonHoverBorder = isDarkMode
+    ? 'rgba(148, 163, 184, 0.28)'
+    : '#cbd5e1';
+  const workspaceNameColor = isDarkMode ? 'white' : textColor;
+  const workspaceLabelColor = mutedTextColor;
   const iconButtonColor = useColorModeValue(
     'gray.600',
     'rgba(203, 213, 225, 0.92)'
@@ -742,8 +742,14 @@ export default function DashboardShell({
                 fontWeight='medium'
                 borderRadius='md'
                 isDisabled={dashboardWorkspaces.length === 0}
-                _hover={{ bg: workspaceButtonHoverBg }}
-                _active={{ bg: workspaceButtonHoverBg }}
+                _hover={{
+                  bg: workspaceButtonHoverBg,
+                  borderColor: workspaceButtonHoverBorder,
+                }}
+                _active={{
+                  bg: workspaceButtonHoverBg,
+                  borderColor: workspaceButtonHoverBorder,
+                }}
               >
                 <HStack spacing={3} justify='space-between' minW={0}>
                   <Text
@@ -976,8 +982,14 @@ export default function DashboardShell({
                 fontWeight='semibold'
                 borderRadius='md'
                 isDisabled={dashboardWorkspaces.length === 0}
-                _hover={{ bg: workspaceButtonHoverBg }}
-                _active={{ bg: workspaceButtonHoverBg }}
+                _hover={{
+                  bg: workspaceButtonHoverBg,
+                  borderColor: workspaceButtonHoverBorder,
+                }}
+                _active={{
+                  bg: workspaceButtonHoverBg,
+                  borderColor: workspaceButtonHoverBorder,
+                }}
               >
                 <Text noOfLines={1}>
                   {dashboardWorkspace?.name || workspaceLabel}
