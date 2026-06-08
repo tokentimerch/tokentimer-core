@@ -351,7 +351,6 @@ export const handleApiError = (error, customMessage = null) => {
           '/blog',
           '/compare',
           '/pricing',
-          '/help',
           '/privacy-policy',
           '/terms-of-service',
           '/faq',

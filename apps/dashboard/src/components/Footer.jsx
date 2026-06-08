@@ -9,8 +9,8 @@ import {
   useColorModeValue,
   Icon,
 } from '@chakra-ui/react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { FiFileText, FiMail, FiBookOpen } from 'react-icons/fi';
+import { useLocation } from 'react-router-dom';
+import { FiFileText, FiBookOpen } from 'react-icons/fi';
 import {
   useBrandColors,
   useLandingColors,
@@ -23,14 +23,22 @@ import { useDashboardThemeColors } from '../hooks/useDashboardTheme.js';
  * Footer component with comprehensive navigation and branding
  */
 const DASHBOARD_SIDEBAR_FALLBACK_WIDTH = '56px';
-const DASHBOARD_SHELL_PATHS = new Set(['/dashboard', '/control-center']);
+const DASHBOARD_SHELL_PATHS = new Set([
+  '/dashboard',
+  '/control-center',
+  '/account',
+  '/preferences',
+  '/workspace-preferences',
+  '/audit',
+  '/workspaces',
+  '/system-settings',
+]);
 
 function isDashboardShellPath(pathname) {
   return DASHBOARD_SHELL_PATHS.has(pathname);
 }
 
 const Footer = () => {
-  const navigate = useNavigate();
   const location = useLocation();
   const isLandingPage = location.pathname === '/';
   const isDashboardShellPage = isDashboardShellPath(location.pathname);
@@ -83,16 +91,6 @@ const Footer = () => {
         href: 'https://tokentimer.ch/docs#self-hosted',
         isExternal: true,
         ariaLabel: 'Documentation (opens online)',
-      },
-      {
-        label: 'Help',
-        icon: FiMail,
-        href: '/help',
-        onClick: e => {
-          e.preventDefault();
-          navigate('/help');
-        },
-        ariaLabel: 'Help and Support',
       },
       {
         label: 'GitHub',
@@ -258,28 +256,6 @@ const Footer = () => {
               <HStack spacing='2' align='center'>
                 <Icon as={FiBookOpen} boxSize={4} />
                 <Text>Docs</Text>
-              </HStack>
-            </Link>
-            <Link
-              href='/help'
-              onClick={e => {
-                e.preventDefault();
-                navigate('/help');
-              }}
-              cursor='pointer'
-              color={footerLinkColor}
-              _hover={{
-                textDecoration: 'none',
-                color: footerLinkHoverColor,
-              }}
-              fontSize='sm'
-              whiteSpace='nowrap'
-              flexShrink={0}
-              aria-label='Help and Support'
-            >
-              <HStack spacing='2' align='center'>
-                <Icon as={FiMail} boxSize={4} />
-                <Text>Help</Text>
               </HStack>
             </Link>
             <Link

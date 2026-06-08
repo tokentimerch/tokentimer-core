@@ -213,8 +213,7 @@ export function resolveContactGroupLabel(
     String(token.contact_group_id).trim() !== ''
       ? String(token.contact_group_id).trim()
       : '';
-  const effectiveId =
-    explicitId || String(defaultContactGroupId || '').trim();
+  const effectiveId = explicitId || String(defaultContactGroupId || '').trim();
   if (!effectiveId) return 'Workspace default';
   const groups = Array.isArray(contactGroups) ? contactGroups : [];
   const group = groups.find(g => String(g?.id) === effectiveId);
@@ -244,10 +243,7 @@ export function getNameSubtitle(token, mode) {
   if (token.category === 'cert' && !columns.has('subject')) {
     return truncateNameHint(token.subject);
   }
-  if (
-    !columns.has('vendor') &&
-    !columns.has('license_type')
-  ) {
+  if (!columns.has('vendor') && !columns.has('license_type')) {
     const parts = [token.vendor, token.license_type]
       .map(value => (value ? String(value).trim() : ''))
       .filter(Boolean);
@@ -537,7 +533,10 @@ function InventoryRowActions({
   onOpenRenew,
   onDeleteToken,
 }) {
-  const detailsColor = useColorModeValue('gray.600', 'rgba(203, 213, 225, 0.9)');
+  const detailsColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.9)'
+  );
   const renewColor = useColorModeValue('teal.600', 'rgba(45, 212, 191, 0.95)');
   const deleteColor = useColorModeValue('red.600', 'rgba(248, 113, 113, 0.95)');
   const actionHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
@@ -709,14 +708,15 @@ function AssetInventoryMobileCard({
   const status = helpers.getStatusMeta(token.expiresAt);
   const statusStyles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const cardTitleColor = useColorModeValue('gray.900', 'white');
-  const cardBorderColor = useColorModeValue('gray.200', 'rgba(148, 163, 184, 0.16)');
+  const cardBorderColor = useColorModeValue(
+    'gray.200',
+    'rgba(148, 163, 184, 0.16)'
+  );
   const visual = helpers.getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
   const nameSubtitle = getNameSubtitle(token, mode);
   const locationHint =
-    !nameSubtitle &&
-    mode !== 'mixed' &&
-    token.category !== 'cert'
+    !nameSubtitle && mode !== 'mixed' && token.category !== 'cert'
       ? helpers.getTokenLocation(token)
       : null;
 
@@ -748,7 +748,11 @@ function AssetInventoryMobileCard({
             <VisualIcon size={18} />
           </Circle>
           <Box minW={0}>
-            <Text fontWeight='semibold' color={cardTitleColor} wordBreak='break-word'>
+            <Text
+              fontWeight='semibold'
+              color={cardTitleColor}
+              wordBreak='break-word'
+            >
               {token.name}
             </Text>
             <Text color={helpers.secondaryTextColor} fontSize='sm'>
@@ -851,11 +855,7 @@ export default function AssetInventoryTable({
   const resolveContactGroup =
     getTokenContactGroup ||
     (token =>
-      resolveContactGroupLabel(
-        token,
-        contactGroups,
-        defaultContactGroupId
-      ));
+      resolveContactGroupLabel(token, contactGroups, defaultContactGroupId));
 
   const mode = inventoryModeProp || inventoryMode(selectedCategories);
   const columns = resolveColumns(mode);

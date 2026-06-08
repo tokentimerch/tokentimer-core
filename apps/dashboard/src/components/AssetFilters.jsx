@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import {
-  Badge,
   Box,
   Button,
   Circle,
+  Collapse,
   Divider,
   Flex,
   HStack,
@@ -10,6 +11,7 @@ import {
   InputGroup,
   InputLeftElement,
   Text,
+  useBreakpointValue,
   useColorMode,
   useColorModeValue,
   VStack,
@@ -26,23 +28,57 @@ const STATUS_COLOR_SCHEMES = {
   expired: 'gray',
 };
 
-function getStatusColorScheme(value) {
-  return STATUS_COLOR_SCHEMES[value] || 'gray';
-}
+const CHIP_MIN_HEIGHT = '32px';
 
-function getCategoryColorScheme(value, TOKEN_CATEGORIES) {
-  return (
-    TOKEN_CATEGORIES.find(category => category.value === value)?.color || 'gray'
-  );
-}
+const STATUS_CHIP_LAYOUT = {
+  variant: 'unstyled',
+  minH: CHIP_MIN_HEIGHT,
+  h: 'auto',
+  px: 3,
+  py: 1,
+  fontWeight: 'medium',
+  borderRadius: 'md',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+};
 
-function getSectionColorScheme(section) {
-  if (section.name === '__all__') return 'blue';
-  if (section.name === '__none__') return 'gray';
-  return getColorFromString(section.name);
-}
+function getFilterChipProps({
+  colorScheme,
+  active,
+  isLight,
+  filled = false,
+  strongHover = false,
+}) {
+  if (strongHover) {
+    if (active) {
+      return {
+        ...STATUS_CHIP_LAYOUT,
+        fontWeight: 'semibold',
+        bg: `${colorScheme}.600`,
+        color: 'white',
+        borderWidth: '2px',
+        borderColor: isLight ? `${colorScheme}.800` : 'whiteAlpha.900',
+        _hover: {
+          bg: `${colorScheme}.700`,
+          borderColor: isLight ? `${colorScheme}.900` : 'white',
+          color: 'white',
+        },
+      };
+    }
 
-function getFilterChipProps({ colorScheme, active, isLight, filled = false }) {
+    return {
+      ...STATUS_CHIP_LAYOUT,
+      bg: isLight ? `${colorScheme}.100` : `${colorScheme}.900`,
+      color: isLight ? `${colorScheme}.800` : `${colorScheme}.100`,
+      borderColor: isLight ? `${colorScheme}.300` : `${colorScheme}.600`,
+      _hover: {
+        bg: isLight ? `${colorScheme}.200` : `${colorScheme}.800`,
+        borderColor: isLight ? `${colorScheme}.500` : `${colorScheme}.500`,
+        color: isLight ? `${colorScheme}.900` : `${colorScheme}.50`,
+      },
+    };
+  }
+
   if (active) {
     return {
       variant: 'solid',
@@ -51,6 +87,7 @@ function getFilterChipProps({ colorScheme, active, isLight, filled = false }) {
       borderColor: `${colorScheme}.500`,
       _hover: {
         bg: `${colorScheme}.600`,
+        color: 'white',
       },
     };
   }
@@ -81,6 +118,22 @@ function getFilterChipProps({ colorScheme, active, isLight, filled = false }) {
       borderColor: `${colorScheme}.500`,
     },
   };
+}
+
+function getStatusColorScheme(value) {
+  return STATUS_COLOR_SCHEMES[value] || 'gray';
+}
+
+function getCategoryColorScheme(value, TOKEN_CATEGORIES) {
+  return (
+    TOKEN_CATEGORIES.find(category => category.value === value)?.color || 'gray'
+  );
+}
+
+function getSectionColorScheme(section) {
+  if (section.name === '__all__') return 'blue';
+  if (section.name === '__none__') return 'gray';
+  return getColorFromString(section.name);
 }
 
 function isSectionActive(section, currentSection) {
@@ -119,6 +172,30 @@ function getNextSectionValue(section, currentSection) {
   return parts.length > 0 ? parts.join(',') : '__all__';
 }
 
+function getNextCategoryValue(categoryValue, currentCategories) {
+  const current = Array.isArray(currentCategories) ? currentCategories : [];
+  // Single-select: clicking the active category clears it; otherwise it
+  // replaces any previous selection so only one category is active at a time.
+  return current.includes(categoryValue) ? [] : [categoryValue];
+}
+
+function ScrollableChipRow({ children, isMobileLayout }) {
+  if (!isMobileLayout) {
+    return (
+      <HStack spacing={2} flexWrap='wrap'>
+        {children}
+      </HStack>
+    );
+  }
+
+  // On mobile, wrap instead of horizontal scroll so every chip stays visible.
+  return (
+    <Flex gap={2} flexWrap='wrap' w='100%'>
+      {children}
+    </Flex>
+  );
+}
+
 export default function AssetFilters({
   statusFilter,
   setStatusFilter,
@@ -138,6 +215,8 @@ export default function AssetFilters({
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
   const { inputBg, border: inputBorder, muted } = useDashboardTheme();
+  const isMobileLayout = useBreakpointValue({ base: true, md: false });
+  const [sectionsExpanded, setSectionsExpanded] = useState(false);
 
   const placeholderColor = muted;
   const filterLabelColor = useColorModeValue(
@@ -154,6 +233,8 @@ export default function AssetFilters({
       onFilterReset();
     }
   };
+
+  const showSectionChips = !isMobileLayout || sectionsExpanded;
 
   return (
     <VStack spacing={3} align='stretch'>
@@ -186,44 +267,61 @@ export default function AssetFilters({
             borderColor={inputBorder}
             borderRadius='md'
             pl='36px'
+            minH={CHIP_MIN_HEIGHT}
             _placeholder={{ color: placeholderColor }}
           />
         </InputGroup>
-        <HStack spacing={2} flexWrap='wrap'>
+        <ScrollableChipRow isMobileLayout={isMobileLayout}>
           {statusFilterOptions.map(option => {
             const active = statusFilter === option.value;
             const colorScheme = getStatusColorScheme(option.value);
+            const isStatusChip = option.value !== 'all';
             const chipProps = getFilterChipProps({
               colorScheme,
               active,
               isLight,
+              strongHover: isStatusChip,
             });
 
             return (
               <Button
                 key={option.value}
-                size='xs'
+                size='sm'
                 borderRadius='md'
                 fontWeight='medium'
+                flexShrink={0}
                 onClick={() => {
                   setStatusFilter(option.value);
                   notifyFilterReset();
                 }}
                 {...chipProps}
               >
-                <Circle
-                  size='7px'
-                  bg={active ? 'white' : `${colorScheme}.400`}
-                  mr={2}
-                />
                 {option.label}
-                <Badge ml={2} bg='whiteAlpha.200' color='inherit'>
+                <Box
+                  as='span'
+                  ml={2}
+                  px={1.5}
+                  borderRadius='sm'
+                  bg={
+                    isStatusChip
+                      ? active
+                        ? 'whiteAlpha.300'
+                        : isLight
+                          ? `${colorScheme}.200`
+                          : 'whiteAlpha.200'
+                      : 'whiteAlpha.300'
+                  }
+                  color='inherit'
+                  fontSize='xs'
+                  fontWeight='semibold'
+                  lineHeight='1.5'
+                >
                   {option.count}
-                </Badge>
+                </Box>
               </Button>
             );
           })}
-        </HStack>
+        </ScrollableChipRow>
       </Flex>
 
       <Divider borderColor='rgba(148, 163, 184, 0.12)' />
@@ -232,7 +330,7 @@ export default function AssetFilters({
         <Text fontSize='xs' color={filterLabelColor} mb={2}>
           Category
         </Text>
-        <HStack spacing={2} flexWrap='wrap'>
+        <ScrollableChipRow isMobileLayout={isMobileLayout}>
           {categoryFilterOptions.map(category => {
             const active = selectedCategories.includes(category.value);
             const colorScheme = getCategoryColorScheme(
@@ -252,8 +350,11 @@ export default function AssetFilters({
                 size='sm'
                 borderRadius='md'
                 fontWeight='medium'
+                flexShrink={0}
                 onClick={() => {
-                  setSelectedCategories(active ? [] : [category.value]);
+                  setSelectedCategories(prev =>
+                    getNextCategoryValue(category.value, prev)
+                  );
                   notifyFilterReset();
                 }}
                 {...chipProps}
@@ -267,62 +368,108 @@ export default function AssetFilters({
                     <CategoryIcon size={15} />
                   </Box>
                 ) : null}
-                <Text as='span' ml={CategoryIcon ? 2 : 0}>
+                <Box as='span' ml={CategoryIcon ? 2 : 0}>
                   {category.label}
-                </Text>
-                <Badge ml={2} bg='whiteAlpha.200' color='inherit'>
+                </Box>
+                <Box
+                  as='span'
+                  ml={2}
+                  px={1.5}
+                  borderRadius='sm'
+                  bg='whiteAlpha.200'
+                  color='inherit'
+                  fontSize='xs'
+                  fontWeight='semibold'
+                  lineHeight='1.5'
+                >
                   {category.count}
-                </Badge>
+                </Box>
               </Button>
             );
           })}
-        </HStack>
+        </ScrollableChipRow>
       </Box>
 
       <Box>
-        <Text fontSize='xs' color={filterLabelColor} mb={2}>
-          Sections
-        </Text>
-        <HStack spacing={2} flexWrap='wrap'>
-          {sectionFilterOptions.map(section => {
-            const currentSection = panelQueries?.__section || '__all__';
-            const active = isSectionActive(section, currentSection);
-            const colorScheme = getSectionColorScheme(section);
-            const chipProps = getFilterChipProps({
-              colorScheme,
-              active,
-              isLight,
-            });
+        {isMobileLayout ? (
+          <Button
+            size='sm'
+            variant='ghost'
+            px={0}
+            mb={2}
+            h='auto'
+            minH={CHIP_MIN_HEIGHT}
+            fontWeight='medium'
+            color={filterLabelColor}
+            justifyContent='flex-start'
+            onClick={() => setSectionsExpanded(open => !open)}
+            aria-expanded={sectionsExpanded}
+          >
+            Sections
+            <Text as='span' ml={2} fontSize='xs' color={muted}>
+              {sectionsExpanded ? 'Hide' : 'Show'}
+            </Text>
+          </Button>
+        ) : (
+          <Text fontSize='xs' color={filterLabelColor} mb={2}>
+            Sections
+          </Text>
+        )}
+        <Collapse in={showSectionChips} animateOpacity>
+          <HStack spacing={2} flexWrap='wrap'>
+            {sectionFilterOptions.map(section => {
+              const currentSection = panelQueries?.__section || '__all__';
+              const active = isSectionActive(section, currentSection);
+              const colorScheme = getSectionColorScheme(section);
+              const chipProps = getFilterChipProps({
+                colorScheme,
+                active,
+                isLight,
+              });
 
-            return (
-              <Button
-                key={`section-${section.name || 'none'}`}
-                size='sm'
-                borderRadius='md'
-                fontWeight='medium'
-                onClick={() => {
-                  const next = getNextSectionValue(section, currentSection);
-                  setPanelQueries(prev => ({ ...prev, __section: next }));
-                  notifyFilterReset();
-                  if (typeof onSectionNavigate === 'function') {
-                    onSectionNavigate(next);
-                  }
-                }}
-                {...chipProps}
-              >
-                <Circle
-                  size='7px'
-                  bg={active ? 'white' : `${colorScheme}.400`}
-                  mr={2}
-                />
-                {section.label}
-                <Badge ml={2} bg='whiteAlpha.200' color='inherit'>
-                  {section.count}
-                </Badge>
-              </Button>
-            );
-          })}
-        </HStack>
+              return (
+                <Button
+                  key={`section-${section.name || 'none'}`}
+                  size='sm'
+                  borderRadius='md'
+                  fontWeight='medium'
+                  flexShrink={0}
+                  onClick={() => {
+                    const next = getNextSectionValue(section, currentSection);
+                    setPanelQueries(prev => ({ ...prev, __section: next }));
+                    notifyFilterReset();
+                    if (typeof onSectionNavigate === 'function') {
+                      onSectionNavigate(next);
+                    }
+                  }}
+                  {...chipProps}
+                >
+                  <Circle
+                    size='7px'
+                    bg={active ? 'white' : `${colorScheme}.400`}
+                    mr={2}
+                  />
+                  {section.label}
+                  {section.name !== '__all__' && (
+                    <Box
+                      as='span'
+                      ml={2}
+                      px={1.5}
+                      borderRadius='sm'
+                      bg='whiteAlpha.200'
+                      color='inherit'
+                      fontSize='xs'
+                      fontWeight='semibold'
+                      lineHeight='1.5'
+                    >
+                      {section.count}
+                    </Box>
+                  )}
+                </Button>
+              );
+            })}
+          </HStack>
+        </Collapse>
       </Box>
     </VStack>
   );

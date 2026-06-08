@@ -72,6 +72,7 @@ import ImportAWSForm, {
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
+import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
 
 function toKey(s) {
   try {
@@ -757,9 +758,7 @@ export default function ImportTokensModal({
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
 
-  const cardBg = useColorModeValue('gray.100', 'gray.800');
-  const borderColor = useColorModeValue('gray.400', 'gray.600');
-  const helpTextColor = useColorModeValue('gray.700', 'gray.300');
+  const { border, muted } = useDashboardTheme();
   const confirmBoxBg = useColorModeValue('gray.50', 'gray.700');
 
   // Timezone list with fallback for older browsers missing Intl.supportedValuesOf
@@ -1999,7 +1998,7 @@ export default function ImportTokensModal({
         motionPreset='none'
       >
         <ModalOverlay />
-        <ModalContent bg={cardBg} border='1px solid' borderColor={borderColor}>
+        <ModalContent>
           <ModalHeader>
             <Text>Import tokens</Text>
           </ModalHeader>
@@ -2240,7 +2239,7 @@ export default function ImportTokensModal({
               {autoSyncManageMode ? (
                 <Box
                   border='1px solid'
-                  borderColor={borderColor}
+                  borderColor={border}
                   borderRadius='md'
                   p={4}
                 >
@@ -2276,7 +2275,7 @@ export default function ImportTokensModal({
                             : ''}
                         </Text>
                       ) : (
-                        <Text fontSize='sm' color={helpTextColor}>
+                        <Text fontSize='sm' color={muted}>
                           No sync run yet
                         </Text>
                       )}
@@ -2333,7 +2332,7 @@ export default function ImportTokensModal({
                       <Text fontSize='sm' fontWeight='semibold' mb={1}>
                         Credentials
                       </Text>
-                      <Text fontSize='sm' color={helpTextColor}>
+                      <Text fontSize='sm' color={muted}>
                         Enter a new token or API key to rotate stored
                         credentials. Leave blank to keep the current secret.
                       </Text>
@@ -2345,7 +2344,7 @@ export default function ImportTokensModal({
               {source === 'file' ? (
                 <>
                   <Box>
-                    <Text fontSize='sm' color={helpTextColor}>
+                    <Text fontSize='sm' color={muted}>
                       Upload a file in .csv, .xlsx, .json, .yaml or .yml format.
                       Required fields per row: name, category, type, expiresAt.
                     </Text>
@@ -2382,7 +2381,7 @@ export default function ImportTokensModal({
                     >
                       Choose file
                     </Button>
-                    <Text fontSize='sm' color={helpTextColor}>
+                    <Text fontSize='sm' color={muted}>
                       {fileName ? fileName : 'No file chosen'}
                     </Text>
                   </HStack>
@@ -2405,8 +2404,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2433,8 +2432,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2462,8 +2461,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   autoSyncManageMode={autoSyncManageMode}
                   updateQuotaFromResponse={updateQuotaFromResponse}
@@ -2492,8 +2491,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2520,8 +2519,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2548,8 +2547,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2563,7 +2562,7 @@ export default function ImportTokensModal({
               {source === 'azure-ad' && !autoSyncManageMode ? (
                 <VStack align='stretch' spacing={3}>
                   <Box>
-                    <Text fontSize='sm' color={helpTextColor}>
+                    <Text fontSize='sm' color={muted}>
                       Scans Azure AD for app registrations and service
                       principals with expiring client secrets and certificates.
                       Token is used for scanning and stored encrypted if
@@ -2614,7 +2613,7 @@ export default function ImportTokensModal({
                           />
                         </InputRightElement>
                       </InputGroup>
-                      <Text fontSize='xs' color={helpTextColor} mt={1}>
+                      <Text fontSize='xs' color={muted} mt={1}>
                         Get token:{' '}
                         <Code fontSize='xs'>
                           az account get-access-token --resource
@@ -2654,7 +2653,7 @@ export default function ImportTokensModal({
                   {azureADSummary.length > 0 && !error && (
                     <Box
                       border='1px solid'
-                      borderColor={borderColor}
+                      borderColor={border}
                       borderRadius='md'
                       p={3}
                     >
@@ -2705,7 +2704,7 @@ export default function ImportTokensModal({
                         );
                       }
                     }}
-                    borderColor={borderColor}
+                    borderColor={border}
                     getDetailsForItem={getAzureADItemDetails}
                     onUpdateItem={updateAzureADItem}
                     duplicateIndices={azureADDuplicates}
@@ -2717,7 +2716,7 @@ export default function ImportTokensModal({
                     contactGroupId={bulkContactGroupId}
                     onContactGroupChange={setBulkContactGroupId}
                     contactGroups={contactGroups}
-                    borderColor={borderColor}
+                    borderColor={border}
                   />
                 </VStack>
               ) : null}
@@ -2813,7 +2812,7 @@ export default function ImportTokensModal({
                         </Table>
                         <HStack justify='space-between' mt={1}>
                           {failedRows.length > 10 ? (
-                            <Text fontSize='xs' color={helpTextColor}>
+                            <Text fontSize='xs' color={muted}>
                               Showing first 10 of {failedRows.length} errors.
                             </Text>
                           ) : (
@@ -2923,7 +2922,7 @@ export default function ImportTokensModal({
                     maxH='260px'
                     overflowY='auto'
                     border='1px solid'
-                    borderColor={borderColor}
+                    borderColor={border}
                     borderRadius='md'
                   >
                     <Table size='sm' variant='simple'>

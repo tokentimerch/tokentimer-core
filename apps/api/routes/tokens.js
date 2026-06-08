@@ -116,8 +116,8 @@ router.get(
             "(tokens.section IS NULL OR cardinality(tokens.section) = 0)",
           );
         } else {
-          // Use contains operator (@>) to match all of the selected sections
-          whereParts.push(`tokens.section @> $${p}::text[]`);
+          // Use overlap operator (&&) to match ANY of the selected sections
+          whereParts.push(`tokens.section && $${p}::text[]`);
           params.push(sectionFilters);
           p++;
         }

@@ -2,7 +2,6 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
-  Heading,
   VStack,
   HStack,
   Text,
@@ -19,7 +18,6 @@ import {
   Badge,
   Checkbox,
   Switch,
-  useColorModeValue,
   AlertDialog,
   AlertDialogBody,
   AlertDialogContent,
@@ -28,8 +26,9 @@ import {
   AlertDialogOverlay,
 } from '@chakra-ui/react';
 import { FiEdit2, FiCheck, FiX } from 'react-icons/fi';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import apiClient, {
   API_ENDPOINTS,
   workspaceAPI,
@@ -50,17 +49,10 @@ const MEMBER_ROLE_OPTIONS = [
   { value: 'workspace_manager', label: MEMBER_ROLE_LABELS.workspace_manager },
 ];
 
-export default function Workspaces({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+export default function Workspaces({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
-  const bg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
-  const border = useColorModeValue('gray.400', 'gray.600');
-  const { selectWorkspace } = useWorkspace();
+  const { surface, border, muted } = useDashboardTheme();
+  const { selectWorkspace, workspaceId } = useWorkspace();
   const [workspaces, setWorkspaces] = React.useState([]);
   const [currentWorkspace, setCurrentWorkspace] = React.useState(null);
   const [members, setMembers] = React.useState([]);
@@ -200,7 +192,8 @@ export default function Workspaces({
     currentWorkspace &&
     (currentWorkspace.role === 'admin' ||
       currentWorkspace.role === 'workspace_manager');
-  const _isViewer = currentWorkspace && currentWorkspace.role === 'viewer';
+  const contextWorkspace = workspaces.find(w => w.id === workspaceId);
+  const isViewer = (contextWorkspace || currentWorkspace)?.role === 'viewer';
   const isAdmin = currentWorkspace && currentWorkspace.role === 'admin';
   const isSystemAdmin = session?.isAdmin === true;
 
@@ -325,27 +318,19 @@ export default function Workspaces({
         description='Manage your workspaces, team members, and workspace settings'
         noindex
       />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        variant='wide'
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box
-        maxW='1000px'
-        mx='auto'
-        px={{ base: 4, md: 6 }}
-        py={6}
-        overflowX='hidden'
+        pageTitle='Workspaces'
+        isViewer={isViewer}
       >
         {authorized === false ? null : (
           <VStack align='stretch' spacing={6}>
-            <Heading size='lg'>Workspaces</Heading>
-
             {
               <Box
-                bg={bg}
+                bg={surface}
                 border='1px solid'
                 borderColor={border}
                 p={4}
@@ -464,7 +449,7 @@ export default function Workspaces({
             }
 
             <Box
-              bg={bg}
+              bg={surface}
               border='1px solid'
               borderColor={border}
               p={4}
@@ -675,7 +660,7 @@ export default function Workspaces({
                 </HStack>
               )}
 
-              <Text fontSize='sm' color='gray.500' mb={3}>
+              <Text fontSize='sm' color={muted} mb={3}>
                 Workspace roles are viewer or manager. System admins
                 (installation-wide, System Settings access) can be granted
                 below; that is separate from workspace manager.
@@ -842,7 +827,7 @@ export default function Workspaces({
                   <Text fontWeight='semibold' mb={2}>
                     Pending invitations ({pendingInvitations.length})
                   </Text>
-                  <Text fontSize='sm' color='gray.500' mb={3}>
+                  <Text fontSize='sm' color={muted} mb={3}>
                     Invitations that have not yet been accepted. They count
                     toward your workspace member cap when one is configured.
                   </Text>
@@ -900,7 +885,7 @@ export default function Workspaces({
             </Box>
           </VStack>
         )}
-      </Box>
+      </DashboardPageLayout>
 
       {/* Transfer Modal */}
       <AlertDialog
@@ -910,7 +895,11 @@ export default function Workspaces({
         size='6xl'
       >
         <AlertDialogOverlay />
-        <AlertDialogContent bg={bg} border='1px solid' borderColor={border}>
+        <AlertDialogContent
+          bg={surface}
+          border='1px solid'
+          borderColor={border}
+        >
           <AlertDialogHeader>Transfer Tokens</AlertDialogHeader>
           <AlertDialogBody>
             <VStack align='stretch' spacing={4}>
@@ -1244,7 +1233,11 @@ export default function Workspaces({
         onClose={() => setConfirmOpen(false)}
       >
         <AlertDialogOverlay />
-        <AlertDialogContent bg={bg} border='1px solid' borderColor={border}>
+        <AlertDialogContent
+          bg={surface}
+          border='1px solid'
+          borderColor={border}
+        >
           <AlertDialogHeader>Delete this workspace?</AlertDialogHeader>
           <AlertDialogBody>
             This action is irreversible. It will delete all tokens, alerts, and

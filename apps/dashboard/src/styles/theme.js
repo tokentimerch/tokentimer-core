@@ -1,6 +1,110 @@
 import { extendTheme } from '@chakra-ui/react';
 import { chakraSemanticTokens as semanticTokens } from './colors';
 
+/** Dashboard chrome palette (light = soft cool gray, dark = existing shell). */
+export const dashboardThemeColors = {
+  bg: {
+    canvas: { light: '#f1f5f9', dark: 'transparent' },
+    shell: {
+      light: 'rgba(236, 242, 248, 0.94)',
+      dark: 'rgba(13, 19, 26, 0.88)',
+    },
+    panel: {
+      light: 'rgba(255, 255, 255, 0.98)',
+      dark: 'rgba(13, 19, 26, 0.95)',
+    },
+    panelHover: { light: '#f8fafc', dark: 'rgba(30, 41, 59, 0.72)' },
+  },
+  border: {
+    subtle: { light: '#e2e8f0', dark: 'rgba(100, 116, 139, 0.2)' },
+    strong: { light: '#cbd5e1', dark: 'rgba(148, 163, 184, 0.28)' },
+  },
+  text: {
+    primary: { light: '#0f172a', dark: '#ffffff' },
+    secondary: { light: '#334155', dark: 'rgba(226, 232, 240, 0.92)' },
+    muted: { light: '#64748b', dark: 'rgba(148, 163, 184, 0.92)' },
+  },
+  accent: {
+    primary: { light: '#5a7d9a', dark: '#93c5fd' },
+  },
+  state: {
+    danger: { light: '#dc2626', dark: '#f87171' },
+    warning: { light: '#d97706', dark: '#fbbf24' },
+    success: { light: '#16a34a', dark: '#4ade80' },
+  },
+};
+
+const dashboardSemanticTokens = Object.fromEntries(
+  Object.entries(dashboardThemeColors).flatMap(([group, entries]) =>
+    Object.entries(entries).map(([name, { light, dark }]) => [
+      `dashboard.${group}.${name}`,
+      { default: light, _dark: dark },
+    ])
+  )
+);
+
+/**
+ * Shared base style for Modal and AlertDialog so every dialog matches the
+ * dashboard panel language: opaque surface, subtle border, divided header and
+ * footer, and an elevation shadow (no backdrop blur, to avoid jank).
+ */
+const dashboardDialogBaseStyle = {
+  overlay: {
+    _light: { bg: 'rgba(15, 23, 42, 0.55)' },
+    _dark: { bg: 'rgba(2, 6, 23, 0.74)' },
+  },
+  dialogContainer: {
+    bg: 'transparent',
+    backgroundColor: 'transparent',
+    _light: { bg: 'transparent', backgroundColor: 'transparent' },
+    _dark: { bg: 'transparent', backgroundColor: 'transparent' },
+  },
+  dialog: {
+    borderRadius: 'xl',
+    border: '1px solid',
+    mx: { base: 4, md: 0 },
+    _light: {
+      bg: '#ffffff',
+      borderColor: '#e2e8f0',
+      boxShadow: '0 24px 60px -15px rgba(15, 23, 42, 0.4)',
+    },
+    _dark: {
+      bg: '#0e141b',
+      borderColor: 'rgba(148, 163, 184, 0.16)',
+      boxShadow: 'none',
+    },
+  },
+  header: {
+    fontFamily: 'Archivo, system-ui, sans-serif',
+    fontWeight: 'bold',
+    fontSize: 'lg',
+    letterSpacing: '-0.01em',
+    px: 6,
+    pt: 5,
+    pb: 4,
+    borderBottom: '1px solid',
+    _light: { borderColor: '#e2e8f0' },
+    _dark: { borderColor: 'rgba(148, 163, 184, 0.14)' },
+  },
+  closeButton: {
+    top: 4,
+    insetEnd: 5,
+    borderRadius: 'md',
+  },
+  body: {
+    px: 6,
+    py: 5,
+  },
+  footer: {
+    px: 6,
+    py: 4,
+    gap: 3,
+    borderTop: '1px solid',
+    _light: { borderColor: '#e2e8f0' },
+    _dark: { borderColor: 'rgba(148, 163, 184, 0.14)' },
+  },
+};
+
 // Design tokens for consistent theming
 const colors = {
   // Primary brand colors
@@ -176,6 +280,8 @@ const components = {
     baseStyle: {
       fontWeight: 'medium',
       borderRadius: 'lg',
+      borderWidth: '1px',
+      borderColor: 'transparent',
       _focus: {
         boxShadow: 'outline',
       },
@@ -192,10 +298,11 @@ const components = {
         },
       }),
       outline: props => ({
-        border: '1px solid',
+        borderWidth: '1px',
+        borderStyle: 'solid',
         borderColor: `${props.colorScheme}.600`,
         color: `${props.colorScheme}.700`,
-        bg: 'transparent', // Transparent background in light theme
+        bg: 'transparent',
         _hover: {
           bg: `${props.colorScheme}.100`,
           borderColor: `${props.colorScheme}.700`,
@@ -207,6 +314,7 @@ const components = {
           bg: 'transparent',
         },
         _dark: {
+          borderWidth: '1px',
           color: `${props.colorScheme}.300`,
           borderColor: `${props.colorScheme}.300`,
           bg: 'transparent',
@@ -333,7 +441,7 @@ const components = {
         _light: {
           color: `${props.colorScheme}.700`,
           borderColor: `${props.colorScheme}.500`,
-          borderWidth: '1.5px',
+          borderWidth: '1px',
           bg: `${props.colorScheme}.50`,
         },
         borderWidth: '1px',
@@ -649,44 +757,28 @@ const components = {
     },
   },
   Modal: {
-    parts: ['overlay', 'dialogContainer', 'dialog'],
-    baseStyle: {
-      overlay: {
-        bg: 'blackAlpha.300',
-      },
-      dialogContainer: {
-        bg: 'transparent',
-        backgroundColor: 'transparent',
-        _light: {
-          bg: 'transparent',
-          backgroundColor: 'transparent',
-        },
-        _dark: {
-          bg: 'transparent',
-          backgroundColor: 'transparent',
-        },
-      },
-    },
+    parts: [
+      'overlay',
+      'dialogContainer',
+      'dialog',
+      'header',
+      'body',
+      'footer',
+      'closeButton',
+    ],
+    baseStyle: dashboardDialogBaseStyle,
   },
   AlertDialog: {
-    parts: ['overlay', 'dialogContainer', 'dialog'],
-    baseStyle: {
-      overlay: {
-        bg: 'blackAlpha.300',
-      },
-      dialogContainer: {
-        bg: 'transparent',
-        backgroundColor: 'transparent',
-        _light: {
-          bg: 'transparent',
-          backgroundColor: 'transparent',
-        },
-        _dark: {
-          bg: 'transparent',
-          backgroundColor: 'transparent',
-        },
-      },
-    },
+    parts: [
+      'overlay',
+      'dialogContainer',
+      'dialog',
+      'header',
+      'body',
+      'footer',
+      'closeButton',
+    ],
+    baseStyle: dashboardDialogBaseStyle,
   },
   Table: {
     baseStyle: {
@@ -794,7 +886,12 @@ export const theme = extendTheme({
       900: '#581c87',
     },
   },
-  semanticTokens,
+  semanticTokens: {
+    colors: {
+      ...semanticTokens.colors,
+      ...dashboardSemanticTokens,
+    },
+  },
   ...typography,
   ...spacing,
   radii,

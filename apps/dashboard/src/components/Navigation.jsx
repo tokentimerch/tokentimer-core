@@ -38,7 +38,7 @@ import ThemeToggle from './ThemeToggle.jsx';
 /**
  * User menu with account options
  */
-const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
+const UserMenu = ({ user, onLogout, onAccountClick }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isTourActive, setIsTourActive] = useState(false);
   const navigate = useNavigate();
@@ -168,22 +168,20 @@ const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
             Account Settings
           </MenuItem>
 
-          {!isViewerOnly && (
-            <MenuItem
-              data-tour='preferences-nav'
-              icon={<FiSettings />}
-              onClick={() => {
-                if (window.location.pathname !== '/preferences') {
-                  navigate('/preferences');
-                }
-              }}
-              _hover={{
-                bg: menuItemHoverBg,
-              }}
-            >
-              Preferences
-            </MenuItem>
-          )}
+          <MenuItem
+            data-tour='preferences-nav'
+            icon={<FiSettings />}
+            onClick={() => {
+              if (window.location.pathname !== '/preferences') {
+                navigate('/preferences');
+              }
+            }}
+            _hover={{
+              bg: menuItemHoverBg,
+            }}
+          >
+            Preferences
+          </MenuItem>
 
           <MenuItem
             icon={<FiLogOut />}
@@ -215,7 +213,6 @@ const MobileNav = ({
   canSeeAudit,
   canSeeWorkspaces,
   isSystemAdmin,
-  isViewerOnly,
 }) => {
   const navigate = useNavigate();
   const bgColor = useColorModeValue('rgba(255, 255, 255, 0.98)', 'gray.800');
@@ -448,32 +445,30 @@ const MobileNav = ({
                 Account Settings
               </Button>
 
-              {!isViewerOnly && (
-                <Button
-                  data-tour='preferences-nav'
-                  variant='ghost'
-                  justifyContent='start'
-                  onClick={() => {
-                    if (window.location.pathname !== '/preferences') {
-                      navigate('/preferences');
-                    }
-                    onClose();
-                  }}
-                  bg='transparent'
-                  _hover={{
-                    bg: primaryHoverBg,
-                  }}
-                  _focus={{ bg: 'transparent' }}
-                  _active={{ bg: 'transparent' }}
-                  whiteSpace='normal'
-                  textAlign='left'
-                  h='auto'
-                  py={2}
-                  px={3}
-                >
-                  Preferences
-                </Button>
-              )}
+              <Button
+                data-tour='preferences-nav'
+                variant='ghost'
+                justifyContent='start'
+                onClick={() => {
+                  if (window.location.pathname !== '/preferences') {
+                    navigate('/preferences');
+                  }
+                  onClose();
+                }}
+                bg='transparent'
+                _hover={{
+                  bg: primaryHoverBg,
+                }}
+                _focus={{ bg: 'transparent' }}
+                _active={{ bg: 'transparent' }}
+                whiteSpace='normal'
+                textAlign='left'
+                h='auto'
+                py={2}
+                px={3}
+              >
+                Preferences
+              </Button>
 
               <Button
                 variant='ghost'
@@ -528,6 +523,9 @@ const Navigation = ({
     };
   }, [onClose]); // Remove isOpen from dependencies to avoid recreating listener
   const navigate = useNavigate();
+  const handleAccountClick = () => {
+    navigate('/account');
+  };
 
   // Use semantic color tokens
   const { primary: textColor } = useTextColors();
@@ -628,7 +626,7 @@ const Navigation = ({
             id: 'alerts-disabled',
             kind: 'warning',
             text: 'Alerts are disabled until a channel is defined.',
-            href: '/preferences',
+            href: '/workspace-preferences',
           });
         }
         if (!hasAnyContact) {
@@ -636,7 +634,7 @@ const Navigation = ({
             id: 'no-contacts-defined',
             kind: 'warning',
             text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
-            href: '/preferences',
+            href: '/workspace-preferences',
           });
         }
         setNotifications(list);
@@ -1227,7 +1225,7 @@ const Navigation = ({
                               if (n && n.href) return navigate(n.href);
                             } catch (_) {}
                             if (isClickable) {
-                              return navigate('/preferences');
+                              return navigate('/workspace-preferences');
                             }
                             return undefined;
                           }}
@@ -1259,8 +1257,7 @@ const Navigation = ({
               <UserMenu
                 user={user}
                 onLogout={onLogout}
-                onAccountClick={onAccountClick}
-                isViewerOnly={isViewerOnly}
+                onAccountClick={handleAccountClick}
               />
             </Box>
 
@@ -1291,13 +1288,12 @@ const Navigation = ({
         onClose={onClose}
         user={user}
         onLogout={onLogout}
-        onAccountClick={onAccountClick}
+        onAccountClick={handleAccountClick}
         onNavigateToDashboard={onNavigateToDashboard}
         onNavigateToLanding={onNavigateToLanding}
         canSeeAudit={canSeeAudit}
         canSeeWorkspaces={canSeeWorkspaces}
         isSystemAdmin={isSystemAdmin}
-        isViewerOnly={isViewerOnly}
       />
     </>
   );

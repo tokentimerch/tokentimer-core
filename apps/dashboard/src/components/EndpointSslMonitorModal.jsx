@@ -26,7 +26,6 @@ import {
   Modal,
   ModalBody,
   ModalCloseButton,
-  ModalContent,
   ModalFooter,
   ModalHeader,
   ModalOverlay,
@@ -45,7 +44,6 @@ import {
   Tr,
   VStack,
   useBreakpointValue,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   FiAlertTriangle,
@@ -65,6 +63,11 @@ import {
   domainSslBadge,
   domainStatusColor,
 } from '../utils/domains.jsx';
+import {
+  DashboardModalFrame,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
 
 const DOMAIN_CHECKER_PAGE_SIZE = 50;
 const ENDPOINT_MONITORS_PAGE_SIZE = 40;
@@ -163,9 +166,9 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
   fetchGlobalFacets,
   fetchTokensForCategoryReset,
 }) {
-  const helpTextColor = useColorModeValue('gray.600', 'gray.400');
-  const domainBorderColor = useColorModeValue('gray.200', 'gray.700');
-  const mobileCardBg = useColorModeValue('gray.50', 'gray.700');
+  const { headerProps } = useDashboardModalProps();
+  const { muted, border, text, dashboard } = useDashboardTheme();
+  const mobileCardBg = dashboard.bg.panelHover;
 
   const { workspaceId: ctxWorkspaceId } = useWorkspace();
 
@@ -857,12 +860,12 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       motionPreset='none'
     >
       <ModalOverlay />
-      <ModalContent maxW='1100px'>
-        <ModalHeader>Endpoint & SSL monitoring</ModalHeader>
-        <ModalCloseButton />
+      <DashboardModalFrame maxW='1100px'>
+        <ModalHeader {...headerProps}>Endpoint & SSL monitoring</ModalHeader>
+        <ModalCloseButton color={text} />
         <ModalBody data-endpoint-ssl-modal-body='true'>
           <VStack spacing={5} align='stretch'>
-            <Text fontSize='sm' color={helpTextColor}>
+            <Text fontSize='sm' color={muted}>
               Monitor SSL certificates and endpoint health for your URLs. Tokens
               are auto-created for each SSL certificate detected.
             </Text>
@@ -872,13 +875,13 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 p={3}
                 borderRadius='md'
                 borderWidth='1px'
-                borderColor={domainBorderColor}
+                borderColor={border}
                 fontSize='sm'
               >
                 <HStack justify='space-between' align='start' spacing={3}>
                   <Box>
                     <Text fontWeight='semibold'>Last import summary</Text>
-                    <Text color={helpTextColor}>
+                    <Text color={muted}>
                       {domainCheckerImportReport.importedLowerBound
                         ? 'At least '
                         : ''}
@@ -927,8 +930,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                         mt={2}
                         p={2}
                         borderRadius='md'
-                        bg='blackAlpha.50'
-                        _dark={{ bg: 'whiteAlpha.100' }}
+                        bg={mobileCardBg}
                         fontSize='xs'
                         whiteSpace='pre-wrap'
                         wordBreak='break-word'
@@ -944,7 +946,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
             )}
 
             {domainsLoading ? (
-              <Text fontSize='sm' color={helpTextColor}>
+              <Text fontSize='sm' color={muted}>
                 Loading endpoints...
               </Text>
             ) : domains.length === 0 ? (
@@ -975,7 +977,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                               p={4}
                               bg={mobileCardBg}
                               border='1px solid'
-                              borderColor={domainBorderColor}
+                              borderColor={border}
                               borderRadius='md'
                             >
                               <HStack
@@ -1004,7 +1006,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                     />
                                   </HStack>
                                   {d.ssl_issuer && (
-                                    <Text fontSize='xs' color={helpTextColor}>
+                                    <Text fontSize='xs' color={muted}>
                                       Issuer: {d.ssl_issuer}
                                     </Text>
                                   )}
@@ -1049,11 +1051,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                   {d.alert_after_failures || 2}x
                                 </Badge>
                               </HStack>
-                              <HStack
-                                spacing={4}
-                                fontSize='xs'
-                                color={helpTextColor}
-                              >
+                              <HStack spacing={4} fontSize='xs' color={muted}>
                                 {d.last_health_response_ms != null && (
                                   <Text>{d.last_health_response_ms}ms</Text>
                                 )}
@@ -1073,7 +1071,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                       <Box
                         borderRadius='md'
                         border='1px solid'
-                        borderColor={domainBorderColor}
+                        borderColor={border}
                         overflow='auto'
                       >
                         <Table size='sm' variant='simple' tableLayout='fixed'>
@@ -1165,7 +1163,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                     </Tooltip>
                                   </HStack>
                                   {d.ssl_issuer && (
-                                    <Text fontSize='2xs' color={helpTextColor}>
+                                    <Text fontSize='2xs' color={muted}>
                                       Issuer: {d.ssl_issuer}
                                     </Text>
                                   )}
@@ -1264,7 +1262,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                         >
                           Previous
                         </Button>
-                        <Text fontSize='sm' color={helpTextColor}>
+                        <Text fontSize='sm' color={muted}>
                           Showing{' '}
                           {endpointMonitorsPage * ENDPOINT_MONITORS_PAGE_SIZE +
                             1}
@@ -1301,7 +1299,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 <Text fontWeight='semibold' fontSize='sm'>
                   Domain checker
                 </Text>
-                <Text fontSize='xs' color={helpTextColor}>
+                <Text fontSize='xs' color={muted}>
                   Discovery is best-effort and limited to publicly available
                   subdomains seen by passive sources. Then import selected hosts
                   as SSL tokens and endpoint monitors.
@@ -1391,7 +1389,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                 <Box
                   mt={3}
                   border='1px solid'
-                  borderColor={domainBorderColor}
+                  borderColor={border}
                   borderRadius='md'
                   overflow='auto'
                 >
@@ -1437,7 +1435,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   >
                     ← Prev
                   </Button>
-                  <Text fontSize='xs' color={helpTextColor}>
+                  <Text fontSize='xs' color={muted}>
                     {domainCheckerPage * DOMAIN_CHECKER_PAGE_SIZE + 1}–
                     {Math.min(
                       (domainCheckerPage + 1) * DOMAIN_CHECKER_PAGE_SIZE,
@@ -1702,7 +1700,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
         <ModalFooter>
           <Button onClick={handleDomainModalClose}>Close</Button>
         </ModalFooter>
-      </ModalContent>
+      </DashboardModalFrame>
     </Modal>
   );
 });

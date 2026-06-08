@@ -42,11 +42,13 @@ import {
   Tooltip,
   Image,
   Icon,
+  SimpleGrid,
 } from '@chakra-ui/react';
 import apiClient, { alertAPI, workspaceAPI } from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { trackEvent } from '../utils/analytics.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { logger } from '../utils/logger';
@@ -89,7 +91,7 @@ export default function AlertPreferences({
   onNavigateToLanding,
 }) {
   const location = useLocation();
-  const { workspaceId, selectWorkspace } = useWorkspace();
+  const { workspaceId } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -219,27 +221,17 @@ export default function AlertPreferences({
   );
 
   // Workspace role and list for selector
-  const [workspaces, setWorkspaces] = useState([]);
   // Default to viewer until role is known to avoid unlocking controls before permissions load
   const [isViewer, setIsViewer] = useState(true);
   const [roleKnown, setRoleKnown] = useState(false);
   const [_workspaceRole, setWorkspaceRole] = useState('');
 
-  const cardBg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
-  const borderColor = useColorModeValue('gray.400', 'gray.600');
-
-  // Move useColorModeValue calls to top level to avoid React Hook rules violations
-  const webhookBoxBg = useColorModeValue(
-    'rgba(255, 255, 255, 0.95)',
-    'gray.700'
-  );
+  const theme = useDashboardTheme();
+  const { surface, border, muted, inputBg, dashboard } = theme;
   const isMobile = useBreakpointValue({ base: true, md: false });
   const discordColor = '#5865F2';
   const pagerdutyColor = '#06AC38';
   const internetColor = useColorModeValue('cyan.500', 'cyan.400');
-  // All color mode values used in JSX must be defined here
-  const grayTextColor = useColorModeValue('gray.600', 'gray.400');
-  const blueRowBg = useColorModeValue('rgba(245, 250, 255, 0.95)', 'gray.700');
 
   // Helper function to render webhook vendor logo - must be defined after all hooks
   const renderWebhookLogo = kind => {
@@ -321,7 +313,7 @@ export default function AlertPreferences({
       try {
         setLoading(true);
         if (!workspaceId) {
-          // No workspace selected yet; wait for Navigation to set it
+          // No workspace selected yet; wait for shell workspace selector
           return;
         }
         const res = { data: await workspaceAPI.getAlertSettings(workspaceId) };
@@ -439,7 +431,6 @@ export default function AlertPreferences({
         const ws = await workspaceAPI.list(50, 0);
         if (cancelled) return;
         const items = Array.isArray(ws?.items) ? ws.items : [];
-        setWorkspaces(items);
         const current = items.find(w => w.id === workspaceId);
         const role = String(current?.role || '').toLowerCase();
         setWorkspaceRole(role);
@@ -448,7 +439,6 @@ export default function AlertPreferences({
         // If viewer is on a non-personal workspace, redirect to personal workspace
         // Do not auto-redirect viewers; show disabled UI instead
       } catch (_) {
-        setWorkspaces([]);
         setIsViewer(false);
         setWorkspaceRole('');
       } finally {
@@ -986,49 +976,19 @@ export default function AlertPreferences({
         description='Configure your alert preferences and notification channels'
         noindex
       />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box
-        maxW={{ base: '2xl', md: '4xl' }}
-        mx='auto'
-        p={{ base: 4, md: 6 }}
-        overflowX='hidden'
-        data-tour='preferences-page'
+        pageTitle='Workspace preferences'
+        variant='wide'
+        isViewer={isViewer}
+        contentProps={{
+          overflowX: 'hidden',
+          'data-tour': 'preferences-page',
+        }}
       >
         <VStack spacing={6} align='stretch'>
-          <Heading size='lg'>Preferences</Heading>
-
-          {/* Workspace selector or viewer message */}
-          <HStack flexWrap='wrap' align='center' gap={2}>
-            <Text fontWeight='semibold'>Workspace:</Text>
-            <Select
-              value={workspaceId || ''}
-              onChange={e => {
-                const id = e.target.value;
-                if (!id) return;
-                selectWorkspace(id, { replace: true });
-              }}
-              onClick={e => e.stopPropagation()}
-              minWidth='200px'
-              maxWidth='100%'
-              width='100%'
-              bg={webhookBoxBg}
-              borderColor={borderColor}
-              borderWidth='2px'
-            >
-              {(workspaces || []).map(w => (
-                <option key={w.id} value={w.id}>
-                  {w.name} ({w.role})
-                </option>
-              ))}
-            </Select>
-          </HStack>
-
           {isViewer && (
             <Alert status='info' borderRadius='md'>
               <AlertIcon />
@@ -1055,311 +1015,325 @@ export default function AlertPreferences({
             </Alert>
           )}
 
-          <Box
-            data-tour='preferences-thresholds'
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-          >
-            <Heading size='md' mb={4}>
-              Default Workspace Thresholds
-            </Heading>
-            {/* Plan gating removed: thresholds editable for all plans */}
-            <FormControl
-              isInvalid={!!thresholdError}
-              isDisabled={loading || isViewer || !roleKnown}
+          <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={6} w='full'>
+            <Box
+              data-tour='preferences-thresholds'
+              bg={surface}
+              p={6}
+              borderRadius='md'
+              boxShadow='sm'
+              border='1px solid'
+              borderColor={border}
             >
-              <FormLabel>Alert thresholds (days, comma-separated)</FormLabel>
-              <Input
-                value={thresholdsCsv}
-                onChange={e => setThresholdsCsv(e.target.value)}
-                placeholder='30,14,7,1,0'
-              />
-              <FormErrorMessage>{thresholdError}</FormErrorMessage>
-              <Text fontSize='sm' color={grayTextColor} mt={2}>
-                Allowed range: -365 (after expiry) to 730 (2 years). Values are
-                sorted automatically.
-              </Text>
-              <Text fontSize='sm' color={grayTextColor} mt={1}>
-                1 alert per threshold crossed.
-              </Text>
-            </FormControl>
-            <HStack mt={4} spacing={3}>
-              <Button
-                onClick={handleResetDefaults}
-                variant='outline'
-                disabled={loading || isViewer}
+              <Heading size='md' mb={4}>
+                Default Workspace Thresholds
+              </Heading>
+              {/* Plan gating removed: thresholds editable for all plans */}
+              <FormControl
+                isInvalid={!!thresholdError}
+                isDisabled={loading || isViewer || !roleKnown}
               >
-                Reset to defaults
-              </Button>
-              <Button
-                colorScheme='blue'
-                onClick={handleSave}
-                isLoading={saving}
-                disabled={loading || !workspaceId || isViewer}
-              >
-                Save
-              </Button>
-            </HStack>
-          </Box>
+                <FormLabel>Alert thresholds (days, comma-separated)</FormLabel>
+                <Input
+                  value={thresholdsCsv}
+                  onChange={e => setThresholdsCsv(e.target.value)}
+                  placeholder='30,14,7,1,0'
+                />
+                <FormErrorMessage>{thresholdError}</FormErrorMessage>
+                <Text fontSize='sm' color={muted} mt={2}>
+                  Allowed range: -365 (after expiry) to 730 (2 years). Values
+                  are sorted automatically.
+                </Text>
+                <Text fontSize='sm' color={muted} mt={1}>
+                  1 alert per threshold crossed.
+                </Text>
+              </FormControl>
+              <HStack mt={4} spacing={3}>
+                <Button
+                  onClick={handleResetDefaults}
+                  variant='outline'
+                  disabled={loading || isViewer}
+                >
+                  Reset to defaults
+                </Button>
+                <Button
+                  colorScheme='blue'
+                  onClick={handleSave}
+                  isLoading={saving}
+                  disabled={loading || !workspaceId || isViewer}
+                >
+                  Save
+                </Button>
+              </HStack>
+            </Box>
 
-          {/* Workspace Delivery Window */}
-          <Box
-            data-tour='preferences-delivery-window'
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-          >
-            <Heading size='md' mb={4}>
-              Workspace Delivery Window
-            </Heading>
-            <Text fontSize='sm' color={grayTextColor} mb={2}>
-              Applies to all alert channels. Alerts are sent only during this
-              window; outside the window they are deferred.
-            </Text>
-            <HStack>
-              <FormControl
-                isDisabled={isViewer}
-                isInvalid={
-                  !!dwStart &&
-                  !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwStart).trim())
-                }
-              >
-                <FormLabel>Start (HH:mm)</FormLabel>
-                <Input
-                  placeholder='00:00'
-                  value={dwStart}
-                  onChange={e => setDwStart(e.target.value)}
-                />
-                {dwStart &&
-                  !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwStart).trim()) && (
-                    <FormErrorMessage>Use HH:mm (00:00-23:59)</FormErrorMessage>
-                  )}
-              </FormControl>
-              <FormControl
-                isDisabled={isViewer}
-                isInvalid={
-                  !!dwEnd &&
-                  !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim())
-                }
-              >
-                <FormLabel>End (HH:mm)</FormLabel>
-                <Input
-                  placeholder='23:59'
-                  value={dwEnd}
-                  onChange={e => setDwEnd(e.target.value)}
-                />
-                {dwEnd &&
-                  !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim()) && (
-                    <FormErrorMessage>Use HH:mm (00:00-23:59)</FormErrorMessage>
-                  )}
-              </FormControl>
-              <FormControl isDisabled={isViewer}>
-                <FormLabel>Timezone</FormLabel>
-                <Select value={dwTz} onChange={e => setDwTz(e.target.value)}>
-                  <optgroup label='Common'>
-                    <option value='UTC'>UTC (UTC+0)</option>
-                    <option value='America/New_York'>
-                      America/New_York (UTC-5/-4, EST/EDT)
-                    </option>
-                    <option value='America/Los_Angeles'>
-                      America/Los_Angeles (UTC-8/-7, PST/PDT)
-                    </option>
-                    <option value='Europe/London'>
-                      Europe/London (UTC+0/+1, GMT/BST)
-                    </option>
-                    <option value='Europe/Zurich'>
-                      Europe/Zurich (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Asia/Tokyo'>Asia/Tokyo (UTC+9, JST)</option>
-                  </optgroup>
-                  <optgroup label='Americas'>
-                    <option value='America/Chicago'>
-                      America/Chicago (UTC-6/-5, CST/CDT)
-                    </option>
-                    <option value='America/Denver'>
-                      America/Denver (UTC-7/-6, MST/MDT)
-                    </option>
-                    <option value='America/Phoenix'>
-                      America/Phoenix (UTC-7, MST no DST)
-                    </option>
-                    <option value='America/Anchorage'>
-                      America/Anchorage (UTC-9/-8, AKST/AKDT)
-                    </option>
-                    <option value='America/Honolulu'>
-                      America/Honolulu (UTC-10, HST)
-                    </option>
-                    <option value='America/Toronto'>
-                      America/Toronto (UTC-5/-4, EST/EDT)
-                    </option>
-                    <option value='America/Vancouver'>
-                      America/Vancouver (UTC-8/-7, PST/PDT)
-                    </option>
-                    <option value='America/Mexico_City'>
-                      America/Mexico_City (UTC-6/-5, CST/CDT)
-                    </option>
-                    <option value='America/Sao_Paulo'>
-                      America/Sao_Paulo (UTC-3, BRT)
-                    </option>
-                    <option value='America/Buenos_Aires'>
-                      America/Buenos_Aires (UTC-3, ART)
-                    </option>
-                  </optgroup>
-                  <optgroup label='Europe'>
-                    <option value='Europe/Paris'>
-                      Europe/Paris (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Berlin'>
-                      Europe/Berlin (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Rome'>
-                      Europe/Rome (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Madrid'>
-                      Europe/Madrid (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Amsterdam'>
-                      Europe/Amsterdam (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Brussels'>
-                      Europe/Brussels (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Vienna'>
-                      Europe/Vienna (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Stockholm'>
-                      Europe/Stockholm (UTC+1/+2, CET/CEST)
-                    </option>
-                    <option value='Europe/Dublin'>
-                      Europe/Dublin (UTC+0/+1, GMT/IST)
-                    </option>
-                    <option value='Europe/Lisbon'>
-                      Europe/Lisbon (UTC+0/+1, WET/WEST)
-                    </option>
-                    <option value='Europe/Athens'>
-                      Europe/Athens (UTC+2/+3, EET/EEST)
-                    </option>
-                    <option value='Europe/Helsinki'>
-                      Europe/Helsinki (UTC+2/+3, EET/EEST)
-                    </option>
-                    <option value='Europe/Moscow'>
-                      Europe/Moscow (UTC+3, MSK)
-                    </option>
-                    <option value='Europe/Istanbul'>
-                      Europe/Istanbul (UTC+3, TRT)
-                    </option>
-                  </optgroup>
-                  <optgroup label='Asia'>
-                    <option value='Asia/Dubai'>Asia/Dubai (UTC+4, GST)</option>
-                    <option value='Asia/Kolkata'>
-                      Asia/Kolkata (UTC+5:30, IST)
-                    </option>
-                    <option value='Asia/Bangkok'>
-                      Asia/Bangkok (UTC+7, ICT)
-                    </option>
-                    <option value='Asia/Singapore'>
-                      Asia/Singapore (UTC+8, SGT)
-                    </option>
-                    <option value='Asia/Hong_Kong'>
-                      Asia/Hong_Kong (UTC+8, HKT)
-                    </option>
-                    <option value='Asia/Shanghai'>
-                      Asia/Shanghai (UTC+8, CST)
-                    </option>
-                    <option value='Asia/Seoul'>Asia/Seoul (UTC+9, KST)</option>
-                    <option value='Asia/Taipei'>
-                      Asia/Taipei (UTC+8, CST)
-                    </option>
-                    <option value='Asia/Manila'>
-                      Asia/Manila (UTC+8, PHT)
-                    </option>
-                    <option value='Asia/Jakarta'>
-                      Asia/Jakarta (UTC+7, WIB)
-                    </option>
-                  </optgroup>
-                  <optgroup label='Pacific'>
-                    <option value='Australia/Sydney'>
-                      Australia/Sydney (UTC+10/+11, AEDT/AEST)
-                    </option>
-                    <option value='Australia/Melbourne'>
-                      Australia/Melbourne (UTC+10/+11, AEDT/AEST)
-                    </option>
-                    <option value='Australia/Brisbane'>
-                      Australia/Brisbane (UTC+10, AEST no DST)
-                    </option>
-                    <option value='Australia/Perth'>
-                      Australia/Perth (UTC+8, AWST)
-                    </option>
-                    <option value='Pacific/Auckland'>
-                      Pacific/Auckland (UTC+12/+13, NZDT/NZST)
-                    </option>
-                    <option value='Pacific/Fiji'>
-                      Pacific/Fiji (UTC+12, FJT)
-                    </option>
-                  </optgroup>
-                  <optgroup label='Africa & Middle East'>
-                    <option value='Africa/Cairo'>
-                      Africa/Cairo (UTC+2, EET)
-                    </option>
-                    <option value='Africa/Johannesburg'>
-                      Africa/Johannesburg (UTC+2, SAST)
-                    </option>
-                    <option value='Africa/Lagos'>
-                      Africa/Lagos (UTC+1, WAT)
-                    </option>
-                    <option value='Africa/Nairobi'>
-                      Africa/Nairobi (UTC+3, EAT)
-                    </option>
-                  </optgroup>
-                </Select>
-              </FormControl>
-            </HStack>
-            <HStack mt={3}>
-              <Button
-                colorScheme='blue'
-                onClick={async () => {
-                  try {
-                    setSavingToggles(true);
-                    await workspaceAPI.updateAlertSettings(workspaceId, {
-                      delivery_window_start: dwStart || null,
-                      delivery_window_end: dwEnd || null,
-                      delivery_window_tz: dwTz || null,
-                    });
-                    showSuccess('Delivery window saved');
-                  } catch (e) {
-                    setError(
-                      e?.response?.data?.error ||
-                        'Failed to save delivery window'
-                    );
-                  } finally {
-                    setSavingToggles(false);
+            {/* Workspace Delivery Window */}
+            <Box
+              data-tour='preferences-delivery-window'
+              bg={surface}
+              p={6}
+              borderRadius='md'
+              boxShadow='sm'
+              border='1px solid'
+              borderColor={border}
+            >
+              <Heading size='md' mb={4}>
+                Workspace Delivery Window
+              </Heading>
+              <Text fontSize='sm' color={muted} mb={2}>
+                Applies to all alert channels. Alerts are sent only during this
+                window; outside the window they are deferred.
+              </Text>
+              <HStack>
+                <FormControl
+                  isDisabled={isViewer}
+                  isInvalid={
+                    !!dwStart &&
+                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwStart).trim())
                   }
-                }}
-                isLoading={savingToggles}
-                disabled={isViewer || !workspaceId}
-              >
-                Save
-              </Button>
-            </HStack>
-          </Box>
+                >
+                  <FormLabel>Start (HH:mm)</FormLabel>
+                  <Input
+                    placeholder='00:00'
+                    value={dwStart}
+                    onChange={e => setDwStart(e.target.value)}
+                  />
+                  {dwStart &&
+                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(
+                      String(dwStart).trim()
+                    ) && (
+                      <FormErrorMessage>
+                        Use HH:mm (00:00-23:59)
+                      </FormErrorMessage>
+                    )}
+                </FormControl>
+                <FormControl
+                  isDisabled={isViewer}
+                  isInvalid={
+                    !!dwEnd &&
+                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim())
+                  }
+                >
+                  <FormLabel>End (HH:mm)</FormLabel>
+                  <Input
+                    placeholder='23:59'
+                    value={dwEnd}
+                    onChange={e => setDwEnd(e.target.value)}
+                  />
+                  {dwEnd &&
+                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim()) && (
+                      <FormErrorMessage>
+                        Use HH:mm (00:00-23:59)
+                      </FormErrorMessage>
+                    )}
+                </FormControl>
+                <FormControl isDisabled={isViewer}>
+                  <FormLabel>Timezone</FormLabel>
+                  <Select value={dwTz} onChange={e => setDwTz(e.target.value)}>
+                    <optgroup label='Common'>
+                      <option value='UTC'>UTC (UTC+0)</option>
+                      <option value='America/New_York'>
+                        America/New_York (UTC-5/-4, EST/EDT)
+                      </option>
+                      <option value='America/Los_Angeles'>
+                        America/Los_Angeles (UTC-8/-7, PST/PDT)
+                      </option>
+                      <option value='Europe/London'>
+                        Europe/London (UTC+0/+1, GMT/BST)
+                      </option>
+                      <option value='Europe/Zurich'>
+                        Europe/Zurich (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Asia/Tokyo'>
+                        Asia/Tokyo (UTC+9, JST)
+                      </option>
+                    </optgroup>
+                    <optgroup label='Americas'>
+                      <option value='America/Chicago'>
+                        America/Chicago (UTC-6/-5, CST/CDT)
+                      </option>
+                      <option value='America/Denver'>
+                        America/Denver (UTC-7/-6, MST/MDT)
+                      </option>
+                      <option value='America/Phoenix'>
+                        America/Phoenix (UTC-7, MST no DST)
+                      </option>
+                      <option value='America/Anchorage'>
+                        America/Anchorage (UTC-9/-8, AKST/AKDT)
+                      </option>
+                      <option value='America/Honolulu'>
+                        America/Honolulu (UTC-10, HST)
+                      </option>
+                      <option value='America/Toronto'>
+                        America/Toronto (UTC-5/-4, EST/EDT)
+                      </option>
+                      <option value='America/Vancouver'>
+                        America/Vancouver (UTC-8/-7, PST/PDT)
+                      </option>
+                      <option value='America/Mexico_City'>
+                        America/Mexico_City (UTC-6/-5, CST/CDT)
+                      </option>
+                      <option value='America/Sao_Paulo'>
+                        America/Sao_Paulo (UTC-3, BRT)
+                      </option>
+                      <option value='America/Buenos_Aires'>
+                        America/Buenos_Aires (UTC-3, ART)
+                      </option>
+                    </optgroup>
+                    <optgroup label='Europe'>
+                      <option value='Europe/Paris'>
+                        Europe/Paris (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Berlin'>
+                        Europe/Berlin (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Rome'>
+                        Europe/Rome (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Madrid'>
+                        Europe/Madrid (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Amsterdam'>
+                        Europe/Amsterdam (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Brussels'>
+                        Europe/Brussels (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Vienna'>
+                        Europe/Vienna (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Stockholm'>
+                        Europe/Stockholm (UTC+1/+2, CET/CEST)
+                      </option>
+                      <option value='Europe/Dublin'>
+                        Europe/Dublin (UTC+0/+1, GMT/IST)
+                      </option>
+                      <option value='Europe/Lisbon'>
+                        Europe/Lisbon (UTC+0/+1, WET/WEST)
+                      </option>
+                      <option value='Europe/Athens'>
+                        Europe/Athens (UTC+2/+3, EET/EEST)
+                      </option>
+                      <option value='Europe/Helsinki'>
+                        Europe/Helsinki (UTC+2/+3, EET/EEST)
+                      </option>
+                      <option value='Europe/Moscow'>
+                        Europe/Moscow (UTC+3, MSK)
+                      </option>
+                      <option value='Europe/Istanbul'>
+                        Europe/Istanbul (UTC+3, TRT)
+                      </option>
+                    </optgroup>
+                    <optgroup label='Asia'>
+                      <option value='Asia/Dubai'>
+                        Asia/Dubai (UTC+4, GST)
+                      </option>
+                      <option value='Asia/Kolkata'>
+                        Asia/Kolkata (UTC+5:30, IST)
+                      </option>
+                      <option value='Asia/Bangkok'>
+                        Asia/Bangkok (UTC+7, ICT)
+                      </option>
+                      <option value='Asia/Singapore'>
+                        Asia/Singapore (UTC+8, SGT)
+                      </option>
+                      <option value='Asia/Hong_Kong'>
+                        Asia/Hong_Kong (UTC+8, HKT)
+                      </option>
+                      <option value='Asia/Shanghai'>
+                        Asia/Shanghai (UTC+8, CST)
+                      </option>
+                      <option value='Asia/Seoul'>
+                        Asia/Seoul (UTC+9, KST)
+                      </option>
+                      <option value='Asia/Taipei'>
+                        Asia/Taipei (UTC+8, CST)
+                      </option>
+                      <option value='Asia/Manila'>
+                        Asia/Manila (UTC+8, PHT)
+                      </option>
+                      <option value='Asia/Jakarta'>
+                        Asia/Jakarta (UTC+7, WIB)
+                      </option>
+                    </optgroup>
+                    <optgroup label='Pacific'>
+                      <option value='Australia/Sydney'>
+                        Australia/Sydney (UTC+10/+11, AEDT/AEST)
+                      </option>
+                      <option value='Australia/Melbourne'>
+                        Australia/Melbourne (UTC+10/+11, AEDT/AEST)
+                      </option>
+                      <option value='Australia/Brisbane'>
+                        Australia/Brisbane (UTC+10, AEST no DST)
+                      </option>
+                      <option value='Australia/Perth'>
+                        Australia/Perth (UTC+8, AWST)
+                      </option>
+                      <option value='Pacific/Auckland'>
+                        Pacific/Auckland (UTC+12/+13, NZDT/NZST)
+                      </option>
+                      <option value='Pacific/Fiji'>
+                        Pacific/Fiji (UTC+12, FJT)
+                      </option>
+                    </optgroup>
+                    <optgroup label='Africa & Middle East'>
+                      <option value='Africa/Cairo'>
+                        Africa/Cairo (UTC+2, EET)
+                      </option>
+                      <option value='Africa/Johannesburg'>
+                        Africa/Johannesburg (UTC+2, SAST)
+                      </option>
+                      <option value='Africa/Lagos'>
+                        Africa/Lagos (UTC+1, WAT)
+                      </option>
+                      <option value='Africa/Nairobi'>
+                        Africa/Nairobi (UTC+3, EAT)
+                      </option>
+                    </optgroup>
+                  </Select>
+                </FormControl>
+              </HStack>
+              <HStack mt={3}>
+                <Button
+                  colorScheme='blue'
+                  onClick={async () => {
+                    try {
+                      setSavingToggles(true);
+                      await workspaceAPI.updateAlertSettings(workspaceId, {
+                        delivery_window_start: dwStart || null,
+                        delivery_window_end: dwEnd || null,
+                        delivery_window_tz: dwTz || null,
+                      });
+                      showSuccess('Delivery window saved');
+                    } catch (e) {
+                      setError(
+                        e?.response?.data?.error ||
+                          'Failed to save delivery window'
+                      );
+                    } finally {
+                      setSavingToggles(false);
+                    }
+                  }}
+                  isLoading={savingToggles}
+                  disabled={isViewer || !workspaceId}
+                >
+                  Save
+                </Button>
+              </HStack>
+            </Box>
+          </SimpleGrid>
 
           {/* Email Panel replaced by Contact Groups */}
 
           {/* Contacts (& WhatsApp if configured) */}
           <Box
             data-tour='preferences-contacts'
-            bg={cardBg}
+            bg={surface}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <Heading size='md' mb={4}>
               Contacts
@@ -1458,7 +1432,7 @@ export default function AlertPreferences({
 
                       return editingContactId === c.id ? (
                         isMobile ? (
-                          <Tr key={c.id} bg={blueRowBg}>
+                          <Tr key={c.id} bg={dashboard.bg.panelHover}>
                             <Td colSpan={4}>
                               <VStack align='stretch' spacing={3}>
                                 <HStack spacing={2} flexWrap='wrap'>
@@ -1635,7 +1609,7 @@ export default function AlertPreferences({
                             </Td>
                           </Tr>
                         ) : (
-                          <Tr key={c.id} bg={blueRowBg}>
+                          <Tr key={c.id} bg={dashboard.bg.panelHover}>
                             <Td colSpan={4}>
                               <VStack align='stretch' spacing={3}>
                                 <HStack spacing={2} flexWrap='wrap'>
@@ -1921,7 +1895,7 @@ export default function AlertPreferences({
                           <Td
                             width={whatsappAvailable ? '30%' : '58%'}
                             fontSize='xs'
-                            color={grayTextColor}
+                            color={muted}
                             pr={2}
                             whiteSpace='normal'
                             wordBreak='break-word'
@@ -1935,7 +1909,7 @@ export default function AlertPreferences({
                                 overflowWrap='anywhere'
                               >
                                 {detailDisplay.map(detail => (
-                                  <Text key={detail.key} color={grayTextColor}>
+                                  <Text key={detail.key} color={muted}>
                                     {detail.icon} {detail.label}: {detail.value}
                                   </Text>
                                 ))}
@@ -2257,13 +2231,13 @@ export default function AlertPreferences({
           {/* Webhooks Panel */}
           <Box
             data-tour='preferences-webhooks'
-            bg={cardBg}
+            bg={surface}
             p={6}
             px={{ base: 8, md: 10 }}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <Heading size='md' mb={4}>
               Webhooks
@@ -2327,10 +2301,10 @@ export default function AlertPreferences({
                   <Box
                     key={index}
                     p={3}
-                    bg={webhookBoxBg}
+                    bg={surface}
                     borderRadius='md'
                     border='1px solid'
-                    borderColor={borderColor}
+                    borderColor={border}
                   >
                     <VStack align='stretch' spacing={2}>
                       <Input
@@ -2342,7 +2316,7 @@ export default function AlertPreferences({
                         size='sm'
                         isDisabled={isViewer}
                       />
-                      <Text fontSize='xs' color={grayTextColor}>
+                      <Text fontSize='xs' color={muted}>
                         Used to pick this webhook in a contact group.
                       </Text>
                       {String(webhook.kind || '').toLowerCase() ===
@@ -2543,17 +2517,17 @@ export default function AlertPreferences({
           {/* Contact Groups (per workspace) */}
           <Box
             data-tour='preferences-contact-groups'
-            bg={cardBg}
+            bg={surface}
             p={6}
             px={{ base: 8, md: 10 }}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <VStack align='stretch' spacing={2} mb={4}>
               <Heading size='md'>Contact Groups</Heading>
-              <Text fontSize='sm' color={grayTextColor}>
+              <Text fontSize='sm' color={muted}>
                 Create groups to organize who receives alerts. Each person can
                 receive via email{whatsappAvailable ? ', WhatsApp,' : ''} or
                 webhooks.
@@ -2630,7 +2604,7 @@ export default function AlertPreferences({
                   </HStack>
                   {selectedGroupId ? (
                     <HStack mt={2} spacing={2} align='center'>
-                      <Text fontSize='xs' color={grayTextColor}>
+                      <Text fontSize='xs' color={muted}>
                         ID:
                       </Text>
                       <Code fontSize='xs'>{selectedGroupId}</Code>
@@ -2649,7 +2623,7 @@ export default function AlertPreferences({
                       />
                     </HStack>
                   ) : null}
-                  <Text fontSize='xs' color={grayTextColor} mt={1}>
+                  <Text fontSize='xs' color={muted} mt={1}>
                     Pick a contact group to edit it. Use {'"'}+ Add New Group
                     {'"'} to create one, then click {'"'}Save group{'"'}.
                   </Text>
@@ -2703,7 +2677,7 @@ export default function AlertPreferences({
                 <Box
                   p={3}
                   border='1px dashed'
-                  borderColor={borderColor}
+                  borderColor={border}
                   borderRadius='md'
                   data-tour='preferences-contact-groups-editor'
                 >
@@ -2711,7 +2685,7 @@ export default function AlertPreferences({
                     <Heading size='sm'>
                       {editingGroupId ? 'Edit Group' : 'New Group'}
                     </Heading>
-                    <Text fontSize='xs' color={grayTextColor}>
+                    <Text fontSize='xs' color={muted}>
                       Groups used: {(contactGroups || []).length}/
                       {groupCap === Infinity ? 'unlimited' : groupCap}
                     </Text>
@@ -2736,7 +2710,7 @@ export default function AlertPreferences({
                     </FormControl>
                     <FormControl data-tour='preferences-contact-groups-contacts-channels'>
                       <FormLabel>Contacts and channels</FormLabel>
-                      <Text fontSize='xs' color={grayTextColor} mb={1}>
+                      <Text fontSize='xs' color={muted} mb={1}>
                         Select per-contact which channels to use.
                         {whatsappAvailable
                           ? ' Each person can have both email and WhatsApp.'
@@ -2747,7 +2721,7 @@ export default function AlertPreferences({
                       </Text>
                       <VStack align='stretch' spacing={2}>
                         {contacts.length === 0 ? (
-                          <Text fontSize='sm' color={grayTextColor}>
+                          <Text fontSize='sm' color={muted}>
                             No contacts defined. Add contacts in the Contacts
                             section above.
                           </Text>
@@ -2933,7 +2907,7 @@ export default function AlertPreferences({
                     <FormLabel>Webhook channels (unlimited)</FormLabel>
                     <Box
                       border='1px solid'
-                      borderColor={borderColor}
+                      borderColor={border}
                       borderRadius='md'
                       p={2}
                       data-tour='preferences-contact-groups-webhooks'
@@ -2950,7 +2924,7 @@ export default function AlertPreferences({
                           );
                           if (options.length === 0) {
                             return (
-                              <Text fontSize='xs' color={grayTextColor}>
+                              <Text fontSize='xs' color={muted}>
                                 No verified named webhooks available.
                               </Text>
                             );
@@ -2992,7 +2966,7 @@ export default function AlertPreferences({
                         onChange={e => setGroupThresholdsCsv(e.target.value)}
                         size='sm'
                       />
-                      <Text fontSize='xs' color={grayTextColor} mt={1}>
+                      <Text fontSize='xs' color={muted} mt={1}>
                         Leave equal to defaults to inherit workspace thresholds.
                         Allowed range: -365 to 730.
                       </Text>
@@ -3001,7 +2975,7 @@ export default function AlertPreferences({
                     <FormLabel m={0} fontSize='sm'>
                       Weekly Digest
                     </FormLabel>
-                    <Text fontSize='xs' color={grayTextColor} mb={2}>
+                    <Text fontSize='xs' color={muted} mb={2}>
                       Send a weekly summary of tokens expiring soon (within the
                       highest threshold).
                     </Text>
@@ -3043,12 +3017,12 @@ export default function AlertPreferences({
                         Webhook weekly digest
                       </Checkbox>
                     </VStack>
-                    <Text fontSize='xs' color={grayTextColor}>
+                    <Text fontSize='xs' color={muted}>
                       Weekly digest supports Slack, Discord, Teams, and generic
                       webhooks. PagerDuty is not supported as it&apos;s designed
                       for incident alerting.
                     </Text>
-                    <Text fontSize='xs' color={grayTextColor}>
+                    <Text fontSize='xs' color={muted}>
                       Changes are not saved until you click {'"'}Save group{'"'}
                       .
                     </Text>
@@ -3086,7 +3060,7 @@ export default function AlertPreferences({
           {/* Save */}
           {/* Global Save removed; saves are per section */}
         </VStack>
-      </Box>
+      </DashboardPageLayout>
 
       <AlertDialog
         isOpen={deleteDialogOpen}

@@ -680,20 +680,15 @@ function TokenDetailModal({
                     },
                   })}
                 {(isEditing || token.privileges) &&
-                  renderEditable(
-                    'Privileges',
-                    'privileges',
-                    token.privileges,
-                    {
-                      multiline: true,
-                      inputProps: {
-                        maxLength: 5000,
-                        placeholder:
-                          'e.g. read:api, write:registry, secrets:read',
-                        rows: 3,
-                      },
-                    }
-                  )}
+                  renderEditable('Privileges', 'privileges', token.privileges, {
+                    multiline: true,
+                    inputProps: {
+                      maxLength: 5000,
+                      placeholder:
+                        'e.g. read:api, write:registry, secrets:read',
+                      rows: 3,
+                    },
+                  })}
                 {(isEditing || token.description) &&
                   renderEditable(
                     'Description',

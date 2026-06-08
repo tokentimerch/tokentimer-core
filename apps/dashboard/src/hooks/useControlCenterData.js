@@ -212,9 +212,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
           );
 
           const now = new Date();
-          setRetryHintDate(
-            new Date(now.getFullYear(), now.getMonth() + 1, 1)
-          );
+          setRetryHintDate(new Date(now.getFullYear(), now.getMonth() + 1, 1));
         } else {
           try {
             const planRes = await apiClient.get(API_ENDPOINTS.ACCOUNT_PLAN);
@@ -306,7 +304,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
 
   const canRequeue =
     Boolean(selectedWorkspaceId) &&
-    eligibleWorkspaces.some(workspace => workspace.id === selectedWorkspaceId) &&
+    eligibleWorkspaces.some(
+      workspace => workspace.id === selectedWorkspaceId
+    ) &&
     !atLimit;
 
   const requeueDisabledReason = atLimit

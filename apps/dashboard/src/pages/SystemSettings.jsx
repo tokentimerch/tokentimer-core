@@ -13,7 +13,6 @@ import {
   AlertIcon,
   AlertDescription,
   Badge,
-  useColorModeValue,
   Divider,
   InputGroup,
   InputRightElement,
@@ -24,8 +23,9 @@ import {
 import { FiEye, FiEyeOff, FiCheck, FiX } from 'react-icons/fi';
 import apiClient from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -33,13 +33,7 @@ import { logger } from '../utils/logger.js';
  * Allows configuring SMTP and Twilio WhatsApp settings from the UI.
  * Fields set via environment variables are greyed out with a warning badge.
  */
-export default function SystemSettings({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [loading, setLoading] = useState(true);
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState(false);
@@ -54,11 +48,8 @@ export default function SystemSettings({
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
 
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const lockedInputBg = useColorModeValue('gray.100', 'gray.700');
-  const grayText = useColorModeValue('gray.600', 'gray.400');
-  const subTitleColor = useColorModeValue('gray.600', 'gray.300');
+  const { surface, border, muted, dashboard } = useDashboardTheme();
+  const lockedInputBg = dashboard.bg.panelHover;
 
   useEffect(() => {
     loadSettings();
@@ -322,7 +313,7 @@ export default function SystemSettings({
             }
             isDisabled={isLocked}
           />
-          <Text fontSize='sm' color={grayText}>
+          <Text fontSize='sm' color={muted}>
             {options.helpText || ''}
           </Text>
         </HStack>
@@ -334,16 +325,15 @@ export default function SystemSettings({
     return (
       <>
         <SEO title='System Settings' />
-        <Navigation
-          user={session}
+        <DashboardPageLayout
+          session={session}
           onLogout={onLogout}
           onAccountClick={onAccountClick}
-          onNavigateToDashboard={onNavigateToDashboard}
-          onNavigateToLanding={onNavigateToLanding}
-        />
-        <Box maxW='800px' mx='auto' py={8} px={4}>
+          pageTitle='System settings'
+          variant='standard'
+        >
           <Text>Loading system settings...</Text>
-        </Box>
+        </DashboardPageLayout>
       </>
     );
   }
@@ -351,30 +341,22 @@ export default function SystemSettings({
   return (
     <>
       <SEO title='System Settings' />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box maxW='800px' mx='auto' py={8} px={4}>
+        pageTitle='System settings'
+        variant='standard'
+      >
         <VStack align='stretch' spacing={6}>
-          <Heading size='lg'>System Settings</Heading>
-          <Text color={subTitleColor}>
-            Configure email (SMTP) and WhatsApp (Twilio) notification providers.
-            Settings defined via environment variables take priority and cannot
-            be changed here.
-          </Text>
-
           {/* SMTP Configuration */}
           <Box
-            bg={cardBg}
+            bg={surface}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <HStack justify='space-between' mb={4}>
               <Heading size='md'>Email (SMTP)</Heading>
@@ -532,12 +514,12 @@ export default function SystemSettings({
 
           {/* Twilio WhatsApp Configuration */}
           <Box
-            bg={cardBg}
+            bg={surface}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <HStack justify='space-between' mb={4}>
               <Heading size='md'>WhatsApp (Twilio)</Heading>
@@ -576,7 +558,7 @@ export default function SystemSettings({
             )}
 
             <VStack align='stretch' spacing={3}>
-              <Text fontWeight='semibold' fontSize='sm' color={grayText}>
+              <Text fontWeight='semibold' fontSize='sm' color={muted}>
                 Required
               </Text>
               {renderField(
@@ -614,7 +596,7 @@ export default function SystemSettings({
               </HStack>
 
               <Divider />
-              <Text fontWeight='semibold' fontSize='sm' color={grayText}>
+              <Text fontWeight='semibold' fontSize='sm' color={muted}>
                 Content Templates
               </Text>
               <HStack spacing={4} align='start'>
@@ -728,7 +710,7 @@ export default function SystemSettings({
             </HStack>
           </Box>
         </VStack>
-      </Box>
+      </DashboardPageLayout>
     </>
   );
 }

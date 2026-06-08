@@ -109,7 +109,6 @@ import {
 } from 'lucide-react';
 
 import { theme } from './styles/theme';
-import Navigation from './components/Navigation';
 import SEO from './components/SEO.jsx';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -130,7 +129,10 @@ import {
   useDashboardTheme,
 } from './hooks/useDashboardTheme.js';
 import { useLoadedAssetMetrics } from './hooks/useLoadedAssetMetrics.js';
-import { useInventoryUrlState } from './hooks/useInventoryUrlState.js';
+import {
+  categoriesEqual,
+  useInventoryUrlState,
+} from './hooks/useInventoryUrlState.js';
 import { domainValueToUrl } from './utils/domains.jsx';
 
 import apiClient, {
@@ -159,7 +161,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Account = lazy(() => import('./pages/Account'));
 const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
-const Help = lazy(() => import('./pages/Help'));
+const UserPreferences = lazy(() => import('./pages/UserPreferences'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
@@ -322,6 +324,14 @@ const TOKEN_CATEGORIES = [
     fields: ['location', 'used_by', 'renewal_url', 'contacts'],
   },
 ];
+
+function buildAccountPathFromDashboardSearch(search) {
+  const params = new URLSearchParams(search);
+  const workspace = params.get('workspace');
+  return workspace
+    ? `/account?workspace=${encodeURIComponent(workspace)}`
+    : '/account';
+}
 
 // Deterministic color mapping for section chips
 // Now uses centralized color system from styles/colors.js
@@ -974,10 +984,9 @@ function App() {
           String(opts.workspaceId).trim() !== ''
             ? String(opts.workspaceId).trim()
             : urlParams.get('workspace') || null;
-        // Use opts.section if provided (immediate update), otherwise fallback to URL
-        const selectedSection =
-          (opts && opts.section) || urlParams.get('section') || '__all__';
-
+        // Global facets must list every section regardless of the active
+        // section filter, so the section chips stay visible and multi-select
+        // works. We intentionally do not pass `section` here.
         const params = {
           limit: 1,
           offset: 0,
@@ -985,9 +994,6 @@ function App() {
           ...(debouncedQuery ? { q: debouncedQuery } : {}),
           ...(Array.isArray(selectedCategories) && selectedCategories.length > 0
             ? { category: selectedCategories }
-            : {}),
-          ...(selectedSection && selectedSection !== '__all__'
-            ? { section: selectedSection }
             : {}),
           t: Date.now(),
         };
@@ -1101,7 +1107,6 @@ function App() {
         '/register',
         '/reset-password',
         '/verify-email',
-        '/help',
       ].some(p => path === p || (p !== '/' && path.startsWith(p)));
       if (isPublic) setLoading(false);
     } catch (_) {}
@@ -1202,7 +1207,8 @@ function App() {
   useEffect(() => {
     const handler = () => setDashboardRouteKey(key => key + 1);
     window.addEventListener('tt:tour-dashboard-remount', handler);
-    return () => window.removeEventListener('tt:tour-dashboard-remount', handler);
+    return () =>
+      window.removeEventListener('tt:tour-dashboard-remount', handler);
   }, []);
 
   useEffect(() => {
@@ -1341,7 +1347,7 @@ function App() {
   };
 
   const handleHelpAccountClick = () => {
-    navigate('/dashboard?view=account');
+    navigate('/account');
   };
 
   const handleHelpNavigateToDashboard = () => {
@@ -2121,8 +2127,8 @@ function App() {
               ? t.section.map(s => norm(s))
               : [norm(t.section)];
 
-            // Match if ALL of the selected sections are present in the token (AND logic)
-            return wantedList.every(w => tokenSections.includes(w));
+            // Match if ANY of the selected sections is present (OR logic)
+            return wantedList.some(w => tokenSections.includes(w));
           });
         }
       }
@@ -2343,7 +2349,58 @@ function App() {
                           }
                         />
                         <Route
+                          path='/account'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <Account
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                  onAccountDeleted={handleAccountDeleted}
+                                />
+                              )
+                            ) : (
+                              <Navigate to='/login' replace />
+                            )
+                          }
+                        />
+                        <Route
                           path='/preferences'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session?.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <UserPreferences
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                  onNavigateToDashboard={
+                                    handleHelpNavigateToDashboard
+                                  }
+                                  onNavigateToLanding={handleNavigateToLanding}
+                                />
+                              )
+                            ) : (
+                              <Navigate to='/login' replace />
+                            )
+                          }
+                        />
+                        <Route
+                          path='/workspace-preferences'
                           element={
                             <RequireManagerRoute session={session}>
                               {session?.needsVerification ? (
@@ -2366,6 +2423,12 @@ function App() {
                                 />
                               )}
                             </RequireManagerRoute>
+                          }
+                        />
+                        <Route
+                          path='/alert-preferences'
+                          element={
+                            <Navigate to='/workspace-preferences' replace />
                           }
                         />
                         <Route
@@ -2437,24 +2500,6 @@ function App() {
                           }
                         />
                         <Route
-                          path='/help'
-                          element={
-                            session ? (
-                              <Help
-                                session={session}
-                                onLogout={handleLogout}
-                                onAccountClick={handleHelpAccountClick}
-                                onNavigateToDashboard={
-                                  handleHelpNavigateToDashboard
-                                }
-                                onNavigateToLanding={handleNavigateToLanding}
-                              />
-                            ) : (
-                              <Navigate to='/login' replace />
-                            )
-                          }
-                        />
-                        <Route
                           path='/dashboard'
                           element={
                             session ? (
@@ -2463,6 +2508,15 @@ function App() {
                                   to={`/verify-email?email=${encodeURIComponent(
                                     session.email || ''
                                   )}`}
+                                  replace
+                                />
+                              ) : new URLSearchParams(location.search).get(
+                                  'view'
+                                ) === 'account' ? (
+                                <Navigate
+                                  to={buildAccountPathFromDashboardSearch(
+                                    location.search
+                                  )}
                                   replace
                                 />
                               ) : (
@@ -2497,9 +2551,6 @@ function App() {
                                   TOKEN_CATEGORIES={TOKEN_CATEGORIES}
                                   onOpenTokenModal={handleOpenTokenModal}
                                   onLogout={handleLogout}
-                                  onAccountClick={handleHelpAccountClick}
-                                  onNavigateToLanding={handleNavigateToLanding}
-                                  onAccountDeleted={handleAccountDeleted}
                                   getFilteredAndSortedTokens={
                                     getFilteredAndSortedTokens
                                   }
@@ -2855,8 +2906,6 @@ function DashboardWrapper({
   TOKEN_CATEGORIES,
   onOpenTokenModal,
   onLogout,
-  onNavigateToLanding,
-  onAccountDeleted,
   showWelcomeModal,
   setShowWelcomeModal,
   welcomeData,
@@ -2895,20 +2944,8 @@ function DashboardWrapper({
   createTokenNotesFlushRef,
 }) {
   const { pageBg } = useDashboardTheme();
-  const [searchParams] = useSearchParams();
-  const [currentView, setCurrentView] = useState('dashboard');
 
-  // Check URL parameter for view on mount and when searchParams change
-  useEffect(() => {
-    const viewParam = searchParams.get('view');
-    if (viewParam === 'account') {
-      setCurrentView('account');
-    } else {
-      setCurrentView('dashboard');
-    }
-  }, [searchParams]);
-
-  // Restore product tour after hard navigation back from /preferences
+  // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
     if (typeof window === 'undefined' || isViewer || !session) return;
     try {
@@ -2961,20 +2998,6 @@ function DashboardWrapper({
     }
   }, [isViewer, setShowProductTour, setTourType, setForceRunTour]);
 
-  const handleAccountClick = () => {
-    setCurrentView('account');
-    const url = new URL(window.location);
-    url.searchParams.set('view', 'account');
-    window.history.pushState({}, '', url);
-  };
-
-  const handleDashboardNavigation = () => {
-    setCurrentView('dashboard');
-    const url = new URL(window.location);
-    url.searchParams.delete('view');
-    window.history.pushState({}, '', url);
-  };
-
   return (
     <div
       style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}
@@ -2984,86 +3007,62 @@ function DashboardWrapper({
         description='Manage your tokens, certificates, and expiring assets'
         noindex
       />
-      {currentView === 'dashboard' ? (
-        <Box display={{ base: 'block', lg: 'none' }}>
-          <Navigation
-            user={session}
-            onLogout={onLogout}
-            onAccountClick={handleAccountClick}
-            onNavigateToDashboard={handleDashboardNavigation}
-            onNavigateToLanding={onNavigateToLanding}
-          />
-        </Box>
-      ) : (
-        <Navigation
-          user={session}
-          onLogout={onLogout}
-          onAccountClick={handleAccountClick}
-          onNavigateToDashboard={handleDashboardNavigation}
-          onNavigateToLanding={onNavigateToLanding}
-        />
-      )}
-
       <main
         id='main-content'
         style={{
           flex: 1,
-          padding:
-            currentView === 'dashboard' ? 0 : 'clamp(1rem, 1.8vw, 1.75rem)',
+          padding: 0,
           overflowX: 'hidden',
-          background: currentView === 'dashboard' ? pageBg : undefined,
+          background: pageBg,
         }}
       >
         <div
           style={{
-            maxWidth: currentView === 'dashboard' ? 'none' : '1200px',
-            margin: currentView === 'dashboard' ? 0 : '0 auto',
+            maxWidth: 'none',
+            margin: 0,
           }}
         >
-          {currentView === 'dashboard' ? (
-            <DashboardView
-              _session={session}
-              tokens={tokens}
-              tokensLoading={tokensLoading}
-              contactGroups={contactGroups || []}
-              workspaceContacts={workspaceContacts}
-              formData={formData}
-              formErrors={formErrors}
-              isSubmitting={isSubmitting}
-              onInputChange={onInputChange}
-              onTokenAdd={onTokenAdd}
-              onDeleteToken={onDeleteToken}
-              onOpenRenew={onOpenRenew}
-              TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-              onOpenTokenModal={onOpenTokenModal}
-              getFilteredAndSortedTokens={getFilteredAndSortedTokens}
-              selectedCategories={selectedCategories}
-              setSelectedCategories={setSelectedCategories}
-              tokenFacets={tokenFacets}
-              globalFacets={globalFacets}
-              fetchGlobalFacets={fetchGlobalFacets}
-              fetchTokensForCategoryReset={fetchTokensForCategoryReset}
-              _setTokens={setTokens}
-              _setSearchQuery={setSearchQuery}
-              _setServerSort={setServerSort}
-              isRefreshing={isRefreshing}
-              categoryHasMore={categoryHasMore}
-              categoryLoading={categoryLoading}
-              categoryCounts={categoryCounts}
-              fetchTokensForCategory={fetchTokensForCategory}
-              isViewer={isViewer}
-              locationEntries={locationEntries}
-              addLocationEntry={addLocationEntry}
-              removeLocationEntry={removeLocationEntry}
-              updateLocationEntry={updateLocationEntry}
-              defaultContactGroupId={defaultContactGroupId}
-              createTokenNotesFlushRef={createTokenNotesFlushRef}
-              onLogout={onLogout}
-              onAccountClick={handleAccountClick}
-            />
-          ) : currentView === 'account' ? (
-            <Account session={session} onAccountDeleted={onAccountDeleted} />
-          ) : null}
+          <DashboardView
+            _session={session}
+            tokens={tokens}
+            tokensLoading={tokensLoading}
+            contactGroups={contactGroups || []}
+            workspaceContacts={workspaceContacts}
+            formData={formData}
+            formErrors={formErrors}
+            isSubmitting={isSubmitting}
+            onInputChange={onInputChange}
+            onTokenAdd={onTokenAdd}
+            onDeleteToken={onDeleteToken}
+            onOpenRenew={onOpenRenew}
+            TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+            onOpenTokenModal={onOpenTokenModal}
+            getFilteredAndSortedTokens={getFilteredAndSortedTokens}
+            selectedCategories={selectedCategories}
+            setSelectedCategories={setSelectedCategories}
+            tokenFacets={tokenFacets}
+            globalFacets={globalFacets}
+            fetchGlobalFacets={fetchGlobalFacets}
+            fetchTokensForCategoryReset={fetchTokensForCategoryReset}
+            _setTokens={setTokens}
+            _setSearchQuery={setSearchQuery}
+            _setServerSort={setServerSort}
+            isRefreshing={isRefreshing}
+            categoryHasMore={categoryHasMore}
+            categoryLoading={categoryLoading}
+            categoryCounts={categoryCounts}
+            fetchTokensForCategory={fetchTokensForCategory}
+            isViewer={isViewer}
+            locationEntries={locationEntries}
+            addLocationEntry={addLocationEntry}
+            removeLocationEntry={removeLocationEntry}
+            updateLocationEntry={updateLocationEntry}
+            defaultContactGroupId={defaultContactGroupId}
+            createTokenNotesFlushRef={createTokenNotesFlushRef}
+            onLogout={onLogout}
+            selectedToken={selectedToken}
+            handleCloseTokenModal={handleCloseTokenModal}
+          />
         </div>
       </main>
 
@@ -3283,10 +3282,14 @@ function DashboardView({
   defaultContactGroupId = '',
   createTokenNotesFlushRef,
   onLogout,
-  onAccountClick,
+  selectedToken,
+  handleCloseTokenModal,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const handleAccountClick = useCallback(() => {
+    navigate('/account');
+  }, [navigate]);
   const { workspaceId, selectWorkspace } = useWorkspace();
   const {
     pageBg,
@@ -3312,10 +3315,7 @@ function DashboardView({
   const inputBorder = border;
   const placeholderColor = muted;
   const emptyTextColor = muted;
-  const hoverBgColor = useColorModeValue(
-    'gray.50',
-    'rgba(30, 41, 59, 0.45)'
-  );
+  const hoverBgColor = useColorModeValue('gray.50', 'rgba(30, 41, 59, 0.45)');
   const filterLabelColor = useColorModeValue(
     'gray.600',
     'rgba(203, 213, 225, 0.86)'
@@ -3539,7 +3539,7 @@ function DashboardView({
             id: 'alerts-disabled',
             kind: 'warning',
             text: 'Alerts are disabled until a channel is defined.',
-            href: '/preferences',
+            href: '/workspace-preferences',
           });
         }
         if (!hasAnyContact) {
@@ -3547,7 +3547,7 @@ function DashboardView({
             id: 'no-contacts-defined',
             kind: 'warning',
             text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
-            href: '/preferences',
+            href: '/workspace-preferences',
           });
         }
         setDashboardNotifications(list);
@@ -3756,20 +3756,50 @@ function DashboardView({
   const statusFilter = inventoryUrl.status;
   const setStatusFilter = inventoryUrl.setStatus;
 
-  const urlCategoriesSyncedRef = useRef(false);
+  const [assetPage, setAssetPage] = useState(1);
+  const [selectedTokenIds, setSelectedTokenIds] = useState([]);
+
   useEffect(() => {
-    if (urlCategoriesSyncedRef.current) return;
-    urlCategoriesSyncedRef.current = true;
-    if (inventoryUrl.categories.length > 0) {
-      setSelectedCategories(inventoryUrl.categories);
+    if (categoriesEqual(selectedCategories, inventoryUrl.categories)) return;
+    setSelectedCategories(inventoryUrl.categories);
+    setSelectedTokenIds([]);
+    setAssetPage(1);
+    if (inventoryUrl.offset > 0) {
+      inventoryUrl.setOffset(0);
     }
-  }, [inventoryUrl.categories, setSelectedCategories]);
+  }, [
+    inventoryUrl.categories,
+    inventoryUrl.offset,
+    inventoryUrl.setOffset,
+    selectedCategories,
+    setSelectedCategories,
+  ]);
 
   useEffect(() => {
     if (typeof _setSearchQuery === 'function') {
       _setSearchQuery(inventoryUrl.search);
     }
   }, [inventoryUrl.search, _setSearchQuery]);
+
+  const pendingUserFilterModalCheckRef = useRef(false);
+
+  const handleFilterReset = useCallback(() => {
+    setSelectedTokenIds([]);
+    setAssetPage(1);
+    if (inventoryUrl.offset > 0) {
+      inventoryUrl.setOffset(0);
+    }
+    pendingUserFilterModalCheckRef.current = true;
+  }, [inventoryUrl]);
+
+  const handleClearAllFilters = useCallback(() => {
+    inventoryUrl.clearAllFilters();
+    setSelectedCategories([]);
+    if (typeof _setSearchQuery === 'function') {
+      _setSearchQuery('');
+    }
+    handleFilterReset();
+  }, [inventoryUrl, setSelectedCategories, _setSearchQuery, handleFilterReset]);
 
   const handleSetSelectedCategories = useCallback(
     updater => {
@@ -3796,20 +3826,8 @@ function DashboardView({
     direction: 'asc',
   });
   const [assetPageSize, setAssetPageSize] = useState(50);
-  const [assetPage, setAssetPage] = useState(1);
 
-  const [selectedTokenIds, setSelectedTokenIds] = useState([]);
   const [bulkSectionDrafts, setBulkSectionDrafts] = useState({});
-
-  useEffect(() => {
-    setSelectedTokenIds([]);
-  }, [
-    assetPage,
-    statusFilter,
-    selectedCategories,
-    panelQueries.__global,
-    panelQueries.__section,
-  ]);
 
   const safeSetTokens = updater => {
     if (typeof _setTokens === 'function') {
@@ -4313,6 +4331,25 @@ function DashboardView({
     tokens,
   ]);
 
+  useEffect(() => {
+    if (!pendingUserFilterModalCheckRef.current) return;
+    pendingUserFilterModalCheckRef.current = false;
+    if (!selectedToken || typeof handleCloseTokenModal !== 'function') return;
+
+    const visibleIds = new Set(visibleTokens.map(token => String(token.id)));
+    if (!visibleIds.has(String(selectedToken.id))) {
+      handleCloseTokenModal();
+    }
+  }, [
+    handleCloseTokenModal,
+    panelQueries.__global,
+    panelQueries.__section,
+    selectedCategoryValues,
+    selectedToken,
+    statusFilter,
+    visibleTokens,
+  ]);
+
   const statusFilterOptions = useMemo(
     () => [
       {
@@ -4349,74 +4386,91 @@ function DashboardView({
     [loadedAssetMetrics]
   );
 
-  const categoryFilterOptions = useMemo(
-    () =>
-      TOKEN_CATEGORIES.map(cat => {
-        const facetsCount = (
-          globalFacets?.category ||
-          tokenFacets?.category ||
-          []
-        ).find(f => String(f.category) === cat.value)?.c;
-        const sectionActive =
-          (panelQueries?.__section || '__all__') !== '__all__';
+  const categoryFilterOptions = useMemo(() => {
+    const norm = v =>
+      String(v || '')
+        .trim()
+        .toLowerCase();
+    const statusActive = Boolean(statusFilter) && statusFilter !== 'all';
+    const tokenMatchesStatus = token => {
+      if (!statusActive) return true;
+      const status = getDashboardStatusMeta(token.expiresAt).key;
+      return (
+        statusFilter === status ||
+        (statusFilter === 'due' && status === 'due-soon') ||
+        (statusFilter === 'critical' &&
+          (status === 'critical' || status === 'expired')) ||
+        (statusFilter === 'healthy' && status === 'healthy')
+      );
+    };
 
-        const count =
-          typeof facetsCount === 'number'
-            ? facetsCount
-            : sectionActive || selectedCategoryValues.length > 0
-              ? (() => {
-                  const sec = panelQueries?.__section;
-                  const norm = v =>
-                    String(v || '')
-                      .trim()
-                      .toLowerCase();
-                  if (sec === '__none__') {
-                    return allLoadedTokens.filter(
-                      t =>
-                        t.category === cat.value &&
-                        (!t.section ||
-                          (Array.isArray(t.section) &&
-                            t.section.length === 0) ||
-                          String(t.section).trim() === '')
-                    ).length;
-                  }
-                  const wantedList =
-                    (sec || '__all__') === '__all__'
-                      ? []
-                      : String(sec)
-                          .split(',')
-                          .map(s => norm(s))
-                          .filter(Boolean);
+    const countCategoryTokens = catValue => {
+      const sec = panelQueries?.__section;
+      const sectionActive = (sec || '__all__') !== '__all__';
 
-                  return allLoadedTokens.filter(t => {
-                    if (t.category !== cat.value) return false;
-                    if (wantedList.length === 0) return true;
-                    const tokenSections = Array.isArray(t.section)
-                      ? t.section.map(s => norm(s))
-                      : [norm(t.section)];
-                    return wantedList.every(w => tokenSections.includes(w));
-                  }).length;
-                })()
-              : typeof categoryCounts?.[cat.value] === 'number'
-                ? categoryCounts[cat.value]
-                : 0;
+      if (sectionActive || statusActive) {
+        if (sec === '__none__') {
+          return allLoadedTokens.filter(
+            t =>
+              t.category === catValue &&
+              tokenMatchesStatus(t) &&
+              (!t.section ||
+                (Array.isArray(t.section) && t.section.length === 0) ||
+                String(t.section).trim() === '')
+          ).length;
+        }
 
-        return {
-          ...cat,
-          count,
-          active: selectedCategoryValues.includes(cat.value),
-        };
-      }),
-    [
-      TOKEN_CATEGORIES,
-      allLoadedTokens,
-      categoryCounts,
-      globalFacets,
-      panelQueries,
-      selectedCategoryValues,
-      tokenFacets,
-    ]
-  );
+        const wantedList =
+          (sec || '__all__') === '__all__'
+            ? []
+            : String(sec)
+                .split(',')
+                .map(s => norm(s))
+                .filter(Boolean);
+
+        return allLoadedTokens.filter(t => {
+          if (t.category !== catValue) return false;
+          if (!tokenMatchesStatus(t)) return false;
+          if (wantedList.length === 0) return true;
+          const tokenSections = Array.isArray(t.section)
+            ? t.section.map(s => norm(s))
+            : [norm(t.section)];
+          return wantedList.some(w => tokenSections.includes(w));
+        }).length;
+      }
+
+      const facetsCount = (
+        globalFacets?.category ||
+        tokenFacets?.category ||
+        []
+      ).find(f => String(f.category) === catValue)?.c;
+
+      if (typeof facetsCount === 'number') return facetsCount;
+      return typeof categoryCounts?.[catValue] === 'number'
+        ? categoryCounts[catValue]
+        : 0;
+    };
+
+    return TOKEN_CATEGORIES.map(cat => ({
+      ...cat,
+      count: countCategoryTokens(cat.value),
+      active: selectedCategoryValues.includes(cat.value),
+    })).filter(
+      cat =>
+        !statusActive ||
+        cat.count > 0 ||
+        selectedCategoryValues.includes(cat.value)
+    );
+  }, [
+    TOKEN_CATEGORIES,
+    allLoadedTokens,
+    categoryCounts,
+    globalFacets,
+    panelQueries,
+    selectedCategoryValues,
+    statusFilter,
+    tokenFacets,
+  ]);
 
   const sectionFilterOptions = useMemo(() => {
     const norm = v =>
@@ -4428,6 +4482,22 @@ function DashboardView({
         .split(',')
         .map(s => s.trim())
         .filter(Boolean);
+
+    // The status chips (Critical/Due/Healthy/Expired) are an expiry bucket the
+    // server facets don't know about, so when one is active we derive section
+    // counts from the loaded tokens that match it and hide non-matching ones.
+    const statusActive = Boolean(statusFilter) && statusFilter !== 'all';
+    const tokenMatchesStatus = token => {
+      if (!statusActive) return true;
+      const status = getDashboardStatusMeta(token.expiresAt).key;
+      return (
+        statusFilter === status ||
+        (statusFilter === 'due' && status === 'due-soon') ||
+        (statusFilter === 'critical' &&
+          (status === 'critical' || status === 'expired')) ||
+        (statusFilter === 'healthy' && status === 'healthy')
+      );
+    };
 
     const facetSource = globalFacets?.section || tokenFacets?.section || [];
     const rawMap = {};
@@ -4474,7 +4544,7 @@ function DashboardView({
               .split(',')
               .map(s => norm(s))
               .filter(Boolean);
-            if (!wanted.every(w => tokenSections.includes(w))) return;
+            if (!wanted.some(w => tokenSections.includes(w))) return;
           }
         }
 
@@ -4498,11 +4568,52 @@ function DashboardView({
       });
     } catch (_) {}
 
-    const raw = Object.values(rawMap);
-    raw.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const statusSectionCounts = {};
+    let statusNoneCount = 0;
+    let statusMatchTotal = 0;
+    if (statusActive) {
+      allLoadedTokens.forEach(token => {
+        if (
+          selectedCategoryValues.length > 0 &&
+          !selectedCategoryValues.includes(token.category)
+        ) {
+          return;
+        }
+        if (!tokenMatchesStatus(token)) return;
+        statusMatchTotal += 1;
+        const labels = Array.isArray(token.section)
+          ? token.section.flatMap(s => splitAndTrim(s))
+          : splitAndTrim(token.section);
+        if (labels.length === 0) {
+          statusNoneCount += 1;
+          return;
+        }
+        const uniqueInToken = [...new Set(labels.map(s => norm(s)))];
+        uniqueInToken.forEach(key => {
+          statusSectionCounts[key] = (statusSectionCounts[key] || 0) + 1;
+        });
+      });
+    }
 
-    const allCount =
-      selectedCategoryValues.length > 0
+    const allKnownSections = {};
+    facetSource.forEach(row => {
+      const labels = splitAndTrim(row.section);
+      labels.forEach(label => {
+        const key = norm(label);
+        if (!allKnownSections[key]) allKnownSections[key] = { name: label };
+      });
+    });
+
+    const mergedSections = Object.values(allKnownSections).map(section => ({
+      name: section.name,
+      count: statusActive
+        ? statusSectionCounts[norm(section.name)] || 0
+        : rawMap[norm(section.name)]?.count || 0,
+    }));
+
+    const allCount = statusActive
+      ? statusMatchTotal
+      : selectedCategoryValues.length > 0
         ? selectedCategoryValues.reduce(
             (sum, cat) => sum + (categoryCounts?.[cat] || 0),
             0
@@ -4511,6 +4622,56 @@ function DashboardView({
             (sum, count) => sum + (count || 0),
             0
           );
+
+    const currentSection = panelQueries?.__section || '__all__';
+    const activeNames =
+      currentSection === '__all__' || currentSection === '__none__'
+        ? []
+        : currentSection
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+
+    const toSectionOption = section => ({
+      name: section.name,
+      label: section.name,
+      count: section.count,
+      scheme: _getSectionColorScheme(section.name),
+    });
+
+    const included = new Set();
+    const activeOptions = activeNames.map(name => {
+      const key = norm(name);
+      const merged = mergedSections.find(s => norm(s.name) === key);
+      return toSectionOption(
+        merged || {
+          name,
+          count: statusActive
+            ? statusSectionCounts[key] || 0
+            : rawMap[key]?.count || 0,
+        }
+      );
+    });
+    activeOptions.forEach(option => included.add(norm(option.name)));
+
+    const nonZeroOptions = mergedSections
+      .filter(section => section.count > 0 && !included.has(norm(section.name)))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .map(toSectionOption);
+    nonZeroOptions.forEach(option => included.add(norm(option.name)));
+
+    // When a status filter is active, only surface sections that actually
+    // contain matching tokens (plus any explicitly-selected section above).
+    const zeroSections = statusActive
+      ? []
+      : mergedSections
+          .filter(
+            section => section.count === 0 && !included.has(norm(section.name))
+          )
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+    const zeroOptions = zeroSections.slice(0, 5).map(toSectionOption);
+    const moreZeros = zeroSections.length > 5;
 
     return [
       {
@@ -4522,17 +4683,22 @@ function DashboardView({
       {
         name: '__none__',
         label: 'No section',
-        count: rawMap['']?.count || 0,
+        count: statusActive ? statusNoneCount : rawMap['']?.count || 0,
         scheme: 'gray',
       },
-      ...raw
-        .filter(section => (section.name || '').length > 0 && section.count > 0)
-        .map(section => ({
-          name: section.name,
-          label: section.name,
-          count: section.count,
-          scheme: _getSectionColorScheme(section.name),
-        })),
+      ...activeOptions,
+      ...nonZeroOptions,
+      ...zeroOptions,
+      ...(moreZeros
+        ? [
+            {
+              name: '__more__',
+              label: 'More sections…',
+              count: zeroSections.length - 5,
+              scheme: 'gray',
+            },
+          ]
+        : []),
     ];
   }, [
     allLoadedTokens,
@@ -4540,6 +4706,7 @@ function DashboardView({
     globalFacets,
     panelQueries,
     selectedCategoryValues,
+    statusFilter,
     tokenFacets,
   ]);
 
@@ -4838,7 +5005,8 @@ function DashboardView({
           TOKEN_CATEGORIES={TOKEN_CATEGORIES}
           categoryIcons={categoryIcons}
           onGlobalSearchChange={_setSearchQuery}
-          onFilterReset={() => setAssetPage(1)}
+          onFilterReset={handleFilterReset}
+          onClearAllFilters={handleClearAllFilters}
           onSectionNavigate={inventoryUrl.setSection}
         />
       </DashboardPanel>
@@ -4943,7 +5111,7 @@ function DashboardView({
         onWorkspaceSelect={handleDashboardWorkspaceSelect}
         dashboardNotifications={dashboardNotifications}
         onLogout={onLogout}
-        onAccountClick={onAccountClick}
+        onAccountClick={handleAccountClick}
         isViewer={isViewer}
         dashboardCanSeeManagerNav={dashboardCanSeeManagerNav}
         isSystemAdmin={isSystemAdmin}

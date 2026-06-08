@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { logger } from '../utils/logger.js';
 import {
   Box,
@@ -31,7 +31,9 @@ import {
   Link,
 } from '@chakra-ui/react';
 import SEO from '../components/SEO.jsx';
-import apiClient from '../utils/apiClient';
+import DashboardPageLayout from '../components/DashboardPageLayout';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
+import apiClient, { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { Link as RouterLink } from 'react-router-dom';
 import { trackEvent } from '../utils/analytics.js';
@@ -62,9 +64,11 @@ function resolveLoginMethodDisplay(session) {
   return { label: method, colorScheme: 'gray' };
 }
 
-function Account({ session, onAccountDeleted }) {
+function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
   const loginMethodDisplay = resolveLoginMethodDisplay(session);
   const { selectWorkspace: _selectWorkspace } = useWorkspace();
+  const { surface, border, muted } = useDashboardTheme();
+  const [canSeeManagerNav, setCanSeeManagerNav] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
   const [info, _setInfo] = useState('');
@@ -81,28 +85,70 @@ function Account({ session, onAccountDeleted }) {
   const [disablePwd, setDisablePwd] = useState('');
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  // Color mode values
-  const bgColor = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
-  const borderColor = useColorModeValue('gray.400', 'gray.600');
   const dangerBgColor = useColorModeValue('red.50', 'red.900');
   const dangerBorderColor = useColorModeValue('red.200', 'red.700');
   const dangerTextColor = useColorModeValue('red.600', 'red.300');
-  const subtextColor = useColorModeValue('gray.600', 'gray.400');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadManagerNav() {
+      if (!session) {
+        if (!cancelled) setCanSeeManagerNav(false);
+        return;
+      }
+      if (session.isAdmin === true) {
+        if (!cancelled) setCanSeeManagerNav(true);
+        return;
+      }
+      try {
+        const ws = await workspaceAPI.list(50, 0);
+        if (cancelled) return;
+        const items = ws?.items || [];
+        const roles = items.map(w => String(w.role || '').toLowerCase());
+        const managerAny =
+          roles.includes('admin') || roles.includes('workspace_manager');
+        setCanSeeManagerNav(items.length ? managerAny : true);
+      } catch (_) {
+        if (!cancelled) setCanSeeManagerNav(false);
+      }
+    }
+
+    loadManagerNav();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  const layoutProps = {
+    variant: 'narrow',
+    pageTitle: 'Account Settings',
+    session,
+    onLogout,
+    onAccountClick,
+    contentProps: { overflowX: 'hidden' },
+  };
 
   // Safety check for session
   if (!session) {
     return (
-      <Box maxW='2xl' mx='auto' p={{ base: 4, md: 6 }} overflowX='hidden'>
-        <VStack spacing={6} align='stretch'>
-          <Heading size='lg'>Account Settings</Heading>
-          <Alert status='error'>
-            <AlertIcon />
-            <AlertDescription>
-              Session not found. Please log in again.
-            </AlertDescription>
-          </Alert>
-        </VStack>
-      </Box>
+      <>
+        <SEO
+          title='Account Settings'
+          description='Manage your profile, password, security, and data export.'
+          noindex
+        />
+        <DashboardPageLayout {...layoutProps}>
+          <VStack spacing={6} align='stretch'>
+            <Alert status='error'>
+              <AlertIcon />
+              <AlertDescription>
+                Session not found. Please log in again.
+              </AlertDescription>
+            </Alert>
+          </VStack>
+        </DashboardPageLayout>
+      </>
     );
   }
 
@@ -181,21 +227,19 @@ function Account({ session, onAccountDeleted }) {
     <>
       <SEO
         title='Account Settings'
-        description='Manage your account settings, password, and two-factor authentication'
+        description='Manage your profile, password, security, and data export.'
         noindex
       />
-      <Box maxW='2xl' mx='auto' p={{ base: 4, md: 6 }} overflowX='hidden'>
+      <DashboardPageLayout {...layoutProps}>
         <VStack spacing={6} align='stretch'>
-          <Heading size='lg'>Account Settings</Heading>
-
           {/* Account Information */}
           <Box
-            bg={bgColor}
+            bg={surface}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <Heading size='md' mb={4}>
               Account Information
@@ -266,12 +310,12 @@ function Account({ session, onAccountDeleted }) {
 
           {/* Security */}
           <Box
-            bg={bgColor}
+            bg={surface}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <Heading size='md' mb={4}>
               Security
@@ -369,7 +413,7 @@ function Account({ session, onAccountDeleted }) {
               {String(session?.authMethod || '').toLowerCase() !== 'google' && (
                 <>
                   <Heading size='sm'>Two-Factor Authentication (2FA)</Heading>
-                  <Text fontSize='sm' color={subtextColor}>
+                  <Text fontSize='sm' color={muted}>
                     Protect your account with a one-time code from an
                     authenticator app.
                   </Text>
@@ -461,13 +505,13 @@ function Account({ session, onAccountDeleted }) {
                                 w={{ base: '200px', md: '200px' }}
                                 h={{ base: '200px', md: '200px' }}
                                 border='1px dashed'
-                                borderColor={borderColor}
+                                borderColor={border}
                                 borderRadius='md'
                                 display='flex'
                                 alignItems='center'
                                 justifyContent='center'
                                 mt={3}
-                                color={subtextColor}
+                                color={muted}
                               >
                                 QR will appear here
                               </Box>
@@ -476,7 +520,7 @@ function Account({ session, onAccountDeleted }) {
                               <Text
                                 mt={2}
                                 fontSize='xs'
-                                color={subtextColor}
+                                color={muted}
                                 noOfLines={2}
                               >
                                 Secret: {secret}
@@ -529,12 +573,12 @@ function Account({ session, onAccountDeleted }) {
 
           {/* Data Management */}
           <Box
-            bg={bgColor}
+            bg={surface}
             p={6}
             borderRadius='md'
             boxShadow='sm'
             border='1px solid'
-            borderColor={borderColor}
+            borderColor={border}
           >
             <Heading size='md' mb={4}>
               Data Management
@@ -559,19 +603,19 @@ function Account({ session, onAccountDeleted }) {
               >
                 📥 Export My Data
               </Button>
-              <Text fontSize='sm' color={subtextColor}>
+              <Text fontSize='sm' color={muted}>
                 Exports a JSON with your profile and settings, your personal
                 tokens, and (when applicable) workspace settings and tokens
                 according to your role.
               </Text>
               <VStack align='stretch' spacing={1} pl={2}>
-                <Text fontSize='xs' color={subtextColor}>
+                <Text fontSize='xs' color={muted}>
                   • Includes: Profile, user settings (webhooks hashed, phone,
                   WhatsApp opt-in), personal tokens, and for admin/manager: all
                   admin/managed workspaces (settings, contact groups with
                   phones, delivery window, WhatsApp opt-in evidence, tokens).
                 </Text>
-                <Text fontSize='xs' color={subtextColor}>
+                <Text fontSize='xs' color={muted}>
                   • Viewers: only personal workspace. For audit history, use the
                   Audit export page.
                 </Text>
@@ -579,38 +623,20 @@ function Account({ session, onAccountDeleted }) {
             </VStack>
           </Box>
 
-          {/* Preferences Shortcut */}
-          <Box
-            bg={bgColor}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-          >
-            <Heading size='md' mb={4}>
-              Alerting Preferences
-            </Heading>
-            <VStack align='stretch' spacing={3}>
-              <Text>
-                Manage your alerting preferences (thresholds and integrations)
-                on the{' '}
-                <Link
-                  as={RouterLink}
-                  to='/preferences'
-                  color='blue.500'
-                  fontWeight='semibold'
-                >
-                  Alerting Preferences
-                </Link>{' '}
-                page.
-              </Text>
-              <Text fontSize='sm'>
-                Use this page for account profile and security settings. Use the
-                Preferences page for notification rules and integrations.
-              </Text>
-            </VStack>
-          </Box>
+          {canSeeManagerNav && (
+            <Text fontSize='sm' color={muted}>
+              Workspace alerting settings live on{' '}
+              <Link
+                as={RouterLink}
+                to='/workspace-preferences'
+                color='blue.500'
+                fontWeight='semibold'
+              >
+                Workspace preferences
+              </Link>
+              .
+            </Text>
+          )}
 
           <Divider />
 
@@ -653,11 +679,7 @@ function Account({ session, onAccountDeleted }) {
         {/* Confirmation Modal */}
         <Modal isOpen={isOpen} onClose={onClose} isCentered>
           <ModalOverlay />
-          <ModalContent
-            bg={bgColor}
-            border='1px solid'
-            borderColor={borderColor}
-          >
+          <ModalContent bg={surface} border='1px solid' borderColor={border}>
             <ModalHeader color={dangerTextColor}>⚠️ Delete Account</ModalHeader>
             <ModalCloseButton />
             <ModalBody>
@@ -681,7 +703,7 @@ function Account({ session, onAccountDeleted }) {
                   Are you sure you want to delete your account{' '}
                   <strong>{session.displayName}</strong>?
                 </Text>
-                <Text fontSize='sm' color={subtextColor}>
+                <Text fontSize='sm' color={muted}>
                   Consider exporting your data first if you need a backup.
                 </Text>
               </VStack>
@@ -701,7 +723,7 @@ function Account({ session, onAccountDeleted }) {
             </ModalFooter>
           </ModalContent>
         </Modal>
-      </Box>
+      </DashboardPageLayout>
     </>
   );
 }

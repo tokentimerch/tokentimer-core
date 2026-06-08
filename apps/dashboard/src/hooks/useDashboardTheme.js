@@ -1,18 +1,41 @@
 import { createContext, useContext, createElement } from 'react';
 import { useColorModeValue } from '@chakra-ui/react';
+import { dashboardThemeColors } from '../styles/theme.js';
 
 const DashboardThemeContext = createContext(null);
 
+function useDashboardToken({ light, dark }) {
+  return useColorModeValue(light, dark);
+}
+
 /** Shared dashboard chrome tokens (safe outside DashboardThemeProvider). */
 export function useDashboardThemeColors() {
-  const pageBg = 'transparent';
-  const surface = useColorModeValue(
-    'rgba(255,255,255,0.95)',
-    'rgba(13, 19, 26, 0.95)'
-  );
-  const text = useColorModeValue('gray.900', 'white');
-  const muted = useColorModeValue('gray.600', 'rgba(148,163,184,0.92)');
-  const border = useColorModeValue('gray.200', 'rgba(100,116,139,0.2)');
+  const dashboard = {
+    bg: {
+      canvas: useDashboardToken(dashboardThemeColors.bg.canvas),
+      shell: useDashboardToken(dashboardThemeColors.bg.shell),
+      panel: useDashboardToken(dashboardThemeColors.bg.panel),
+      panelHover: useDashboardToken(dashboardThemeColors.bg.panelHover),
+    },
+    border: {
+      subtle: useDashboardToken(dashboardThemeColors.border.subtle),
+      strong: useDashboardToken(dashboardThemeColors.border.strong),
+    },
+    text: {
+      primary: useDashboardToken(dashboardThemeColors.text.primary),
+      secondary: useDashboardToken(dashboardThemeColors.text.secondary),
+      muted: useDashboardToken(dashboardThemeColors.text.muted),
+    },
+    accent: {
+      primary: useDashboardToken(dashboardThemeColors.accent.primary),
+    },
+    state: {
+      danger: useDashboardToken(dashboardThemeColors.state.danger),
+      warning: useDashboardToken(dashboardThemeColors.state.warning),
+      success: useDashboardToken(dashboardThemeColors.state.success),
+    },
+  };
+
   const inputBg = useColorModeValue('white', 'rgba(2, 6, 23, 0.58)');
   const footerLink = useColorModeValue('gray.700', 'rgba(203, 213, 225, 0.82)');
   const footerLinkHoverBg = useColorModeValue(
@@ -25,11 +48,12 @@ export function useDashboardThemeColors() {
   );
 
   return {
-    pageBg,
-    surface,
-    text,
-    muted,
-    border,
+    dashboard,
+    pageBg: 'transparent',
+    surface: dashboard.bg.panel,
+    text: dashboard.text.primary,
+    muted: dashboard.text.muted,
+    border: dashboard.border.subtle,
     inputBg,
     footerLink,
     footerLinkHoverBg,

@@ -2,10 +2,9 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
-  Heading,
   Text,
-  VStack,
   HStack,
+  Flex,
   Table,
   Thead,
   Tbody,
@@ -15,11 +14,12 @@ import {
   Badge,
   Select,
   Input,
-  useColorModeValue,
   Button,
 } from '@chakra-ui/react';
-import Navigation from '../components/Navigation';
+import DashboardShell from '../components/DashboardShell';
+import { useDashboardShellProps } from '../hooks/useDashboardShellProps';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import TruncatedText from '../components/TruncatedText';
 import apiClient, {
   API_ENDPOINTS,
@@ -153,14 +153,19 @@ const ALL_ACTION_TYPES = [
   'WEEKLY_DIGEST_SENT',
 ].sort();
 
-export default function Audit({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+/** Fixed column shares so the audit table uses the full width evenly. */
+const AUDIT_TABLE_COLUMN_WIDTHS = {
+  time: '15%',
+  action: '17%',
+  user: '16%',
+  workspace: '17%',
+  metadata: '35%',
+};
+
+export default function Audit({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
+  const theme = useDashboardTheme();
+  const { pageBg, surface, text, muted, border } = theme;
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -188,9 +193,6 @@ export default function Audit({
   const [authorized, setAuthorized] = useState(null);
   const [_rolesLoaded, setRolesLoaded] = useState(false);
 
-  const cardBg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
-  const borderColor = useColorModeValue('gray.400', 'gray.600');
-  const emptyTextColor = useColorModeValue('gray.600', 'gray.400');
   const isSystemAdmin = session?.isAdmin === true;
   const canViewOrganizationAudit = isSystemAdmin || (isAdminAny && isAdminOrg);
 
@@ -1071,7 +1073,11 @@ export default function Audit({
       setError('Failed to export CSV');
     }
   }
-  const _overlayBg = useColorModeValue('whiteAlpha.700', 'blackAlpha.600');
+  const selectedWorkspace =
+    workspaces.find(w => w.id === (auditWorkspaceId || workspaceId)) ||
+    workspaces[0] ||
+    null;
+
   // UI scope:
   // - Admins: respect selected scope
   // - Non-admins: allow 'user' and 'workspace'; coerce 'organization' to 'workspace'
@@ -1081,6 +1087,21 @@ export default function Audit({
       ? 'workspace'
       : scope;
 
+  const shellProps = useDashboardShellProps({
+    session,
+    onLogout,
+    onAccountClick,
+    pageTitle: 'Audit',
+    dashboardWorkspaces: workspaces,
+    dashboardWorkspace: selectedWorkspace,
+    onWorkspaceSelect: workspace => {
+      if (workspace?.id) {
+        setAuditWorkspaceId(workspace.id);
+      }
+    },
+    dashboardCanSeeManagerNav: isManagerOrAdminAny,
+  });
+
   return (
     <>
       <SEO
@@ -1088,28 +1109,50 @@ export default function Audit({
         description='View audit logs and activity history'
         noindex
       />
-      <Navigation
-        user={session}
-        onLogout={onLogout}
-        onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-
-      <Box maxW='6xl' mx='auto' p={{ base: 4, md: 6 }} overflowX='hidden'>
-        <VStack spacing={6} align='stretch'>
-          <Heading size='lg'>Audit Log</Heading>
-
+      <Box
+        color={text}
+        minH='100vh'
+        bg={pageBg}
+        sx={{
+          '.chakra-table': {
+            tableLayout: 'fixed',
+            width: '100%',
+          },
+          '.chakra-table th': {
+            color: muted,
+            borderColor: border,
+            fontSize: '0.72rem',
+            letterSpacing: '0',
+            textTransform: 'none',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          },
+          '.chakra-table td': {
+            color: text,
+            borderColor: border,
+            verticalAlign: 'top',
+            overflow: 'hidden',
+          },
+        }}
+      >
+        <DashboardShell {...shellProps}>
           <Box
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-            position='relative'
+            px={{ base: 4, lg: 4, '2xl': 5 }}
+            py={{ base: 5, lg: 3 }}
+            w='100%'
+            minW={0}
           >
-            <Box>
+            <Box
+              bg={surface}
+              p={6}
+              borderRadius='md'
+              boxShadow='sm'
+              border='1px solid'
+              borderColor={border}
+              w='100%'
+              minW={0}
+            >
               <HStack spacing={3} mb={4} flexWrap='wrap'>
                 <Input
                   placeholder='Search action or metadata...'
@@ -1214,38 +1257,85 @@ export default function Audit({
               {error ? (
                 <Text color='red.500'>{error}</Text>
               ) : filtered.length === 0 ? (
-                <Text color={emptyTextColor}>No audit events found.</Text>
+                <Text color={muted}>No audit events found.</Text>
               ) : (
-                <Box overflowX='auto'>
-                  <Table size='sm' variant='simple'>
+                <Box overflowX='auto' w='100%' minW={0}>
+                  <Table size='sm' variant='simple' w='100%' layout='fixed'>
                     <Thead>
                       <Tr>
-                        <Th>Time</Th>
-                        <Th>Action</Th>
-                        <Th>User</Th>
-                        <Th>Workspace</Th>
-                        <Th>Metadata</Th>
+                        <Th w={AUDIT_TABLE_COLUMN_WIDTHS.time} textAlign='left'>
+                          Time
+                        </Th>
+                        <Th
+                          w={AUDIT_TABLE_COLUMN_WIDTHS.action}
+                          textAlign='center'
+                        >
+                          Action
+                        </Th>
+                        <Th w={AUDIT_TABLE_COLUMN_WIDTHS.user} textAlign='left'>
+                          User
+                        </Th>
+                        <Th
+                          w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
+                          textAlign='left'
+                        >
+                          Workspace
+                        </Th>
+                        <Th
+                          w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
+                          textAlign='left'
+                        >
+                          Metadata
+                        </Th>
                       </Tr>
                     </Thead>
                     <Tbody>
                       {filtered.map(ev => (
                         <Tr key={ev.id}>
-                          <Td>{formatDateTime(ev.occurred_at)}</Td>
-                          <Td>
-                            <Badge
-                              colorScheme={ACTION_COLORS[ev.action] || 'gray'}
-                            >
-                              {ev.action}
-                            </Badge>
+                          <Td
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.time}
+                            whiteSpace='nowrap'
+                            textOverflow='ellipsis'
+                            overflow='hidden'
+                          >
+                            {formatDateTime(ev.occurred_at)}
                           </Td>
-                          <Td>{ev.actor_display_name || ''}</Td>
-                          <Td>{ev.workspace_name || ev.workspace_id || ''}</Td>
-                          <Td maxW='800px'>
+                          <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action}>
+                            <Flex justify='center'>
+                              <Badge
+                                colorScheme={ACTION_COLORS[ev.action] || 'gray'}
+                                whiteSpace='normal'
+                                textAlign='center'
+                                maxW='100%'
+                              >
+                                {ev.action}
+                              </Badge>
+                            </Flex>
+                          </Td>
+                          <Td
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.user}
+                            textOverflow='ellipsis'
+                            overflow='hidden'
+                            whiteSpace='nowrap'
+                          >
+                            {ev.actor_display_name || ''}
+                          </Td>
+                          <Td
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
+                            textOverflow='ellipsis'
+                            overflow='hidden'
+                            whiteSpace='nowrap'
+                          >
+                            {ev.workspace_name || ev.workspace_id || ''}
+                          </Td>
+                          <Td
+                            w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
+                            wordBreak='break-word'
+                          >
                             <Box display={{ base: 'none', md: 'block' }}>
                               <TruncatedText
                                 text={formatMetadata(ev)}
                                 maxLines={3}
-                                maxWidth='800px'
                               />
                             </Box>
                             <Box display={{ base: 'block', md: 'none' }}>
@@ -1288,7 +1378,7 @@ export default function Audit({
               )}
             </Box>
           </Box>
-        </VStack>
+        </DashboardShell>
       </Box>
     </>
   );

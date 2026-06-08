@@ -275,6 +275,70 @@ function SectionState({
   );
 }
 
+const CONTROL_CENTER_PAGE_LAYOUT = {
+  variant: 'wide',
+  contentProps: {
+    px: { base: 4, lg: 4, '2xl': 5 },
+    py: { base: 5, lg: 3 },
+  },
+};
+
+function useControlCenterShellProps({
+  theme,
+  location,
+  session,
+  alertData,
+  selectedWorkspace,
+  dashboardCanSeeManagerNav,
+  onLogout,
+  onAccountClick,
+}) {
+  return useMemo(() => {
+    const sessionName =
+      session?.displayName || session?.name || session?.email || 'User';
+    const sessionEmail = session?.email || '';
+    const sessionInitials = String(sessionName)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .toUpperCase();
+
+    return {
+      dashboardColors: theme,
+      currentPath: location.pathname,
+      sessionName,
+      sessionEmail,
+      sessionInitials,
+      dashboardWorkspaces: alertData.workspaces,
+      dashboardWorkspace: selectedWorkspace,
+      workspaceLabel: selectedWorkspace?.name || 'Current workspace',
+      onWorkspaceSelect: workspace => {
+        if (workspace?.id) {
+          alertData.setSelectedWorkspaceId(workspace.id);
+        }
+      },
+      dashboardNotifications: [],
+      onLogout,
+      onAccountClick,
+      dashboardCanSeeManagerNav,
+      isSystemAdmin: session?.isAdmin === true,
+      pageTitle: 'Control center',
+    };
+  }, [
+    theme,
+    location.pathname,
+    session,
+    alertData.workspaces,
+    alertData.setSelectedWorkspaceId,
+    selectedWorkspace,
+    onLogout,
+    onAccountClick,
+    dashboardCanSeeManagerNav,
+  ]);
+}
+
 export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const location = useLocation();
   const theme = useDashboardTheme();
@@ -302,17 +366,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
 
   const assetStats = useControlCenterStats();
   const alertData = useControlCenterData();
-
-  const sessionName =
-    session?.displayName || session?.name || session?.email || 'User';
-  const sessionEmail = session?.email || '';
-  const sessionInitials = String(sessionName)
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0])
-    .join('')
-    .toUpperCase();
 
   const selectedWorkspace = useMemo(
     () =>
@@ -407,6 +460,17 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     alertData.refresh();
   };
 
+  const dashboardShellProps = useControlCenterShellProps({
+    theme,
+    location,
+    session,
+    alertData,
+    selectedWorkspace,
+    dashboardCanSeeManagerNav,
+    onLogout,
+    onAccountClick,
+  });
+
   return (
     <>
       <SEO
@@ -433,30 +497,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
           },
         }}
       >
-        <DashboardShell
-          dashboardColors={theme}
-          currentPath={location.pathname}
-          sessionName={sessionName}
-          sessionEmail={sessionEmail}
-          sessionInitials={sessionInitials}
-          dashboardWorkspaces={alertData.workspaces}
-          dashboardWorkspace={selectedWorkspace}
-          workspaceLabel={selectedWorkspace?.name || 'Current workspace'}
-          onWorkspaceSelect={workspace => {
-            if (workspace?.id) {
-              alertData.setSelectedWorkspaceId(workspace.id);
-            }
-          }}
-          dashboardNotifications={[]}
-          onLogout={onLogout}
-          onAccountClick={onAccountClick}
-          dashboardCanSeeManagerNav={dashboardCanSeeManagerNav}
-          isSystemAdmin={session?.isAdmin === true}
-          pageTitle='Control center'
-        >
+        <DashboardShell {...dashboardShellProps}>
           <Box
-            px={{ base: 4, lg: 4, '2xl': 5 }}
-            py={{ base: 5, lg: 3 }}
+            {...CONTROL_CENTER_PAGE_LAYOUT.contentProps}
             data-tour='control-center-page'
           >
             <VStack spacing={6} align='stretch'>

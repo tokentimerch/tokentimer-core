@@ -168,6 +168,26 @@ const findActiveStepIndex = (steps, selector) => {
 };
 
 const TOUR_RESUME_STORAGE_KEY = 'tt_tour_resume_pending';
+const USER_PREFERENCES_PATH = '/preferences';
+const WORKSPACE_ALERTS_PATH = '/workspace-preferences';
+
+const isUserPreferencesPath = () => {
+  if (typeof window === 'undefined') return false;
+  return window.location.pathname === USER_PREFERENCES_PATH;
+};
+
+const isWorkspaceAlertsPath = () => {
+  if (typeof window === 'undefined') return false;
+  return window.location.pathname === WORKSPACE_ALERTS_PATH;
+};
+
+const isPreferencesNavTourId = tourId =>
+  tourId === 'preferences-nav' || tourId === 'workspace-alert-settings-nav';
+
+const isWorkspaceAlertSubStepTourId = tourId =>
+  Boolean(
+    tourId && tourId.startsWith('preferences-') && tourId !== 'preferences-nav'
+  );
 
 const buildDashboardTourUrl = () => {
   const search = new URLSearchParams();
@@ -364,6 +384,7 @@ export default function ProductTour({
   tourType = 'dashboard',
   onTourComplete,
   forceRun = false, // Bypass localStorage check for demos
+  canManageWorkspaceAlerts = true,
 }) {
   const { colorMode } = useColorMode();
   const navigate = useNavigate();
@@ -476,7 +497,7 @@ export default function ProductTour({
       {
         target: '[data-tour="user-menu"]',
         content:
-          'Your account menu lives here. Open it for account settings, preferences, and sign out.',
+          'Your account menu lives here. Open it for account settings, personal preferences, and sign out.',
         placement: 'bottom',
         disableBeacon: true,
         disableScrolling: true,
@@ -487,18 +508,45 @@ export default function ProductTour({
       {
         target: '[data-tour="preferences-nav"]',
         content:
-          'Click Preferences to configure alert settings, thresholds, delivery windows, contacts, webhooks, and contact groups.',
+          'Click Preferences to open your personal settings: theme, defaults, and other options that follow you across workspaces.',
         placement: 'left',
         disableBeacon: true,
         mobileTarget:
           '[data-tour="mobile-drawer"] [data-tour="preferences-nav"]',
-        mobilePlacement: 'right', // Drawer is on left, so place tooltip on right
+        mobilePlacement: 'right',
+      },
+      {
+        target: '[data-tour="user-preferences-page"]',
+        content:
+          'This is your personal Preferences page. Settings here apply to your account, not to workspace alert delivery.',
+        placement: 'bottom',
+      },
+      {
+        target: '[data-tour="mobile-alert-settings-nav"]',
+        content:
+          'Open Alert settings to configure workspace-wide alerts: thresholds, contacts, webhooks, and delivery windows. Managers only.',
+        placement: 'right',
+        disableBeacon: true,
+        isManagerOnly: true,
+        isMobileOnly: true,
+        mobileTarget:
+          '[data-tour="mobile-drawer"] [data-tour="mobile-alert-settings-nav"]',
+      },
+      {
+        target: '[data-tour="workspace-alert-settings-nav"]',
+        content:
+          'Open Alert settings in the sidebar to configure workspace-wide alerts: thresholds, contacts, webhooks, and delivery windows. Managers only.',
+        placement: 'right',
+        disableBeacon: true,
+        isManagerOnly: true,
+        isDesktopOnly: true,
       },
       {
         target: '[data-tour="preferences-page"]',
         content:
-          'This is the Preferences page where you can configure all your alert and notification settings.',
+          'This is the workspace Alert settings page where you configure notification channels and delivery for the selected workspace.',
         placement: 'bottom',
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-thresholds"]',
@@ -506,6 +554,7 @@ export default function ProductTour({
           'Set default workspace thresholds (days before expiration) when alerts should be sent. These apply to all tokens unless overridden by contact groups.',
         placement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-delivery-window"]',
@@ -513,6 +562,7 @@ export default function ProductTour({
           'Configure when alerts should be delivered. Alerts are only sent during this time window; outside the window they are deferred.',
         placement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-contacts-list"]',
@@ -521,6 +571,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-contacts-add"]',
@@ -529,6 +580,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-webhooks-list"]',
@@ -537,6 +589,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-webhooks-add"]',
@@ -545,6 +598,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-contact-groups-selector"]',
@@ -553,6 +607,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-contact-groups-contacts-channels"]',
@@ -561,6 +616,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-contact-groups-webhooks"]',
@@ -569,6 +625,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="preferences-contact-groups-digest"]',
@@ -577,6 +634,7 @@ export default function ProductTour({
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="usage-nav"]',
@@ -584,12 +642,14 @@ export default function ProductTour({
           'Open Control center to monitor alert delivery, token health, and queue status across your workspaces. Available for managers and admins.',
         placement: 'bottom',
         isDesktopOnly: true,
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="control-center-page"]',
         content:
           'Control center gives you a single view of alert delivery, token health, and queue status across your workspaces.',
         placement: 'bottom',
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="control-center-metrics"]',
@@ -597,6 +657,7 @@ export default function ProductTour({
           'Review delivery metrics by channel, token counts, expiry buckets, and monthly alert usage for the selected workspace or organization.',
         placement: 'top',
         mobilePlacement: 'bottom',
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="control-center-alert-queue"]',
@@ -604,6 +665,7 @@ export default function ProductTour({
           'Monitor and manage the alert queue: pending and blocked alerts, requeue failed deliveries, and track delivery status.',
         placement: 'top',
         mobilePlacement: 'bottom',
+        isManagerOnly: true,
       },
       {
         target: '[data-tour="docs-nav"]',
@@ -703,6 +765,7 @@ export default function ProductTour({
       .filter(step => {
         if (isMobileView && step.isDesktopOnly) return false;
         if (!isMobileView && step.isMobileOnly) return false;
+        if (step.isManagerOnly && !canManageWorkspaceAlerts) return false;
         return true;
       })
       .map(step => {
@@ -732,7 +795,7 @@ export default function ProductTour({
 
         return transformedStep;
       });
-  }, [steps]);
+  }, [steps, canManageWorkspaceAlerts]);
 
   /** Steps passed to Joyride with visible DOM nodes (avoids hidden legacy nav duplicates). */
   const joyrideSteps = useMemo(() => {
@@ -764,10 +827,26 @@ export default function ProductTour({
         (typeof step.target === 'string' &&
           step.target.includes('preferences-nav'))
       ) {
-        const prefNavEl = findVisibleTourTarget('[data-tour="preferences-nav"]');
+        const prefNavEl = findVisibleTourTarget(
+          '[data-tour="preferences-nav"]'
+        );
         if (prefNavEl) {
           resolvedTarget = prefNavEl;
           placement = 'left';
+        }
+      }
+
+      if (
+        step.target === '[data-tour="workspace-alert-settings-nav"]' ||
+        (typeof step.target === 'string' &&
+          step.target.includes('workspace-alert-settings-nav'))
+      ) {
+        const alertNavEl = findVisibleTourTarget(
+          '[data-tour="workspace-alert-settings-nav"]'
+        );
+        if (alertNavEl) {
+          resolvedTarget = alertNavEl;
+          placement = 'right';
         }
       }
 
@@ -808,7 +887,7 @@ export default function ProductTour({
       return;
     }
 
-    // Resume tour after hard navigation back from /preferences
+    // Resume tour after hard navigation back from preferences routes
     try {
       const raw = sessionStorage.getItem(TOUR_RESUME_STORAGE_KEY);
       if (raw) {
@@ -872,9 +951,7 @@ export default function ProductTour({
     const start = startIndex => {
       if (cancelled) return;
       const index =
-        typeof startIndex === 'number'
-          ? startIndex
-          : findFirstAvailableStep();
+        typeof startIndex === 'number' ? startIndex : findFirstAvailableStep();
       setStepIndex(index);
       setIsRunning(true);
       requestAnimationFrame(() => {
@@ -1150,7 +1227,15 @@ export default function ProductTour({
             (step.target === '[data-tour="mobile-tokens-nav"]' ||
               step.target === '[data-tour="mobile-docs-nav"]' ||
               step.target === '[data-tour="mobile-help-nav"]' ||
-              (isMobileView && step.target === '[data-tour="preferences-nav"]'))
+              step.target === '[data-tour="mobile-alert-settings-nav"]' ||
+              (typeof step.target === 'string' &&
+                step.target.includes('mobile-alert-settings-nav')) ||
+              (isMobileView &&
+                (step.target === '[data-tour="preferences-nav"]' ||
+                  step.target ===
+                    '[data-tour="workspace-alert-settings-nav"]' ||
+                  (typeof step.target === 'string' &&
+                    step.target.includes('workspace-alert-settings-nav')))))
           ) {
             // Open drawer non-blocking
             setTimeout(() => {
@@ -1226,9 +1311,9 @@ export default function ProductTour({
             }, 100);
           }
 
-          // For preferences-nav, ensure menu/drawer is open (dashboard only; never on /preferences)
+          // For preferences-nav, ensure menu/drawer is open (dashboard only; not on user prefs route)
           if (
-            stepTourId(step)?.includes('preferences-nav') &&
+            stepTourId(step) === 'preferences-nav' &&
             isDashboardPath() &&
             action !== ACTIONS.PREV
           ) {
@@ -1268,31 +1353,80 @@ export default function ProductTour({
             }
           }
 
-          // Navigate to /preferences when we reach the preferences-page step (going forward)
-          if (tourStepMatches(step, '[data-tour="preferences-page"]')) {
-            // If we're going forward and not on preferences page yet, navigate there
+          // Workspace alert settings nav: open mobile drawer when needed
+          if (
+            tourStepMatches(
+              step,
+              '[data-tour="workspace-alert-settings-nav"]'
+            ) &&
+            isDashboardPath() &&
+            action !== ACTIONS.PREV
+          ) {
+            const isMobileNow =
+              typeof window !== 'undefined' &&
+              window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+
+            if (isMobileNow) {
+              setTimeout(() => {
+                const drawer = document.querySelector(
+                  '[data-tour="mobile-drawer"]'
+                );
+                const drawerVisible =
+                  drawer && window.getComputedStyle(drawer).display !== 'none';
+                if (!drawer || !drawerVisible) {
+                  const menuButton = document.querySelector(
+                    '[data-tour="mobile-menu-button"]'
+                  );
+                  if (menuButton) menuButton.click();
+                }
+              }, 100);
+            }
+          }
+
+          // Navigate to user /preferences when we reach the user-preferences-page step
+          if (tourStepMatches(step, '[data-tour="user-preferences-page"]')) {
             if (
               action !== ACTIONS.PREV &&
               typeof window !== 'undefined' &&
-              window.location.pathname !== '/preferences'
+              !isUserPreferencesPath()
             ) {
               setIsRunning(false);
+              navigate(USER_PREFERENCES_PATH);
 
-              // Trigger navigation
-              navigate('/preferences');
-
-              // Wait for the preferences page root element to be fully mounted
               const found = await waitForElement(step.target, {
                 timeout: 8000,
                 interval: 150,
               });
 
-              // Additional wait to ensure React has fully rendered the component
               if (found) {
                 await wait(300);
               }
 
-              // Resume this same step (index)
+              setStepIndex(index);
+              setIsRunning(true);
+              return;
+            }
+          }
+
+          // Navigate to /workspace-preferences when we reach the workspace alert page step
+          if (tourStepMatches(step, '[data-tour="preferences-page"]')) {
+            if (
+              action !== ACTIONS.PREV &&
+              typeof window !== 'undefined' &&
+              !isWorkspaceAlertsPath()
+            ) {
+              setIsRunning(false);
+              navigate(WORKSPACE_ALERTS_PATH);
+
+              const found = await waitForElement(step.target, {
+                timeout: 8000,
+                interval: 150,
+              });
+
+              if (found) {
+                await wait(300);
+              }
+
               setStepIndex(index);
               setIsRunning(true);
               return;
@@ -1311,11 +1445,14 @@ export default function ProductTour({
 
               // Determine where to navigate based on previous step
               const prevStep = activeSteps[index - 1];
-              let targetPath = '/preferences'; // Default to preferences (mobile flow)
+              let targetPath = WORKSPACE_ALERTS_PATH;
 
-              // If previous step is usage-nav (desktop) or anything on dashboard, go to dashboard
               if (prevStep?.target === '[data-tour="usage-nav"]') {
                 targetPath = '/dashboard';
+              } else if (
+                prevStep?.target === '[data-tour="user-preferences-page"]'
+              ) {
+                targetPath = USER_PREFERENCES_PATH;
               }
 
               // Navigate to the appropriate page
@@ -1523,7 +1660,24 @@ export default function ProductTour({
                       400
                     );
                   }
-                }, 400); // Wait for drawer animation
+                }, 400);
+              }
+
+              if (
+                target &&
+                (target.includes('workspace-alert-settings-nav') ||
+                  target.includes('mobile-alert-settings-nav'))
+              ) {
+                setTimeout(() => {
+                  const el = document.querySelector(target);
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(
+                      () => window.dispatchEvent(new Event('resize')),
+                      400
+                    );
+                  }
+                }, 400);
               }
 
               // Scroll control center page sections slightly into view
@@ -1600,20 +1754,23 @@ export default function ProductTour({
         if (missingTourId === 'create-token-button') {
           scrollTourTargetIntoView('[data-tour="create-token-button"]');
           setIsRunning(false);
-          const found = await waitForElement('[data-tour="create-token-button"]', {
-            timeout: 3000,
-            interval: 100,
-          });
+          const found = await waitForElement(
+            '[data-tour="create-token-button"]',
+            {
+              timeout: 3000,
+              interval: 100,
+            }
+          );
           setStepIndex(index);
           setIsRunning(true);
           if (found) return;
         }
 
-        // preferences-nav only exists on the dashboard shell (not on /preferences)
+        // preferences-nav only exists on the dashboard shell (not on user prefs route)
         if (
           tourStepMatches(step, '[data-tour="preferences-nav"]') &&
           typeof window !== 'undefined' &&
-          window.location.pathname === '/preferences'
+          isUserPreferencesPath()
         ) {
           setIsRunning(false);
           const userMenuIndex = findActiveStepIndex(
@@ -1639,7 +1796,7 @@ export default function ProductTour({
         }
 
         // For preferences-nav, ensure menu is open first
-        if (stepTourId(step)?.includes('preferences-nav')) {
+        if (stepTourId(step) === 'preferences-nav') {
           const isMobileNow =
             typeof window !== 'undefined' &&
             window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
@@ -1692,13 +1849,62 @@ export default function ProductTour({
           }
         }
 
-        // For preferences-page and other preferences-* steps (not preferences-nav), wait for them to load
-        const tourId = stepTourId(step);
+        // For workspace-alert-settings-nav, open mobile drawer if needed
         if (
-          tourId &&
-          tourId.startsWith('preferences-') &&
-          tourId !== 'preferences-nav'
+          tourStepMatches(step, '[data-tour="workspace-alert-settings-nav"]') ||
+          (typeof step?.target === 'string' &&
+            step.target.includes('workspace-alert-settings-nav'))
         ) {
+          const isMobileNow =
+            typeof window !== 'undefined' &&
+            window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+
+          if (isMobileNow) {
+            const menuButton = document.querySelector(
+              '[data-tour="mobile-menu-button"]'
+            );
+            if (menuButton) {
+              const drawer = document.querySelector(
+                '[data-tour="mobile-drawer"]'
+              );
+              const drawerVisible =
+                drawer && window.getComputedStyle(drawer).display !== 'none';
+
+              if (!drawer || !drawerVisible) {
+                menuButton.click();
+              }
+
+              setIsRunning(false);
+              const found = await waitForElement(step.target, {
+                timeout: 2000,
+                interval: 100,
+              });
+              if (found) {
+                setStepIndex(index);
+                setIsRunning(true);
+                return;
+              }
+            }
+          }
+        }
+
+        // For user-preferences-page and workspace alert sub-steps, wait for them to load
+        const tourId = stepTourId(step);
+        if (tourId === 'user-preferences-page') {
+          setIsRunning(false);
+          const found = await waitForElement(step.target, {
+            timeout: 4000,
+            interval: 150,
+          });
+
+          if (found) {
+            setStepIndex(index);
+            setIsRunning(true);
+            return;
+          }
+        }
+
+        if (isWorkspaceAlertSubStepTourId(tourId)) {
           // Likely still loading; wait a bit for this exact element
           setIsRunning(false);
           const found = await waitForElement(step.target, {
@@ -1802,12 +2008,14 @@ export default function ProductTour({
           const leavingTourId = stepTourId(step);
           const onPrefsRoute =
             typeof window !== 'undefined' &&
-            window.location.pathname === '/preferences';
+            (isUserPreferencesPath() || isWorkspaceAlertsPath());
           const userMenuIndex = resolveUserMenuStepIndex();
           const resumeIndex =
             userMenuIndex >= 0 ? userMenuIndex : Math.max(0, nextIndex);
           const needsHardDashboardReload =
-            onPrefsRoute || leavingTourId === 'preferences-page';
+            onPrefsRoute ||
+            leavingTourId === 'user-preferences-page' ||
+            leavingTourId === 'preferences-page';
 
           if (needsHardDashboardReload) {
             setIsRunning(false);
@@ -1827,6 +2035,7 @@ export default function ProductTour({
 
           if (
             leavingTourId === 'preferences-nav' ||
+            leavingTourId === 'user-preferences-page' ||
             leavingTourId === 'preferences-page'
           ) {
             setIsRunning(false);
@@ -1861,7 +2070,10 @@ export default function ProductTour({
           }
           setStepIndex(targetIndex);
           setIsRunning(true);
-          window.setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+          window.setTimeout(
+            () => window.dispatchEvent(new Event('resize')),
+            50
+          );
           window.setTimeout(
             () => window.dispatchEvent(new Event('resize')),
             250
@@ -1939,11 +2151,11 @@ export default function ProductTour({
           return;
         }
 
-        // Release menu lock when going backward from user-menu or preferences-nav
+        // Release menu lock when going backward from user-menu or preferences nav steps
         if (
           action === ACTIONS.PREV &&
           (matchesTourTarget(step, '[data-tour="user-menu"]') ||
-            stepTourId(step)?.includes('preferences-nav'))
+            isPreferencesNavTourId(stepTourId(step)))
         ) {
           window.dispatchEvent(
             new CustomEvent('tt:tour-menu-state', {
@@ -2016,6 +2228,43 @@ export default function ProductTour({
             }
           }, 100);
           return; // Don't proceed with default behavior
+        }
+
+        // Special case: after mobile-menu-button step, open drawer for mobile alert settings
+        if (
+          step?.target === '[data-tour="mobile-menu-button"]' &&
+          nextStep?.target &&
+          (nextStep.target.includes('mobile-alert-settings-nav') ||
+            nextStep.target.includes('workspace-alert-settings-nav'))
+        ) {
+          setTimeout(async () => {
+            try {
+              const menuButton = document.querySelector(
+                '[data-tour="mobile-menu-button"]'
+              );
+              if (menuButton) {
+                const drawer = document.querySelector(
+                  '[data-tour="mobile-drawer"]'
+                );
+                const drawerVisible =
+                  drawer && window.getComputedStyle(drawer).display !== 'none';
+
+                if (!drawer || !drawerVisible) {
+                  menuButton.click();
+                  await wait(800);
+                }
+              }
+
+              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
+                setStepIndex(nextIndex);
+              }
+            } catch (err) {
+              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
+                setStepIndex(nextIndex);
+              }
+            }
+          }, 100);
+          return;
         }
 
         // Special case: after mobile-menu-button step, open drawer for preferences-nav
@@ -2275,8 +2524,8 @@ export default function ProductTour({
         ) {
           setIsRunning(false);
           setTimeout(async () => {
-            if (window.location.pathname !== '/preferences') {
-              navigate('/preferences');
+            if (!isWorkspaceAlertsPath()) {
+              navigate(WORKSPACE_ALERTS_PATH);
               await wait(500);
             }
             // Wait for contact groups digest to appear
@@ -2327,8 +2576,8 @@ export default function ProductTour({
         ) {
           setIsRunning(false);
           setTimeout(async () => {
-            if (window.location.pathname !== '/preferences') {
-              navigate('/preferences');
+            if (!isWorkspaceAlertsPath()) {
+              navigate(WORKSPACE_ALERTS_PATH);
               await wait(500);
             }
             // Wait for contact groups digest to appear
@@ -2389,16 +2638,16 @@ export default function ProductTour({
           }, 50);
         }
 
-        // After preferences-nav, navigate to /preferences (Joyride passes HTMLElement targets)
+        // After preferences-nav, navigate to user /preferences
         if (
           tourStepMatches(step, '[data-tour="preferences-nav"]') &&
           action !== ACTIONS.PREV &&
-          tourStepMatches(nextStep, '[data-tour="preferences-page"]')
+          tourStepMatches(nextStep, '[data-tour="user-preferences-page"]')
         ) {
           setIsRunning(false);
           releaseTourMenuLock();
 
-          const goToPreferences = async () => {
+          const goToUserPreferences = async () => {
             try {
               const preferencesItem = resolveTourClickTarget(
                 step,
@@ -2409,18 +2658,21 @@ export default function ProductTour({
                 await wait(200);
               }
 
-              if (window.location.pathname !== '/preferences') {
-                navigate('/preferences');
+              if (!isUserPreferencesPath()) {
+                navigate(USER_PREFERENCES_PATH);
               }
 
               const found = await waitForElement(
-                '[data-tour="preferences-page"]',
+                '[data-tour="user-preferences-page"]',
                 { timeout: 8000, interval: 150 }
               );
 
               await wait(found ? 300 : 500);
             } catch (err) {
-              logger.warn('Product tour: preferences navigation failed', err);
+              logger.warn(
+                'Product tour: user preferences navigation failed',
+                err
+              );
               await wait(500);
             } finally {
               setStepIndex(nextIndex);
@@ -2429,7 +2681,246 @@ export default function ProductTour({
             }
           };
 
-          void goToPreferences();
+          void goToUserPreferences();
+
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'next',
+          });
+          return;
+        }
+
+        // After user-preferences-page, return to dashboard for workspace alert settings (managers)
+        if (
+          tourStepMatches(step, '[data-tour="user-preferences-page"]') &&
+          action !== ACTIONS.PREV &&
+          canManageWorkspaceAlerts &&
+          (tourStepMatches(
+            nextStep,
+            '[data-tour="workspace-alert-settings-nav"]'
+          ) ||
+            tourStepMatches(
+              nextStep,
+              '[data-tour="mobile-alert-settings-nav"]'
+            ) ||
+            tourStepMatches(nextStep, '[data-tour="preferences-page"]'))
+        ) {
+          setIsRunning(false);
+          releaseTourMenuLock();
+
+          const resumeWorkspaceAlerts = async () => {
+            try {
+              if (
+                tourStepMatches(
+                  nextStep,
+                  '[data-tour="mobile-alert-settings-nav"]'
+                ) ||
+                (tourStepMatches(nextStep, '[data-tour="preferences-page"]') &&
+                  typeof window !== 'undefined' &&
+                  window.innerWidth < LAYOUT_LG_BREAKPOINT_PX)
+              ) {
+                if (!isDashboardPath()) {
+                  navigate('/dashboard', { replace: true });
+                  await wait(400);
+                }
+
+                const menuButton = document.querySelector(
+                  '[data-tour="mobile-menu-button"]'
+                );
+                if (menuButton) {
+                  const drawer = document.querySelector(
+                    '[data-tour="mobile-drawer"]'
+                  );
+                  const drawerVisible =
+                    drawer &&
+                    window.getComputedStyle(drawer).display !== 'none';
+                  if (!drawer || !drawerVisible) {
+                    menuButton.click();
+                    await wait(600);
+                  }
+                }
+
+                if (
+                  tourStepMatches(
+                    nextStep,
+                    '[data-tour="mobile-alert-settings-nav"]'
+                  )
+                ) {
+                  await waitForElement(nextStep.target, {
+                    timeout: 8000,
+                    interval: 150,
+                  });
+                  await wait(300);
+                  setStepIndex(nextIndex);
+                  setIsRunning(true);
+                  window.dispatchEvent(new Event('resize'));
+                  return;
+                }
+              }
+
+              if (!isDashboardPath()) {
+                navigate('/dashboard', { replace: true });
+                await wait(400);
+              }
+
+              if (
+                tourStepMatches(nextStep, '[data-tour="preferences-page"]') &&
+                typeof window !== 'undefined' &&
+                window.innerWidth < LAYOUT_LG_BREAKPOINT_PX
+              ) {
+                navigate(WORKSPACE_ALERTS_PATH);
+                await waitForElement('[data-tour="preferences-page"]', {
+                  timeout: 8000,
+                  interval: 150,
+                });
+                await wait(300);
+              } else if (
+                tourStepMatches(
+                  nextStep,
+                  '[data-tour="workspace-alert-settings-nav"]'
+                )
+              ) {
+                await waitForElement(
+                  '[data-tour="workspace-alert-settings-nav"]',
+                  {
+                    timeout: 8000,
+                    interval: 150,
+                  }
+                );
+                await wait(300);
+              }
+            } catch (err) {
+              logger.warn(
+                'Product tour: workspace alert nav resume failed',
+                err
+              );
+              await wait(500);
+            } finally {
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            }
+          };
+
+          void resumeWorkspaceAlerts();
+
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'next',
+          });
+          return;
+        }
+
+        // After mobile-alert-settings-nav, navigate to /workspace-preferences
+        if (
+          (tourStepMatches(step, '[data-tour="mobile-alert-settings-nav"]') ||
+            (typeof step?.target === 'string' &&
+              step.target.includes('mobile-alert-settings-nav'))) &&
+          action !== ACTIONS.PREV &&
+          tourStepMatches(nextStep, '[data-tour="preferences-page"]')
+        ) {
+          setIsRunning(false);
+          releaseTourMenuLock();
+
+          const goToWorkspaceAlertsFromMobile = async () => {
+            try {
+              const alertNavItem = resolveTourClickTarget(
+                step,
+                '[data-tour="mobile-alert-settings-nav"]'
+              );
+              if (alertNavItem) {
+                alertNavItem.click();
+                await wait(200);
+              }
+
+              if (!isWorkspaceAlertsPath()) {
+                navigate(WORKSPACE_ALERTS_PATH);
+              }
+
+              const found = await waitForElement(
+                '[data-tour="preferences-page"]',
+                {
+                  timeout: 8000,
+                  interval: 150,
+                }
+              );
+
+              await wait(found ? 300 : 500);
+            } catch (err) {
+              logger.warn(
+                'Product tour: mobile workspace alert navigation failed',
+                err
+              );
+              await wait(500);
+            } finally {
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            }
+          };
+
+          void goToWorkspaceAlertsFromMobile();
+
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'next',
+          });
+          return;
+        }
+
+        // After workspace-alert-settings-nav, navigate to /workspace-preferences
+        if (
+          tourStepMatches(step, '[data-tour="workspace-alert-settings-nav"]') &&
+          action !== ACTIONS.PREV &&
+          tourStepMatches(nextStep, '[data-tour="preferences-page"]')
+        ) {
+          setIsRunning(false);
+          releaseTourMenuLock();
+
+          const goToWorkspaceAlerts = async () => {
+            try {
+              const alertNavItem = resolveTourClickTarget(
+                step,
+                '[data-tour="workspace-alert-settings-nav"]'
+              );
+              if (alertNavItem) {
+                alertNavItem.click();
+                await wait(200);
+              }
+
+              if (!isWorkspaceAlertsPath()) {
+                navigate(WORKSPACE_ALERTS_PATH);
+              }
+
+              const found = await waitForElement(
+                '[data-tour="preferences-page"]',
+                {
+                  timeout: 8000,
+                  interval: 150,
+                }
+              );
+
+              await wait(found ? 300 : 500);
+            } catch (err) {
+              logger.warn(
+                'Product tour: workspace alert settings navigation failed',
+                err
+              );
+              await wait(500);
+            } finally {
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            }
+          };
+
+          void goToWorkspaceAlerts();
 
           trackEvent('product_tour_step', {
             tour_type: tourType,
@@ -2593,12 +3084,22 @@ export default function ProductTour({
           }
         }
 
-        // Do not advance to preferences-page until /preferences has loaded
+        // Do not advance to user-preferences-page until /preferences has loaded
+        if (
+          action !== ACTIONS.PREV &&
+          tourStepMatches(nextStep, '[data-tour="user-preferences-page"]') &&
+          typeof window !== 'undefined' &&
+          !isUserPreferencesPath()
+        ) {
+          return;
+        }
+
+        // Do not advance to workspace alert page until /workspace-preferences has loaded
         if (
           action !== ACTIONS.PREV &&
           tourStepMatches(nextStep, '[data-tour="preferences-page"]') &&
           typeof window !== 'undefined' &&
-          window.location.pathname !== '/preferences'
+          !isWorkspaceAlertsPath()
         ) {
           return;
         }
@@ -2638,6 +3139,7 @@ export default function ProductTour({
       closeMobileNav,
       wait,
       scrollTargetWithTooltipSpaceMobile,
+      canManageWorkspaceAlerts,
     ]
   );
 
