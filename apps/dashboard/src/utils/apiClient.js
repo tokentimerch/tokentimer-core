@@ -816,13 +816,22 @@ export const alertAPI = {
   getAuditEvents: async (
     limit = 100,
     offset = 0,
-    { scope = 'user', workspaceId = null, action = null, query = null } = {}
+    {
+      scope = 'user',
+      workspaceId = null,
+      action = null,
+      query = null,
+      since = null,
+      until = null,
+    } = {}
   ) => {
     try {
       let response;
       const params = { limit, offset };
       if (action) params.action = action;
       if (query) params.query = query;
+      if (since) params.since = since;
+      if (until) params.until = until;
 
       if (scope === 'organization') {
         params.scope = 'organization';
@@ -847,6 +856,7 @@ export const alertAPI = {
     format = 'json',
     limit = 10000,
     since = null,
+    until = null,
     action = null,
     query = null,
   } = {}) => {
@@ -854,6 +864,7 @@ export const alertAPI = {
       const params = { scope, format, limit };
       if (workspaceId) params.workspace_id = workspaceId;
       if (since) params.since = since;
+      if (until) params.until = until;
       if (action) params.action = action;
       if (query) params.query = query;
       const response = await apiClient.get(API_ENDPOINTS.AUDIT_EXPORT, {

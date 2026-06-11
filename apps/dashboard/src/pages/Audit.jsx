@@ -1,9 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Text,
+  Flex,
   HStack,
+  VStack,
   Table,
   Thead,
   Tbody,
@@ -13,8 +15,22 @@ import {
   Badge,
   Select,
   Input,
+  InputGroup,
+  InputLeftElement,
   Button,
+  IconButton,
+  useColorModeValue,
 } from '@chakra-ui/react';
+import {
+  FiBriefcase,
+  FiChevronDown,
+  FiChevronRight,
+  FiChevronUp,
+  FiDownload,
+  FiRefreshCw,
+  FiSearch,
+  FiUser,
+} from 'react-icons/fi';
 import DashboardShell from '../components/DashboardShell';
 import { useDashboardShellProps } from '../hooks/useDashboardShellProps';
 import SEO from '../components/SEO.jsx';
@@ -44,6 +60,14 @@ function formatDateTime(dateString) {
   } catch (_) {
     return String(dateString || '');
   }
+}
+
+const AUDIT_FILTER_VALUE_RE =
+  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/;
+
+function dateInputToAuditDateParam(value) {
+  if (!value) return null;
+  return AUDIT_FILTER_VALUE_RE.test(value) ? value : null;
 }
 
 const ACTION_COLORS = {
@@ -161,20 +185,79 @@ const AUDIT_TABLE_COLUMN_WIDTHS = {
   metadata: '35%',
 };
 
+const AUDIT_PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
+const AUDIT_CONTROL_HEIGHT = '32px';
+
+function getAuditEventKey(ev) {
+  return String(ev?.id ?? `${ev?.action || 'event'}-${ev?.occurred_at || ''}`);
+}
+
 export default function Audit({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
   const theme = useDashboardTheme();
-  const { pageBg, surface, text, muted, border } = theme;
+  const { pageBg, surface, text, muted, border, inputBg, dashboard } = theme;
+  const strongBorder = dashboard.border.strong;
+  const secondaryText = dashboard.text.secondary;
+  const panelHoverBg = dashboard.bg.panelHover;
+  const accentColor = dashboard.accent.primary;
+  const tableHeaderBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
+  const tableCellColor = useColorModeValue(
+    'gray.800',
+    'rgba(226, 232, 240, 0.94)'
+  );
+  const fieldTextColor = useColorModeValue(
+    'gray.900',
+    'rgba(248, 250, 252, 0.96)'
+  );
+  const optionBg = useColorModeValue('white', '#0f172a');
+  const optionColor = useColorModeValue('gray.900', 'white');
+  const searchIconColor = useColorModeValue(
+    'var(--chakra-colors-gray-500)',
+    'rgba(148, 163, 184, 0.86)'
+  );
+  const dateInputColorScheme = useColorModeValue('light', 'dark');
+  const datePickerIconFilter = useColorModeValue(
+    'none',
+    'brightness(0) invert(1)'
+  );
+  const paginationControlColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.9)'
+  );
+  const paginationPageBg = useColorModeValue(
+    'blue.50',
+    'rgba(37, 99, 235, 0.18)'
+  );
+  const paginationPageColor = useColorModeValue('blue.700', 'white');
+  const paginationPageBorder = useColorModeValue(
+    'blue.200',
+    'rgba(59, 130, 246, 0.38)'
+  );
+  const mobileCardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.78)');
+  const mobileDetailBg = useColorModeValue(
+    'gray.50',
+    'rgba(8, 13, 22, 0.58)'
+  );
+  const mobileSubtleBorder = useColorModeValue(
+    'gray.200',
+    'rgba(148, 163, 184, 0.16)'
+  );
+  const mobileAccentBg = useColorModeValue('blue.50', 'rgba(147, 197, 253, 0.1)');
+  const mobileAccentBorder = useColorModeValue(
+    'blue.200',
+    'rgba(147, 197, 253, 0.34)'
+  );
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [actionFilter, setActionFilter] = useState('');
-  const [limit] = useState(50);
-  /** Start offset of the last fetched page; kept in a ref so updating it does not recreate `load` and retrigger the filter effect. */
-  const pageOffsetRef = useRef(0);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(10);
+  const [expandedEventIds, setExpandedEventIds] = useState(() => new Set());
   const [scope, setScope] = useState(() => {
     try {
       return localStorage.getItem('tt_audit_scope') || 'user';
@@ -196,20 +279,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   const canViewOrganizationAudit = isSystemAdmin || (isAdminAny && isAdminOrg);
 
   const load = useCallback(
-    async (isMore = false) => {
+    async (pageToLoad = 1) => {
       if (authorized === false) return;
       try {
-        if (isMore) {
-          setLoadingMore(true);
-        } else {
-          setLoading(true);
-          pageOffsetRef.current = 0;
-        }
+        setLoading(true);
         setError('');
         const viewerOnly = !isManagerOrAdminAny && !isSystemAdmin;
         // Core: block viewers (no backend calls)
         if (viewerOnly) {
           setEvents([]);
+          setHasMore(false);
           return;
         }
         // Core: non-admins cannot view organization scope
@@ -218,62 +297,52 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           effectiveScope = 'workspace';
         }
         const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
-        const currentOffset = isMore ? pageOffsetRef.current + limit : 0;
-        const eventsData = await alertAPI.getAuditEvents(limit, currentOffset, {
-          scope: effectiveScope,
-          workspaceId: effectiveWorkspaceId,
-          action: actionFilter || null,
-          query: query || null,
-        });
+        const page = Math.max(1, pageToLoad);
+        const pageLimit = auditPageSize + 1;
+        const currentOffset = (page - 1) * auditPageSize;
+        const since = dateInputToAuditDateParam(dateFrom);
+        const until = dateInputToAuditDateParam(dateTo);
+        const eventsData = await alertAPI.getAuditEvents(
+          pageLimit,
+          currentOffset,
+          {
+            scope: effectiveScope,
+            workspaceId: effectiveWorkspaceId,
+            action: actionFilter || null,
+            query: query || null,
+            since,
+            until,
+          }
+        );
 
         const newEvents = Array.isArray(eventsData) ? eventsData : [];
-        if (isMore) {
-          setEvents(prev => [...prev, ...newEvents]);
-          pageOffsetRef.current = currentOffset;
-        } else {
-          setEvents(newEvents);
-          pageOffsetRef.current = 0;
-        }
-        setHasMore(newEvents.length === limit);
+        setEvents(newEvents.slice(0, auditPageSize));
+        setHasMore(newEvents.length > auditPageSize);
       } catch (e) {
         setError('Failed to load audit events');
       } finally {
         setLoading(false);
-        setLoadingMore(false);
       }
     },
     [
       authorized,
-      limit,
+      auditPageSize,
       scope,
       workspaceId,
       auditWorkspaceId,
       isManagerOrAdminAny,
-      isAdminAny,
       actionFilter,
-      isAdminOrg,
       isSystemAdmin,
       canViewOrganizationAudit,
       query,
+      dateFrom,
+      dateTo,
     ]
   );
 
   useEffect(() => {
-    load();
-  }, [
-    load,
-    authorized,
-    scope,
-    workspaceId,
-    auditWorkspaceId,
-    isManagerOrAdminAny,
-    isAdminAny,
-    actionFilter,
-    isAdminOrg,
-    isSystemAdmin,
-    canViewOrganizationAudit,
-    query,
-  ]);
+    load(auditPage);
+  }, [load, auditPage]);
 
   // Redirect viewers (no manager/admin role) only when we have workspaces; avoid redirect when list empty (e.g. bootstrap admin)
   useEffect(() => {
@@ -1013,6 +1082,41 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     return '';
   }
 
+  function getMetadataEntries(ev) {
+    const formatted = formatMetadata(ev);
+    if (!formatted) {
+      return [{ label: 'Metadata', value: '-' }];
+    }
+
+    return formatted
+      .split(' | ')
+      .map(part => part.trim())
+      .filter(Boolean)
+      .map(part => {
+        const separatorIndex = part.indexOf(':');
+        if (separatorIndex > 0 && separatorIndex < 48) {
+          return {
+            label: part.slice(0, separatorIndex).trim(),
+            value: part.slice(separatorIndex + 1).trim() || '-',
+          };
+        }
+
+        return { label: 'Detail', value: part };
+      });
+  }
+
+  const toggleEventExpanded = useCallback(eventId => {
+    setExpandedEventIds(previous => {
+      const next = new Set(previous);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  }, []);
+
   async function exportJson() {
     try {
       const effectiveScope = canViewOrganizationAudit
@@ -1021,6 +1125,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           ? 'workspace'
           : scope;
       const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
+      const since = dateInputToAuditDateParam(dateFrom);
+      const until = dateInputToAuditDateParam(dateTo);
       const { blob, filename, contentType } = await alertAPI.exportAudit({
         scope: effectiveScope,
         workspaceId:
@@ -1029,6 +1135,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         limit: 10000,
         action: actionFilter || null,
         query: query || null,
+        since,
+        until,
       });
       const url = URL.createObjectURL(new Blob([blob], { type: contentType }));
       const a = document.createElement('a');
@@ -1051,6 +1159,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           ? 'workspace'
           : scope;
       const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
+      const since = dateInputToAuditDateParam(dateFrom);
+      const until = dateInputToAuditDateParam(dateTo);
       const { blob, filename, contentType } = await alertAPI.exportAudit({
         scope: effectiveScope,
         workspaceId:
@@ -1059,6 +1169,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         limit: 10000,
         action: actionFilter || null,
         query: query || null,
+        since,
+        until,
       });
       const url = URL.createObjectURL(new Blob([blob], { type: contentType }));
       const a = document.createElement('a');
@@ -1085,6 +1197,214 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     : scope === 'organization'
       ? 'workspace'
       : scope;
+  const pageOffset = (auditPage - 1) * auditPageSize;
+  const auditRangeStart = filtered.length === 0 ? 0 : pageOffset + 1;
+  const auditRangeEnd = pageOffset + filtered.length;
+  const auditRangeLabel =
+    filtered.length === 0
+      ? '0 of 0'
+      : `${auditRangeStart}-${auditRangeEnd} of ${hasMore ? `${auditRangeEnd}+` : auditRangeEnd}`;
+  const fieldStyles = {
+    bg: inputBg,
+    borderColor: border,
+    color: fieldTextColor,
+    fontSize: 'sm',
+    borderRadius: 'md',
+    minH: AUDIT_CONTROL_HEIGHT,
+    _hover: { borderColor: strongBorder },
+    _focus: {
+      borderColor: accentColor,
+      boxShadow: `0 0 0 1px ${accentColor}`,
+    },
+    _placeholder: { color: muted },
+    sx: {
+      option: {
+        background: optionBg,
+        color: optionColor,
+      },
+    },
+  };
+  const dateFieldStyles = {
+    ...fieldStyles,
+    sx: {
+      ...fieldStyles.sx,
+      colorScheme: dateInputColorScheme,
+      '&::-webkit-calendar-picker-indicator': {
+        filter: datePickerIconFilter,
+        opacity: 0.92,
+        cursor: 'pointer',
+      },
+      '&::-webkit-datetime-edit': {
+        color: fieldTextColor,
+      },
+      '&::-webkit-date-and-time-value': {
+        color: fieldTextColor,
+      },
+    },
+  };
+  const outlineActionButtonStyles = {
+    borderColor: strongBorder,
+    color: secondaryText,
+    bg: 'transparent',
+    borderRadius: 'md',
+    minW: 'fit-content',
+    whiteSpace: 'nowrap',
+    _hover: {
+      bg: panelHoverBg,
+      color: text,
+      borderColor: accentColor,
+    },
+    _active: {
+      bg: panelHoverBg,
+    },
+  };
+
+  const renderMobileAuditCard = ev => {
+    const eventId = getAuditEventKey(ev);
+    const isExpanded = expandedEventIds.has(eventId);
+    const metadataEntries = getMetadataEntries(ev);
+    const metadataPreview = formatMetadata(ev) || '-';
+    const workspaceLabel = ev.workspace_name || ev.workspace_id || '-';
+    const userLabel = ev.actor_display_name || '-';
+
+    return (
+      <Box
+        key={eventId}
+        bg={mobileCardBg}
+        border='1px solid'
+        borderColor={isExpanded ? mobileAccentBorder : mobileSubtleBorder}
+        borderLeftColor={isExpanded ? accentColor : mobileSubtleBorder}
+        borderLeftWidth={isExpanded ? '3px' : '1px'}
+        borderRadius='md'
+        boxShadow='0 14px 34px rgba(0, 0, 0, 0.22)'
+        p={4}
+        minW={0}
+      >
+        <Flex align='flex-start' gap={3} minW={0}>
+          <Box flex='1' minW={0}>
+            <Badge
+              bg={mobileAccentBg}
+              color={accentColor}
+              border='1px solid'
+              borderColor={mobileAccentBorder}
+              variant='outline'
+              borderRadius='md'
+              px={2}
+              py={1}
+              maxW='100%'
+              whiteSpace='normal'
+              wordBreak='break-word'
+            >
+              {ev.action}
+            </Badge>
+            <Text color={text} fontSize='sm' mt={2} noOfLines={1}>
+              {formatDateTime(ev.occurred_at)}
+            </Text>
+            <HStack spacing={2} color={muted} fontSize='sm' mt={1} minW={0}>
+              <FiBriefcase size={15} />
+              <Text noOfLines={1} minW={0}>
+                {workspaceLabel}
+              </Text>
+            </HStack>
+            {!isExpanded && (
+              <Text color={secondaryText} fontSize='sm' mt={3} noOfLines={2}>
+                {metadataPreview}
+              </Text>
+            )}
+          </Box>
+
+          <IconButton
+            aria-label={isExpanded ? 'Collapse audit event' : 'Expand audit event'}
+            icon={isExpanded ? <FiChevronUp /> : <FiChevronDown />}
+            size='sm'
+            variant='ghost'
+            borderRadius='full'
+            color={secondaryText}
+            bg={panelHoverBg}
+            flexShrink={0}
+            aria-expanded={isExpanded}
+            onClick={() => toggleEventExpanded(eventId)}
+            _hover={{
+              bg: mobileAccentBg,
+              color: accentColor,
+            }}
+          />
+        </Flex>
+
+        {isExpanded && (
+          <VStack spacing={3} align='stretch' mt={4}>
+            <Box
+              bg={mobileDetailBg}
+              border='1px solid'
+              borderColor={mobileSubtleBorder}
+              borderRadius='md'
+              p={3}
+            >
+              <HStack align='flex-start' spacing={3}>
+                <Flex
+                  align='center'
+                  justify='center'
+                  w='36px'
+                  h='36px'
+                  borderRadius='md'
+                  bg={panelHoverBg}
+                  color={secondaryText}
+                  flexShrink={0}
+                >
+                  <FiUser size={18} />
+                </Flex>
+                <Box minW={0}>
+                  <Text color={muted} fontSize='xs' fontWeight='semibold'>
+                    User
+                  </Text>
+                  <Text color={text} fontSize='sm' wordBreak='break-word'>
+                    {userLabel}
+                  </Text>
+                  <Text color={muted} fontSize='xs' mt={2} fontWeight='semibold'>
+                    Workspace
+                  </Text>
+                  <Text color={text} fontSize='sm' wordBreak='break-word'>
+                    {workspaceLabel}
+                  </Text>
+                </Box>
+              </HStack>
+            </Box>
+
+            <Box
+              bg={mobileDetailBg}
+              border='1px solid'
+              borderColor={mobileAccentBorder}
+              borderRadius='md'
+              p={3}
+            >
+              <Box minW={0}>
+                <Text color={accentColor} fontSize='sm' fontWeight='semibold'>
+                  Metadata
+                </Text>
+                <VStack spacing={2} align='stretch' mt={2}>
+                  {metadataEntries.map((entry, index) => (
+                    <Box key={`${eventId}-metadata-${index}`} minW={0}>
+                      <Text color={muted} fontSize='xs' fontWeight='semibold'>
+                        {entry.label}
+                      </Text>
+                      <Text
+                        color={text}
+                        fontSize='sm'
+                        whiteSpace='pre-wrap'
+                        wordBreak='break-word'
+                      >
+                        {entry.value}
+                      </Text>
+                    </Box>
+                  ))}
+                </VStack>
+              </Box>
+            </Box>
+          </VStack>
+        )}
+      </Box>
+    );
+  };
 
   const shellProps = useDashboardShellProps({
     session,
@@ -1095,6 +1415,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     dashboardWorkspace: selectedWorkspace,
     onWorkspaceSelect: workspace => {
       if (workspace?.id) {
+        setAuditPage(1);
         setAuditWorkspaceId(workspace.id);
       }
     },
@@ -1128,10 +1449,17 @@ export default function Audit({ session, onLogout, onAccountClick }) {
             textOverflow: 'ellipsis',
           },
           '.chakra-table td': {
-            color: text,
+            color: tableCellColor,
             borderColor: border,
             verticalAlign: 'top',
             overflow: 'hidden',
+          },
+          '.chakra-input, .chakra-select': {
+            color: fieldTextColor,
+          },
+          option: {
+            background: optionBg,
+            color: optionColor,
           },
         }}
       >
@@ -1143,31 +1471,106 @@ export default function Audit({ session, onLogout, onAccountClick }) {
             minW={0}
             maxW='100%'
           >
-            <Box
+            <Flex
               bg={surface}
-              p={{ base: 4, md: 6 }}
-              borderRadius='md'
-              boxShadow='sm'
               border='1px solid'
               borderColor={border}
+              borderRadius='md'
+              p={{ base: 3, md: 4 }}
+              gap={3}
+              align={{ base: 'stretch', sm: 'center' }}
+              justify='flex-start'
+              direction={{ base: 'column', sm: 'row' }}
+              flexWrap='wrap'
+              mb={4}
+            >
+              <Button
+                leftIcon={<FiRefreshCw />}
+                onClick={() => load(auditPage)}
+                isLoading={loading}
+                colorScheme='blue'
+                borderRadius='md'
+                size='sm'
+                h={AUDIT_CONTROL_HEIGHT}
+                w={{ base: '100%', sm: 'auto' }}
+              >
+                Refresh
+              </Button>
+              <Button
+                leftIcon={<FiDownload />}
+                variant='outline'
+                onClick={exportJson}
+                size='sm'
+                h={AUDIT_CONTROL_HEIGHT}
+                w={{ base: '100%', sm: 'auto' }}
+                {...outlineActionButtonStyles}
+              >
+                Export JSON
+              </Button>
+              <Button
+                leftIcon={<FiDownload />}
+                variant='outline'
+                onClick={exportCsv}
+                size='sm'
+                h={AUDIT_CONTROL_HEIGHT}
+                w={{ base: '100%', sm: 'auto' }}
+                {...outlineActionButtonStyles}
+              >
+                Export CSV
+              </Button>
+            </Flex>
+
+            <Box
+              bg={surface}
+              border='1px solid'
+              borderColor={border}
+              borderRadius='md'
               w='100%'
               minW={0}
               maxW='100%'
               overflow='hidden'
+              mb={4}
             >
-              <HStack spacing={3} mb={4} flexWrap='wrap'>
-                <Input
-                  placeholder='Search action or metadata...'
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  maxW='320px'
-                />
+              <Flex
+                p={{ base: 4, md: 5 }}
+                gap={3}
+                align={{ base: 'stretch', lg: 'center' }}
+                direction={{ base: 'column', lg: 'row' }}
+                flexWrap='wrap'
+              >
+                <InputGroup
+                  maxW={{ base: '100%', lg: '360px' }}
+                  size='sm'
+                  flex={{ base: '1 1 auto', lg: '0 1 360px' }}
+                >
+                  <InputLeftElement pointerEvents='none' h={AUDIT_CONTROL_HEIGHT}>
+                    <FiSearch size={16} color={searchIconColor} />
+                  </InputLeftElement>
+                  <Input
+                    size='sm'
+                    h={AUDIT_CONTROL_HEIGHT}
+                    pl='36px'
+                    placeholder='Search action or metadata...'
+                    value={query}
+                    onChange={e => {
+                      setAuditPage(1);
+                      setQuery(e.target.value);
+                    }}
+                    {...fieldStyles}
+                  />
+                </InputGroup>
                 <Select
                   placeholder='All actions'
                   value={actionFilter}
-                  onChange={e => setActionFilter(e.target.value)}
-                  maxW='220px'
+                  onChange={e => {
+                    setAuditPage(1);
+                    setActionFilter(e.target.value);
+                  }}
+                  size='sm'
+                  maxW={{ base: '100%', md: '240px' }}
+                  h={AUDIT_CONTROL_HEIGHT}
                   title='Filter by specific action type'
+                  {...fieldStyles}
                 >
                   {uniqueActions.map(a => (
                     <option key={a} value={a}>
@@ -1180,12 +1583,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     value={scope}
                     onChange={e => {
                       const v = e.target.value;
+                      setAuditPage(1);
                       setScope(v);
                       try {
                         localStorage.setItem('tt_audit_scope', v);
                       } catch (_) {}
                     }}
-                    maxW='220px'
+                    size='sm'
+                    maxW={{ base: '100%', md: '240px' }}
+                    h={AUDIT_CONTROL_HEIGHT}
+                    {...fieldStyles}
                   >
                     <option value='user'>My actions</option>
                     <option value='workspace'>This workspace</option>
@@ -1197,12 +1604,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     onChange={e => {
                       const v = e.target.value;
                       const next = v === 'organization' ? 'workspace' : v;
+                      setAuditPage(1);
                       setScope(next);
                       try {
                         localStorage.setItem('tt_audit_scope', next);
                       } catch (_) {}
                     }}
-                    maxW='220px'
+                    size='sm'
+                    maxW={{ base: '100%', md: '240px' }}
+                    h={AUDIT_CONTROL_HEIGHT}
+                    {...fieldStyles}
                   >
                     <option value='user'>My actions</option>
                     <option value='workspace'>This workspace</option>
@@ -1213,6 +1624,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     value={auditWorkspaceId || workspaceId || ''}
                     onChange={e => {
                       const nextId = e.target.value;
+                      setAuditPage(1);
                       setAuditWorkspaceId(nextId);
                       if (isAdminAny && scope !== 'workspace') {
                         try {
@@ -1220,7 +1632,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                         } catch (_) {}
                       }
                     }}
-                    maxW='260px'
+                    size='sm'
+                    maxW={{ base: '100%', md: '280px' }}
+                    h={AUDIT_CONTROL_HEIGHT}
+                    {...fieldStyles}
                   >
                     {(() => {
                       const list = workspaces || [];
@@ -1241,150 +1656,270 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                     })()}
                   </Select>
                 )}
-                <Button onClick={() => load()} isLoading={loading}>
-                  Refresh
-                </Button>
-                <Button variant='outline' onClick={exportJson}>
-                  Export JSON
-                </Button>
-                <Button variant='outline' onClick={exportCsv}>
-                  Export CSV
-                </Button>
-              </HStack>
+                <Input
+                  type='datetime-local'
+                  aria-label='Audit date range start'
+                  title='From date and time'
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={event => {
+                    setAuditPage(1);
+                    setDateFrom(event.target.value);
+                  }}
+                  size='sm'
+                  maxW={{ base: '100%', md: '220px' }}
+                  h={AUDIT_CONTROL_HEIGHT}
+                  step={60}
+                  {...dateFieldStyles}
+                />
+                <Input
+                  type='datetime-local'
+                  aria-label='Audit date range end'
+                  title='To date and time'
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={event => {
+                    setAuditPage(1);
+                    setDateTo(event.target.value);
+                  }}
+                  size='sm'
+                  maxW={{ base: '100%', md: '220px' }}
+                  h={AUDIT_CONTROL_HEIGHT}
+                  step={60}
+                  {...dateFieldStyles}
+                />
+              </Flex>
+            </Box>
 
-              {error ? (
-                <Text color='red.500'>{error}</Text>
-              ) : filtered.length === 0 ? (
-                <Text color={muted}>No audit events found.</Text>
-              ) : (
-                <>
-                  <Box overflowX='auto' w='100%' minW={0}>
-                    <Table size='sm' variant='simple' w='100%' layout='fixed'>
-                      <Thead>
-                        <Tr>
-                          <Th
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.time}
-                            textAlign='left'
-                          >
-                            Time
-                          </Th>
-                          <Th
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.action}
-                            textAlign='left'
-                          >
-                            Action
-                          </Th>
-                          <Th
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.user}
-                            textAlign='left'
-                          >
-                            User
-                          </Th>
-                          <Th
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
-                            textAlign='left'
-                          >
-                            Workspace
-                          </Th>
-                          <Th
-                            w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
-                            textAlign='left'
-                          >
-                            Metadata
-                          </Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {filtered.map(ev => (
-                          <Tr key={ev.id}>
-                            <Td
+            <Box
+              bg={surface}
+              border='1px solid'
+              borderColor={border}
+              borderRadius='md'
+              boxShadow='0 16px 48px rgba(0, 0, 0, 0.2)'
+              w='100%'
+              minW={0}
+              maxW='100%'
+              overflow='hidden'
+            >
+              <Flex
+                px={{ base: 4, md: 5 }}
+                py={3}
+                borderBottom='1px solid'
+                borderColor='rgba(148, 163, 184, 0.13)'
+                align='center'
+                justify='space-between'
+                gap={3}
+              >
+                <Text color={text} fontWeight='semibold' fontSize='sm'>
+                  Audit events
+                </Text>
+              </Flex>
+              <Box p={{ base: 4, md: 5 }}>
+                <Flex
+                  align={{ base: 'stretch', md: 'center' }}
+                  justify='space-between'
+                  direction={{ base: 'column', lg: 'row' }}
+                  gap={3}
+                  mb={4}
+                >
+                  <Text color={muted} fontSize='sm' whiteSpace='nowrap'>
+                    {filtered.length} visible
+                  </Text>
+                  <Flex
+                    align={{ base: 'stretch', md: 'center' }}
+                    justify={{ base: 'space-between', md: 'end' }}
+                    direction={{ base: 'column', sm: 'row' }}
+                    gap={3}
+                    flex='1'
+                    minW={0}
+                  >
+                    <HStack spacing={2}>
+                      <Text color={muted} fontSize='sm'>
+                        Show
+                      </Text>
+                      <Select
+                        size='sm'
+                        w='84px'
+                        value={auditPageSize}
+                        onChange={event => {
+                          setAuditPageSize(Number(event.target.value));
+                          setAuditPage(1);
+                        }}
+                        {...fieldStyles}
+                      >
+                        {AUDIT_PAGE_SIZE_OPTIONS.map(size => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </Select>
+                    </HStack>
+                    <HStack spacing={3} justify={{ base: 'space-between', sm: 'end' }}>
+                      <Text color={muted} fontSize='sm' whiteSpace='nowrap'>
+                        {auditRangeLabel}
+                      </Text>
+                      <HStack spacing={1}>
+                        <IconButton
+                          aria-label='Previous audit page'
+                          icon={<FiChevronRight />}
+                          size='sm'
+                          variant='ghost'
+                          color={paginationControlColor}
+                          isDisabled={auditPage <= 1}
+                          onClick={() =>
+                            setAuditPage(page => Math.max(1, page - 1))
+                          }
+                          sx={{ svg: { transform: 'rotate(180deg)' } }}
+                          _hover={{ bg: panelHoverBg, color: text }}
+                        />
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          borderColor={paginationPageBorder}
+                          color={paginationPageColor}
+                          bg={paginationPageBg}
+                          minW='38px'
+                          borderRadius='md'
+                        >
+                          {auditPage}
+                        </Button>
+                        <IconButton
+                          aria-label='Next audit page'
+                          icon={<FiChevronRight />}
+                          size='sm'
+                          variant='ghost'
+                          color={paginationControlColor}
+                          isDisabled={!hasMore}
+                          onClick={() => setAuditPage(page => page + 1)}
+                          _hover={{ bg: panelHoverBg, color: text }}
+                        />
+                      </HStack>
+                    </HStack>
+                  </Flex>
+                </Flex>
+
+                {error ? (
+                  <Text color='red.500' p={{ base: 4, md: 6 }}>
+                    {error}
+                  </Text>
+                ) : loading && filtered.length === 0 ? (
+                  <Text color={muted} p={{ base: 4, md: 6 }}>
+                    Loading audit events...
+                  </Text>
+                ) : filtered.length === 0 ? (
+                  <Text color={muted} p={{ base: 4, md: 6 }}>
+                    No audit events found.
+                  </Text>
+                ) : (
+                  <>
+                    <Box display={{ base: 'block', lg: 'none' }} w='100%' minW={0}>
+                      <VStack spacing={3} align='stretch'>
+                        {filtered.map(ev => renderMobileAuditCard(ev))}
+                      </VStack>
+                    </Box>
+
+                    <Box
+                      overflowX='auto'
+                      w='100%'
+                      minW={0}
+                      display={{ base: 'none', lg: 'block' }}
+                    >
+                      <Table size='sm' variant='simple' w='100%' layout='fixed'>
+                        <Thead bg={tableHeaderBg}>
+                          <Tr>
+                            <Th
                               w={AUDIT_TABLE_COLUMN_WIDTHS.time}
-                              whiteSpace='nowrap'
-                              textOverflow='ellipsis'
-                              overflow='hidden'
+                              textAlign='left'
                             >
-                              {formatDateTime(ev.occurred_at)}
-                            </Td>
-                            <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action}>
-                              <Badge
-                                colorScheme={ACTION_COLORS[ev.action] || 'gray'}
-                                whiteSpace='normal'
-                                textAlign='left'
-                                maxW='100%'
-                              >
-                                {ev.action}
-                              </Badge>
-                            </Td>
-                            <Td
+                              Time
+                            </Th>
+                            <Th
+                              w={AUDIT_TABLE_COLUMN_WIDTHS.action}
+                              textAlign='left'
+                            >
+                              Action
+                            </Th>
+                            <Th
                               w={AUDIT_TABLE_COLUMN_WIDTHS.user}
-                              textOverflow='ellipsis'
-                              overflow='hidden'
-                              whiteSpace='nowrap'
+                              textAlign='left'
                             >
-                              {ev.actor_display_name || ''}
-                            </Td>
-                            <Td
+                              User
+                            </Th>
+                            <Th
                               w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
-                              textOverflow='ellipsis'
-                              overflow='hidden'
-                              whiteSpace='nowrap'
+                              textAlign='left'
                             >
-                              {ev.workspace_name || ev.workspace_id || ''}
-                            </Td>
-                            <Td
+                              Workspace
+                            </Th>
+                            <Th
                               w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
-                              wordBreak='break-word'
+                              textAlign='left'
                             >
-                              <Box display={{ base: 'none', md: 'block' }}>
+                              Metadata
+                            </Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {filtered.map(ev => (
+                            <Tr key={ev.id} _hover={{ bg: panelHoverBg }}>
+                              <Td
+                                w={AUDIT_TABLE_COLUMN_WIDTHS.time}
+                                whiteSpace='nowrap'
+                                textOverflow='ellipsis'
+                                overflow='hidden'
+                                py={3}
+                              >
+                                {formatDateTime(ev.occurred_at)}
+                              </Td>
+                              <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action} py={3}>
+                                <Badge
+                                  colorScheme={ACTION_COLORS[ev.action] || 'gray'}
+                                  variant='subtle'
+                                  borderRadius='md'
+                                  whiteSpace='normal'
+                                  textAlign='left'
+                                  maxW='100%'
+                                >
+                                  {ev.action}
+                                </Badge>
+                              </Td>
+                              <Td
+                                w={AUDIT_TABLE_COLUMN_WIDTHS.user}
+                                textOverflow='ellipsis'
+                                overflow='hidden'
+                                whiteSpace='nowrap'
+                                py={3}
+                              >
+                                {ev.actor_display_name || ''}
+                              </Td>
+                              <Td
+                                w={AUDIT_TABLE_COLUMN_WIDTHS.workspace}
+                                textOverflow='ellipsis'
+                                overflow='hidden'
+                                whiteSpace='nowrap'
+                                py={3}
+                              >
+                                {ev.workspace_name || ev.workspace_id || ''}
+                              </Td>
+                              <Td
+                                w={AUDIT_TABLE_COLUMN_WIDTHS.metadata}
+                                wordBreak='break-word'
+                                py={3}
+                              >
                                 <TruncatedText
                                   text={formatMetadata(ev)}
                                   maxLines={3}
                                 />
-                              </Box>
-                              <Box display={{ base: 'block', md: 'none' }}>
-                                <Button
-                                  size='xs'
-                                  variant='outline'
-                                  onClick={() => {
-                                    try {
-                                      const pretty =
-                                        formatMetadata(ev) ||
-                                        (ev.metadata
-                                          ? JSON.stringify(ev.metadata, null, 2)
-                                          : '');
-                                      alert(pretty || '{}');
-                                    } catch (_) {}
-                                  }}
-                                >
-                                  View
-                                </Button>
-                              </Box>
-                            </Td>
-                          </Tr>
-                        ))}
-                      </Tbody>
-                    </Table>
-                  </Box>
-                  {hasMore && (
-                    <Box
-                      mt={4}
-                      pt={3}
-                      borderTop='1px solid'
-                      borderColor={border}
-                    >
-                      <Button
-                        onClick={() => load(true)}
-                        isLoading={loadingMore}
-                        variant='ghost'
-                        size='sm'
-                        colorScheme='blue'
-                      >
-                        Load More
-                      </Button>
+                              </Td>
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
                     </Box>
-                  )}
-                </>
-              )}
+                  </>
+                )}
+              </Box>
             </Box>
           </Box>
         </DashboardShell>
