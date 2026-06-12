@@ -26,6 +26,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
   const [stats, setStats] = useState({ byChannel: [], monthUsage: 0 });
   const [orgStats, setOrgStats] = useState({ monthUsage: 0 });
   const [orgWorkspaceCount, setOrgWorkspaceCount] = useState(0);
+  const [orgTokenCount, setOrgTokenCount] = useState(0);
   const [workspaceMemberCount, setWorkspaceMemberCount] = useState(0);
   const [workspaces, setWorkspaces] = useState([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(
@@ -117,6 +118,13 @@ export function useControlCenterData(initialWorkspaceId = '') {
                 params: { workspace_id: effectiveWorkspaceId },
               })
             : apiClient.get(API_ENDPOINTS.ACCOUNT_PLAN);
+          // Selected plan data is workspace-scoped; this aggregate value backs
+          // the "Across workspaces" organization card.
+          const orgPlanPromise = adminAny
+            ? apiClient
+                .get(API_ENDPOINTS.ACCOUNT_PLAN)
+                .catch(() => ({ data: { tokenCount: 0 } }))
+            : Promise.resolve({ data: { tokenCount: 0 } });
           const tokensPromise = effectiveWorkspaceId
             ? tokenAPI.getTokens({ workspace_id: effectiveWorkspaceId })
             : tokenAPI.getTokens();
@@ -131,21 +139,30 @@ export function useControlCenterData(initialWorkspaceId = '') {
                 .catch(() => ({ data: { monthUsage: 0 } }))
             : Promise.resolve({ data: { monthUsage: 0 } });
 
-          const [queueRes, statsRes, planRes, tokensRes, membersRes, orgRes] =
-            await Promise.all([
-              queuePromise,
-              statsPromise,
-              planPromise,
-              tokensPromise,
-              membersPromise,
-              orgUsagePromise,
-            ]);
+          const [
+            queueRes,
+            statsRes,
+            planRes,
+            orgPlanRes,
+            tokensRes,
+            membersRes,
+            orgRes,
+          ] = await Promise.all([
+            queuePromise,
+            statsPromise,
+            planPromise,
+            orgPlanPromise,
+            tokensPromise,
+            membersPromise,
+            orgUsagePromise,
+          ]);
 
           if (generation !== loadGenerationRef.current) return;
 
           const queueData = queueRes?.data || {};
           const statsData = statsRes?.data || {};
           const planData = planRes?.data || {};
+          const orgPlanData = orgPlanRes?.data || {};
           setQueue(queueData.alerts || []);
 
           const byChannel = Array.isArray(statsData.byChannel)
@@ -204,6 +221,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
           });
 
           setOrgStats({ monthUsage: orgRes?.data?.monthUsage || 0 });
+          setOrgTokenCount(orgPlanData.tokenCount || 0);
 
           const workspaceTokens = tokensRes?.items || [];
           setWorkspaceTokenCount(workspaceTokens.length);
@@ -218,6 +236,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
             const planRes = await apiClient.get(API_ENDPOINTS.ACCOUNT_PLAN);
             const planData = planRes?.data || {};
             setPlanInfo(planData);
+            setOrgTokenCount(planData.tokenCount || 0);
           } catch (planError) {
             logger.warn('Failed to load plan info for viewer:', planError);
             setPlanInfo({
@@ -226,12 +245,14 @@ export function useControlCenterData(initialWorkspaceId = '') {
               tokenCount: 0,
               tokenLimit: 50,
             });
+            setOrgTokenCount(0);
           }
           setQueue([]);
           setStats({ byChannel: [], monthUsage: 0 });
           setWorkspaceTokenCount(0);
           setWorkspaceMemberCount(0);
           setOrgStats({ monthUsage: 0 });
+          setOrgTokenCount(0);
         }
       } catch (err) {
         if (generation !== loadGenerationRef.current) return;
@@ -351,6 +372,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
     stats,
     orgStats,
     orgWorkspaceCount,
+    orgTokenCount,
     workspaceMemberCount,
     workspaces,
     selectedWorkspaceId,

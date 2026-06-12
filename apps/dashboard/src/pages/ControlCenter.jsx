@@ -200,6 +200,7 @@ function MetricCard({ icon: Icon, label, value, detail, accent }) {
 
 function ControlStatCard({ label, value, help, color }) {
   const { text, muted } = useDashboardTheme();
+  const valueColor = color || text;
 
   return (
     <SharedDashboardPanel p={4} minH='108px'>
@@ -207,7 +208,12 @@ function ControlStatCard({ label, value, help, color }) {
         <Text color={muted} fontSize='sm' lineHeight='1.25'>
           {label}
         </Text>
-        <Text color={color || text} fontSize='2xl' fontWeight='bold'>
+        <Text
+          color={valueColor}
+          style={{ color: valueColor }}
+          fontSize='2xl'
+          fontWeight='bold'
+        >
           {value}
         </Text>
         {help ? (
@@ -461,6 +467,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     'gray.800',
     'rgba(226, 232, 240, 0.94)'
   );
+  const successValueColor = useColorModeValue('#15803d', '#22c55e');
+  const cautionValueColor = useColorModeValue('#c2410c', '#fb923c');
+  const pendingValueColor = useColorModeValue('#b45309', '#facc15');
+  const blockedValueColor = useColorModeValue('#b91c1c', '#f87171');
   const healthChartInnerBg = surface;
 
   const assetStats = useControlCenterStats();
@@ -519,10 +529,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     : 0;
   const usageColor =
     usageRatio >= 0.9
-      ? 'red.500'
+      ? blockedValueColor
       : usageRatio >= 0.75
-        ? 'orange.500'
-        : 'green.500';
+        ? cautionValueColor
+        : successValueColor;
 
   const assetSectionStatus = assetStats.isUnauthorized
     ? 'unauthorized'
@@ -832,7 +842,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                       />
                       <ControlStatCard
                         label='Tokens'
-                        value={alertData.planInfo.tokenCount || 0}
+                        value={alertData.orgTokenCount || 0}
                         help='Across workspaces'
                       />
                       <ControlStatCard
@@ -899,13 +909,13 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                       label='Pending'
                       value={alertData.queueSummary.pending || 0}
                       help='Awaiting delivery'
-                      color='yellow.500'
+                      color={pendingValueColor}
                     />
                     <ControlStatCard
                       label='Blocked'
                       value={alertData.queueSummary.blocked || 0}
                       help='Delivery blocked'
-                      color='red.500'
+                      color={blockedValueColor}
                     />
                   </SimpleGrid>
                 ) : null}

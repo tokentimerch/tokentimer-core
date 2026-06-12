@@ -21,6 +21,7 @@ import {
   StatNumber,
   StatHelpText,
   Select,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import apiClient, {
   API_ENDPOINTS,
@@ -394,16 +395,21 @@ export default function Usage({ session, onLogout, onAccountClick }) {
     return acc;
   }, {});
 
+  const successValueColor = useColorModeValue('#15803d', '#22c55e');
+  const cautionValueColor = useColorModeValue('#c2410c', '#fb923c');
+  const pendingValueColor = useColorModeValue('#b45309', '#facc15');
+  const blockedValueColor = useColorModeValue('#b91c1c', '#f87171');
+
   // Delivery usage thresholds: >=90% red, >=75% orange, else green
   const usageRatio = planInfo.alertLimitMonth
     ? Math.min(1, (stats.monthUsage || 0) / planInfo.alertLimitMonth)
     : 0;
   const usageColor =
     usageRatio >= 0.9
-      ? 'red.500'
+      ? blockedValueColor
       : usageRatio >= 0.75
-        ? 'orange.500'
-        : 'green.500';
+        ? cautionValueColor
+        : successValueColor;
 
   // Workspaces where user has privileged role
   const eligibleWorkspaces = workspaces.filter(
@@ -584,7 +590,7 @@ export default function Usage({ session, onLogout, onAccountClick }) {
                   borderColor={borderColor}
                 >
                   <StatLabel>Successful deliveries</StatLabel>
-                  <StatNumber color={usageColor}>
+                  <StatNumber color={usageColor} style={{ color: usageColor }}>
                     {typeof stats.allMonthSuccesses === 'number' &&
                     stats.allMonthSuccesses >= 0
                       ? stats.allMonthSuccesses
@@ -649,7 +655,10 @@ export default function Usage({ session, onLogout, onAccountClick }) {
                 borderColor={borderColor}
               >
                 <StatLabel>Pending</StatLabel>
-                <StatNumber color='yellow.500'>
+                <StatNumber
+                  color={pendingValueColor}
+                  style={{ color: pendingValueColor }}
+                >
                   {queueSummary.pending || 0}
                 </StatNumber>
                 <StatHelpText>Awaiting delivery</StatHelpText>
@@ -662,7 +671,10 @@ export default function Usage({ session, onLogout, onAccountClick }) {
                 borderColor={borderColor}
               >
                 <StatLabel>Blocked</StatLabel>
-                <StatNumber color='red.500'>
+                <StatNumber
+                  color={blockedValueColor}
+                  style={{ color: blockedValueColor }}
+                >
                   {queueSummary.blocked || 0}
                 </StatNumber>
                 <StatHelpText>Delivery blocked</StatHelpText>
