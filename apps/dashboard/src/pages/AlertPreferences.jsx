@@ -47,6 +47,12 @@ import {
 import apiClient, { alertAPI, workspaceAPI } from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
 import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardPanelHeader,
+} from '../components/DashboardPrimitives';
+import { useDashboardModalProps } from '../components/DashboardModalFrame.jsx';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { trackEvent } from '../utils/analytics.js';
@@ -87,8 +93,8 @@ export default function AlertPreferences({
   showProductTour,
   onLogout,
   onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
+  onNavigateToDashboard: _onNavigateToDashboard,
+  onNavigateToLanding: _onNavigateToLanding,
 }) {
   const location = useLocation();
   const { workspaceId } = useWorkspace();
@@ -227,7 +233,24 @@ export default function AlertPreferences({
   const [_workspaceRole, setWorkspaceRole] = useState('');
 
   const theme = useDashboardTheme();
-  const { surface, border, muted, inputBg, dashboard } = theme;
+  const { border, muted, dashboard } = theme;
+  const {
+    overlayProps,
+    contentProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
+  const modalOutlineButtonProps = {
+    variant: 'outline',
+    borderColor: 'rgba(148, 163, 184, 0.34)',
+    color: modalTokens.subtleText,
+    _hover: {
+      bg: modalTokens.fieldBg,
+      borderColor: modalTokens.focusBorder,
+    },
+  };
   const isMobile = useBreakpointValue({ base: true, md: false });
   const discordColor = '#5865F2';
   const pagerdutyColor = '#06AC38';
@@ -1016,18 +1039,11 @@ export default function AlertPreferences({
           )}
 
           <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={6} w='full'>
-            <Box
-              data-tour='preferences-thresholds'
-              bg={surface}
-              p={6}
-              borderRadius='md'
-              boxShadow='sm'
-              border='1px solid'
-              borderColor={border}
-            >
-              <Heading size='md' mb={4}>
-                Default Workspace Thresholds
-              </Heading>
+            <DashboardPanel data-tour='preferences-thresholds'>
+              <DashboardPanelHeader
+                title='Default workspace thresholds'
+                description='Control when alert notifications are created for assets in this workspace.'
+              />
               {/* Plan gating removed: thresholds editable for all plans */}
               <FormControl
                 isInvalid={!!thresholdError}
@@ -1049,42 +1065,31 @@ export default function AlertPreferences({
                 </Text>
               </FormControl>
               <HStack mt={4} spacing={3}>
-                <Button
+                <DashboardActionButton
                   onClick={handleResetDefaults}
                   variant='outline'
                   disabled={loading || isViewer}
                 >
                   Reset to defaults
-                </Button>
-                <Button
+                </DashboardActionButton>
+                <DashboardActionButton
                   colorScheme='blue'
                   onClick={handleSave}
                   isLoading={saving}
                   disabled={loading || !workspaceId || isViewer}
                 >
                   Save
-                </Button>
+                </DashboardActionButton>
               </HStack>
-            </Box>
+            </DashboardPanel>
 
             {/* Workspace Delivery Window */}
-            <Box
-              data-tour='preferences-delivery-window'
-              bg={surface}
-              p={6}
-              borderRadius='md'
-              boxShadow='sm'
-              border='1px solid'
-              borderColor={border}
-            >
-              <Heading size='md' mb={4}>
-                Workspace Delivery Window
-              </Heading>
-              <Text fontSize='sm' color={muted} mb={2}>
-                Applies to all alert channels. Alerts are sent only during this
-                window; outside the window they are deferred.
-              </Text>
-              <HStack>
+            <DashboardPanel data-tour='preferences-delivery-window'>
+              <DashboardPanelHeader
+                title='Workspace delivery window'
+                description='Applies to all alert channels. Alerts outside this window are deferred.'
+              />
+              <Stack direction={{ base: 'column', lg: 'row' }} spacing={3}>
                 <FormControl
                   isDisabled={isViewer}
                   isInvalid={
@@ -1292,9 +1297,9 @@ export default function AlertPreferences({
                     </optgroup>
                   </Select>
                 </FormControl>
-              </HStack>
+              </Stack>
               <HStack mt={3}>
-                <Button
+                <DashboardActionButton
                   colorScheme='blue'
                   onClick={async () => {
                     try {
@@ -1318,26 +1323,19 @@ export default function AlertPreferences({
                   disabled={isViewer || !workspaceId}
                 >
                   Save
-                </Button>
+                </DashboardActionButton>
               </HStack>
-            </Box>
+            </DashboardPanel>
           </SimpleGrid>
 
           {/* Email Panel replaced by Contact Groups */}
 
           {/* Contacts (& WhatsApp if configured) */}
-          <Box
-            data-tour='preferences-contacts'
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4}>
-              Contacts
-            </Heading>
+          <DashboardPanel data-tour='preferences-contacts'>
+            <DashboardPanelHeader
+              title='Contacts'
+              description='Manage people and contact details that can receive workspace alerts.'
+            />
             <VStack align='stretch' spacing={4}>
               {isViewer && (
                 <Alert status='info' borderRadius='md'>
@@ -2226,22 +2224,14 @@ export default function AlertPreferences({
                 </>
               )}
             </VStack>
-          </Box>
+          </DashboardPanel>
 
           {/* Webhooks Panel */}
-          <Box
-            data-tour='preferences-webhooks'
-            bg={surface}
-            p={6}
-            px={{ base: 8, md: 10 }}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4}>
-              Webhooks
-            </Heading>
+          <DashboardPanel data-tour='preferences-webhooks'>
+            <DashboardPanelHeader
+              title='Webhooks'
+              description='Configure outgoing webhook targets for workspace alerts.'
+            />
             {isViewer && (
               <Alert status='info' mb={3} borderRadius='md'>
                 <AlertIcon />
@@ -2301,7 +2291,7 @@ export default function AlertPreferences({
                   <Box
                     key={index}
                     p={3}
-                    bg={surface}
+                    bg={dashboard.bg.panelHover}
                     borderRadius='md'
                     border='1px solid'
                     borderColor={border}
@@ -2501,7 +2491,7 @@ export default function AlertPreferences({
                     </VStack>
                   </Box>
                 ))}
-                <Button
+                <DashboardActionButton
                   size='sm'
                   variant='outline'
                   onClick={addWebhook}
@@ -2509,30 +2499,17 @@ export default function AlertPreferences({
                   data-tour='preferences-webhooks-add'
                 >
                   Add Webhook
-                </Button>
+                </DashboardActionButton>
               </VStack>
             </FormControl>
-          </Box>
+          </DashboardPanel>
 
           {/* Contact Groups (per workspace) */}
-          <Box
-            data-tour='preferences-contact-groups'
-            bg={surface}
-            p={6}
-            px={{ base: 8, md: 10 }}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <VStack align='stretch' spacing={2} mb={4}>
-              <Heading size='md'>Contact Groups</Heading>
-              <Text fontSize='sm' color={muted}>
-                Create groups to organize who receives alerts. Each person can
-                receive via email{whatsappAvailable ? ', WhatsApp,' : ''} or
-                webhooks.
-              </Text>
-            </VStack>
+          <DashboardPanel data-tour='preferences-contact-groups'>
+            <DashboardPanelHeader
+              title='Contact groups'
+              description={`Create groups to organize who receives alerts. Each person can receive via email${whatsappAvailable ? ', WhatsApp,' : ''} or webhooks.`}
+            />
             {isViewer && (
               <Alert status='info' mb={4} borderRadius='md'>
                 <AlertIcon />
@@ -3055,7 +3032,7 @@ export default function AlertPreferences({
                 </Box>
               )}
             </VStack>
-          </Box>
+          </DashboardPanel>
 
           {/* Save */}
           {/* Global Save removed; saves are per section */}
@@ -3067,20 +3044,42 @@ export default function AlertPreferences({
         leastDestructiveRef={cancelRef}
         onClose={() => setDeleteDialogOpen(false)}
       >
-        <AlertDialogOverlay />
-        <AlertDialogContent>
-          <AlertDialogHeader>Delete this contact group?</AlertDialogHeader>
-          <AlertDialogBody>
-            Deleting this contact group will reassign any tokens using it to the
-            current default group. This action cannot be undone.
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Delete this contact group?
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Reassign tokens and remove this group permanently.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogBody {...bodyProps}>
+            <Text color={modalTokens.subtleText}>
+              Deleting this contact group will reassign any tokens using it to
+              the current default group. This action cannot be undone.
+            </Text>
           </AlertDialogBody>
-          <AlertDialogFooter>
+          <AlertDialogFooter {...footerProps}>
             <Button
               ref={cancelRef}
               onClick={() => {
                 setDeleteDialogOpen(false);
                 setDeleteTargetId('');
               }}
+              {...modalOutlineButtonProps}
             >
               Cancel
             </Button>
@@ -3111,19 +3110,41 @@ export default function AlertPreferences({
         leastDestructiveRef={cancelRef}
         onClose={() => setDisableAllDialogOpen(false)}
       >
-        <AlertDialogOverlay />
-        <AlertDialogContent>
-          <AlertDialogHeader>Disable all alerts?</AlertDialogHeader>
-          <AlertDialogBody>
-            If you disable this channel, you won&apos;t receive any alert.
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Disable all alerts?
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Confirm this alert channel change.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogBody {...bodyProps}>
+            <Text color={modalTokens.subtleText}>
+              If you disable this channel, you won&apos;t receive any alert.
+            </Text>
           </AlertDialogBody>
-          <AlertDialogFooter>
+          <AlertDialogFooter {...footerProps}>
             <Button
               ref={cancelRef}
               onClick={() => {
                 setDisableAllDialogOpen(false);
                 setDisableAllTarget('');
               }}
+              {...modalOutlineButtonProps}
             >
               Cancel
             </Button>
@@ -3154,15 +3175,36 @@ export default function AlertPreferences({
         leastDestructiveRef={cancelRef}
         onClose={() => setDefaultReassignedOpen(false)}
       >
-        <AlertDialogOverlay />
-        <AlertDialogContent>
-          <AlertDialogHeader>Default group updated</AlertDialogHeader>
-          <AlertDialogBody>
-            {defaultReassignedName
-              ? `The deleted default group was replaced by "${defaultReassignedName}" as the workspace default.`
-              : 'The deleted default group was removed.'}
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Default group updated
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Workspace contact group defaults changed.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogBody {...bodyProps}>
+            <Text color={modalTokens.subtleText}>
+              {defaultReassignedName
+                ? `The deleted default group was replaced by "${defaultReassignedName}" as the workspace default.`
+                : 'The deleted default group was removed.'}
+            </Text>
           </AlertDialogBody>
-          <AlertDialogFooter>
+          <AlertDialogFooter {...footerProps}>
             <Button
               onClick={() => setDefaultReassignedOpen(false)}
               colorScheme='blue'

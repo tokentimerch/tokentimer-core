@@ -3,7 +3,6 @@ import { logger } from '../utils/logger.js';
 import {
   Box,
   Button,
-  Heading,
   Text,
   VStack,
   HStack,
@@ -14,7 +13,6 @@ import {
   AlertDescription,
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalFooter,
   ModalBody,
@@ -32,6 +30,15 @@ import {
 } from '@chakra-ui/react';
 import SEO from '../components/SEO.jsx';
 import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardPanelHeader,
+} from '../components/DashboardPrimitives';
+import {
+  DashboardModalFrame,
+  useDashboardModalProps,
+} from '../components/DashboardModalFrame.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import apiClient, { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
@@ -64,10 +71,42 @@ function resolveLoginMethodDisplay(session) {
   return { label: method, colorScheme: 'gray' };
 }
 
+function AccountInfoRow({ label, children, muted, text }) {
+  return (
+    <Flex
+      direction={{ base: 'column', sm: 'row' }}
+      align={{ base: 'stretch', sm: 'center' }}
+      gap={{ base: 1, sm: 0 }}
+    >
+      <Text color={muted} fontSize='sm' fontWeight='medium' minW='fit-content'>
+        {label}:
+      </Text>
+      <Spacer display={{ base: 'none', sm: 'block' }} />
+      <Box
+        color={text}
+        fontSize='sm'
+        fontWeight='normal'
+        minW={0}
+        wordBreak='break-word'
+      >
+        {children}
+      </Box>
+    </Flex>
+  );
+}
+
 function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
   const loginMethodDisplay = resolveLoginMethodDisplay(session);
   const { selectWorkspace: _selectWorkspace } = useWorkspace();
-  const { surface, border, muted } = useDashboardTheme();
+  const { border, text, muted, dashboard } = useDashboardTheme();
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
   const [canSeeManagerNav, setCanSeeManagerNav] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -85,9 +124,14 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
   const [disablePwd, setDisablePwd] = useState('');
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  const dangerBgColor = useColorModeValue('red.50', 'red.900');
   const dangerBorderColor = useColorModeValue('red.200', 'red.700');
   const dangerTextColor = useColorModeValue('red.600', 'red.300');
+  const formLabelProps = {
+    color: muted,
+    fontSize: 'sm',
+    fontWeight: 'medium',
+    mb: 2,
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -233,17 +277,11 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
       <DashboardPageLayout {...layoutProps}>
         <VStack spacing={6} align='stretch'>
           {/* Account Information */}
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4}>
-              Account Information
-            </Heading>
+          <DashboardPanel p={{ base: 4, md: 5 }}>
+            <DashboardPanelHeader
+              title='Account information'
+              description='Profile identity and authentication details for this session.'
+            />
             <VStack align='stretch' spacing={3}>
               {info && (
                 <Alert status='success'>
@@ -252,74 +290,34 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                 </Alert>
               )}
 
-              <Flex
-                direction={{ base: 'column', sm: 'row' }}
-                align={{ base: 'stretch', sm: 'center' }}
-                gap={{ base: 1, sm: 0 }}
-              >
-                <Text fontWeight='semibold' minW='fit-content'>
-                  Name:
-                </Text>
-                <Spacer display={{ base: 'none', sm: 'block' }} />
-                <Text wordBreak='break-word'>{session.displayName}</Text>
-              </Flex>
-              <Flex
-                direction={{ base: 'column', sm: 'row' }}
-                align={{ base: 'stretch', sm: 'center' }}
-                gap={{ base: 1, sm: 0 }}
-              >
-                <Text fontWeight='semibold' minW='fit-content'>
-                  Email:
-                </Text>
-                <Spacer display={{ base: 'none', sm: 'block' }} />
-                <Text wordBreak='break-word'>{session.email}</Text>
-              </Flex>
-              <Flex
-                direction={{ base: 'column', sm: 'row' }}
-                align={{ base: 'stretch', sm: 'center' }}
-                gap={{ base: 1, sm: 0 }}
-              >
-                <Text fontWeight='semibold' minW='fit-content'>
-                  Login Method:
-                </Text>
-                <Spacer display={{ base: 'none', sm: 'block' }} />
+              <AccountInfoRow label='Name' muted={muted} text={text}>
+                {session.displayName}
+              </AccountInfoRow>
+              <AccountInfoRow label='Email' muted={muted} text={text}>
+                {session.email}
+              </AccountInfoRow>
+              <AccountInfoRow label='Login Method' muted={muted} text={text}>
                 <Badge
                   colorScheme={loginMethodDisplay.colorScheme}
                   maxW='fit-content'
                 >
                   {loginMethodDisplay.label}
                 </Badge>
-              </Flex>
-              <Flex
-                direction={{ base: 'column', sm: 'row' }}
-                align={{ base: 'stretch', sm: 'center' }}
-                gap={{ base: 1, sm: 0 }}
-              >
-                <Text fontWeight='semibold' minW='fit-content'>
-                  Account Created:
-                </Text>
-                <Spacer display={{ base: 'none', sm: 'block' }} />
-                <Text wordBreak='break-word'>
-                  {new Date(
-                    session.created_at || Date.now()
-                  ).toLocaleDateString()}
-                </Text>
-              </Flex>
+              </AccountInfoRow>
+              <AccountInfoRow label='Account Created' muted={muted} text={text}>
+                {new Date(
+                  session.created_at || Date.now()
+                ).toLocaleDateString()}
+              </AccountInfoRow>
             </VStack>
-          </Box>
+          </DashboardPanel>
 
           {/* Security */}
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4}>
-              Security
-            </Heading>
+          <DashboardPanel p={{ base: 4, md: 5 }}>
+            <DashboardPanelHeader
+              title='Security'
+              description='Manage password and two-factor authentication for your account.'
+            />
             <VStack align='stretch' spacing={4}>
               {pwdMessage && (
                 <Alert status='success'>
@@ -333,7 +331,9 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                   <AlertDescription>{pwdError}</AlertDescription>
                 </Alert>
               )}
-              <Heading size='sm'>Change Password</Heading>
+              <Text fontSize='sm' fontWeight='medium' color={text}>
+                Change password
+              </Text>
               <form
                 onSubmit={async e => {
                   e.preventDefault();
@@ -367,7 +367,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
               >
                 <VStack align='stretch' spacing={4}>
                   <FormControl>
-                    <FormLabel>Current Password</FormLabel>
+                    <FormLabel {...formLabelProps}>Current Password</FormLabel>
                     <Input
                       type='password'
                       autoComplete='current-password'
@@ -377,7 +377,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel>New Password</FormLabel>
+                    <FormLabel {...formLabelProps}>New Password</FormLabel>
                     <Input
                       type='password'
                       autoComplete='new-password'
@@ -387,7 +387,9 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel>Confirm New Password</FormLabel>
+                    <FormLabel {...formLabelProps}>
+                      Confirm New Password
+                    </FormLabel>
                     <Input
                       type='password'
                       autoComplete='new-password'
@@ -397,13 +399,13 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                     />
                   </FormControl>
                   <HStack>
-                    <Button
+                    <DashboardActionButton
                       type='submit'
                       colorScheme='blue'
                       isLoading={isPwdSaving}
                     >
                       Update Password
-                    </Button>
+                    </DashboardActionButton>
                   </HStack>
                 </VStack>
               </form>
@@ -412,7 +414,9 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
 
               {String(session?.authMethod || '').toLowerCase() !== 'google' && (
                 <>
-                  <Heading size='sm'>Two-Factor Authentication (2FA)</Heading>
+                  <Text fontSize='sm' fontWeight='medium' color={text}>
+                    Two-factor authentication (2FA)
+                  </Text>
                   <Text fontSize='sm' color={muted}>
                     Protect your account with a one-time code from an
                     authenticator app.
@@ -428,7 +432,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                         <>
                           {/* Disable with password input styled like others */}
                           <FormControl>
-                            <FormLabel>
+                            <FormLabel {...formLabelProps}>
                               Confirm Password to Disable 2FA
                             </FormLabel>
                             <Input
@@ -528,7 +532,9 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                             )}
                           </Box>
                           <FormControl>
-                            <FormLabel>Authenticator Code</FormLabel>
+                            <FormLabel {...formLabelProps}>
+                              Authenticator Code
+                            </FormLabel>
                             <Input
                               type='text'
                               inputMode='numeric'
@@ -569,25 +575,21 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                 </>
               )}
             </VStack>
-          </Box>
+          </DashboardPanel>
 
           {/* Data Management */}
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4}>
-              Data Management
-            </Heading>
+          <DashboardPanel p={{ base: 4, md: 5 }}>
+            <DashboardPanelHeader
+              title='Data management'
+              description='Export account data or review permanent account actions.'
+            />
             <VStack align='stretch' spacing={4}>
               <Alert status='info' borderRadius='md'>
                 <AlertIcon />
                 <Box>
-                  <AlertTitle>Data actions</AlertTitle>
+                  <AlertTitle fontSize='sm' fontWeight='semibold'>
+                    Data actions
+                  </AlertTitle>
                   <AlertDescription>
                     Export your data or permanently delete your account from
                     this page.
@@ -595,14 +597,14 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                 </Box>
               </Alert>
 
-              <Button
+              <DashboardActionButton
                 onClick={handleExportData}
                 colorScheme='blue'
                 variant='outline'
-                size='lg'
+                alignSelf='flex-start'
               >
-                📥 Export My Data
-              </Button>
+                Export my data
+              </DashboardActionButton>
               <Text fontSize='sm' color={muted}>
                 Exports a JSON with your profile and settings, your personal
                 tokens, and (when applicable) workspace settings and tokens
@@ -610,18 +612,18 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
               </Text>
               <VStack align='stretch' spacing={1} pl={2}>
                 <Text fontSize='xs' color={muted}>
-                  • Includes: Profile, user settings (webhooks hashed, phone,
+                  Includes: Profile, user settings (webhooks hashed, phone,
                   WhatsApp opt-in), personal tokens, and for admin/manager: all
                   admin/managed workspaces (settings, contact groups with
                   phones, delivery window, WhatsApp opt-in evidence, tokens).
                 </Text>
                 <Text fontSize='xs' color={muted}>
-                  • Viewers: only personal workspace. For audit history, use the
+                  Viewers: only personal workspace. For audit history, use the
                   Audit export page.
                 </Text>
               </VStack>
             </VStack>
-          </Box>
+          </DashboardPanel>
 
           {canSeeManagerNav && (
             <Text fontSize='sm' color={muted}>
@@ -641,20 +643,20 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
           <Divider />
 
           {/* Danger Zone */}
-          <Box
-            bg={dangerBgColor}
-            p={6}
-            borderRadius='md'
-            border='1px solid'
+          <DashboardPanel
+            bg={dashboard.bg.panelHover}
             borderColor={dangerBorderColor}
           >
-            <Heading size='md' mb={4} color={dangerTextColor}>
-              Danger Zone
-            </Heading>
+            <DashboardPanelHeader
+              title='Danger zone'
+              description='Destructive account actions that cannot be undone.'
+            />
             <Alert status='warning' mb={4}>
               <AlertIcon />
               <Box>
-                <AlertTitle>Account Deletion</AlertTitle>
+                <AlertTitle fontSize='sm' fontWeight='semibold'>
+                  Account Deletion
+                </AlertTitle>
                 <AlertDescription>
                   This will permanently delete your account and remove
                   associated data you own in this deployment. This action cannot
@@ -670,36 +672,54 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
               </Alert>
             )}
 
-            <Button colorScheme='red' onClick={onOpen} size='lg' width='100%'>
-              🗑️ Delete My Account
+            <Button colorScheme='red' onClick={onOpen} width='100%'>
+              Delete my account
             </Button>
-          </Box>
+          </DashboardPanel>
         </VStack>
 
         {/* Confirmation Modal */}
         <Modal isOpen={isOpen} onClose={onClose} isCentered>
-          <ModalOverlay />
-          <ModalContent bg={surface} border='1px solid' borderColor={border}>
-            <ModalHeader color={dangerTextColor}>⚠️ Delete Account</ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
+          <ModalOverlay {...overlayProps} />
+          <DashboardModalFrame maxW='560px'>
+            <ModalHeader {...headerProps}>
+              <Text
+                fontSize={{ base: 'md', md: 'lg' }}
+                fontWeight='bold'
+                color={dangerTextColor}
+              >
+                Delete account
+              </Text>
+              <Text
+                fontSize='sm'
+                color={modalTokens.muted}
+                mt={1.5}
+                fontWeight='medium'
+              >
+                Confirm this permanent account action.
+              </Text>
+            </ModalHeader>
+            <ModalCloseButton {...closeButtonProps} />
+            <ModalBody {...bodyProps}>
               <VStack spacing={4} align='stretch'>
                 <Alert status='error'>
                   <AlertIcon />
                   <Box>
-                    <AlertTitle>This action is irreversible!</AlertTitle>
+                    <AlertTitle fontSize='sm' fontWeight='semibold'>
+                      This action is irreversible!
+                    </AlertTitle>
                     <AlertDescription>
                       All your tokens, account data, and settings will be
                       permanently deleted.
                     </AlertDescription>
                   </Box>
                 </Alert>
-                <Text fontSize='sm' color='gray.600'>
+                <Text fontSize='sm' color={muted}>
                   Deleting your account removes your personal workspace data and
                   memberships. Other workspace data remains according to
                   ownership and role rules.
                 </Text>
-                <Text>
+                <Text fontSize='sm' color={modalTokens.text}>
                   Are you sure you want to delete your account{' '}
                   <strong>{session.displayName}</strong>?
                 </Text>
@@ -708,20 +728,38 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                 </Text>
               </VStack>
             </ModalBody>
-            <ModalFooter>
-              <Button variant='ghost' mr={3} onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                colorScheme='red'
-                onClick={handleDeleteAccount}
-                isLoading={isDeleting}
-                loadingText='Deleting...'
+            <ModalFooter {...footerProps}>
+              <Flex
+                w='100%'
+                gap={3}
+                justify={{ base: 'stretch', sm: 'flex-end' }}
+                direction={{ base: 'column-reverse', sm: 'row' }}
               >
-                Yes, Delete My Account
-              </Button>
+                <Button
+                  variant='outline'
+                  onClick={onClose}
+                  borderColor='rgba(148, 163, 184, 0.34)'
+                  color={modalTokens.subtleText}
+                  minW={{ base: '100%', sm: '104px' }}
+                  _hover={{
+                    bg: modalTokens.fieldBg,
+                    borderColor: modalTokens.focusBorder,
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  colorScheme='red'
+                  onClick={handleDeleteAccount}
+                  isLoading={isDeleting}
+                  loadingText='Deleting...'
+                  minW={{ base: '100%', sm: '180px' }}
+                >
+                  Yes, delete my account
+                </Button>
+              </Flex>
             </ModalFooter>
-          </ModalContent>
+          </DashboardModalFrame>
         </Modal>
       </DashboardPageLayout>
     </>

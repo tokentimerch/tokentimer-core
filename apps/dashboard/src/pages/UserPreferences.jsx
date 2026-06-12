@@ -4,7 +4,6 @@ import {
   Box,
   FormControl,
   FormLabel,
-  Heading,
   HStack,
   Link,
   Switch,
@@ -13,6 +12,10 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardPanel,
+  DashboardPanelHeader,
+} from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { useLocalPreference } from '../hooks/useLocalPreference';
@@ -30,10 +33,16 @@ function PreferenceToggle({
     <FormControl display='flex' alignItems='center'>
       <HStack justify='space-between' w='full'>
         <Box pr={4}>
-          <FormLabel mb={0} color={text}>
+          <FormLabel
+            mb={0}
+            color={text}
+            fontSize='sm'
+            fontWeight='medium'
+            lineHeight='short'
+          >
             {label}
           </FormLabel>
-          <Text fontSize='sm' color={muted}>
+          <Text fontSize='sm' color={muted} lineHeight='1.45'>
             {description}
           </Text>
         </Box>
@@ -62,7 +71,7 @@ export default function UserPreferences({
   isViewer = false,
 }) {
   const { colorMode, toggleColorMode } = useColorMode();
-  const { surface, border, text, muted } = useDashboardTheme();
+  const { text, muted } = useDashboardTheme();
   const [viewerOnly, setViewerOnly] = useState(isViewer);
 
   const [reducedMotion, setReducedMotion] = useLocalPreference(
@@ -126,24 +135,24 @@ export default function UserPreferences({
         contentProps={{ 'data-tour': 'user-preferences-page' }}
       >
         <VStack spacing={6} align='stretch'>
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4} color={text}>
-              Appearance
-            </Heading>
+          <DashboardPanel p={{ base: 4, md: 5 }}>
+            <DashboardPanelHeader
+              title='Appearance'
+              description='Control the visual theme used across the app.'
+            />
             <FormControl display='flex' alignItems='center'>
               <HStack justify='space-between' w='full'>
                 <Box>
-                  <FormLabel mb={0} color={text}>
+                  <FormLabel
+                    mb={0}
+                    color={text}
+                    fontSize='sm'
+                    fontWeight='medium'
+                    lineHeight='short'
+                  >
                     Color mode
                   </FormLabel>
-                  <Text fontSize='sm' color={muted}>
+                  <Text fontSize='sm' color={muted} lineHeight='1.45'>
                     {isDarkMode ? 'Dark mode' : 'Light mode'}
                   </Text>
                 </Box>
@@ -154,22 +163,13 @@ export default function UserPreferences({
                 />
               </HStack>
             </FormControl>
-          </Box>
+          </DashboardPanel>
 
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4} color={text}>
-              Display
-            </Heading>
-            <Text fontSize='sm' color={muted} mb={4}>
-              These preferences are stored on this device only.
-            </Text>
+          <DashboardPanel p={{ base: 4, md: 5 }}>
+            <DashboardPanelHeader
+              title='Display'
+              description='These preferences are stored on this device only.'
+            />
             <VStack spacing={5} align='stretch'>
               <PreferenceToggle
                 label='Reduced motion'
@@ -196,20 +196,14 @@ export default function UserPreferences({
                 muted={muted}
               />
             </VStack>
-          </Box>
+          </DashboardPanel>
 
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <Heading size='md' mb={4} color={text}>
-              Account
-            </Heading>
-            <Text color={text}>
+          <DashboardPanel p={{ base: 4, md: 5 }}>
+            <DashboardPanelHeader
+              title='Account'
+              description='Manage profile, password, security, and exports from your account page.'
+            />
+            <Text color={muted} fontSize='sm' lineHeight='1.6'>
               Manage your profile, password, and security on the{' '}
               <Link
                 as={RouterLink}
@@ -221,34 +215,27 @@ export default function UserPreferences({
               </Link>{' '}
               page.
             </Text>
-          </Box>
+          </DashboardPanel>
 
           {!viewerOnly && (
-            <Box
-              bg={surface}
-              p={6}
-              borderRadius='md'
-              boxShadow='sm'
-              border='1px solid'
-              borderColor={border}
-            >
-              <Heading size='md' mb={4} color={text}>
-                Workspace alerts
-              </Heading>
-              <Text color={text}>
-                Alert thresholds, contacts, webhooks, and delivery windows are
-                configured per workspace. Open{' '}
+            <DashboardPanel p={{ base: 4, md: 5 }}>
+              <DashboardPanelHeader
+                title='Workspace preferences'
+                description='Alert thresholds, contacts, webhooks, and delivery windows are configured per workspace.'
+              />
+              <Text color={muted} fontSize='sm' lineHeight='1.6'>
+                Open{' '}
                 <Link
                   as={RouterLink}
                   to='/workspace-preferences'
                   color='blue.500'
                   fontWeight='semibold'
                 >
-                  Alert settings
+                  Workspace preferences
                 </Link>{' '}
                 to manage workspace notification preferences.
               </Text>
-            </Box>
+            </DashboardPanel>
           )}
         </VStack>
       </DashboardPageLayout>

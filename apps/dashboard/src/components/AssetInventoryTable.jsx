@@ -83,10 +83,6 @@ function resolveCategoryVisual(categoryValue, isLight) {
   return { icon: meta.icon, ...colors };
 }
 
-function defaultCategoryVisual(categoryValue) {
-  return resolveCategoryVisual(categoryValue, false);
-}
-
 const COLUMN_META = {
   name: { label: 'Name', minW: '210px', sortable: true },
   type: { label: 'Type', minW: '160px', sortable: true },
@@ -366,12 +362,13 @@ function resolveStatusBadgeStyles(status, isLight) {
   };
 }
 
-function StatusPill({ status, styles }) {
+function StatusPill({ status, styles, minW, justify = 'flex-start' }) {
   return (
     <Box
       as='span'
       display='inline-flex'
       alignItems='center'
+      justifyContent={justify}
       bg={styles.bg}
       color={styles.color}
       border='1px solid'
@@ -382,19 +379,49 @@ function StatusPill({ status, styles }) {
       fontWeight='semibold'
       fontSize='xs'
       lineHeight='short'
+      minW={minW}
+      flexShrink={0}
+      whiteSpace='nowrap'
       sx={{ color: `${styles.color} !important` }}
     >
-      <HStack spacing={1.5}>
+      <HStack spacing={1.5} minW={0} flexWrap='nowrap'>
         <Circle size='6px' bg={styles.dot} flexShrink={0} />
         <Text
           as='span'
           fontSize='xs'
           fontWeight='semibold'
+          whiteSpace='nowrap'
+          noOfLines={1}
           sx={{ color: `${styles.color} !important` }}
         >
           {status.label}
         </Text>
       </HStack>
+    </Box>
+  );
+}
+
+function MobileMetaItem({ label, value, children }) {
+  const labelColor = useColorModeValue('gray.500', 'rgba(148, 163, 184, 0.92)');
+  const valueColor = useColorModeValue('gray.800', 'rgba(226, 232, 240, 0.92)');
+
+  return (
+    <Box minW={0} flex='1'>
+      <Text
+        color={labelColor}
+        fontSize='10px'
+        fontWeight='semibold'
+        lineHeight='short'
+        textTransform='uppercase'
+        mb={1}
+      >
+        {label}
+      </Text>
+      {children || (
+        <Text color={valueColor} fontSize='sm' noOfLines={2}>
+          {value || '-'}
+        </Text>
+      )}
     </Box>
   );
 }
@@ -708,97 +735,194 @@ function AssetInventoryMobileCard({
   const status = helpers.getStatusMeta(token.expiresAt);
   const statusStyles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const cardTitleColor = useColorModeValue('gray.900', 'white');
+  const cardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.96)');
+  const cardHoverBg = useColorModeValue('gray.50', 'rgba(17, 24, 39, 0.98)');
   const cardBorderColor = useColorModeValue(
     'gray.200',
-    'rgba(148, 163, 184, 0.16)'
+    'rgba(148, 163, 184, 0.2)'
+  );
+  const metaBorderColor = useColorModeValue(
+    'gray.100',
+    'rgba(148, 163, 184, 0.12)'
+  );
+  const metaBg = useColorModeValue(
+    'rgba(248, 250, 252, 0.86)',
+    'rgba(2, 6, 23, 0.22)'
+  );
+  const actionBorderColor = useColorModeValue(
+    'gray.100',
+    'rgba(148, 163, 184, 0.14)'
+  );
+  const detailsButtonColor = useColorModeValue('blue.700', '#93c5fd');
+  const renewButtonColor = useColorModeValue('teal.700', '#5eead4');
+  const deleteButtonColor = useColorModeValue('red.600', '#f87171');
+  const actionHoverBg = useColorModeValue(
+    'rgba(37, 99, 235, 0.08)',
+    'rgba(30, 41, 59, 0.72)'
   );
   const visual = helpers.getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
   const nameSubtitle = getNameSubtitle(token, mode);
-  const locationHint =
-    !nameSubtitle && mode !== 'mixed' && token.category !== 'cert'
-      ? helpers.getTokenLocation(token)
-      : null;
+  const location = helpers.getTokenLocation(token);
+  const owner = helpers.getTokenOwner(token);
+  const contactGroup = helpers.getTokenContactGroup(token);
+  const expiresAtLabel = formatExpirationDate(token.expiresAt);
 
   return (
     <Box
-      p={4}
-      bg={helpers.mobileCardBg}
+      p={0}
+      bg={cardBg || helpers.mobileCardBg}
       border='1px solid'
       borderColor={cardBorderColor}
       borderRadius='md'
+      overflow='hidden'
+      boxShadow='0 14px 32px rgba(0, 0, 0, 0.18)'
+      transition='background 140ms ease, border-color 140ms ease'
+      _hover={{ bg: cardHoverBg, borderColor: 'rgba(59, 130, 246, 0.3)' }}
     >
-      <HStack align='start' justify='space-between' gap={3}>
-        <HStack align='start' spacing={3} minW={0}>
-          {!isViewer && (
-            <Checkbox
-              mt={1}
-              isChecked={selectedIds.includes(token.id)}
-              onChange={() => onToggleSelect(token.id)}
-            />
-          )}
-          <Circle
-            size='36px'
-            bg={visual.bg}
-            color={visual.color}
-            border='1px solid'
-            borderColor={visual.border}
-            flex='0 0 auto'
-          >
-            <VisualIcon size={18} />
-          </Circle>
-          <Box minW={0}>
-            <Text
-              fontWeight='semibold'
-              color={cardTitleColor}
-              wordBreak='break-word'
+      <VStack align='stretch' spacing={0}>
+        <HStack align='start' spacing={3} p={3.5}>
+          <HStack align='start' spacing={3} minW={0} flex='1'>
+            <Box pt={1} flex='0 0 auto'>
+              {!isViewer && (
+                <Checkbox
+                  isChecked={selectedIds.includes(token.id)}
+                  onChange={() => onToggleSelect(token.id)}
+                />
+              )}
+            </Box>
+            <Circle
+              size='38px'
+              bg={visual.bg}
+              color={visual.color}
+              border='1px solid'
+              borderColor={visual.border}
+              flex='0 0 auto'
             >
-              {token.name}
-            </Text>
-            <Text color={helpers.secondaryTextColor} fontSize='sm'>
-              {helpers.getAssetTypeLabel(token)}
-            </Text>
-            {nameSubtitle ? (
-              <Text color={helpers.mutedTextColor} fontSize='xs' noOfLines={2}>
-                {nameSubtitle}
+              <VisualIcon size={18} />
+            </Circle>
+            <Box minW={0} flex='1'>
+              <Text
+                fontWeight='bold'
+                color={cardTitleColor}
+                wordBreak='break-word'
+                lineHeight='short'
+                noOfLines={2}
+              >
+                {token.name}
               </Text>
-            ) : null}
-            {locationHint ? (
-              <Text color={helpers.mutedTextColor} fontSize='xs' noOfLines={2}>
-                {locationHint}
+              <Text
+                color={helpers.secondaryTextColor}
+                fontSize='sm'
+                lineHeight='short'
+                mt={1}
+                noOfLines={1}
+              >
+                {helpers.getAssetTypeLabel(token)}
               </Text>
-            ) : null}
-          </Box>
+              {nameSubtitle ? (
+                <Text
+                  color={helpers.mutedTextColor}
+                  fontSize='xs'
+                  mt={1}
+                  noOfLines={2}
+                >
+                  {nameSubtitle}
+                </Text>
+              ) : null}
+              <Box mt={2}>
+                <StatusPill
+                  status={status}
+                  styles={statusStyles}
+                  minW='96px'
+                  justify='center'
+                />
+              </Box>
+            </Box>
+          </HStack>
         </HStack>
-        <StatusPill status={status} styles={statusStyles} />
-      </HStack>
-      <HStack spacing={2} flexWrap='wrap' mt={4}>
-        <Button
-          size='sm'
-          colorScheme='blue'
-          onClick={() => helpers.onOpenTokenModal(token)}
+
+        <Box px={3.5} pb={3.5}>
+          <Box
+            bg={metaBg}
+            border='1px solid'
+            borderColor={metaBorderColor}
+            borderRadius='md'
+            p={3}
+          >
+            <VStack align='stretch' spacing={3}>
+              <HStack align='start' spacing={3}>
+                <MobileMetaItem label='Location' value={location} />
+                <MobileMetaItem label='Owner' value={owner} />
+              </HStack>
+              <HStack align='start' spacing={3}>
+                <MobileMetaItem label='Contact group' value={contactGroup} />
+                <MobileMetaItem label='Expiration' value={expiresAtLabel} />
+              </HStack>
+            </VStack>
+          </Box>
+        </Box>
+
+        <HStack
+          spacing={0}
+          borderTop='1px solid'
+          borderColor={actionBorderColor}
+          align='stretch'
         >
-          Details
-        </Button>
-        {!isViewer && (
-          <>
-            <Button
-              size='sm'
-              colorScheme='teal'
-              onClick={() => helpers.onOpenRenew(token)}
-            >
-              Renew
-            </Button>
-            <Button
-              size='sm'
-              colorScheme='red'
-              onClick={() => helpers.onDeleteToken(token.id)}
-            >
-              Delete
-            </Button>
-          </>
-        )}
-      </HStack>
+          <Button
+            size='sm'
+            h='38px'
+            flex='1'
+            minW={0}
+            borderRadius='0'
+            variant='ghost'
+            color={detailsButtonColor}
+            fontSize='xs'
+            fontWeight='semibold'
+            leftIcon={<MoreVertical size={14} />}
+            _hover={{ bg: actionHoverBg }}
+            onClick={() => helpers.onOpenTokenModal(token)}
+          >
+            Details
+          </Button>
+          {!isViewer && (
+            <>
+              <Button
+                size='sm'
+                h='38px'
+                flex='1'
+                minW={0}
+                borderRadius='0'
+                variant='ghost'
+                color={renewButtonColor}
+                fontSize='xs'
+                fontWeight='semibold'
+                leftIcon={<CalendarClock size={14} />}
+                _hover={{ bg: actionHoverBg }}
+                onClick={() => helpers.onOpenRenew(token)}
+              >
+                Renew
+              </Button>
+              <Button
+                size='sm'
+                h='38px'
+                flex='1'
+                minW={0}
+                borderRadius='0'
+                variant='ghost'
+                color={deleteButtonColor}
+                fontSize='xs'
+                fontWeight='semibold'
+                leftIcon={<FiTrash2 size={14} />}
+                _hover={{ bg: actionHoverBg }}
+                onClick={() => helpers.onDeleteToken(token.id)}
+              >
+                Delete
+              </Button>
+            </>
+          )}
+        </HStack>
+      </VStack>
     </Box>
   );
 }

@@ -13,6 +13,47 @@ const { sanitizeForLogging } = require("../utils/sanitize");
 
 const router = require("express").Router();
 
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/;
+
+const padDatePart = (value) => String(value).padStart(2, "0");
+
+const formatLocalDateOnly = (date) =>
+  [
+    date.getFullYear(),
+    padDatePart(date.getMonth() + 1),
+    padDatePart(date.getDate()),
+  ].join("-");
+
+const formatUtcDateOnly = (date) =>
+  [
+    date.getUTCFullYear(),
+    padDatePart(date.getUTCMonth() + 1),
+    padDatePart(date.getUTCDate()),
+  ].join("-");
+
+const normalizeDateOnlyInput = (value) => {
+  const raw = String(value || "").trim();
+  const match = raw.match(DATE_ONLY_PATTERN);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return `${match[1]}-${match[2]}-${match[3]}`;
+  }
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  return formatUtcDateOnly(date);
+};
+
 // --- TOKEN MANAGEMENT ROUTES ---
 
 // Get tokens (scoped by workspace membership). Optional ?workspace_id=...
@@ -639,7 +680,9 @@ router.put(
     }
 
     if (section === undefined) {
-      return res.status(400).json({ error: "No fields to update", code: "VALIDATION_ERROR" });
+      return res
+        .status(400)
+        .json({ error: "No fields to update", code: "VALIDATION_ERROR" });
     }
 
     // Normalize section using the same rules as PUT /api/tokens/:id
@@ -675,7 +718,9 @@ router.put(
         normalizedSection = flat.length > 0 ? [...new Set(flat)] : null;
       }
     } catch (e) {
-      return res.status(400).json({ error: e.message, code: "VALIDATION_ERROR" });
+      return res
+        .status(400)
+        .json({ error: e.message, code: "VALIDATION_ERROR" });
     }
 
     try {
@@ -974,33 +1019,48 @@ router.put(
 
       // Validate and convert expiresAt/expiration if provided
       const NEVER_EXPIRES_DATE = "2099-12-31";
-      let expirationDate = null;
-      const dateToValidate = expiresAt || expiration; // Accept either field name
-      if (
-        dateToValidate !== undefined &&
-        dateToValidate !== null &&
-        dateToValidate !== ""
-      ) {
-        const expDate = new Date(dateToValidate);
-        if (isNaN(expDate.getTime())) {
-          return res.status(400).json({
-            error: "Validation failed",
-            code: "VALIDATION_ERROR",
-            details: ["Invalid expiration date format"],
-          });
+      let expirationDate;
+      const hasExpiresAt = Object.prototype.hasOwnProperty.call(
+        req.body,
+        "expiresAt",
+      );
+      const hasExpiration = Object.prototype.hasOwnProperty.call(
+        req.body,
+        "expiration",
+      );
+      const expirationProvided = hasExpiresAt || hasExpiration;
+      const dateToValidate = hasExpiresAt ? expiresAt : expiration; // Accept either field name
+      if (expirationProvided) {
+        if (
+          dateToValidate === undefined ||
+          dateToValidate === null ||
+          dateToValidate === ""
+        ) {
+          expirationDate = NEVER_EXPIRES_DATE;
+        } else {
+          const normalizedExpirationDate =
+            normalizeDateOnlyInput(dateToValidate);
+          if (!normalizedExpirationDate) {
+            return res.status(400).json({
+              error: "Validation failed",
+              code: "VALIDATION_ERROR",
+              details: ["Invalid expiration date format"],
+            });
+          }
+
+          const existingExpiresAt = existingToken.expiresAt || null;
+          if (
+            normalizedExpirationDate <= formatLocalDateOnly(new Date()) &&
+            normalizedExpirationDate !== existingExpiresAt
+          ) {
+            return res.status(400).json({
+              error: "Validation failed",
+              code: "VALIDATION_ERROR",
+              details: ["Expiration date must be in the future"],
+            });
+          }
+          expirationDate = normalizedExpirationDate;
         }
-        if (expDate <= new Date()) {
-          return res.status(400).json({
-            error: "Validation failed",
-            code: "VALIDATION_ERROR",
-            details: ["Expiration date must be in the future"],
-          });
-        }
-        expirationDate = expDate.toISOString().split("T")[0];
-      } else {
-        // If expiration is not provided in update, keep existing expiration
-        // (don't change it to "never expires" unless explicitly set)
-        expirationDate = existingToken.expiration || NEVER_EXPIRES_DATE;
       }
 
       // Validate conditional fields based on existing or new type

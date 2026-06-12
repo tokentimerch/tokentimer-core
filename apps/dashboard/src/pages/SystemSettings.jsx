@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Heading,
   Text,
   VStack,
   HStack,
+  Stack,
   FormControl,
   FormLabel,
   Input,
-  Button,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -24,6 +23,12 @@ import { FiEye, FiEyeOff, FiCheck, FiX } from 'react-icons/fi';
 import apiClient from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
 import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardPanelHeader,
+  DashboardState,
+} from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { logger } from '../utils/logger.js';
@@ -48,7 +53,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
 
-  const { surface, border, muted, dashboard } = useDashboardTheme();
+  const { muted, dashboard } = useDashboardTheme();
   const lockedInputBg = dashboard.bg.panelHover;
 
   useEffect(() => {
@@ -332,7 +337,9 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
           pageTitle='System settings'
           variant='standard'
         >
-          <Text>Loading system settings...</Text>
+          <DashboardPanel>
+            <DashboardState type='loading' title='Loading system settings...' />
+          </DashboardPanel>
         </DashboardPageLayout>
       </>
     );
@@ -350,41 +357,41 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
       >
         <VStack align='stretch' spacing={6}>
           {/* SMTP Configuration */}
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <HStack justify='space-between' mb={4}>
-              <Heading size='md'>Email (SMTP)</Heading>
-              <HStack spacing={2}>
-                {smtp.configured ? (
-                  <Badge
-                    colorScheme='green'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiCheck size={12} /> Configured
-                  </Badge>
-                ) : (
-                  <Badge
-                    colorScheme='orange'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiX size={12} /> Not configured
-                  </Badge>
-                )}
-              </HStack>
-            </HStack>
+          <DashboardPanel>
+            <DashboardPanelHeader
+              title='Email (SMTP)'
+              description='Configure outgoing email delivery for alert notifications.'
+              action={
+                <HStack spacing={2}>
+                  {smtp.configured ? (
+                    <Badge
+                      colorScheme='green'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiCheck size={12} /> Configured
+                    </Badge>
+                  ) : (
+                    <Badge
+                      colorScheme='orange'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiX size={12} /> Not configured
+                    </Badge>
+                  )}
+                </HStack>
+              }
+            />
 
             <VStack align='stretch' spacing={3}>
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={3}>
                   {renderField(
                     'SMTP Host',
@@ -400,7 +407,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     placeholder: '465',
                   })}
                 </Box>
-              </HStack>
+              </Stack>
               {renderField('SMTP User', 'user', smtp, smtpForm, setSmtpForm, {
                 placeholder: 'user@example.com',
               })}
@@ -417,7 +424,11 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                   placeholder: 'Enter SMTP password',
                 }
               )}
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderBooleanField(
                     'Force SSL/TLS (SMTPS)',
@@ -443,9 +454,13 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
               <Divider />
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'From Email',
@@ -466,7 +481,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     { placeholder: 'TokenTimer' }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
             </VStack>
 
             <HStack
@@ -489,62 +504,55 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     onChange={e => setTestEmail(e.target.value)}
                   />
                 </FormControl>
-                <Button
-                  size='sm'
+                <DashboardActionButton
                   colorScheme='blue'
                   variant='outline'
-                  px={4}
                   isLoading={testingSmtp}
                   onClick={handleTestSmtp}
                   isDisabled={!smtp.configured}
                 >
                   Send test email
-                </Button>
+                </DashboardActionButton>
               </HStack>
-              <Button
-                size='sm'
+              <DashboardActionButton
                 colorScheme='blue'
                 isLoading={savingSmtp}
                 onClick={handleSaveSmtp}
               >
                 Save SMTP
-              </Button>
+              </DashboardActionButton>
             </HStack>
-          </Box>
+          </DashboardPanel>
 
           {/* Twilio WhatsApp Configuration */}
-          <Box
-            bg={surface}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={border}
-          >
-            <HStack justify='space-between' mb={4}>
-              <Heading size='md'>WhatsApp (Twilio)</Heading>
-              <HStack spacing={2}>
-                {whatsapp.configured ? (
-                  <Badge
-                    colorScheme='green'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiCheck size={12} /> Configured
-                  </Badge>
-                ) : (
-                  <Badge
-                    colorScheme='orange'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiX size={12} /> Not configured
-                  </Badge>
-                )}
-              </HStack>
-            </HStack>
+          <DashboardPanel>
+            <DashboardPanelHeader
+              title='WhatsApp (Twilio)'
+              description='Configure Twilio WhatsApp delivery and alert templates.'
+              action={
+                <HStack spacing={2}>
+                  {whatsapp.configured ? (
+                    <Badge
+                      colorScheme='green'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiCheck size={12} /> Configured
+                    </Badge>
+                  ) : (
+                    <Badge
+                      colorScheme='orange'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiX size={12} /> Not configured
+                    </Badge>
+                  )}
+                </HStack>
+              }
+            />
 
             {!whatsapp.configured && (
               <Alert status='info' mb={4} borderRadius='md'>
@@ -582,7 +590,11 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                   placeholder: 'Enter Twilio Auth Token',
                 }
               )}
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'WhatsApp From Number',
@@ -593,13 +605,17 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     { placeholder: '+14155238886' }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
 
               <Divider />
               <Text fontWeight='semibold' fontSize='sm' color={muted}>
                 Content Templates
               </Text>
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'Alert (Expires) Template SID',
@@ -620,8 +636,12 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     { placeholder: 'HXxxxxxxxxx' }
                   )}
                 </Box>
-              </HStack>
-              <HStack spacing={4} align='start'>
+              </Stack>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'Endpoint Down Template SID',
@@ -642,8 +662,12 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     { placeholder: 'HXxxxxxxxxx' }
                   )}
                 </Box>
-              </HStack>
-              <HStack spacing={4} align='start'>
+              </Stack>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'Test Message Template SID',
@@ -664,7 +688,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     { placeholder: 'HXxxxxxxxxx' }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
             </VStack>
 
             <HStack
@@ -687,28 +711,25 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
                     onChange={e => setTestPhone(e.target.value)}
                   />
                 </FormControl>
-                <Button
-                  size='sm'
+                <DashboardActionButton
                   colorScheme='green'
                   variant='outline'
-                  px={4}
                   isLoading={testingWhatsapp}
                   onClick={handleTestWhatsapp}
                   isDisabled={!whatsapp.configured}
                 >
                   Send test WhatsApp
-                </Button>
+                </DashboardActionButton>
               </HStack>
-              <Button
-                size='sm'
+              <DashboardActionButton
                 colorScheme='blue'
                 isLoading={savingWhatsapp}
                 onClick={handleSaveWhatsapp}
               >
                 Save WhatsApp
-              </Button>
+              </DashboardActionButton>
             </HStack>
-          </Box>
+          </DashboardPanel>
         </VStack>
       </DashboardPageLayout>
     </>

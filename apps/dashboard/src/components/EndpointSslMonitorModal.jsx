@@ -166,8 +166,16 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
   fetchGlobalFacets,
   fetchTokensForCategoryReset,
 }) {
-  const { headerProps } = useDashboardModalProps();
-  const { muted, border, text, dashboard } = useDashboardTheme();
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    fieldProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
+  const { muted, border, dashboard } = useDashboardTheme();
   const mobileCardBg = dashboard.bg.panelHover;
 
   const { workspaceId: ctxWorkspaceId } = useWorkspace();
@@ -859,11 +867,27 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       size='xl'
       motionPreset='none'
     >
-      <ModalOverlay />
+      <ModalOverlay {...overlayProps} />
       <DashboardModalFrame maxW='1100px'>
-        <ModalHeader {...headerProps}>Endpoint & SSL monitoring</ModalHeader>
-        <ModalCloseButton color={text} />
-        <ModalBody data-endpoint-ssl-modal-body='true'>
+        <ModalHeader {...headerProps}>
+          <Text
+            fontSize={{ base: 'md', md: 'lg' }}
+            fontWeight='bold'
+            color={modalTokens.text}
+          >
+            Endpoint & SSL monitoring
+          </Text>
+          <Text
+            fontSize='sm'
+            color={modalTokens.muted}
+            mt={1.5}
+            fontWeight='medium'
+          >
+            Monitor SSL certificates and endpoint health for your URLs.
+          </Text>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps} data-endpoint-ssl-modal-body='true'>
           <VStack spacing={5} align='stretch'>
             <Text fontSize='sm' color={muted}>
               Monitor SSL certificates and endpoint health for your URLs. Tokens
@@ -871,13 +895,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
             </Text>
 
             {domainCheckerImportReport && (
-              <Box
-                p={3}
-                borderRadius='md'
-                borderWidth='1px'
-                borderColor={border}
-                fontSize='sm'
-              >
+              <Box {...fieldProps} p={3} fontSize='sm'>
                 <HStack justify='space-between' align='start' spacing={3}>
                   <Box>
                     <Text fontWeight='semibold'>Last import summary</Text>
@@ -1697,8 +1715,20 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
             </HStack>
           </VStack>
         </ModalBody>
-        <ModalFooter>
-          <Button onClick={handleDomainModalClose}>Close</Button>
+        <ModalFooter {...footerProps}>
+          <Button
+            variant='outline'
+            onClick={handleDomainModalClose}
+            borderColor='rgba(148, 163, 184, 0.34)'
+            color={modalTokens.subtleText}
+            minW={{ base: '100%', sm: '104px' }}
+            _hover={{
+              bg: modalTokens.fieldBg,
+              borderColor: modalTokens.focusBorder,
+            }}
+          >
+            Close
+          </Button>
         </ModalFooter>
       </DashboardModalFrame>
     </Modal>

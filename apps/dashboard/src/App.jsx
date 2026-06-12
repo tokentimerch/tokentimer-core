@@ -27,18 +27,8 @@ import {
   Button,
   Flex,
   Text,
-  Link,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  Badge,
   VStack,
-  useColorMode,
   useColorModeValue,
-  Tooltip,
   IconButton,
   Modal,
   ModalOverlay,
@@ -56,18 +46,12 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
-  Checkbox,
   Portal,
-  InputGroup,
-  InputLeftElement,
-  Divider,
-  Circle,
 } from '@chakra-ui/react';
 import {
   Routes,
   Route,
   Navigate,
-  Link as RouterLink,
   useSearchParams,
   useNavigate,
   useLocation,
@@ -75,37 +59,14 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
-import {
-  FiTrash2,
-  FiPlus,
-  FiX,
-  FiChevronRight,
-  FiMenu,
-  FiExternalLink,
-  FiActivity,
-  FiBell,
-} from 'react-icons/fi';
+import { FiTrash2, FiPlus, FiX, FiChevronRight } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
-  AlertTriangle,
   BadgeCheck,
-  BookOpen,
-  Building2,
-  CalendarClock,
-  ChevronDown,
   Database,
   Download,
-  Gauge,
   KeyRound,
-  Layers,
   LockKeyhole,
-  LogOut,
-  MoreVertical,
-  Moon,
-  Search,
-  Settings,
-  ShieldAlert,
-  User,
 } from 'lucide-react';
 
 import { theme } from './styles/theme';
@@ -115,10 +76,13 @@ import ErrorBoundary from './components/ErrorBoundary';
 import WelcomeModal from './components/WelcomeModal';
 import ProductTour from './components/ProductTour';
 import { AccessibleSpinner } from './components/Accessibility';
-import TruncatedText from './components/TruncatedText';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
+import {
+  DashboardModalFrame,
+  useDashboardModalProps,
+} from './components/DashboardModalFrame.jsx';
 import DashboardShell from './components/DashboardShell.jsx';
 import AssetFilters from './components/AssetFilters.jsx';
 import AssetInventoryTable, {
@@ -128,12 +92,12 @@ import {
   DashboardThemeProvider,
   useDashboardTheme,
 } from './hooks/useDashboardTheme.js';
+import { useDashboardMenuStyles } from './hooks/useDashboardMenuStyles.js';
 import { useLoadedAssetMetrics } from './hooks/useLoadedAssetMetrics.js';
 import {
   categoriesEqual,
   useInventoryUrlState,
 } from './hooks/useInventoryUrlState.js';
-import { domainValueToUrl } from './utils/domains.jsx';
 
 import apiClient, {
   authAPI,
@@ -143,11 +107,7 @@ import apiClient, {
   showSuccessMessage,
 } from './utils/apiClient';
 
-import {
-  formatExpirationDate,
-  isNeverExpires,
-  NEVER_EXPIRES_DATE_VALUE,
-} from './utils/dateUtils';
+import { isNeverExpires, NEVER_EXPIRES_DATE_VALUE } from './utils/dateUtils';
 import {
   TOUR_MOCK_TOKENS,
   TOUR_MOCK_CONTACT_GROUPS,
@@ -2233,14 +2193,24 @@ function App() {
     navigate(`?${search.toString()}`, { replace: true });
   };
 
-  // Move useColorModeValue calls outside of conditional rendering
-  const deleteBoxBg = useColorModeValue('gray.100', 'gray.700');
-  const deleteTextColor = useColorModeValue('gray.700', 'gray.200');
-  const deleteLabelColor = useColorModeValue('gray.800', 'gray.100');
-  const renewBoxBg = useColorModeValue('gray.100', 'gray.700');
-  const renewTextColor = useColorModeValue('gray.700', 'gray.200');
-  const renewLabelColor = useColorModeValue('gray.800', 'gray.100');
-  const _renewHelperTextColor = useColorModeValue('gray.600', 'gray.100');
+  const dashboardModalSurfaceBg = '#0d131a';
+  const dashboardModalFieldBg = 'rgba(9, 13, 21, 0.66)';
+  const dashboardModalHeaderBg = '#0d131a';
+  const dashboardModalFooterBg = '#0b1118';
+  const dashboardModalBorder = 'rgba(148, 163, 184, 0.18)';
+  const dashboardModalText = '#f8fafc';
+  const dashboardModalMuted = '#94a3b8';
+  const dashboardModalSubtleText = '#cbd5e1';
+  const dashboardModalInputBg = '#090d15';
+  const dashboardModalInputBorder = 'rgba(148, 163, 184, 0.28)';
+  const dashboardModalFocusBorder = '#3b82f6';
+  const dashboardModalButtonBorder = 'rgba(148, 163, 184, 0.34)';
+  const dashboardModalWarningBg = 'rgba(146, 64, 14, 0.22)';
+  const dashboardModalWarningBorder = 'rgba(251, 191, 36, 0.34)';
+  const dashboardModalWarningText = '#fde68a';
+  const dashboardModalDangerBg = 'rgba(127, 29, 29, 0.28)';
+  const dashboardModalDangerBorder = 'rgba(248, 113, 113, 0.3)';
+  const dashboardModalDangerText = '#fecaca';
 
   return (
     <ChakraProvider theme={theme}>
@@ -2558,6 +2528,7 @@ function App() {
                                   setShowWelcomeModal={setShowWelcomeModal}
                                   welcomeData={welcomeData}
                                   selectedToken={selectedToken}
+                                  setSelectedToken={setSelectedToken}
                                   handleCloseTokenModal={handleCloseTokenModal}
                                   // Thread global filtering/search/sort state into wrapper
                                   setSearchQuery={setSearchQuery}
@@ -2617,13 +2588,60 @@ function App() {
               onClose={cancelDeleteToken}
               isCentered
             >
-              <ModalOverlay />
-              <ModalContent>
-                <ModalHeader>Confirm Token Deletion</ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  <VStack spacing={4} align='stretch'>
-                    <Alert status='warning' borderRadius='md'>
+              <ModalOverlay bg='rgba(2, 6, 23, 0.72)' />
+              <ModalContent
+                bg={dashboardModalSurfaceBg}
+                border='1px solid'
+                borderColor={dashboardModalBorder}
+                borderRadius={{ base: '14px', md: '18px' }}
+                boxShadow='0 24px 70px rgba(0, 0, 0, 0.42)'
+                maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+                overflow='hidden'
+              >
+                <ModalHeader
+                  bg={dashboardModalHeaderBg}
+                  borderBottom='1px solid'
+                  borderColor={dashboardModalBorder}
+                  px={{ base: 4, md: 6 }}
+                  py={{ base: 4, md: 5 }}
+                  pr={{ base: 12, md: 14 }}
+                >
+                  <Text
+                    fontSize={{ base: 'md', md: 'lg' }}
+                    fontWeight='bold'
+                    color={dashboardModalText}
+                  >
+                    Confirm Token Deletion
+                  </Text>
+                  <Text
+                    fontSize='sm'
+                    color={dashboardModalMuted}
+                    mt={1.5}
+                    fontWeight='medium'
+                  >
+                    Review the asset before permanently deleting it.
+                  </Text>
+                </ModalHeader>
+                <ModalCloseButton
+                  color={dashboardModalMuted}
+                  top={{ base: 3, md: 4 }}
+                  right={{ base: 3, md: 4 }}
+                  borderRadius='10px'
+                  _hover={{
+                    bg: dashboardModalFieldBg,
+                    color: dashboardModalText,
+                  }}
+                />
+                <ModalBody px={{ base: 4, md: 6 }} py={{ base: 5, md: 6 }}>
+                  <VStack spacing={3} align='stretch'>
+                    <Alert
+                      status='warning'
+                      bg={dashboardModalWarningBg}
+                      border='1px solid'
+                      borderColor={dashboardModalWarningBorder}
+                      color={dashboardModalWarningText}
+                      borderRadius='12px'
+                    >
                       <AlertIcon />
                       <AlertDescription>
                         This action cannot be undone. The token will be
@@ -2631,7 +2649,14 @@ function App() {
                       </AlertDescription>
                     </Alert>
                     {tokenToDelete?.monitor_url && (
-                      <Alert status='error' borderRadius='md'>
+                      <Alert
+                        status='error'
+                        bg={dashboardModalDangerBg}
+                        border='1px solid'
+                        borderColor={dashboardModalDangerBorder}
+                        color={dashboardModalDangerText}
+                        borderRadius='12px'
+                      >
                         <AlertIcon />
                         <AlertDescription>
                           This token has a linked endpoint monitor (
@@ -2641,63 +2666,132 @@ function App() {
                       </Alert>
                     )}
                     {tokenToDelete && (
-                      <Box p={4} bg={deleteBoxBg} borderRadius='md'>
-                        <Text fontWeight='bold' mb={2} color={deleteLabelColor}>
+                      <Box
+                        p={{ base: 3.5, md: 4 }}
+                        bg={dashboardModalFieldBg}
+                        border='1px solid'
+                        borderColor={dashboardModalBorder}
+                        borderRadius='12px'
+                      >
+                        <Text
+                          fontSize='sm'
+                          fontWeight='semibold'
+                          mb={3}
+                          color={dashboardModalMuted}
+                        >
                           Token to delete:
                         </Text>
-                        <Text color={deleteTextColor}>
-                          <Text
-                            as='span'
-                            fontWeight='semibold'
-                            color={deleteLabelColor}
-                          >
-                            Name:
-                          </Text>{' '}
-                          {tokenToDelete.name}
-                        </Text>
-                        <Text color={deleteTextColor}>
-                          <Text
-                            as='span'
-                            fontWeight='semibold'
-                            color={deleteLabelColor}
-                          >
-                            Type:
-                          </Text>{' '}
-                          {tokenToDelete.type}
-                        </Text>
-                        <Text color={deleteTextColor}>
-                          <Text
-                            as='span'
-                            fontWeight='semibold'
-                            color={deleteLabelColor}
-                          >
-                            Category:
-                          </Text>{' '}
-                          {tokenToDelete.category}
-                        </Text>
-                        {tokenToDelete.expiresAt && (
-                          <Text color={deleteTextColor}>
+                        <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                          <Box>
                             <Text
-                              as='span'
+                              fontSize='xs'
                               fontWeight='semibold'
-                              color={deleteLabelColor}
+                              color={dashboardModalMuted}
+                              mb={1}
                             >
-                              Expires:
-                            </Text>{' '}
-                            {formatDate(tokenToDelete.expiresAt)}
-                          </Text>
-                        )}
+                              Name
+                            </Text>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='bold'
+                              color={dashboardModalText}
+                              wordBreak='break-word'
+                            >
+                              {tokenToDelete.name}
+                            </Text>
+                          </Box>
+                          <Box>
+                            <Text
+                              fontSize='xs'
+                              fontWeight='semibold'
+                              color={dashboardModalMuted}
+                              mb={1}
+                            >
+                              Type
+                            </Text>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='bold'
+                              color={dashboardModalText}
+                            >
+                              {tokenToDelete.type}
+                            </Text>
+                          </Box>
+                          <Box>
+                            <Text
+                              fontSize='xs'
+                              fontWeight='semibold'
+                              color={dashboardModalMuted}
+                              mb={1}
+                            >
+                              Category
+                            </Text>
+                            <Text
+                              fontSize='sm'
+                              fontWeight='bold'
+                              color={dashboardModalText}
+                            >
+                              {tokenToDelete.category}
+                            </Text>
+                          </Box>
+                          {tokenToDelete.expiresAt && (
+                            <Box>
+                              <Text
+                                fontSize='xs'
+                                fontWeight='semibold'
+                                color={dashboardModalMuted}
+                                mb={1}
+                              >
+                                Expires
+                              </Text>
+                              <Text
+                                fontSize='sm'
+                                fontWeight='bold'
+                                color={dashboardModalText}
+                              >
+                                {formatDate(tokenToDelete.expiresAt)}
+                              </Text>
+                            </Box>
+                          )}
+                        </SimpleGrid>
                       </Box>
                     )}
                   </VStack>
                 </ModalBody>
-                <ModalFooter>
-                  <Button variant='ghost' mr={3} onClick={cancelDeleteToken}>
-                    Cancel
-                  </Button>
-                  <Button colorScheme='red' onClick={confirmDeleteToken}>
-                    Delete Token
-                  </Button>
+                <ModalFooter
+                  bg={dashboardModalFooterBg}
+                  borderTop='1px solid'
+                  borderColor={dashboardModalBorder}
+                  px={{ base: 4, md: 6 }}
+                  py={{ base: 4, md: 5 }}
+                >
+                  <Flex
+                    w='100%'
+                    gap={3}
+                    justify={{ base: 'stretch', sm: 'flex-end' }}
+                    direction={{ base: 'column-reverse', sm: 'row' }}
+                  >
+                    <Button
+                      variant='outline'
+                      onClick={cancelDeleteToken}
+                      borderColor={dashboardModalButtonBorder}
+                      color={dashboardModalSubtleText}
+                      minW={{ base: '100%', sm: '104px' }}
+                      _hover={{
+                        bg: dashboardModalFieldBg,
+                        borderColor: dashboardModalFocusBorder,
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      colorScheme='red'
+                      onClick={confirmDeleteToken}
+                      minW={{ base: '100%', sm: '128px' }}
+                    >
+                      Delete Token
+                    </Button>
+                  </Flex>
                 </ModalFooter>
               </ModalContent>
             </Modal>
@@ -2806,18 +2900,82 @@ function App() {
               onClose={handleCloseRenew}
               isCentered
             >
-              <ModalOverlay />
-              <ModalContent>
-                <ModalHeader>Renew Token</ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  <VStack spacing={4} align='stretch'>
+              <ModalOverlay bg='rgba(2, 6, 23, 0.72)' />
+              <ModalContent
+                bg={dashboardModalSurfaceBg}
+                border='1px solid'
+                borderColor={dashboardModalBorder}
+                borderRadius={{ base: '14px', md: '18px' }}
+                boxShadow='0 24px 70px rgba(0, 0, 0, 0.42)'
+                maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+                overflow='hidden'
+              >
+                <ModalHeader
+                  bg={dashboardModalHeaderBg}
+                  borderBottom='1px solid'
+                  borderColor={dashboardModalBorder}
+                  px={{ base: 4, md: 6 }}
+                  py={{ base: 4, md: 5 }}
+                  pr={{ base: 12, md: 14 }}
+                >
+                  <Text
+                    fontSize={{ base: 'md', md: 'lg' }}
+                    fontWeight='bold'
+                    color={dashboardModalText}
+                  >
+                    Renew Token
+                  </Text>
+                  <Text
+                    fontSize='sm'
+                    color={dashboardModalMuted}
+                    mt={1.5}
+                    fontWeight='medium'
+                  >
+                    Choose the next expiration date for this asset.
+                  </Text>
+                </ModalHeader>
+                <ModalCloseButton
+                  color={dashboardModalMuted}
+                  top={{ base: 3, md: 4 }}
+                  right={{ base: 3, md: 4 }}
+                  borderRadius='10px'
+                  _hover={{
+                    bg: dashboardModalFieldBg,
+                    color: dashboardModalText,
+                  }}
+                />
+                <ModalBody px={{ base: 4, md: 6 }} py={{ base: 5, md: 6 }}>
+                  <VStack spacing={3} align='stretch'>
                     {tokenToRenew && (
-                      <Box p={4} bg={renewBoxBg} borderRadius='md'>
-                        <Text fontWeight='bold' mb={2} color={renewLabelColor}>
+                      <Box
+                        p={{ base: 3.5, md: 4 }}
+                        bg={dashboardModalFieldBg}
+                        border='1px solid'
+                        borderColor={dashboardModalBorder}
+                        borderRadius='12px'
+                      >
+                        <Text
+                          fontSize='sm'
+                          fontWeight='semibold'
+                          color={dashboardModalMuted}
+                          mb={2}
+                        >
+                          Asset
+                        </Text>
+                        <Text
+                          fontSize={{ base: 'md', md: 'lg' }}
+                          fontWeight='bold'
+                          color={dashboardModalText}
+                          mb={2}
+                          wordBreak='break-word'
+                        >
                           {tokenToRenew.name}
                         </Text>
-                        <Text color={renewTextColor}>
+                        <Text
+                          fontSize='sm'
+                          color={dashboardModalSubtleText}
+                          fontWeight='medium'
+                        >
                           Current expiration:{' '}
                           {tokenToRenew.expiresAt
                             ? formatDate(tokenToRenew.expiresAt)
@@ -2825,8 +2983,20 @@ function App() {
                         </Text>
                       </Box>
                     )}
-                    <FormControl isInvalid={!!renewErrors.renewDate}>
-                      <FormLabel htmlFor='renewDate'>
+                    <FormControl
+                      isInvalid={!!renewErrors.renewDate}
+                      bg={dashboardModalFieldBg}
+                      border='1px solid'
+                      borderColor={dashboardModalBorder}
+                      borderRadius='12px'
+                      p={{ base: 3.5, md: 4 }}
+                    >
+                      <FormLabel
+                        htmlFor='renewDate'
+                        color={dashboardModalMuted}
+                        fontWeight='semibold'
+                        fontSize='sm'
+                      >
                         New Expiration Date
                       </FormLabel>
                       <Input
@@ -2834,34 +3004,72 @@ function App() {
                         type='date'
                         value={renewDate}
                         onChange={e => setRenewDate(e.target.value)}
+                        bg={dashboardModalInputBg}
+                        borderColor={
+                          renewErrors.renewDate
+                            ? 'red.400'
+                            : dashboardModalInputBorder
+                        }
+                        borderRadius='10px'
+                        color={dashboardModalText}
+                        minH='40px'
+                        _hover={{ borderColor: dashboardModalFocusBorder }}
+                        _focusVisible={{
+                          borderColor: dashboardModalFocusBorder,
+                          boxShadow: `0 0 0 1px ${dashboardModalFocusBorder}`,
+                        }}
                       />
                       {renewErrors.renewDate && (
-                        <FormErrorMessage>
+                        <FormErrorMessage color={dashboardModalDangerText}>
                           {renewErrors.renewDate}
                         </FormErrorMessage>
                       )}
                     </FormControl>
                     <Text
                       fontSize='sm'
-                      _light={{ color: 'gray.600' }}
-                      _dark={{ color: 'whiteAlpha.800' }}
+                      color={dashboardModalMuted}
+                      lineHeight='1.5'
                     >
                       Default set based on token category/type. You can pick any
                       future date.
                     </Text>
                   </VStack>
                 </ModalBody>
-                <ModalFooter>
-                  <Button variant='ghost' mr={3} onClick={handleCloseRenew}>
-                    Cancel
-                  </Button>
-                  <Button
-                    colorScheme='teal'
-                    onClick={handleConfirmRenew}
-                    isLoading={isRenewSubmitting}
+                <ModalFooter
+                  bg={dashboardModalFooterBg}
+                  borderTop='1px solid'
+                  borderColor={dashboardModalBorder}
+                  px={{ base: 4, md: 6 }}
+                  py={{ base: 4, md: 5 }}
+                >
+                  <Flex
+                    w='100%'
+                    gap={3}
+                    justify={{ base: 'stretch', sm: 'flex-end' }}
+                    direction={{ base: 'column-reverse', sm: 'row' }}
                   >
-                    Confirm
-                  </Button>
+                    <Button
+                      variant='outline'
+                      onClick={handleCloseRenew}
+                      borderColor={dashboardModalButtonBorder}
+                      color={dashboardModalSubtleText}
+                      minW={{ base: '100%', sm: '104px' }}
+                      _hover={{
+                        bg: dashboardModalFieldBg,
+                        borderColor: dashboardModalFocusBorder,
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      colorScheme='green'
+                      onClick={handleConfirmRenew}
+                      isLoading={isRenewSubmitting}
+                      minW={{ base: '100%', sm: '104px' }}
+                    >
+                      Confirm
+                    </Button>
+                  </Flex>
                 </ModalFooter>
               </ModalContent>
             </Modal>
@@ -2910,6 +3118,7 @@ function DashboardWrapper({
   setShowWelcomeModal,
   welcomeData,
   selectedToken,
+  setSelectedToken,
   handleCloseTokenModal,
   getFilteredAndSortedTokens,
   // Global filtering/search/sort state/handlers from App
@@ -3154,6 +3363,9 @@ function DashboardWrapper({
               __nextTokens = arr;
               return arr;
             });
+            setSelectedToken(current =>
+              current?.id === updated.id ? updated : current
+            );
             // Trigger a single dashboard reload so facets/sections update
             try {
               window.dispatchEvent(
@@ -3305,8 +3517,10 @@ function DashboardView({
   );
 
   // Move useColorModeValue calls to the top to comply with Rules of Hooks
-  const menuBg = useColorModeValue('white', 'rgba(15, 23, 42, 0.98)');
-  const menuBorder = useColorModeValue('gray.200', 'rgba(148, 163, 184, 0.2)');
+  const {
+    menuListProps: dashboardMenuListProps,
+    menuItemProps: dashboardMenuItemProps,
+  } = useDashboardMenuStyles();
   const _popoverBg = useColorModeValue('gray.100', 'gray.800');
   const _popoverBorder = useColorModeValue('gray.400', 'gray.600');
   const helpTextColor = useColorModeValue('gray.500', 'gray.400');
@@ -3342,6 +3556,18 @@ function DashboardView({
     'gray.900',
     'rgba(248, 250, 252, 0.96)'
   );
+  const {
+    overlayProps: dashboardModalOverlayProps,
+    headerProps: dashboardModalHeaderProps,
+    bodyProps: dashboardModalBodyProps,
+    footerProps: dashboardModalFooterProps,
+    closeButtonProps: dashboardModalCloseButtonProps,
+    tokens: dashboardModalTokens,
+  } = useDashboardModalProps();
+  const createTokenFormId = 'create-token-form';
+  const canSubmitCreateToken =
+    (typeof canCreateToken === 'boolean' ? canCreateToken : true) &&
+    (typeof isViewer === 'boolean' ? !isViewer : true);
   const optionBg = useColorModeValue('white', '#0f172a');
   const optionColor = useColorModeValue('gray.900', 'white');
   const outlineButtonHoverColor = useColorModeValue('gray.900', 'white');
@@ -3572,8 +3798,8 @@ function DashboardView({
     [onInputChange]
   );
 
-  const contactTagBg = useColorModeValue('blue.100', 'blue.800');
-  const contactTagColor = useColorModeValue('blue.800', 'blue.200');
+  const contactTagBg = 'rgba(59, 130, 246, 0.16)';
+  const contactTagColor = '#bfdbfe';
 
   const contactInputRef = useRef(null);
   const [contactTags, setContactTags] = useState([]);
@@ -3661,14 +3887,21 @@ function DashboardView({
   const renderContactTagInput = placeholder => (
     <Box
       border='1px solid'
-      borderColor={inputBorder}
-      borderRadius='md'
-      bg={inputBg}
+      borderColor={dashboardModalTokens.inputBorder}
+      borderRadius='10px'
+      bg={dashboardModalTokens.inputBg}
       px={2}
       py='6px'
       minH='40px'
+      color={dashboardModalTokens.text}
       cursor='text'
+      transition='border-color 120ms ease, box-shadow 120ms ease'
       onClick={() => contactInputRef.current?.focus()}
+      _hover={{ borderColor: dashboardModalTokens.focusBorder }}
+      _focusWithin={{
+        borderColor: dashboardModalTokens.focusBorder,
+        boxShadow: `0 0 0 1px ${dashboardModalTokens.focusBorder}`,
+      }}
     >
       <Flex wrap='wrap' gap={1} alignItems='center'>
         {contactTags.map((tag, i) => (
@@ -3677,7 +3910,9 @@ function DashboardView({
             align='center'
             bg={contactTagBg}
             color={contactTagColor}
-            borderRadius='md'
+            border='1px solid'
+            borderColor='rgba(96, 165, 250, 0.28)'
+            borderRadius='8px'
             px={2}
             py='2px'
             fontSize='sm'
@@ -3706,21 +3941,45 @@ function DashboardView({
         ))}
         <Input
           ref={contactInputRef}
+          variant='unstyled'
           type='text'
           value={contactInputValue}
           onChange={handleContactInputChange}
           onKeyDown={handleContactKeyDown}
           list='workspace-contacts-suggestions'
           placeholder={contactTags.length === 0 ? placeholder : ''}
-          _placeholder={{ color: placeholderColor }}
+          _placeholder={{ color: dashboardModalTokens.muted }}
           border='none'
           bg='transparent'
+          color={dashboardModalTokens.text}
           p={0}
           h='28px'
           flex={1}
           minW='120px'
-          fontSize='sm'
-          _focusVisible={{ boxShadow: 'outline' }}
+          fontSize='md'
+          lineHeight='1.5'
+          outline='none'
+          boxShadow='none'
+          sx={{
+            border: '0 !important',
+            borderRadius: '0 !important',
+            background: 'transparent !important',
+            boxShadow: 'none !important',
+            '&:hover': {
+              border: '0 !important',
+              boxShadow: 'none !important',
+            },
+            '&:focus': {
+              border: '0 !important',
+              boxShadow: 'none !important',
+            },
+            '&:focus-visible': {
+              border: '0 !important',
+              boxShadow: 'none !important',
+            },
+          }}
+          _focus={{ boxShadow: 'none' }}
+          _focusVisible={{ boxShadow: 'none' }}
         />
       </Flex>
     </Box>
@@ -5142,7 +5401,7 @@ function DashboardView({
                   >
                     Create New Token
                   </Button>
-                  <Menu placement='bottom-end'>
+                  <Menu placement='bottom-end' autoSelect={false}>
                     <MenuButton
                       data-tour='export-tokens'
                       as={Button}
@@ -5156,22 +5415,29 @@ function DashboardView({
                       Export tokens
                     </MenuButton>
                     <Portal>
-                      <MenuList
-                        zIndex={1500}
-                        bg={menuBg}
-                        borderColor={menuBorder}
-                        borderWidth='1px'
-                      >
-                        <MenuItem onClick={() => exportTokens('csv')}>
+                      <MenuList {...dashboardMenuListProps}>
+                        <MenuItem
+                          onClick={() => exportTokens('csv')}
+                          {...dashboardMenuItemProps}
+                        >
                           CSV
                         </MenuItem>
-                        <MenuItem onClick={() => exportTokens('xlsx')}>
+                        <MenuItem
+                          onClick={() => exportTokens('xlsx')}
+                          {...dashboardMenuItemProps}
+                        >
                           XLSX
                         </MenuItem>
-                        <MenuItem onClick={() => exportTokens('json')}>
+                        <MenuItem
+                          onClick={() => exportTokens('json')}
+                          {...dashboardMenuItemProps}
+                        >
                           JSON
                         </MenuItem>
-                        <MenuItem onClick={() => exportTokens('yaml')}>
+                        <MenuItem
+                          onClick={() => exportTokens('yaml')}
+                          {...dashboardMenuItemProps}
+                        >
                           YAML
                         </MenuItem>
                       </MenuList>
@@ -5200,18 +5466,31 @@ function DashboardView({
                 onClose={() => setCreateTokenModalOpen(false)}
                 size='6xl'
                 scrollBehavior='inside'
+                isCentered
               >
-                <ModalOverlay />
-                <ModalContent
-                  bg={surface}
-                  border='1px solid'
-                  borderColor={border}
-                >
-                  <ModalHeader color={text}>Create New Token</ModalHeader>
-                  <ModalCloseButton color={text} />
-                  <ModalBody pb={6}>
+                <ModalOverlay {...dashboardModalOverlayProps} />
+                <DashboardModalFrame maxW='1100px'>
+                  <ModalHeader {...dashboardModalHeaderProps}>
+                    <Text
+                      fontSize={{ base: 'md', md: 'lg' }}
+                      fontWeight='bold'
+                      color={dashboardModalTokens.text}
+                    >
+                      Create New Token
+                    </Text>
+                    <Text
+                      fontSize='sm'
+                      color={dashboardModalTokens.muted}
+                      mt={1.5}
+                      fontWeight='medium'
+                    >
+                      Add a certificate, key, secret, license, or general asset.
+                    </Text>
+                  </ModalHeader>
+                  <ModalCloseButton {...dashboardModalCloseButtonProps} />
+                  <ModalBody {...dashboardModalBodyProps}>
                     <Box pt={0}>
-                      <form onSubmit={onTokenAdd}>
+                      <form id={createTokenFormId} onSubmit={onTokenAdd}>
                         <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
                           {/* Name Field */}
                           <FormControl isInvalid={!!formErrors.name}>
@@ -5924,44 +6203,45 @@ function DashboardView({
                             placeholderColor={placeholderColor}
                           />
                         </FormControl>
-
-                        {(typeof canCreateToken === 'boolean'
-                          ? canCreateToken
-                          : true) && (
-                          <Flex justify='flex-end' mt={8}>
-                            {typeof isViewer === 'boolean' ? (
-                              !isViewer && (
-                                <Button
-                                  type='submit'
-                                  disabled={isSubmitting}
-                                  colorScheme='blue'
-                                  size='lg'
-                                  px={8}
-                                  isLoading={isSubmitting}
-                                  loadingText='Creating...'
-                                >
-                                  Create Token
-                                </Button>
-                              )
-                            ) : (
-                              <Button
-                                type='submit'
-                                disabled={isSubmitting}
-                                colorScheme='blue'
-                                size='lg'
-                                px={8}
-                                isLoading={isSubmitting}
-                                loadingText='Creating...'
-                              >
-                                Create Token
-                              </Button>
-                            )}
-                          </Flex>
-                        )}
                       </form>
                     </Box>
                   </ModalBody>
-                </ModalContent>
+                  <ModalFooter {...dashboardModalFooterProps}>
+                    <Flex
+                      w='100%'
+                      gap={3}
+                      justify={{ base: 'stretch', sm: 'flex-end' }}
+                      direction={{ base: 'column-reverse', sm: 'row' }}
+                    >
+                      <Button
+                        variant='outline'
+                        onClick={() => setCreateTokenModalOpen(false)}
+                        borderColor='rgba(148, 163, 184, 0.34)'
+                        color={dashboardModalTokens.subtleText}
+                        minW={{ base: '100%', sm: '104px' }}
+                        _hover={{
+                          bg: dashboardModalTokens.fieldBg,
+                          borderColor: dashboardModalTokens.focusBorder,
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      {canSubmitCreateToken && (
+                        <Button
+                          type='submit'
+                          form={createTokenFormId}
+                          disabled={isSubmitting}
+                          colorScheme='blue'
+                          minW={{ base: '100%', sm: '128px' }}
+                          isLoading={isSubmitting}
+                          loadingText='Creating...'
+                        >
+                          Create Token
+                        </Button>
+                      )}
+                    </Flex>
+                  </ModalFooter>
+                </DashboardModalFrame>
               </Modal>
             </>
           )}

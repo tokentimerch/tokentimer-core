@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalCloseButton,
   ModalBody,
@@ -30,7 +29,6 @@ import {
   Tooltip,
   IconButton,
   useColorMode,
-  useColorModeValue,
   Link as ChakraLink,
   Code,
   InputGroup,
@@ -73,6 +71,10 @@ import ImportAWSForm, {
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
+import {
+  DashboardModalFrame,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
 
 function toKey(s) {
   try {
@@ -759,7 +761,15 @@ export default function ImportTokensModal({
   const isLight = colorMode === 'light';
 
   const { border, muted } = useDashboardTheme();
-  const confirmBoxBg = useColorModeValue('gray.50', 'gray.700');
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    fieldProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
 
   // Timezone list with fallback for older browsers missing Intl.supportedValuesOf
   const timezoneList = React.useMemo(() => {
@@ -1997,13 +2007,27 @@ export default function ImportTokensModal({
         size='4xl'
         motionPreset='none'
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>
-            <Text>Import tokens</Text>
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame maxW='960px'>
+          <ModalHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Import tokens
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Import assets from files or connected infrastructure providers.
+            </Text>
           </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
               {/* Source selector */}
               <Box>
@@ -2080,9 +2104,33 @@ export default function ImportTokensModal({
                           : ''
                       : '';
                     return (
-                      <VStack key={card.key} spacing={2} align='center'>
+                      <VStack
+                        key={card.key}
+                        spacing={2}
+                        align='center'
+                        justify='center'
+                        p={3}
+                        minH={{ base: '116px', md: '132px' }}
+                        bg={modalTokens.fieldBg}
+                        border='1px solid'
+                        borderColor={
+                          source === card.key
+                            ? modalTokens.focusBorder
+                            : modalTokens.border
+                        }
+                        borderRadius='12px'
+                        boxShadow={
+                          source === card.key
+                            ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
+                            : 'none'
+                        }
+                      >
                         <HStack spacing={1}>
-                          <Text fontSize='sm' fontWeight='medium'>
+                          <Text
+                            fontSize='sm'
+                            fontWeight='semibold'
+                            color={modalTokens.text}
+                          >
                             {card.label}
                           </Text>
                           {isLocked && (
@@ -3030,7 +3078,12 @@ export default function ImportTokensModal({
               ) : null}
             </VStack>
           </ModalBody>
-          <ModalFooter flexDirection='column' alignItems='stretch' gap={3}>
+          <ModalFooter
+            {...footerProps}
+            flexDirection='column'
+            alignItems='stretch'
+            gap={3}
+          >
             <HStack w='full' justify='flex-end' flexWrap='wrap'>
               {!autoSyncManageMode ? (
                 source === 'file' ? (
@@ -3130,7 +3183,18 @@ export default function ImportTokensModal({
                   </Button>
                 ) : null
               ) : null}
-              <Button onClick={onCloseInternal}>Close</Button>
+              <Button
+                variant='outline'
+                onClick={onCloseInternal}
+                borderColor='rgba(148, 163, 184, 0.34)'
+                color={modalTokens.subtleText}
+                _hover={{
+                  bg: modalTokens.fieldBg,
+                  borderColor: modalTokens.focusBorder,
+                }}
+              >
+                Close
+              </Button>
               {source !== 'file' && !isViewer && !hasAutoSync ? (
                 <Tooltip
                   label={
@@ -3163,7 +3227,7 @@ export default function ImportTokensModal({
               ) : null}
             </HStack>
           </ModalFooter>
-        </ModalContent>
+        </DashboardModalFrame>
       </Modal>
 
       {/* Enable auto-sync modal */}
@@ -3173,11 +3237,27 @@ export default function ImportTokensModal({
         isCentered
         size='md'
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Enable Auto-Sync</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame maxW='520px'>
+          <ModalHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Enable Auto-Sync
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Save credentials for scheduled infrastructure scans.
+            </Text>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
             <VStack spacing={4} align='stretch'>
               <Alert status='info' borderRadius='md'>
                 <AlertIcon />
@@ -3187,7 +3267,7 @@ export default function ImportTokensModal({
                   credentials later from the Manage auto-sync tab.
                 </Text>
               </Alert>
-              <Box p={3} bg={confirmBoxBg} borderRadius='md'>
+              <Box {...fieldProps} p={3}>
                 <Text fontSize='sm' fontWeight='semibold' mb={1}>
                   Provider: {source}
                 </Text>
@@ -3231,19 +3311,30 @@ export default function ImportTokensModal({
               </FormControl>
             </VStack>
           </ModalBody>
-          <ModalFooter>
-            <Button variant='ghost' mr={3} onClick={onEnableAutoSyncClose}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme='blue'
-              onClick={confirmEnableAutoSync}
-              isLoading={savingAutoSync}
-            >
-              Enable Auto-Sync
-            </Button>
+          <ModalFooter {...footerProps}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
+              <Button
+                variant='outline'
+                onClick={onEnableAutoSyncClose}
+                borderColor='rgba(148, 163, 184, 0.34)'
+                color={modalTokens.subtleText}
+                _hover={{
+                  bg: modalTokens.fieldBg,
+                  borderColor: modalTokens.focusBorder,
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                colorScheme='blue'
+                onClick={confirmEnableAutoSync}
+                isLoading={savingAutoSync}
+              >
+                Enable Auto-Sync
+              </Button>
+            </HStack>
           </ModalFooter>
-        </ModalContent>
+        </DashboardModalFrame>
       </Modal>
 
       {/* Disable auto-sync confirmation modal */}
@@ -3253,11 +3344,27 @@ export default function ImportTokensModal({
         isCentered
         size='sm'
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Disable Auto-Sync</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame maxW='460px'>
+          <ModalHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Disable Auto-Sync
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Stop scheduled scans for this provider.
+            </Text>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
             <VStack spacing={3} align='stretch'>
               <Alert status='warning' borderRadius='md'>
                 <AlertIcon />
@@ -3267,7 +3374,7 @@ export default function ImportTokensModal({
                 </Text>
               </Alert>
               {autoSyncConfig && (
-                <Box p={3} bg={confirmBoxBg} borderRadius='md'>
+                <Box {...fieldProps} p={3}>
                   <Text fontSize='sm'>
                     <Text as='span' fontWeight='semibold'>
                       Provider:
@@ -3294,15 +3401,26 @@ export default function ImportTokensModal({
               )}
             </VStack>
           </ModalBody>
-          <ModalFooter>
-            <Button variant='ghost' mr={3} onClick={onDisableAutoSyncClose}>
-              Cancel
-            </Button>
-            <Button colorScheme='red' onClick={confirmDisableAutoSync}>
-              Disable Auto-Sync
-            </Button>
+          <ModalFooter {...footerProps}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
+              <Button
+                variant='outline'
+                onClick={onDisableAutoSyncClose}
+                borderColor='rgba(148, 163, 184, 0.34)'
+                color={modalTokens.subtleText}
+                _hover={{
+                  bg: modalTokens.fieldBg,
+                  borderColor: modalTokens.focusBorder,
+                }}
+              >
+                Cancel
+              </Button>
+              <Button colorScheme='red' onClick={confirmDisableAutoSync}>
+                Disable Auto-Sync
+              </Button>
+            </HStack>
           </ModalFooter>
-        </ModalContent>
+        </DashboardModalFrame>
       </Modal>
     </>
   );

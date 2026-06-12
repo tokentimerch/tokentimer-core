@@ -42,6 +42,7 @@ import {
   Sun,
   User,
 } from 'lucide-react';
+import { useDashboardMenuStyles } from '../hooks/useDashboardMenuStyles.js';
 
 const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
 const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
@@ -149,8 +150,15 @@ export default function DashboardShell({
   const mutedTextColor = dashboardColors?.muted ?? 'rgba(148, 163, 184, 0.92)';
   const borderColor = dashboardColors?.border ?? 'rgba(148, 163, 184, 0.13)';
 
-  const menuBg = useColorModeValue('white', 'rgba(15, 23, 42, 0.98)');
-  const menuBorder = useColorModeValue('gray.200', 'rgba(148, 163, 184, 0.2)');
+  const {
+    menuBg,
+    menuBorder,
+    chromeHoverBg,
+    chromeHoverColor,
+    menuListProps,
+    menuItemProps: userMenuItemStyles,
+    inactiveMenuItemProps: inactiveMenuItemStyles,
+  } = useDashboardMenuStyles();
   const appIconFilter = useColorModeValue('none', 'invert(1)');
   const navInactiveColor = useColorModeValue(
     'gray.600',
@@ -167,8 +175,6 @@ export default function DashboardShell({
     'blue.100',
     'rgba(37, 99, 235, 0.32)'
   );
-  const chromeHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
-  const chromeHoverColor = useColorModeValue('gray.900', 'white');
   const sidebarToggleColor = useColorModeValue('gray.700', 'white');
   const sidebarToggleBorder = useColorModeValue(
     'gray.200',
@@ -267,33 +273,6 @@ export default function DashboardShell({
     }
     setIsUserMenuOpen(false);
   };
-  const userMenuItemStyles = {
-    bg: 'transparent',
-    _hover: { bg: chromeHoverBg },
-    _focus: { bg: chromeHoverBg },
-    _focusVisible: {
-      bg: chromeHoverBg,
-      boxShadow: `inset 0 0 0 1px ${menuBorder}`,
-    },
-    _active: { bg: chromeHoverBg },
-    sx: {
-      '&:hover, &[data-hover], &[data-focus]': {
-        background: `${chromeHoverBg} !important`,
-      },
-    },
-  };
-  const inactiveMenuItemStyles = {
-    bg: 'transparent',
-    _hover: { bg: 'transparent' },
-    _focus: { bg: 'transparent' },
-    _active: { bg: 'transparent' },
-    sx: {
-      '&:hover, &[data-hover], &[data-focus]': {
-        background: 'transparent !important',
-      },
-    },
-  };
-
   useLayoutEffect(() => {
     const widthPx = `${dashboardSidebarWidth}px`;
     document.documentElement.style.setProperty(
@@ -370,7 +349,7 @@ export default function DashboardShell({
           },
           {
             key: 'alert-settings',
-            label: 'Alert settings',
+            label: 'Workspace preferences',
             icon: Bell,
             active: currentPath === '/workspace-preferences',
             onClick: () => navigate('/workspace-preferences'),
@@ -796,7 +775,7 @@ export default function DashboardShell({
                 </HStack>
               </MenuButton>
               <Portal>
-                <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+                <MenuList {...menuListProps}>
                   {dashboardWorkspaces.map(workspace => (
                     <MenuItem
                       key={workspace.id}
@@ -836,12 +815,7 @@ export default function DashboardShell({
                 />
               </Box>
               <Portal>
-                <MenuList
-                  zIndex={1500}
-                  bg={menuBg}
-                  borderColor={menuBorder}
-                  minW='280px'
-                >
+                <MenuList {...menuListProps} minW='280px'>
                   {dashboardNotifications.length === 0 ? (
                     <Box px={3} py={2}>
                       <Text fontSize='sm' color={mutedTextColor}>
@@ -938,7 +912,7 @@ export default function DashboardShell({
                 </HStack>
               </MenuButton>
               <Portal>
-                <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+                <MenuList {...menuListProps}>
                   <MenuItem
                     icon={<User size={15} />}
                     onClick={handleAccountClick}
@@ -1030,7 +1004,7 @@ export default function DashboardShell({
                 </Text>
               </MenuButton>
               <Portal>
-                <MenuList zIndex={1500} bg={menuBg} borderColor={menuBorder}>
+                <MenuList {...menuListProps}>
                   {dashboardWorkspaces.map(workspace => (
                     <MenuItem
                       key={workspace.id}

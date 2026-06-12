@@ -6,17 +6,11 @@ import {
   AlertIcon,
   Badge,
   Box,
-  Button,
   Circle,
   Flex,
-  Heading,
   HStack,
   SimpleGrid,
   Spinner,
-  Stat,
-  StatHelpText,
-  StatLabel,
-  StatNumber,
   Table,
   Tbody,
   Td,
@@ -37,12 +31,21 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import DashboardShell from '../components/DashboardShell';
+import {
+  DashboardActionButton,
+  DashboardPanel as SharedDashboardPanel,
+  DashboardPanelHeader,
+  DashboardState,
+} from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
 import TruncatedText from '../components/TruncatedText';
 import { useControlCenterData } from '../hooks/useControlCenterData';
 import { useControlCenterStats } from '../hooks/useControlCenterStats';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { formatDate } from '../utils/apiClient';
+
+const EMPTY_BUCKETS = Object.freeze({});
+const EMPTY_LIST = Object.freeze([]);
 
 function formatPercent(count, total) {
   if (!total) return '0.0%';
@@ -122,60 +125,59 @@ function formatRelativeTime(dateStr) {
   return date.toLocaleDateString();
 }
 
-function DashboardPanel({ title, action, children, ...props }) {
-  const { surface, text, border } = useDashboardTheme();
-  const panelShadow = useColorModeValue(
-    '0 1px 3px rgba(0, 0, 0, 0.08)',
-    '0 16px 48px rgba(0, 0, 0, 0.2)'
-  );
+function getAlertChannelAttempts(alert) {
+  if (alert.channel === 'email') {
+    return typeof alert.attempts_email === 'number'
+      ? alert.attempts_email
+      : alert.attempts;
+  }
+  if (alert.channel === 'webhooks') {
+    return typeof alert.attempts_webhooks === 'number'
+      ? alert.attempts_webhooks
+      : alert.attempts;
+  }
+  return alert.attempts;
+}
+
+function ControlCenterPanel({
+  title,
+  description,
+  action,
+  children,
+  bodyProps,
+  ...props
+}) {
+  const { border } = useDashboardTheme();
 
   return (
-    <Box
-      bg={surface}
-      border='1px solid'
-      borderColor={border}
-      borderRadius='md'
-      boxShadow={panelShadow}
-      overflow='hidden'
-      {...props}
-    >
-      {(title || action) && (
-        <Flex
-          align='center'
-          justify='space-between'
+    <SharedDashboardPanel p={0} {...props}>
+      {(title || description || action) && (
+        <Box
           px={{ base: 4, md: 5 }}
           py={3}
           borderBottom='1px solid'
           borderColor={border}
         >
-          <Text color={text} fontWeight='semibold' fontSize='sm'>
-            {title}
-          </Text>
-          {action}
-        </Flex>
+          <DashboardPanelHeader
+            title={title}
+            description={description}
+            action={action}
+            mb={0}
+          />
+        </Box>
       )}
-      <Box p={{ base: 4, md: 5 }}>{children}</Box>
-    </Box>
+      <Box p={{ base: 4, md: 5 }} {...bodyProps}>
+        {children}
+      </Box>
+    </SharedDashboardPanel>
   );
 }
 
 function MetricCard({ icon: Icon, label, value, detail, accent }) {
-  const { surface, text, muted, border } = useDashboardTheme();
-  const cardShadow = useColorModeValue(
-    '0 1px 3px rgba(0, 0, 0, 0.08)',
-    '0 14px 42px rgba(0, 0, 0, 0.18)'
-  );
+  const { text, muted } = useDashboardTheme();
 
   return (
-    <Box
-      bg={surface}
-      border='1px solid'
-      borderColor={border}
-      borderRadius='md'
-      p={4}
-      minH='84px'
-      boxShadow={cardShadow}
-    >
+    <SharedDashboardPanel p={4} minH='96px'>
       <HStack align='center' spacing={3}>
         <Circle size='38px' bg={`${accent}22`} color={accent} flex='0 0 auto'>
           <Icon size={19} strokeWidth={2} />
@@ -192,6 +194,119 @@ function MetricCard({ icon: Icon, label, value, detail, accent }) {
           </Text>
         </Box>
       </HStack>
+    </SharedDashboardPanel>
+  );
+}
+
+function ControlStatCard({ label, value, help, color }) {
+  const { text, muted } = useDashboardTheme();
+
+  return (
+    <SharedDashboardPanel p={4} minH='108px'>
+      <VStack align='stretch' spacing={1}>
+        <Text color={muted} fontSize='sm' lineHeight='1.25'>
+          {label}
+        </Text>
+        <Text color={color || text} fontSize='2xl' fontWeight='bold'>
+          {value}
+        </Text>
+        {help ? (
+          <Text color={muted} fontSize='xs'>
+            {help}
+          </Text>
+        ) : null}
+      </VStack>
+    </SharedDashboardPanel>
+  );
+}
+
+function AlertQueueMobileCard({ alert, channelAttempts }) {
+  const { text, muted, border, dashboard } = useDashboardTheme();
+  const cardBg = useColorModeValue('white', dashboard.bg.panelHover);
+  const detailBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.58)');
+  const channelLabel = alert.channel_display || alert.channel || 'None';
+  const errorMessage = friendlyErrorMessage(
+    alert.channel_error_message || alert.error_message || ''
+  );
+
+  return (
+    <Box
+      bg={cardBg}
+      border='1px solid'
+      borderColor={border}
+      borderRadius='md'
+      p={4}
+    >
+      <VStack align='stretch' spacing={3}>
+        <Flex align='start' justify='space-between' gap={3}>
+          <Box minW={0}>
+            <Text
+              color={text}
+              fontSize='sm'
+              fontWeight='semibold'
+              noOfLines={2}
+            >
+              {alert.token_name || `Token #${alert.token_id}`}
+            </Text>
+            <Text color={muted} fontSize='xs' noOfLines={1}>
+              {alert.token_type || 'Unknown'}
+            </Text>
+          </Box>
+          {getStatusBadge(alert.status)}
+        </Flex>
+
+        <SimpleGrid columns={2} spacing={3}>
+          <Box>
+            <Text color={muted} fontSize='xs'>
+              Days
+            </Text>
+            <Text color={text} fontSize='sm' fontWeight='medium'>
+              {alert.threshold_days}
+            </Text>
+          </Box>
+          <Box>
+            <Text color={muted} fontSize='xs'>
+              Due
+            </Text>
+            <Text color={text} fontSize='sm' fontWeight='medium'>
+              {alert.due_date
+                ? new Date(alert.due_date).toISOString().slice(0, 10)
+                : '-'}
+            </Text>
+          </Box>
+          <Box>
+            <Text color={muted} fontSize='xs'>
+              Channel
+            </Text>
+            <Badge colorScheme={alert.channel === 'email' ? 'green' : 'blue'}>
+              {channelLabel}
+            </Badge>
+          </Box>
+          <Box>
+            <Text color={muted} fontSize='xs'>
+              Attempts
+            </Text>
+            <Text color={text} fontSize='sm' fontWeight='medium'>
+              {channelAttempts}
+            </Text>
+          </Box>
+        </SimpleGrid>
+
+        {errorMessage ? (
+          <Box bg={detailBg} border='1px solid' borderColor={border} p={3}>
+            <Text color={muted} fontSize='xs' mb={1}>
+              Error
+            </Text>
+            <Text color={text} fontSize='sm' wordBreak='break-word'>
+              {errorMessage}
+            </Text>
+          </Box>
+        ) : null}
+
+        <Text color={muted} fontSize='xs'>
+          Updated {formatRelativeTime(alert.updated_at)}
+        </Text>
+      </VStack>
     </Box>
   );
 }
@@ -205,7 +320,7 @@ function SectionState({
   unauthorizedDetail = 'You need manager or admin access to view this section.',
   children,
 }) {
-  const { muted, text } = useDashboardTheme();
+  const { muted } = useDashboardTheme();
 
   if (status === 'loading' || status === 'refreshing') {
     return (
@@ -247,16 +362,7 @@ function SectionState({
 
   if (status === 'empty') {
     return (
-      <VStack spacing={2} py={6}>
-        <Text color={text} fontSize='sm' fontWeight='medium'>
-          {emptyTitle}
-        </Text>
-        {emptyDetail ? (
-          <Text color={muted} fontSize='xs' textAlign='center'>
-            {emptyDetail}
-          </Text>
-        ) : null}
-      </VStack>
+      <DashboardState title={emptyTitle} description={emptyDetail} py={6} />
     );
   }
 
@@ -293,6 +399,8 @@ function useControlCenterShellProps({
   onLogout,
   onAccountClick,
 }) {
+  const { workspaces, setSelectedWorkspaceId } = alertData;
+
   return useMemo(() => {
     const sessionName =
       session?.displayName || session?.name || session?.email || 'User';
@@ -311,12 +419,12 @@ function useControlCenterShellProps({
       sessionName,
       sessionEmail,
       sessionInitials,
-      dashboardWorkspaces: alertData.workspaces,
+      dashboardWorkspaces: workspaces,
       dashboardWorkspace: selectedWorkspace,
       workspaceLabel: selectedWorkspace?.name || 'Current workspace',
       onWorkspaceSelect: workspace => {
         if (workspace?.id) {
-          alertData.setSelectedWorkspaceId(workspace.id);
+          setSelectedWorkspaceId(workspace.id);
         }
       },
       dashboardNotifications: [],
@@ -330,8 +438,8 @@ function useControlCenterShellProps({
     theme,
     location.pathname,
     session,
-    alertData.workspaces,
-    alertData.setSelectedWorkspaceId,
+    workspaces,
+    setSelectedWorkspaceId,
     selectedWorkspace,
     onLogout,
     onAccountClick,
@@ -344,15 +452,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const theme = useDashboardTheme();
   const { pageBg, surface, text, muted, border } = theme;
 
-  const outlineButtonColor = useColorModeValue(
-    'gray.700',
-    'rgba(226, 232, 240, 0.94)'
-  );
-  const outlineButtonHoverBg = useColorModeValue(
-    'gray.100',
-    'rgba(30, 41, 59, 0.72)'
-  );
-  const outlineButtonHoverColor = useColorModeValue('gray.900', 'white');
   const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
   const tableHeadColor = useColorModeValue(
     'gray.600',
@@ -389,10 +488,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     alertData.workspaces.length <= 1;
 
   const statsData = assetStats.data;
-  const buckets = statsData?.buckets || {};
+  const buckets = statsData?.buckets || EMPTY_BUCKETS;
   const totalAssets = statsData?.totalAssets || 0;
-  const sources = statsData?.sources || [];
-  const needsAttention = statsData?.needsAttention || [];
+  const sources = statsData?.sources || EMPTY_LIST;
+  const needsAttention = statsData?.needsAttention || EMPTY_LIST;
 
   const healthSegments = useMemo(() => {
     const total = Math.max(totalAssets, 1);
@@ -403,8 +502,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
       0
     );
     const criticalPercent = (criticalCount / total) * 100;
-    const expiredPercent = ((buckets.expired || 0) / total) * 100;
-
     return {
       gradient: `conic-gradient(#22c55e 0 ${healthyPercent}%, #f97316 ${healthyPercent}% ${
         healthyPercent + duePercent
@@ -566,7 +663,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                     spacing={3}
                     alignItems='stretch'
                   >
-                    <DashboardPanel title='Needs attention'>
+                    <ControlCenterPanel title='Needs attention'>
                       {needsAttention.length === 0 ? (
                         <Text color={muted} fontSize='sm'>
                           All clear. No assets are due soon.
@@ -611,7 +708,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                 <Text
                                   color={meta.color}
                                   fontSize='xs'
-                                  fontWeight='bold'
+                                  fontWeight='semibold'
                                   textAlign='right'
                                 >
                                   {formatAttentionDays(item.daysLeft)}
@@ -621,10 +718,14 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           })}
                         </VStack>
                       )}
-                    </DashboardPanel>
+                    </ControlCenterPanel>
 
-                    <DashboardPanel title='Asset health overview'>
-                      <HStack spacing={5} align='center'>
+                    <ControlCenterPanel title='Asset health overview'>
+                      <HStack
+                        spacing={5}
+                        align='center'
+                        direction={{ base: 'column', sm: 'row' }}
+                      >
                         <Circle
                           size='112px'
                           bg={healthSegments.gradient}
@@ -669,9 +770,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           ))}
                         </VStack>
                       </HStack>
-                    </DashboardPanel>
+                    </ControlCenterPanel>
 
-                    <DashboardPanel title='Asset sources'>
+                    <ControlCenterPanel title='Asset sources'>
                       {sources.length === 0 ? (
                         <Text color={muted} fontSize='sm'>
                           No asset sources yet.
@@ -699,7 +800,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           ))}
                         </VStack>
                       )}
-                    </DashboardPanel>
+                    </ControlCenterPanel>
                   </SimpleGrid>
                 </SectionState>
               </Box>
@@ -714,213 +815,118 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                 unauthorizedDetail='Alert delivery statistics require manager or admin access.'
               >
                 {alertData.isAdminAny && !alertData.hasManagerOrViewerRole ? (
-                  <Box
-                    bg={surface}
-                    p={4}
-                    borderRadius='md'
-                    border='1px solid'
-                    borderColor={border}
-                    mb={4}
-                  >
-                    <Heading size='sm' mb={3} color={text}>
-                      Organization (admin only)
-                    </Heading>
+                  <ControlCenterPanel title='Organization (admin only)' mb={4}>
                     <SimpleGrid
                       columns={{ base: 1, sm: 2, md: 3, lg: 5 }}
-                      spacing={4}
+                      spacing={3}
                     >
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Workspaces</StatLabel>
-                        <StatNumber>{alertData.orgWorkspaceCount}</StatNumber>
-                        <StatHelpText>Across organization</StatHelpText>
-                      </Stat>
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Members</StatLabel>
-                        <StatNumber>
-                          {alertData.planInfo.memberCount || 0}
-                        </StatNumber>
-                        <StatHelpText>Across organization</StatHelpText>
-                      </Stat>
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Tokens</StatLabel>
-                        <StatNumber>
-                          {alertData.planInfo.tokenCount || 0}
-                        </StatNumber>
-                        <StatHelpText>Across workspaces</StatHelpText>
-                      </Stat>
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Email/webhook deliveries (month)</StatLabel>
-                        <StatNumber>{alertData.orgStats.monthUsage}</StatNumber>
-                        <StatHelpText>All workspaces</StatHelpText>
-                      </Stat>
+                      <ControlStatCard
+                        label='Workspaces'
+                        value={alertData.orgWorkspaceCount}
+                        help='Across organization'
+                      />
+                      <ControlStatCard
+                        label='Members'
+                        value={alertData.planInfo.memberCount || 0}
+                        help='Across organization'
+                      />
+                      <ControlStatCard
+                        label='Tokens'
+                        value={alertData.planInfo.tokenCount || 0}
+                        help='Across workspaces'
+                      />
+                      <ControlStatCard
+                        label='Email/webhook deliveries'
+                        value={alertData.orgStats.monthUsage}
+                        help='This month, all workspaces'
+                      />
                       {(alertData.stats.whatsappMonth || 0) > 0 ? (
-                        <Stat
-                          bg={surface}
-                          p={4}
-                          borderRadius='md'
-                          border='1px solid'
-                          borderColor={border}
-                        >
-                          <StatLabel>WhatsApp deliveries (month)</StatLabel>
-                          <StatNumber>
-                            {alertData.stats.whatsappMonth || 0}
-                          </StatNumber>
-                          <StatHelpText>Across organization</StatHelpText>
-                        </Stat>
+                        <ControlStatCard
+                          label='WhatsApp deliveries'
+                          value={alertData.stats.whatsappMonth || 0}
+                          help='This month, across organization'
+                        />
                       ) : null}
                     </SimpleGrid>
-                  </Box>
+                  </ControlCenterPanel>
                 ) : null}
 
                 {alertData.eligibleWorkspaces.length > 0 ? (
-                  <Box
-                    bg={surface}
-                    p={4}
-                    borderRadius='md'
-                    border='1px solid'
-                    borderColor={border}
+                  <ControlCenterPanel
+                    title='Alert delivery (this month)'
                     mb={4}
                   >
-                    <Heading size='sm' mb={3} color={text}>
-                      Alert delivery (this month)
-                    </Heading>
                     <SimpleGrid
                       columns={{ base: 1, sm: 2, md: 3, lg: 5 }}
-                      spacing={4}
+                      spacing={3}
                     >
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Successful deliveries</StatLabel>
-                        <StatNumber color={usageColor}>
-                          {typeof alertData.stats.allMonthSuccesses ===
+                      <ControlStatCard
+                        label='Successful deliveries'
+                        value={
+                          typeof alertData.stats.allMonthSuccesses ===
                             'number' && alertData.stats.allMonthSuccesses >= 0
                             ? alertData.stats.allMonthSuccesses
-                            : alertData.stats.monthUsage}
-                        </StatNumber>
-                      </Stat>
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Email successes</StatLabel>
-                        <StatNumber>
-                          {alertData.stats.emailsMonth || 0}
-                        </StatNumber>
-                      </Stat>
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Webhook successes</StatLabel>
-                        <StatNumber>
-                          {alertData.stats.webhooksMonth || 0}
-                        </StatNumber>
-                      </Stat>
+                            : alertData.stats.monthUsage
+                        }
+                        color={usageColor}
+                      />
+                      <ControlStatCard
+                        label='Email successes'
+                        value={alertData.stats.emailsMonth || 0}
+                      />
+                      <ControlStatCard
+                        label='Webhook successes'
+                        value={alertData.stats.webhooksMonth || 0}
+                      />
                       {(alertData.stats.whatsappMonth || 0) > 0 ? (
-                        <Stat
-                          bg={surface}
-                          p={4}
-                          borderRadius='md'
-                          border='1px solid'
-                          borderColor={border}
-                        >
-                          <StatLabel>WhatsApp successes</StatLabel>
-                          <StatNumber>
-                            {alertData.stats.whatsappMonth || 0}
-                          </StatNumber>
-                        </Stat>
+                        <ControlStatCard
+                          label='WhatsApp successes'
+                          value={alertData.stats.whatsappMonth || 0}
+                        />
                       ) : null}
-                      <Stat
-                        bg={surface}
-                        p={4}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor={border}
-                      >
-                        <StatLabel>Tokens</StatLabel>
-                        <StatNumber>{alertData.workspaceTokenCount}</StatNumber>
-                        <StatHelpText>In this workspace</StatHelpText>
-                      </Stat>
+                      <ControlStatCard
+                        label='Tokens'
+                        value={alertData.workspaceTokenCount}
+                        help='In this workspace'
+                      />
                     </SimpleGrid>
-                  </Box>
+                  </ControlCenterPanel>
                 ) : null}
 
                 {alertData.eligibleWorkspaces.length > 0 ? (
-                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mb={4}>
-                    <Stat
-                      bg={surface}
-                      p={4}
-                      borderRadius='md'
-                      border='1px solid'
-                      borderColor={border}
-                    >
-                      <StatLabel>Pending</StatLabel>
-                      <StatNumber color='yellow.500'>
-                        {alertData.queueSummary.pending || 0}
-                      </StatNumber>
-                      <StatHelpText>Awaiting delivery</StatHelpText>
-                    </Stat>
-                    <Stat
-                      bg={surface}
-                      p={4}
-                      borderRadius='md'
-                      border='1px solid'
-                      borderColor={border}
-                    >
-                      <StatLabel>Blocked</StatLabel>
-                      <StatNumber color='red.500'>
-                        {alertData.queueSummary.blocked || 0}
-                      </StatNumber>
-                      <StatHelpText>Delivery blocked</StatHelpText>
-                    </Stat>
+                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mb={4}>
+                    <ControlStatCard
+                      label='Pending'
+                      value={alertData.queueSummary.pending || 0}
+                      help='Awaiting delivery'
+                      color='yellow.500'
+                    />
+                    <ControlStatCard
+                      label='Blocked'
+                      value={alertData.queueSummary.blocked || 0}
+                      help='Delivery blocked'
+                      color='red.500'
+                    />
                   </SimpleGrid>
                 ) : null}
               </SectionState>
 
               {alertData.eligibleWorkspaces.length > 0 ? (
-                <Box
+                <ControlCenterPanel
                   data-tour='control-center-alert-queue'
-                  bg={surface}
-                  p={6}
-                  borderRadius='md'
-                  boxShadow='sm'
-                  border='1px solid'
-                  borderColor={border}
+                  title='Alert queue (workspace)'
+                  action={
+                    <DashboardActionButton
+                      onClick={handleRefreshAll}
+                      isLoading={
+                        assetStats.isRefreshing || alertData.refreshing
+                      }
+                      variant='outline'
+                      borderColor={border}
+                    >
+                      Refresh
+                    </DashboardActionButton>
+                  }
                 >
                   <SectionState
                     status={
@@ -934,47 +940,20 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                     unauthorizedDetail='The alert queue requires manager or admin access.'
                   >
                     <VStack align='stretch' spacing={4}>
-                      <Flex
-                        align='center'
-                        justify='space-between'
-                        gap={3}
-                        flexWrap='wrap'
-                      >
-                        <Heading size='md' color={text}>
-                          Alert queue (workspace)
-                        </Heading>
-                        <Button
-                          onClick={handleRefreshAll}
-                          isLoading={
-                            assetStats.isRefreshing || alertData.refreshing
-                          }
-                          size='sm'
-                          variant='outline'
-                          borderColor={border}
-                          color={outlineButtonColor}
-                          _hover={{
-                            bg: outlineButtonHoverBg,
-                            color: outlineButtonHoverColor,
-                          }}
-                        >
-                          Refresh
-                        </Button>
-                      </Flex>
                       <VStack align='start' spacing={2}>
                         <Tooltip
                           label={alertData.requeueDisabledReason}
                           hasArrow
                           placement='top-start'
                         >
-                          <Button
-                            size='sm'
+                          <DashboardActionButton
                             colorScheme='blue'
                             variant='solid'
                             onClick={() => alertData.requeueAlerts()}
                             isDisabled={!alertData.canRequeue}
                           >
                             Requeue blocked/failed
-                          </Button>
+                          </DashboardActionButton>
                         </Tooltip>
                         <Text fontSize='xs' color={muted}>
                           Admins can requeue failed alerts for the selected
@@ -997,103 +976,112 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                       </Alert>
 
                       {alertData.queue.length === 0 ? (
-                        <VStack spacing={4} py={4}>
-                          <Text color={muted} fontSize='lg'>
-                            No pending or failed alerts
-                          </Text>
-                        </VStack>
+                        <DashboardState
+                          title='No pending or failed alerts'
+                          py={4}
+                        />
                       ) : (
-                        <Box overflowX='auto'>
-                          <Table size='sm' variant='simple'>
-                            <Thead>
-                              <Tr>
-                                <Th>Token</Th>
-                                <Th isNumeric width='80px'>
-                                  Days
-                                </Th>
-                                <Th width='130px'>Due</Th>
-                                <Th>Status</Th>
-                                <Th>Channel</Th>
-                                <Th isNumeric>Attempts</Th>
-                                <Th>Error</Th>
-                                <Th>Updated</Th>
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {alertData.queue.map(alert => {
-                                const channelAttempts =
-                                  alert.channel === 'email'
-                                    ? typeof alert.attempts_email === 'number'
-                                      ? alert.attempts_email
-                                      : alert.attempts
-                                    : alert.channel === 'webhooks'
-                                      ? typeof alert.attempts_webhooks ===
-                                        'number'
-                                        ? alert.attempts_webhooks
-                                        : alert.attempts
-                                      : alert.attempts;
+                        <>
+                          <Box display={{ base: 'block', lg: 'none' }}>
+                            <VStack align='stretch' spacing={3}>
+                              {alertData.queue.map(alert => (
+                                <AlertQueueMobileCard
+                                  key={`${alert.id}-${alert.channel}-mobile`}
+                                  alert={alert}
+                                  channelAttempts={getAlertChannelAttempts(
+                                    alert
+                                  )}
+                                />
+                              ))}
+                            </VStack>
+                          </Box>
 
-                                return (
-                                  <Tr key={`${alert.id}-${alert.channel}`}>
-                                    <Td>
-                                      <VStack align='start' spacing={0}>
-                                        <Text fontWeight='medium'>
-                                          {alert.token_name ||
-                                            `Token #${alert.token_id}`}
-                                        </Text>
-                                        <Text fontSize='sm' color={muted}>
-                                          {alert.token_type || 'Unknown'}
-                                        </Text>
-                                      </VStack>
-                                    </Td>
-                                    <Td isNumeric>{alert.threshold_days}</Td>
-                                    <Td>
-                                      {alert.due_date
-                                        ? new Date(alert.due_date)
-                                            .toISOString()
-                                            .slice(0, 10)
-                                        : '-'}
-                                    </Td>
-                                    <Td>{getStatusBadge(alert.status)}</Td>
-                                    <Td>
-                                      <Badge
-                                        colorScheme={
-                                          alert.channel === 'email'
-                                            ? 'green'
-                                            : 'blue'
-                                        }
-                                        size='sm'
-                                      >
-                                        {alert.channel_display ||
-                                          alert.channel ||
-                                          'None'}
-                                      </Badge>
-                                    </Td>
-                                    <Td isNumeric>{channelAttempts}</Td>
-                                    <Td maxW='200px'>
-                                      <TruncatedText
-                                        text={friendlyErrorMessage(
-                                          alert.channel_error_message ||
-                                            alert.error_message ||
-                                            ''
-                                        )}
-                                        maxLines={3}
-                                        maxWidth='200px'
-                                      />
-                                    </Td>
-                                    <Td>
-                                      {formatRelativeTime(alert.updated_at)}
-                                    </Td>
-                                  </Tr>
-                                );
-                              })}
-                            </Tbody>
-                          </Table>
-                        </Box>
+                          <Box
+                            overflowX='auto'
+                            display={{ base: 'none', lg: 'block' }}
+                          >
+                            <Table size='sm' variant='simple'>
+                              <Thead>
+                                <Tr>
+                                  <Th>Token</Th>
+                                  <Th isNumeric width='80px'>
+                                    Days
+                                  </Th>
+                                  <Th width='130px'>Due</Th>
+                                  <Th>Status</Th>
+                                  <Th>Channel</Th>
+                                  <Th isNumeric>Attempts</Th>
+                                  <Th>Error</Th>
+                                  <Th>Updated</Th>
+                                </Tr>
+                              </Thead>
+                              <Tbody>
+                                {alertData.queue.map(alert => {
+                                  const channelAttempts =
+                                    getAlertChannelAttempts(alert);
+
+                                  return (
+                                    <Tr key={`${alert.id}-${alert.channel}`}>
+                                      <Td>
+                                        <VStack align='start' spacing={0}>
+                                          <Text fontWeight='medium'>
+                                            {alert.token_name ||
+                                              `Token #${alert.token_id}`}
+                                          </Text>
+                                          <Text fontSize='sm' color={muted}>
+                                            {alert.token_type || 'Unknown'}
+                                          </Text>
+                                        </VStack>
+                                      </Td>
+                                      <Td isNumeric>{alert.threshold_days}</Td>
+                                      <Td>
+                                        {alert.due_date
+                                          ? new Date(alert.due_date)
+                                              .toISOString()
+                                              .slice(0, 10)
+                                          : '-'}
+                                      </Td>
+                                      <Td>{getStatusBadge(alert.status)}</Td>
+                                      <Td>
+                                        <Badge
+                                          colorScheme={
+                                            alert.channel === 'email'
+                                              ? 'green'
+                                              : 'blue'
+                                          }
+                                          size='sm'
+                                        >
+                                          {alert.channel_display ||
+                                            alert.channel ||
+                                            'None'}
+                                        </Badge>
+                                      </Td>
+                                      <Td isNumeric>{channelAttempts}</Td>
+                                      <Td maxW='200px'>
+                                        <TruncatedText
+                                          text={friendlyErrorMessage(
+                                            alert.channel_error_message ||
+                                              alert.error_message ||
+                                              ''
+                                          )}
+                                          maxLines={3}
+                                          maxWidth='200px'
+                                        />
+                                      </Td>
+                                      <Td>
+                                        {formatRelativeTime(alert.updated_at)}
+                                      </Td>
+                                    </Tr>
+                                  );
+                                })}
+                              </Tbody>
+                            </Table>
+                          </Box>
+                        </>
                       )}
                     </VStack>
                   </SectionState>
-                </Box>
+                </ControlCenterPanel>
               ) : null}
             </VStack>
           </Box>
