@@ -34,10 +34,19 @@ const update = async (id, userData) => {
     tokenExpiry,
   } = userData;
 
+  // COALESCE so an update that omits a field (e.g. a routine login that does
+  // not carry tokens) does not erase the stored value with NULL.
   const query = `
     UPDATE users 
-    SET display_name = $2, first_name = $3, last_name = $4, email = $5, photo = $6, access_token = $7, 
-        refresh_token = $8, token_expiry = $9, updated_at = NOW()
+    SET display_name = COALESCE($2, display_name),
+        first_name = COALESCE($3, first_name),
+        last_name = COALESCE($4, last_name),
+        email = COALESCE($5, email),
+        photo = COALESCE($6, photo),
+        access_token = COALESCE($7, access_token),
+        refresh_token = COALESCE($8, refresh_token),
+        token_expiry = COALESCE($9, token_expiry),
+        updated_at = NOW()
     WHERE id = $1
     RETURNING *
   `;

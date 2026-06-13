@@ -11,8 +11,14 @@ import { readFileSync, existsSync } from "fs";
 export function getDatabaseConfig() {
   const sslMode = process.env.DB_SSL;
   const caPath = process.env.PGSSLROOTCERT;
+  const isProduction = process.env.NODE_ENV === "production";
 
-  // Build SSL config
+  // Build SSL config.
+  //   verify (or a CA provided)  -> encrypted + server identity verified
+  //   require                    -> encrypted; identity verified in production
+  //                                 unless DB_SSL=require-no-verify is set
+  //   require-no-verify          -> encrypted, identity NOT verified (explicit
+  //                                 opt-in for controlled environments)
   let ssl = false;
   if (sslMode === "verify" || caPath) {
     ssl = {
@@ -22,6 +28,8 @@ export function getDatabaseConfig() {
       minVersion: "TLSv1.3",
     };
   } else if (sslMode === "require") {
+    ssl = { rejectUnauthorized: isProduction, minVersion: "TLSv1.3" };
+  } else if (sslMode === "require-no-verify") {
     ssl = { rejectUnauthorized: false, minVersion: "TLSv1.3" };
   }
 

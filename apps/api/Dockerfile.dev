@@ -28,8 +28,11 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
 COPY --from=subfinder-builder /go/bin/subfinder /usr/local/bin/subfinder
 RUN subfinder -version
 
-# Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+# Enable pnpm via corepack. COREPACK_HOME makes the prepared pnpm cache
+# world-readable so the non-root runtime user reuses it instead of
+# downloading pnpm again (or worse, an unpinned latest) at container start.
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate && chmod -R a+rX /opt/corepack
 
 # Copy package files
 COPY package.json ./
@@ -39,11 +42,14 @@ COPY package.json ./
 RUN pnpm install --no-frozen-lockfile && \
     (pnpm audit --audit-level=high || true)
 
-# Copy source code
-COPY . .
+# Copy source code. --chown instead of a later `RUN chown -R /app`: the
+# blanket chown duplicated every layer (source + node_modules) into a second
+# copy. node_modules stays root-owned; runtime only reads it.
+COPY --chown=nodejs:nodejs . .
+# Dev containers may write transient files into the project root; chown the
+# /app directory inode only (non-recursive: metadata, no layer duplication).
+RUN chown nodejs:nodejs /app
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expose port

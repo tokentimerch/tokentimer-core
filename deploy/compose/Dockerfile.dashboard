@@ -40,7 +40,8 @@ RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm --filter @tokentimer/dashboard
 FROM nginx:1.28.3-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-# CVE-2026-9256: pin nginx=1.28.3-r2. Drop unused nginx-module-* packages first; their r1
+# CVE-2026-9256 / CVE-2026-49975: pin nginx=1.28.3-r3 (r2 superseded in Alpine 3.23 repos).
+# Drop unused nginx-module-* packages first; their r1
 # revisions block apk from replacing nginx while those modules stay installed.
 RUN apk update && apk upgrade --no-cache \
     && apk del --no-cache \
@@ -49,8 +50,8 @@ RUN apk update && apk upgrade --no-cache \
         nginx-module-image-filter \
         nginx-module-njs \
         nginx-module-xslt \
-    && apk add --no-cache nginx=1.28.3-r2 \
-    && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r2"
+    && apk add --no-cache nginx=1.28.3-r3 \
+    && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r3"
 
 # Create non-root nginx user and prepare writable directories
 RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentimer && \

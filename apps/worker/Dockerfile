@@ -18,9 +18,11 @@ ENV NODE_ENV=production
 # Copy workspace config, root package.json, and lockfile from repo root
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
-# Copy workspace packages and the worker app
-COPY packages ./packages
-COPY apps/worker ./apps/worker
+# Copy workspace packages and the worker app. --chown instead of a later
+# `RUN chown -R /app`, which duplicated source + node_modules into a second
+# layer. node_modules stays root-owned; the worker only reads it at runtime.
+COPY --chown=nodejs:nodejs packages ./packages
+COPY --chown=nodejs:nodejs apps/worker ./apps/worker
 
 # Install production dependencies using frozen lockfile
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...
@@ -28,8 +30,6 @@ RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...
 # Set working directory to worker
 WORKDIR /app/apps/worker
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Default command (overridden by tests/orchestration)

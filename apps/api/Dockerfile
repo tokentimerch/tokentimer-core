@@ -35,11 +35,12 @@ ENV NODE_ENV=production
 RUN pnpm install --prod --frozen-lockfile && \
     pnpm audit --audit-level=high || true
 
-# Copy source code (node_modules should not be in build context)
-COPY . .
+# Copy source code (node_modules should not be in build context).
+# --chown instead of a later `RUN chown -R /app`: the blanket chown duplicated
+# every layer (source + node_modules) and roughly doubled the image size.
+# node_modules stays root-owned; the app only needs read access at runtime.
+COPY --chown=nodejs:nodejs . .
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expose port

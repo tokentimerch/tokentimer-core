@@ -14,9 +14,11 @@ RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 # Copy workspace config, root package.json, and lockfile from repo root
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
-# Copy workspace packages (needed for pnpm workspace resolution)
-COPY packages ./packages
-COPY apps/worker ./apps/worker
+# Copy workspace packages (needed for pnpm workspace resolution). --chown
+# instead of a later `RUN chown -R /app`, which duplicated source +
+# node_modules into a second layer. node_modules stays root-owned (read-only).
+COPY --chown=nodejs:nodejs packages ./packages
+COPY --chown=nodejs:nodejs apps/worker ./apps/worker
 
 # Install all dependencies (including dev) using frozen lockfile
 RUN pnpm install --frozen-lockfile --filter @tokentimer/worker...
@@ -24,8 +26,6 @@ RUN pnpm install --frozen-lockfile --filter @tokentimer/worker...
 # Set working directory to worker
 WORKDIR /app/apps/worker
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Default command (overridden by tests/orchestration)
