@@ -1,7 +1,10 @@
 FROM node:22.22.2-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-RUN apk update && apk upgrade --no-cache
+# Explicit pin avoids stale GHA cache layers reporting pre-fix libcrypto3/libssl3 revisions.
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0"
 
 WORKDIR /app
 

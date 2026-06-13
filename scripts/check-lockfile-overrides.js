@@ -26,11 +26,12 @@ const REQUIRED_PINS = {
   flatted: { "*": "3.4.2" },
   "serialize-javascript": { "*": "7.0.5" },
   picomatch: { 2: "2.3.2", 4: "4.0.4" },
-  ajv: { 6: "6.14.0" },
+  ajv: { 6: "6.15.0" },
   lodash: { "*": "4.18.1" },
   "follow-redirects": { "*": "1.16.0" },
   postcss: { "*": "8.5.12" },
   qs: { "*": "6.15.2" },
+  "ip-address": { "*": "10.2.0" },
 };
 
 function fail(message) {

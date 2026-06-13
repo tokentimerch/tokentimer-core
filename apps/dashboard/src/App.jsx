@@ -5760,7 +5760,16 @@ function ImportTokensButton() {
   }, []);
 
   useEffect(() => {
-    const KNOWN_IMPORT_PROVIDERS = ['file', 'vault', 'gitlab', 'github', 'aws', 'azure', 'azure-ad', 'gcp'];
+    const KNOWN_IMPORT_PROVIDERS = [
+      'file',
+      'vault',
+      'gitlab',
+      'github',
+      'aws',
+      'azure',
+      'azure-ad',
+      'gcp',
+    ];
     const provider = searchParams.get('import');
     if (!provider) return;
     if (KNOWN_IMPORT_PROVIDERS.includes(provider)) {

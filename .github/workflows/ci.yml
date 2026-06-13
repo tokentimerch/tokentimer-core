@@ -120,6 +120,9 @@ jobs:
       - name: Validate security override pins in lockfile
         run: pnpm run check:lockfile-overrides
 
+      - name: Validate secret logging hygiene
+        run: pnpm run check:secret-logging
+
       - name: Run contract tests
         env:
           CONTRACT_API_REQUIRED: "0"
