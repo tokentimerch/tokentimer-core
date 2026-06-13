@@ -555,6 +555,14 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_domain_monitors_token ON domain_monitors(token_id);
     `,
   },
+  {
+    version: 9,
+    name: "tokens_workspace_expiration_index",
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_tokens_workspace_expiration
+        ON tokens(workspace_id, expiration);
+    `,
+  },
 ];
 
 async function runMigrations() {

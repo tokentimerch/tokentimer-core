@@ -14,8 +14,10 @@ describe('dateUtils', () => {
     expect(
       isNeverExpires(new Date(`${NEVER_EXPIRES_DATE_VALUE}T00:00:00Z`))
     ).toBe(true);
+    expect(isNeverExpires('9999-12-31')).toBe(true);
     expect(isNeverExpires('2026-01-01')).toBe(false);
     expect(isNeverExpires(null)).toBe(false);
+    expect(isNeverExpires('')).toBe(false);
   });
 
   it('formats expiration dates with fallback text and short format', () => {

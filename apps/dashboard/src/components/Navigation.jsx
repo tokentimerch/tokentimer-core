@@ -38,7 +38,7 @@ import ThemeToggle from './ThemeToggle.jsx';
 /**
  * User menu with account options
  */
-const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
+const UserMenu = ({ user, onLogout, onAccountClick }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isTourActive, setIsTourActive] = useState(false);
   const navigate = useNavigate();
@@ -53,13 +53,36 @@ const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
   const menuItemHoverBg = useColorModeValue('blue.50', 'blue.900');
   const signOutColor = useColorModeValue('red.600', 'red.400');
   const signOutHoverBg = useColorModeValue('red.50', 'red.900');
+  const menuItemInteractiveStyles = hoverBg => ({
+    bg: 'transparent',
+    _hover: { bg: hoverBg },
+    _focus: { bg: hoverBg },
+    _focusVisible: {
+      bg: hoverBg,
+      boxShadow: `inset 0 0 0 1px ${menuBorderColor}`,
+    },
+    _active: { bg: hoverBg },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: `${hoverBg} !important`,
+      },
+    },
+  });
 
   // Listen for tour events to keep menu open during tour
   useEffect(() => {
     const handleTourStateChange = event => {
       const { isActive, keepMenuOpen } = event.detail || {};
-      setIsTourActive(isActive && keepMenuOpen);
-      if (isActive && keepMenuOpen) {
+      const tourWantsMenu = Boolean(isActive && keepMenuOpen);
+      setIsTourActive(tourWantsMenu);
+      if (!tourWantsMenu) {
+        return;
+      }
+      // Dashboard shell has its own user menu on lg+; only force-open legacy nav when visible
+      const navMenuButton = document.querySelector('[data-tour="user-menu"]');
+      if (!navMenuButton) return;
+      const rect = navMenuButton.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
         setIsOpen(true);
       }
     };
@@ -81,6 +104,7 @@ const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
 
   return (
     <Menu
+      autoSelect={false}
       isOpen={isOpen}
       onOpen={() => setIsOpen(true)}
       onClose={handleMenuClose}
@@ -153,37 +177,29 @@ const UserMenu = ({ user, onLogout, onAccountClick, isViewerOnly }) => {
           <MenuItem
             icon={<FiUser />}
             onClick={onAccountClick}
-            _hover={{
-              bg: menuItemHoverBg,
-            }}
+            {...menuItemInteractiveStyles(menuItemHoverBg)}
           >
             Account Settings
           </MenuItem>
 
-          {!isViewerOnly && (
-            <MenuItem
-              data-tour='preferences-nav'
-              icon={<FiSettings />}
-              onClick={() => {
-                if (window.location.pathname !== '/preferences') {
-                  navigate('/preferences');
-                }
-              }}
-              _hover={{
-                bg: menuItemHoverBg,
-              }}
-            >
-              Preferences
-            </MenuItem>
-          )}
+          <MenuItem
+            data-tour='preferences-nav'
+            icon={<FiSettings />}
+            onClick={() => {
+              if (window.location.pathname !== '/preferences') {
+                navigate('/preferences');
+              }
+            }}
+            {...menuItemInteractiveStyles(menuItemHoverBg)}
+          >
+            Preferences
+          </MenuItem>
 
           <MenuItem
             icon={<FiLogOut />}
             onClick={onLogout}
             color={signOutColor}
-            _hover={{
-              bg: signOutHoverBg,
-            }}
+            {...menuItemInteractiveStyles(signOutHoverBg)}
           >
             Sign Out
           </MenuItem>
@@ -207,7 +223,6 @@ const MobileNav = ({
   canSeeAudit,
   canSeeWorkspaces,
   isSystemAdmin,
-  isViewerOnly,
 }) => {
   const navigate = useNavigate();
   const bgColor = useColorModeValue('rgba(255, 255, 255, 0.98)', 'gray.800');
@@ -440,32 +455,30 @@ const MobileNav = ({
                 Account Settings
               </Button>
 
-              {!isViewerOnly && (
-                <Button
-                  data-tour='preferences-nav'
-                  variant='ghost'
-                  justifyContent='start'
-                  onClick={() => {
-                    if (window.location.pathname !== '/preferences') {
-                      navigate('/preferences');
-                    }
-                    onClose();
-                  }}
-                  bg='transparent'
-                  _hover={{
-                    bg: primaryHoverBg,
-                  }}
-                  _focus={{ bg: 'transparent' }}
-                  _active={{ bg: 'transparent' }}
-                  whiteSpace='normal'
-                  textAlign='left'
-                  h='auto'
-                  py={2}
-                  px={3}
-                >
-                  Preferences
-                </Button>
-              )}
+              <Button
+                data-tour='preferences-nav'
+                variant='ghost'
+                justifyContent='start'
+                onClick={() => {
+                  if (window.location.pathname !== '/preferences') {
+                    navigate('/preferences');
+                  }
+                  onClose();
+                }}
+                bg='transparent'
+                _hover={{
+                  bg: primaryHoverBg,
+                }}
+                _focus={{ bg: 'transparent' }}
+                _active={{ bg: 'transparent' }}
+                whiteSpace='normal'
+                textAlign='left'
+                h='auto'
+                py={2}
+                px={3}
+              >
+                Preferences
+              </Button>
 
               <Button
                 variant='ghost'
@@ -520,6 +533,9 @@ const Navigation = ({
     };
   }, [onClose]); // Remove isOpen from dependencies to avoid recreating listener
   const navigate = useNavigate();
+  const handleAccountClick = () => {
+    navigate('/account');
+  };
 
   // Use semantic color tokens
   const { primary: textColor } = useTextColors();
@@ -532,6 +548,32 @@ const Navigation = ({
   const borderPrimary = useColorModeValue('border.primary', 'border.primary');
   const gray600 = useColorModeValue('gray.600', 'gray.300');
   const gray400 = useColorModeValue('gray.600', 'gray.400');
+  const menuItemInteractiveStyles = hoverBg => ({
+    bg: 'transparent',
+    _hover: { bg: hoverBg },
+    _focus: { bg: hoverBg },
+    _focusVisible: {
+      bg: hoverBg,
+      boxShadow: `inset 0 0 0 1px ${borderColor}`,
+    },
+    _active: { bg: hoverBg },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: `${hoverBg} !important`,
+      },
+    },
+  });
+  const inactiveMenuItemStyles = {
+    bg: 'transparent',
+    _hover: { bg: 'transparent' },
+    _focus: { bg: 'transparent' },
+    _active: { bg: 'transparent' },
+    sx: {
+      '&:hover, &[data-hover], &[data-focus]': {
+        background: 'transparent !important',
+      },
+    },
+  };
   const imageFilter = useColorModeValue('none', 'invert(1)');
 
   const [notifications, setNotifications] = useState([]);
@@ -620,7 +662,7 @@ const Navigation = ({
             id: 'alerts-disabled',
             kind: 'warning',
             text: 'Alerts are disabled until a channel is defined.',
-            href: '/preferences',
+            href: '/workspace-preferences',
           });
         }
         if (!hasAnyContact) {
@@ -628,7 +670,7 @@ const Navigation = ({
             id: 'no-contacts-defined',
             kind: 'warning',
             text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
-            href: '/preferences',
+            href: '/workspace-preferences',
           });
         }
         setNotifications(list);
@@ -978,7 +1020,7 @@ const Navigation = ({
           <HStack spacing='4' display={{ base: 'none', md: 'flex' }}>
             {/* Workspace Switcher */}
             {user && (
-              <Menu>
+              <Menu autoSelect={false}>
                 <MenuButton
                   data-tour='workspace-selector'
                   as={Button}
@@ -1016,6 +1058,7 @@ const Navigation = ({
                           } catch (_) {}
                         } catch (_) {}
                       }}
+                      {...menuItemInteractiveStyles(primaryHoverBg)}
                     >
                       {w.name}
                     </MenuItem>
@@ -1041,14 +1084,14 @@ const Navigation = ({
               Tokens
             </AccessibleButton>
 
-            {/* Usage: only for manager/admin */}
+            {/* Control center: only for manager/admin */}
             {hasManagerOrAdminAny && (
               <AccessibleButton
                 data-tour='usage-nav'
                 variant='ghost'
                 size='md'
                 onClick={() => {
-                  navigate('/usage');
+                  navigate('/control-center');
                 }}
                 bg='transparent'
                 _hover={{
@@ -1056,9 +1099,9 @@ const Navigation = ({
                 }}
                 _focus={{ bg: 'transparent' }}
                 _active={{ bg: 'transparent' }}
-                aria-label='Usage'
+                aria-label='Control center'
               >
-                Usage
+                Control center
               </AccessibleButton>
             )}
 
@@ -1146,7 +1189,7 @@ const Navigation = ({
           {/* Right side actions */}
           <HStack spacing='2' ml='auto'>
             {/* Notifications */}
-            <Menu placement='bottom-end'>
+            <Menu placement='bottom-end' autoSelect={false}>
               <Box position='relative'>
                 {notifications.length > 0 && (
                   <Box
@@ -1201,7 +1244,7 @@ const Navigation = ({
                           : n.id?.startsWith('auto-sync-failed-')
                             ? 'Opens Import tokens on the Manage auto-sync tab.'
                             : n.id === 'alerts-out-of-window'
-                              ? 'View the alert queue on the Usage page.'
+                              ? 'View the alert queue on the Control center page.'
                               : n.id === 'alerts-disabled'
                                 ? 'Go to Preferences to enable a notification channel.'
                                 : n.id === 'no-contacts-defined'
@@ -1219,14 +1262,14 @@ const Navigation = ({
                               if (n && n.href) return navigate(n.href);
                             } catch (_) {}
                             if (isClickable) {
-                              return navigate('/preferences');
+                              return navigate('/workspace-preferences');
                             }
                             return undefined;
                           }}
-                          _hover={{
-                            bg: isClickable ? primaryHoverBg : 'transparent',
-                          }}
                           cursor={isClickable ? 'pointer' : 'default'}
+                          {...(isClickable
+                            ? menuItemInteractiveStyles(primaryHoverBg)
+                            : inactiveMenuItemStyles)}
                         >
                           <VStack align='start' spacing='0'>
                             <Text fontSize='sm' fontWeight='medium'>
@@ -1251,8 +1294,7 @@ const Navigation = ({
               <UserMenu
                 user={user}
                 onLogout={onLogout}
-                onAccountClick={onAccountClick}
-                isViewerOnly={isViewerOnly}
+                onAccountClick={handleAccountClick}
               />
             </Box>
 
@@ -1283,13 +1325,12 @@ const Navigation = ({
         onClose={onClose}
         user={user}
         onLogout={onLogout}
-        onAccountClick={onAccountClick}
+        onAccountClick={handleAccountClick}
         onNavigateToDashboard={onNavigateToDashboard}
         onNavigateToLanding={onNavigateToLanding}
         canSeeAudit={canSeeAudit}
         canSeeWorkspaces={canSeeWorkspaces}
         isSystemAdmin={isSystemAdmin}
-        isViewerOnly={isViewerOnly}
       />
     </>
   );

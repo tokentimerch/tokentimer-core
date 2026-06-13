@@ -70,7 +70,6 @@ export function WorkspaceProvider({ children }) {
       path === '/verify-email' ||
       path === '/' ||
       path === '/pricing' ||
-      path === '/help' ||
       path === '/privacy-policy' ||
       path === '/terms-of-service' ||
       path.startsWith('/solutions') ||
@@ -130,7 +129,6 @@ export function WorkspaceProvider({ children }) {
       path === '/verify-email' ||
       path === '/' ||
       path === '/pricing' ||
-      path === '/help' ||
       path === '/privacy-policy' ||
       path === '/terms-of-service' ||
       path.startsWith('/solutions') ||

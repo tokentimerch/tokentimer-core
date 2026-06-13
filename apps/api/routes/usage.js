@@ -23,12 +23,78 @@ function isSystemAdminUser(user) {
   return user?.is_admin === true;
 }
 
+const AUDIT_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const AUDIT_LOCAL_DATETIME_RE =
+  /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?$/;
+
+function isValidDateOnly(value) {
+  if (!AUDIT_DATE_ONLY_RE.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function parseAuditLocalDateTime(value) {
+  const match = AUDIT_LOCAL_DATETIME_RE.exec(value);
+  if (!match) return null;
+
+  const [, datePart, hourPart, minutePart, secondPart = "00", fractionPart] =
+    match;
+  const hour = Number(hourPart);
+  const minute = Number(minutePart);
+  const second = Number(secondPart);
+
+  if (
+    !isValidDateOnly(datePart) ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return null;
+  }
+
+  const fraction = fractionPart ? `.${fractionPart.padEnd(6, "0")}` : "";
+  return `${datePart} ${hourPart}:${minutePart}:${secondPart}${fraction}`;
+}
+
+function parseAuditTimestampBound(rawValue, boundary) {
+  if (!rawValue) return null;
+  const value = String(rawValue).trim();
+  if (!value) return null;
+
+  if (AUDIT_DATE_ONLY_RE.test(value)) {
+    if (!isValidDateOnly(value)) return null;
+    return boundary === "end"
+      ? `${value} 23:59:59.999999`
+      : `${value} 00:00:00`;
+  }
+
+  if (AUDIT_LOCAL_DATETIME_RE.test(value)) {
+    return parseAuditLocalDateTime(value);
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function parseAuditDateBounds(query) {
+  return {
+    since: parseAuditTimestampBound(query.since, "start"),
+    until: parseAuditTimestampBound(query.until, "end"),
+  };
+}
+
 async function loadOrganizationAuditRows({
   userId,
   systemAdmin = false,
   limit,
   offset = null,
   since = null,
+  until = null,
   actionFilter = null,
   searchQuery = null,
 }) {
@@ -70,6 +136,12 @@ async function loadOrganizationAuditRows({
   if (since) {
     query += ` AND ae.occurred_at >= $${paramIndex}`;
     params.push(since);
+    paramIndex++;
+  }
+
+  if (until) {
+    query += ` AND ae.occurred_at <= $${paramIndex}`;
+    params.push(until);
     paramIndex++;
   }
 
@@ -468,12 +540,7 @@ router.get(
         1,
         Math.min(100000, parseInt(req.query.limit || "10000", 10)),
       );
-      const sinceRaw = req.query.since ? String(req.query.since) : null;
-      let since = null;
-      if (sinceRaw) {
-        const d = new Date(sinceRaw);
-        if (!Number.isNaN(d.getTime())) since = d.toISOString();
-      }
+      const { since, until } = parseAuditDateBounds(req.query);
       const actionFilter = req.query.action
         ? String(req.query.action).trim()
         : null;
@@ -510,6 +577,7 @@ router.get(
           systemAdmin: isSystemAdminUser(req.user),
           limit,
           since,
+          until,
           actionFilter,
           searchQuery,
         });
@@ -540,6 +608,11 @@ router.get(
         if (since) {
           whereClauses.push(`ae.occurred_at >= $${paramIndex}`);
           params.push(since);
+          paramIndex++;
+        }
+        if (until) {
+          whereClauses.push(`ae.occurred_at <= $${paramIndex}`);
+          params.push(until);
           paramIndex++;
         }
         if (actionFilter) {
@@ -590,6 +663,11 @@ router.get(
         if (since) {
           whereClauses.push(`ae.occurred_at >= $${paramIndex}`);
           params.push(since);
+          paramIndex++;
+        }
+        if (until) {
+          whereClauses.push(`ae.occurred_at <= $${paramIndex}`);
+          params.push(until);
           paramIndex++;
         }
         if (actionFilter) {
@@ -940,6 +1018,7 @@ router.get(
       const searchQuery = req.query.query
         ? String(req.query.query).trim()
         : null;
+      const { since, until } = parseAuditDateBounds(req.query);
 
       // Core: no paid plan gating; access is role-based.
       // Audit access requires manager or admin role in at least one workspace.
@@ -969,6 +1048,8 @@ router.get(
           systemAdmin: isSystemAdminUser(req.user),
           limit,
           offset,
+          since,
+          until,
           actionFilter,
           searchQuery,
         });
@@ -992,6 +1073,18 @@ router.get(
       if (actionFilter) {
         query += ` AND ae.action = $${paramIndex}`;
         params.push(actionFilter);
+        paramIndex++;
+      }
+
+      if (since) {
+        query += ` AND ae.occurred_at >= $${paramIndex}`;
+        params.push(since);
+        paramIndex++;
+      }
+
+      if (until) {
+        query += ` AND ae.occurred_at <= $${paramIndex}`;
+        params.push(until);
         paramIndex++;
       }
 
@@ -1043,6 +1136,7 @@ router.get(
       const searchQuery = req.query.query
         ? String(req.query.query).trim()
         : null;
+      const { since, until } = parseAuditDateBounds(req.query);
 
       let query = `SELECT ae.id, ae.occurred_at, ae.actor_user_id, ae.subject_user_id, ae.action,
               ae.target_type, ae.target_id, ae.channel, ae.metadata,
@@ -1060,6 +1154,18 @@ router.get(
       if (actionFilter) {
         query += ` AND ae.action = $${paramIndex}`;
         params.push(actionFilter);
+        paramIndex++;
+      }
+
+      if (since) {
+        query += ` AND ae.occurred_at >= $${paramIndex}`;
+        params.push(since);
+        paramIndex++;
+      }
+
+      if (until) {
+        query += ` AND ae.occurred_at <= $${paramIndex}`;
+        params.push(until);
         paramIndex++;
       }
 

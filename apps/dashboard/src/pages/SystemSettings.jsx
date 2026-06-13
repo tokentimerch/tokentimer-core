@@ -1,19 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Heading,
   Text,
   VStack,
   HStack,
+  Stack,
   FormControl,
   FormLabel,
   Input,
-  Button,
   Alert,
   AlertIcon,
   AlertDescription,
   Badge,
-  useColorModeValue,
   Divider,
   InputGroup,
   InputRightElement,
@@ -24,8 +22,15 @@ import {
 import { FiEye, FiEyeOff, FiCheck, FiX } from 'react-icons/fi';
 import apiClient from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardPanelHeader,
+  DashboardState,
+} from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -33,13 +38,7 @@ import { logger } from '../utils/logger.js';
  * Allows configuring SMTP and Twilio WhatsApp settings from the UI.
  * Fields set via environment variables are greyed out with a warning badge.
  */
-export default function SystemSettings({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [loading, setLoading] = useState(true);
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState(false);
@@ -54,11 +53,8 @@ export default function SystemSettings({
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
 
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const lockedInputBg = useColorModeValue('gray.100', 'gray.700');
-  const grayText = useColorModeValue('gray.600', 'gray.400');
-  const subTitleColor = useColorModeValue('gray.600', 'gray.300');
+  const { muted, dashboard } = useDashboardTheme();
+  const lockedInputBg = dashboard.bg.panelHover;
 
   useEffect(() => {
     loadSettings();
@@ -322,7 +318,7 @@ export default function SystemSettings({
             }
             isDisabled={isLocked}
           />
-          <Text fontSize='sm' color={grayText}>
+          <Text fontSize='sm' color={muted}>
             {options.helpText || ''}
           </Text>
         </HStack>
@@ -334,16 +330,17 @@ export default function SystemSettings({
     return (
       <>
         <SEO title='System Settings' />
-        <Navigation
-          user={session}
+        <DashboardPageLayout
+          session={session}
           onLogout={onLogout}
           onAccountClick={onAccountClick}
-          onNavigateToDashboard={onNavigateToDashboard}
-          onNavigateToLanding={onNavigateToLanding}
-        />
-        <Box maxW='800px' mx='auto' py={8} px={4}>
-          <Text>Loading system settings...</Text>
-        </Box>
+          pageTitle='System settings'
+          variant='standard'
+        >
+          <DashboardPanel>
+            <DashboardState type='loading' title='Loading system settings...' />
+          </DashboardPanel>
+        </DashboardPageLayout>
       </>
     );
   }
@@ -351,58 +348,50 @@ export default function SystemSettings({
   return (
     <>
       <SEO title='System Settings' />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box maxW='800px' mx='auto' py={8} px={4}>
+        pageTitle='System settings'
+        variant='standard'
+      >
         <VStack align='stretch' spacing={6}>
-          <Heading size='lg'>System Settings</Heading>
-          <Text color={subTitleColor}>
-            Configure email (SMTP) and WhatsApp (Twilio) notification providers.
-            Settings defined via environment variables take priority and cannot
-            be changed here.
-          </Text>
-
           {/* SMTP Configuration */}
-          <Box
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-          >
-            <HStack justify='space-between' mb={4}>
-              <Heading size='md'>Email (SMTP)</Heading>
-              <HStack spacing={2}>
-                {smtp.configured ? (
-                  <Badge
-                    colorScheme='green'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiCheck size={12} /> Configured
-                  </Badge>
-                ) : (
-                  <Badge
-                    colorScheme='orange'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiX size={12} /> Not configured
-                  </Badge>
-                )}
-              </HStack>
-            </HStack>
+          <DashboardPanel>
+            <DashboardPanelHeader
+              title='Email (SMTP)'
+              description='Configure outgoing email delivery for alert notifications.'
+              action={
+                <HStack spacing={2}>
+                  {smtp.configured ? (
+                    <Badge
+                      colorScheme='green'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiCheck size={12} /> Configured
+                    </Badge>
+                  ) : (
+                    <Badge
+                      colorScheme='orange'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiX size={12} /> Not configured
+                    </Badge>
+                  )}
+                </HStack>
+              }
+            />
 
             <VStack align='stretch' spacing={3}>
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={3}>
                   {renderField(
                     'SMTP Host',
@@ -418,7 +407,7 @@ export default function SystemSettings({
                     placeholder: '465',
                   })}
                 </Box>
-              </HStack>
+              </Stack>
               {renderField('SMTP User', 'user', smtp, smtpForm, setSmtpForm, {
                 placeholder: 'user@example.com',
               })}
@@ -435,7 +424,11 @@ export default function SystemSettings({
                   placeholder: 'Enter SMTP password',
                 }
               )}
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderBooleanField(
                     'Force SSL/TLS (SMTPS)',
@@ -461,9 +454,13 @@ export default function SystemSettings({
                     }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
               <Divider />
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'From Email',
@@ -484,7 +481,7 @@ export default function SystemSettings({
                     { placeholder: 'TokenTimer' }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
             </VStack>
 
             <HStack
@@ -507,62 +504,55 @@ export default function SystemSettings({
                     onChange={e => setTestEmail(e.target.value)}
                   />
                 </FormControl>
-                <Button
-                  size='sm'
+                <DashboardActionButton
                   colorScheme='blue'
                   variant='outline'
-                  px={4}
                   isLoading={testingSmtp}
                   onClick={handleTestSmtp}
                   isDisabled={!smtp.configured}
                 >
                   Send test email
-                </Button>
+                </DashboardActionButton>
               </HStack>
-              <Button
-                size='sm'
+              <DashboardActionButton
                 colorScheme='blue'
                 isLoading={savingSmtp}
                 onClick={handleSaveSmtp}
               >
                 Save SMTP
-              </Button>
+              </DashboardActionButton>
             </HStack>
-          </Box>
+          </DashboardPanel>
 
           {/* Twilio WhatsApp Configuration */}
-          <Box
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-          >
-            <HStack justify='space-between' mb={4}>
-              <Heading size='md'>WhatsApp (Twilio)</Heading>
-              <HStack spacing={2}>
-                {whatsapp.configured ? (
-                  <Badge
-                    colorScheme='green'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiCheck size={12} /> Configured
-                  </Badge>
-                ) : (
-                  <Badge
-                    colorScheme='orange'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiX size={12} /> Not configured
-                  </Badge>
-                )}
-              </HStack>
-            </HStack>
+          <DashboardPanel>
+            <DashboardPanelHeader
+              title='WhatsApp (Twilio)'
+              description='Configure Twilio WhatsApp delivery and alert templates.'
+              action={
+                <HStack spacing={2}>
+                  {whatsapp.configured ? (
+                    <Badge
+                      colorScheme='green'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiCheck size={12} /> Configured
+                    </Badge>
+                  ) : (
+                    <Badge
+                      colorScheme='orange'
+                      display='flex'
+                      alignItems='center'
+                      gap={1}
+                    >
+                      <FiX size={12} /> Not configured
+                    </Badge>
+                  )}
+                </HStack>
+              }
+            />
 
             {!whatsapp.configured && (
               <Alert status='info' mb={4} borderRadius='md'>
@@ -576,7 +566,7 @@ export default function SystemSettings({
             )}
 
             <VStack align='stretch' spacing={3}>
-              <Text fontWeight='semibold' fontSize='sm' color={grayText}>
+              <Text fontWeight='semibold' fontSize='sm' color={muted}>
                 Required
               </Text>
               {renderField(
@@ -600,7 +590,11 @@ export default function SystemSettings({
                   placeholder: 'Enter Twilio Auth Token',
                 }
               )}
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'WhatsApp From Number',
@@ -611,13 +605,17 @@ export default function SystemSettings({
                     { placeholder: '+14155238886' }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
 
               <Divider />
-              <Text fontWeight='semibold' fontSize='sm' color={grayText}>
+              <Text fontWeight='semibold' fontSize='sm' color={muted}>
                 Content Templates
               </Text>
-              <HStack spacing={4} align='start'>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'Alert (Expires) Template SID',
@@ -638,8 +636,12 @@ export default function SystemSettings({
                     { placeholder: 'HXxxxxxxxxx' }
                   )}
                 </Box>
-              </HStack>
-              <HStack spacing={4} align='start'>
+              </Stack>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'Endpoint Down Template SID',
@@ -660,8 +662,12 @@ export default function SystemSettings({
                     { placeholder: 'HXxxxxxxxxx' }
                   )}
                 </Box>
-              </HStack>
-              <HStack spacing={4} align='start'>
+              </Stack>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={4}
+                align='stretch'
+              >
                 <Box flex={1}>
                   {renderField(
                     'Test Message Template SID',
@@ -682,7 +688,7 @@ export default function SystemSettings({
                     { placeholder: 'HXxxxxxxxxx' }
                   )}
                 </Box>
-              </HStack>
+              </Stack>
             </VStack>
 
             <HStack
@@ -705,30 +711,27 @@ export default function SystemSettings({
                     onChange={e => setTestPhone(e.target.value)}
                   />
                 </FormControl>
-                <Button
-                  size='sm'
+                <DashboardActionButton
                   colorScheme='green'
                   variant='outline'
-                  px={4}
                   isLoading={testingWhatsapp}
                   onClick={handleTestWhatsapp}
                   isDisabled={!whatsapp.configured}
                 >
                   Send test WhatsApp
-                </Button>
+                </DashboardActionButton>
               </HStack>
-              <Button
-                size='sm'
+              <DashboardActionButton
                 colorScheme='blue'
                 isLoading={savingWhatsapp}
                 onClick={handleSaveWhatsapp}
               >
                 Save WhatsApp
-              </Button>
+              </DashboardActionButton>
             </HStack>
-          </Box>
+          </DashboardPanel>
         </VStack>
-      </Box>
+      </DashboardPageLayout>
     </>
   );
 }

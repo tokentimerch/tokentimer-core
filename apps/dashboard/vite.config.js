@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    dedupe: ['react', 'react-dom', '@emotion/react', '@emotion/styled'],
+  },
   esbuild: {
     drop: ['console', 'debugger'],
     legalComments: 'none',
@@ -47,7 +50,12 @@ export default defineConfig({
     strictPort: true,
   },
   optimizeDeps: {
-    include: ['@emotion/react', '@emotion/styled'],
+    include: [
+      '@emotion/react',
+      '@emotion/styled',
+      '@chakra-ui/react',
+      '@chakra-ui/theme',
+    ],
   },
   test: {
     environment: 'jsdom',

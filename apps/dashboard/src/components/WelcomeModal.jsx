@@ -41,7 +41,7 @@ function WelcomeModal({
       closeOnOverlayClick={false}
       closeOnEsc={false}
     >
-      <ModalOverlay bg='blackAlpha.300' backdropFilter='blur(10px)' />
+      <ModalOverlay bg='blackAlpha.300' />
       <ModalContent bg={bgColor} border='1px solid' borderColor={borderColor}>
         <ModalHeader textAlign='center' color={headerColor}>
           <VStack spacing={3}>

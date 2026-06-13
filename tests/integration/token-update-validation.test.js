@@ -141,6 +141,26 @@ describe("Token Update Validation Integration Tests", () => {
 
       expect(response.body.expiresAt).to.equal(updateData.expiresAt);
     });
+
+    it("should preserve date-only expiresAt updates without timezone drift", async () => {
+      if (!session.cookie) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const freshToken = await createTestToken(session, {
+        name: "Timezone Stable Date Token",
+      });
+      const updateData = { expiresAt: "2030-06-14" };
+
+      const response = await request("http://localhost:4000")
+        .put(`/api/tokens/${freshToken.id}`)
+        .set("Cookie", session.cookie)
+        .send(updateData)
+        .expect(200);
+
+      expect(response.body.expiresAt).to.equal("2030-06-14");
+    });
   });
 
   describe("Update Date Validation", () => {
@@ -188,6 +208,44 @@ describe("Token Update Validation Integration Tests", () => {
       expect(response.body.details.join(" ")).to.include(
         "Expiration date must be in the future",
       );
+    });
+
+    it("should allow editing an expired token when its expiration date is unchanged", async () => {
+      if (!session.cookie || !testUser) {
+        logger.info("Skipping authenticated test due to login failure");
+        return;
+      }
+
+      const workspaceResult = await TestUtils.execQuery(
+        `SELECT workspace_id FROM workspace_memberships WHERE user_id = $1 LIMIT 1`,
+        [testUser.id],
+      );
+      const workspaceId = workspaceResult.rows[0]?.workspace_id || null;
+      const expiredDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0];
+
+      const insertResult = await TestUtils.execQuery(
+        `INSERT INTO tokens (
+          user_id, workspace_id, created_by, name, expiration, type, category
+        )
+        VALUES ($1, $2, $1, $3, $4, 'api_key', 'general')
+        RETURNING id`,
+        [testUser.id, workspaceId, "Expired Editable Token", expiredDate],
+      );
+      const expiredTokenId = insertResult.rows[0].id;
+
+      const response = await request("http://localhost:4000")
+        .put(`/api/tokens/${expiredTokenId}`)
+        .set("Cookie", session.cookie)
+        .send({
+          expiresAt: expiredDate,
+          notes: "Updated notes on an expired asset",
+        })
+        .expect(200);
+
+      expect(response.body.expiresAt).to.equal(expiredDate);
+      expect(response.body.notes).to.equal("Updated notes on an expired asset");
     });
   });
 
@@ -550,6 +608,7 @@ describe("Token Update Validation Integration Tests", () => {
 
       expect(response.body.name).to.equal(originalName);
       expect(response.body.domains).to.deep.equal(originalDomains);
+      expect(response.body.expiresAt).to.equal(freshToken.expiresAt);
       expect(response.body.notes).to.equal("Updated notes");
     });
 

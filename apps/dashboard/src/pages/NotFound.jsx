@@ -38,9 +38,6 @@ export default function NotFound() {
           >
             Read the Docs ↗
           </Button>
-          <Button as={RouterLink} to='/help' variant='ghost'>
-            Get Help
-          </Button>
         </VStack>
       </VStack>
     </Box>

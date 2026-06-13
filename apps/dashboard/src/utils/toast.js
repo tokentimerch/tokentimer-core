@@ -5,10 +5,15 @@ import { theme } from '../styles/theme.js';
 const { toast } = createStandaloneToast({ theme });
 
 const DEFAULT_OPTIONS = {
-  position: 'top-right',
+  position: 'bottom-right',
   duration: 3000,
   isClosable: true,
-  variant: 'subtle',
+  variant: 'solid',
+  containerStyle: {
+    marginBottom: '1rem',
+    marginRight: '1rem',
+    maxWidth: '380px',
+  },
 };
 
 export function showToast(options = {}) {

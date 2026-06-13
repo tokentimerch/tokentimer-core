@@ -2,7 +2,6 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
-  Heading,
   VStack,
   HStack,
   Text,
@@ -19,7 +18,6 @@ import {
   Badge,
   Checkbox,
   Switch,
-  useColorModeValue,
   AlertDialog,
   AlertDialogBody,
   AlertDialogContent,
@@ -28,8 +26,16 @@ import {
   AlertDialogOverlay,
 } from '@chakra-ui/react';
 import { FiEdit2, FiCheck, FiX } from 'react-icons/fi';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardPanelHeader,
+  DashboardState,
+} from '../components/DashboardPrimitives';
+import { useDashboardModalProps } from '../components/DashboardModalFrame.jsx';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import apiClient, {
   API_ENDPOINTS,
   workspaceAPI,
@@ -50,17 +56,28 @@ const MEMBER_ROLE_OPTIONS = [
   { value: 'workspace_manager', label: MEMBER_ROLE_LABELS.workspace_manager },
 ];
 
-export default function Workspaces({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+export default function Workspaces({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
-  const bg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
-  const border = useColorModeValue('gray.400', 'gray.600');
-  const { selectWorkspace } = useWorkspace();
+  const { border, muted } = useDashboardTheme();
+  const {
+    overlayProps,
+    contentProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    fieldProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
+  const modalOutlineButtonProps = {
+    variant: 'outline',
+    borderColor: 'rgba(148, 163, 184, 0.34)',
+    color: modalTokens.subtleText,
+    _hover: {
+      bg: modalTokens.fieldBg,
+      borderColor: modalTokens.focusBorder,
+    },
+  };
+  const { selectWorkspace, workspaceId } = useWorkspace();
   const [workspaces, setWorkspaces] = React.useState([]);
   const [currentWorkspace, setCurrentWorkspace] = React.useState(null);
   const [members, setMembers] = React.useState([]);
@@ -200,7 +217,8 @@ export default function Workspaces({
     currentWorkspace &&
     (currentWorkspace.role === 'admin' ||
       currentWorkspace.role === 'workspace_manager');
-  const _isViewer = currentWorkspace && currentWorkspace.role === 'viewer';
+  const contextWorkspace = workspaces.find(w => w.id === workspaceId);
+  const isViewer = (contextWorkspace || currentWorkspace)?.role === 'viewer';
   const isAdmin = currentWorkspace && currentWorkspace.role === 'admin';
   const isSystemAdmin = session?.isAdmin === true;
 
@@ -325,41 +343,39 @@ export default function Workspaces({
         description='Manage your workspaces, team members, and workspace settings'
         noindex
       />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        variant='wide'
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box
-        maxW='1000px'
-        mx='auto'
-        px={{ base: 4, md: 6 }}
-        py={6}
-        overflowX='hidden'
+        pageTitle='Workspaces'
+        isViewer={isViewer}
       >
-        {authorized === false ? null : (
+        {authorized === false ? (
+          <DashboardPanel>
+            <DashboardState
+              title='Workspace management is unavailable'
+              description='Only workspace admins and managers can manage members and workspace settings.'
+            />
+          </DashboardPanel>
+        ) : (
           <VStack align='stretch' spacing={6}>
-            <Heading size='lg'>Workspaces</Heading>
-
             {
-              <Box
-                bg={bg}
-                border='1px solid'
-                borderColor={border}
-                p={4}
-                borderRadius='md'
-              >
-                <HStack spacing={3} mb={2} align='center' flexWrap='wrap'>
-                  <Text fontWeight='semibold'>Create workspace:</Text>
+              <DashboardPanel>
+                <DashboardPanelHeader
+                  title='Create workspace'
+                  description='Create an isolated workspace for another team, project, or environment.'
+                  mb={3}
+                />
+                <HStack spacing={3} align='center' flexWrap='wrap'>
                   <Input
                     placeholder='Workspace name'
                     value={newWorkspaceName}
                     onChange={e => setNewWorkspaceName(e.target.value)}
                     maxW={{ base: '100%', sm: '320px' }}
+                    size='sm'
                   />
-                  <Button
+                  <DashboardActionButton
                     isLoading={creatingWorkspace}
                     onClick={async () => {
                       const name = (newWorkspaceName || '').trim();
@@ -458,18 +474,17 @@ export default function Workspaces({
                     }}
                   >
                     Create
-                  </Button>
+                  </DashboardActionButton>
                 </HStack>
-              </Box>
+              </DashboardPanel>
             }
 
-            <Box
-              bg={bg}
-              border='1px solid'
-              borderColor={border}
-              p={4}
-              borderRadius='md'
-            >
+            <DashboardPanel>
+              <DashboardPanelHeader
+                title='Workspace management'
+                description='Select a workspace, manage its members, and transfer assets between workspaces.'
+                mb={3}
+              />
               <HStack spacing={3} mb={4} align='center' flexWrap='wrap'>
                 <Text fontWeight='semibold'>Workspace:</Text>
                 <Select
@@ -675,7 +690,7 @@ export default function Workspaces({
                 </HStack>
               )}
 
-              <Text fontSize='sm' color='gray.500' mb={3}>
+              <Text fontSize='sm' color={muted} mb={3}>
                 Workspace roles are viewer or manager. System admins
                 (installation-wide, System Settings access) can be granted
                 below; that is separate from workspace manager.
@@ -721,7 +736,7 @@ export default function Workspaces({
                 </Button>
               </HStack>
 
-              <Box overflowX='auto'>
+              <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
                 <Table size='sm' minW='600px'>
                   <Thead>
                     <Tr>
@@ -836,17 +851,140 @@ export default function Workspaces({
                   </Tbody>
                 </Table>
               </Box>
+              <VStack
+                display={{ base: 'flex', md: 'none' }}
+                align='stretch'
+                spacing={3}
+              >
+                {members.map(m => (
+                  <Box
+                    key={`${m.user_id}-card`}
+                    border='1px solid'
+                    borderColor={border}
+                    borderRadius='md'
+                    bg='rgba(15, 23, 42, 0.38)'
+                    p={4}
+                  >
+                    <VStack align='stretch' spacing={3}>
+                      <Box>
+                        <Text fontWeight='semibold' noOfLines={2}>
+                          {m.display_name || m.email}
+                        </Text>
+                        <Text fontSize='sm' color={muted} wordBreak='break-all'>
+                          {m.email}
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text fontSize='xs' color={muted} mb={1}>
+                          Workspace role
+                        </Text>
+                        {m.role === 'admin' ? (
+                          <Badge colorScheme='purple'>
+                            {MEMBER_ROLE_LABELS.admin}
+                          </Badge>
+                        ) : (
+                          <Select
+                            size='sm'
+                            value={m.role}
+                            isDisabled={!canManage || m.user_id === session?.id}
+                            onChange={async e => {
+                              if (!currentWorkspace) return;
+                              const nextRole = e.target.value;
+                              if (
+                                currentWorkspace.role !== 'admin' &&
+                                currentWorkspace.role !== 'workspace_manager'
+                              ) {
+                                showWarning(
+                                  'Insufficient permissions',
+                                  'Only workspace admins or managers can change member roles.'
+                                );
+                                return;
+                              }
+                              if (m.user_id === session?.id) {
+                                showWarning(
+                                  'Action not allowed',
+                                  'You cannot change your own role.'
+                                );
+                                return;
+                              }
+                              await workspaceAPI.changeRole(
+                                currentWorkspace.id,
+                                m.user_id,
+                                nextRole
+                              );
+                              await reloadMembers(currentWorkspace.id);
+                            }}
+                          >
+                            {MEMBER_ROLE_OPTIONS.map(opt => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                      </Box>
+                      {isSystemAdmin ? (
+                        <HStack justify='space-between'>
+                          <Text fontSize='sm' color={muted}>
+                            System admin
+                          </Text>
+                          <Switch
+                            size='sm'
+                            isChecked={m.is_admin === true}
+                            isDisabled={m.user_id === session?.id}
+                            onChange={async e => {
+                              try {
+                                await adminAPI.setSystemAdmin(
+                                  m.user_id,
+                                  e.target.checked
+                                );
+                                await reloadMembers(currentWorkspace.id);
+                              } catch (err) {
+                                showError(
+                                  'Failed to update system admin',
+                                  err.message
+                                );
+                              }
+                            }}
+                          />
+                        </HStack>
+                      ) : null}
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        alignSelf='flex-start'
+                        onClick={async () => {
+                          if (!currentWorkspace) return;
+                          await workspaceAPI.removeMember(
+                            currentWorkspace.id,
+                            m.user_id
+                          );
+                          await reloadMembers(currentWorkspace.id);
+                        }}
+                        isDisabled={
+                          (currentWorkspace?.role !== 'admin' &&
+                            m.role === 'admin') ||
+                          (currentWorkspace?.role !== 'admin' &&
+                            m.user_id === session?.id)
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </VStack>
+                  </Box>
+                ))}
+              </VStack>
 
               {pendingInvitations.length > 0 && (
                 <Box mt={6}>
                   <Text fontWeight='semibold' mb={2}>
                     Pending invitations ({pendingInvitations.length})
                   </Text>
-                  <Text fontSize='sm' color='gray.500' mb={3}>
+                  <Text fontSize='sm' color={muted} mb={3}>
                     Invitations that have not yet been accepted. They count
                     toward your workspace member cap when one is configured.
                   </Text>
-                  <Box overflowX='auto'>
+                  <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
                     <Table size='sm' minW='600px'>
                       <Thead>
                         <Tr>
@@ -895,12 +1033,72 @@ export default function Workspaces({
                       </Tbody>
                     </Table>
                   </Box>
+                  <VStack
+                    display={{ base: 'flex', md: 'none' }}
+                    align='stretch'
+                    spacing={3}
+                  >
+                    {pendingInvitations.map(inv => (
+                      <Box
+                        key={`${inv.id}-card`}
+                        border='1px solid'
+                        borderColor={border}
+                        borderRadius='md'
+                        bg='rgba(15, 23, 42, 0.38)'
+                        p={4}
+                      >
+                        <VStack align='stretch' spacing={3}>
+                          <Box>
+                            <Text fontWeight='semibold' wordBreak='break-all'>
+                              {inv.email}
+                            </Text>
+                            <Text fontSize='sm' color={muted}>
+                              {inv.role}
+                            </Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize='xs' color={muted}>
+                              Sent
+                            </Text>
+                            <Text fontSize='sm'>
+                              {inv.created_at
+                                ? new Date(inv.created_at).toLocaleString()
+                                : ''}
+                            </Text>
+                          </Box>
+                          <Button
+                            size='sm'
+                            variant='outline'
+                            alignSelf='flex-start'
+                            isDisabled={!canManage}
+                            onClick={async () => {
+                              if (!currentWorkspace) return;
+                              try {
+                                await workspaceAPI.cancelInvitation(
+                                  currentWorkspace.id,
+                                  inv.id
+                                );
+                              } catch (e) {
+                                showError(
+                                  'Failed to cancel invitation',
+                                  String(e?.message || '')
+                                );
+                              }
+                              await reloadInvitations(currentWorkspace.id);
+                            }}
+                          >
+                            Cancel invite
+                          </Button>
+                        </VStack>
+                      </Box>
+                    ))}
+                  </VStack>
                 </Box>
               )}
-            </Box>
+            </DashboardPanel>
           </VStack>
         )}
-      </Box>
+      </DashboardPageLayout>
 
       {/* Transfer Modal */}
       <AlertDialog
@@ -909,13 +1107,39 @@ export default function Workspaces({
         onClose={() => setTransferOpen(false)}
         size='6xl'
       >
-        <AlertDialogOverlay />
-        <AlertDialogContent bg={bg} border='1px solid' borderColor={border}>
-          <AlertDialogHeader>Transfer Tokens</AlertDialogHeader>
-          <AlertDialogBody>
-            <VStack align='stretch' spacing={4}>
-              <HStack>
-                <Box flex='1'>
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', xl: '1100px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+          display='flex'
+          flexDirection='column'
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Transfer Tokens
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Move selected assets from one workspace to another.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogBody {...bodyProps} flex='1' minH={0} overflow='hidden'>
+            <VStack align='stretch' spacing={4} h='100%' minH={0}>
+              <HStack
+                align='flex-end'
+                flexWrap={{ base: 'wrap', md: 'nowrap' }}
+                spacing={3}
+              >
+                <Box flex={{ base: '1 1 100%', md: '1 1 0' }} minW={0}>
                   <Text fontWeight='semibold' mb={1}>
                     From workspace
                   </Text>
@@ -951,7 +1175,7 @@ export default function Workspaces({
                     ))}
                   </Select>
                 </Box>
-                <Box flex='1'>
+                <Box flex={{ base: '1 1 100%', md: '1 1 0' }} minW={0}>
                   <Text fontWeight='semibold' mb={1}>
                     To workspace
                   </Text>
@@ -975,7 +1199,11 @@ export default function Workspaces({
                 </Box>
               </HStack>
 
-              <HStack>
+              <HStack
+                align='flex-end'
+                flexWrap={{ base: 'wrap', lg: 'nowrap' }}
+                spacing={3}
+              >
                 <Input
                   placeholder='Search by name'
                   value={transferState.search}
@@ -985,6 +1213,8 @@ export default function Workspaces({
                       search: e.target.value,
                     }))
                   }
+                  flex={{ base: '1 1 100%', lg: '1.3 1 0' }}
+                  minW={{ base: '100%', lg: '260px' }}
                 />
                 <Select
                   placeholder='Filter by category'
@@ -994,6 +1224,12 @@ export default function Workspaces({
                       filterCategory: e.target.value || null,
                     }))
                   }
+                  flex={{
+                    base: '1 1 100%',
+                    md: '1 1 calc(50% - 6px)',
+                    lg: '1 1 0',
+                  }}
+                  minW={{ base: '100%', md: '220px', lg: '180px' }}
                 >
                   {transferState.categories.map(c => (
                     <option key={c} value={c}>
@@ -1009,6 +1245,12 @@ export default function Workspaces({
                       filterSection: e.target.value || null,
                     }))
                   }
+                  flex={{
+                    base: '1 1 100%',
+                    md: '1 1 calc(50% - 6px)',
+                    lg: '1 1 0',
+                  }}
+                  minW={{ base: '100%', md: '220px', lg: '180px' }}
                 >
                   {transferState.sections.map(s => (
                     <option key={s} value={s}>
@@ -1019,11 +1261,11 @@ export default function Workspaces({
               </HStack>
 
               <Box
-                border='1px solid'
-                borderColor={border}
-                borderRadius='md'
-                maxH='420px'
-                overflow='auto'
+                {...fieldProps}
+                borderRadius='0'
+                maxH={{ base: '320px', md: '420px' }}
+                overflowX='auto'
+                overflowY='auto'
               >
                 <Table size='sm'>
                   <Thead>
@@ -1185,56 +1427,68 @@ export default function Workspaces({
               </Box>
             </VStack>
           </AlertDialogBody>
-          <AlertDialogFooter>
-            <Button onClick={() => setTransferOpen(false)}>Close</Button>
-            <Button
-              colorScheme='blue'
-              ml={3}
-              isDisabled={
-                !transferState.fromId ||
-                !transferState.toId ||
-                transferState.fromId === transferState.toId ||
-                transferState.selected.size === 0
-              }
-              onClick={async () => {
-                try {
-                  // Safety: only transfer currently visible selections
-                  const visible = (transferState.tokens || []).filter(t => {
-                    const nameMatch = transferState.search
-                      ? (t.name || '')
-                          .toLowerCase()
-                          .includes(transferState.search.toLowerCase())
-                      : true;
-                    const catMatch = transferState.filterCategory
-                      ? t.category === transferState.filterCategory
-                      : true;
-                    const secMatch = transferState.filterSection
-                      ? Array.isArray(t.section)
-                        ? t.section.includes(transferState.filterSection)
-                        : false
-                      : true;
-                    return nameMatch && catMatch && secMatch;
-                  });
-                  const visibleIds = new Set(visible.map(t => t.id));
-                  const ids = Array.from(
-                    transferState.selected.values()
-                  ).filter(id => visibleIds.has(id));
-                  await workspaceAPI.transferTokens(
-                    transferState.toId,
-                    transferState.fromId,
-                    ids
-                  );
-                  // Refresh list for fromId
-                  await fetchAllTokensForWorkspace(transferState.fromId);
-                  setTransferState(prev => ({ ...prev, selected: new Set() }));
+          <AlertDialogFooter {...footerProps}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
+              <Button
+                ref={cancelRef}
+                onClick={() => setTransferOpen(false)}
+                {...modalOutlineButtonProps}
+              >
+                Close
+              </Button>
+              <Button
+                colorScheme='blue'
+                isDisabled={
+                  !transferState.fromId ||
+                  !transferState.toId ||
+                  transferState.fromId === transferState.toId ||
+                  transferState.selected.size === 0
+                }
+                onClick={async () => {
                   try {
-                    window.dispatchEvent(new CustomEvent('tt:tokens-updated'));
+                    // Safety: only transfer currently visible selections
+                    const visible = (transferState.tokens || []).filter(t => {
+                      const nameMatch = transferState.search
+                        ? (t.name || '')
+                            .toLowerCase()
+                            .includes(transferState.search.toLowerCase())
+                        : true;
+                      const catMatch = transferState.filterCategory
+                        ? t.category === transferState.filterCategory
+                        : true;
+                      const secMatch = transferState.filterSection
+                        ? Array.isArray(t.section)
+                          ? t.section.includes(transferState.filterSection)
+                          : false
+                        : true;
+                      return nameMatch && catMatch && secMatch;
+                    });
+                    const visibleIds = new Set(visible.map(t => t.id));
+                    const ids = Array.from(
+                      transferState.selected.values()
+                    ).filter(id => visibleIds.has(id));
+                    await workspaceAPI.transferTokens(
+                      transferState.toId,
+                      transferState.fromId,
+                      ids
+                    );
+                    // Refresh list for fromId
+                    await fetchAllTokensForWorkspace(transferState.fromId);
+                    setTransferState(prev => ({
+                      ...prev,
+                      selected: new Set(),
+                    }));
+                    try {
+                      window.dispatchEvent(
+                        new CustomEvent('tt:tokens-updated')
+                      );
+                    } catch (_) {}
                   } catch (_) {}
-                } catch (_) {}
-              }}
-            >
-              Transfer selected
-            </Button>
+                }}
+              >
+                Transfer selected
+              </Button>
+            </HStack>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1243,81 +1497,123 @@ export default function Workspaces({
         leastDestructiveRef={cancelRef}
         onClose={() => setConfirmOpen(false)}
       >
-        <AlertDialogOverlay />
-        <AlertDialogContent bg={bg} border='1px solid' borderColor={border}>
-          <AlertDialogHeader>Delete this workspace?</AlertDialogHeader>
-          <AlertDialogBody>
-            This action is irreversible. It will delete all tokens, alerts, and
-            data associated with this workspace. Type the workspace name to
-            confirm.
-            <Input
-              mt={3}
-              placeholder={currentWorkspace?.name}
-              onChange={e => {
-                window.__confirmName = e.target.value;
-              }}
-            />
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Delete this workspace?
+            </Text>
+            <Text
+              fontSize='sm'
+              color={modalTokens.muted}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Confirm the workspace name before deleting it permanently.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogBody {...bodyProps}>
+            <VStack align='stretch' spacing={4}>
+              <Box {...fieldProps} p={4}>
+                <Text color={modalTokens.subtleText} fontSize='sm'>
+                  This action is irreversible. It will delete all tokens,
+                  alerts, and data associated with this workspace.
+                </Text>
+              </Box>
+              <Box>
+                <Text
+                  fontSize='sm'
+                  fontWeight='semibold'
+                  color={modalTokens.muted}
+                  mb={2}
+                >
+                  Type the workspace name to confirm
+                </Text>
+                <Input
+                  placeholder={currentWorkspace?.name}
+                  onChange={e => {
+                    window.__confirmName = e.target.value;
+                  }}
+                />
+              </Box>
+            </VStack>
           </AlertDialogBody>
-          <AlertDialogFooter>
-            <Button ref={cancelRef} onClick={() => setConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme='red'
-              ml={3}
-              isLoading={deleting}
-              onClick={async () => {
-                if (!currentWorkspace) return;
-                const typed = window.__confirmName || '';
-                if (typed.trim() !== (currentWorkspace.name || '').trim()) {
-                  showWarning(
-                    'Name mismatch',
-                    'Please type the exact workspace name to confirm.'
-                  );
-                  return;
-                }
-                try {
-                  setDeleting(true);
-                  await workspaceAPI.remove(currentWorkspace.id);
-                  const ws = await workspaceAPI.list(50, 0);
-                  const items = ws?.items || [];
-                  setWorkspaces(items);
-                  const next = items[0] || null;
-                  setCurrentWorkspace(next);
-                  if (next) {
-                    const res = await workspaceAPI.listMembers(next.id, 100, 0);
-                    setMembers(res?.items || []);
-                    await reloadInvitations(next.id);
-                  } else {
-                    setMembers([]);
-                    setPendingInvitations([]);
+          <AlertDialogFooter {...footerProps}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
+              <Button
+                ref={cancelRef}
+                onClick={() => setConfirmOpen(false)}
+                {...modalOutlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Button
+                colorScheme='red'
+                isLoading={deleting}
+                onClick={async () => {
+                  if (!currentWorkspace) return;
+                  const typed = window.__confirmName || '';
+                  if (typed.trim() !== (currentWorkspace.name || '').trim()) {
+                    showWarning(
+                      'Name mismatch',
+                      'Please type the exact workspace name to confirm.'
+                    );
+                    return;
                   }
                   try {
-                    window.dispatchEvent(
-                      new CustomEvent('tt:workspaces-updated', {
-                        detail: { deletedId: currentWorkspace.id },
-                      })
-                    );
-                  } catch (_) {}
-                } catch (e) {
-                  const msg = String(e?.message || '').toUpperCase();
-                  if (msg.includes('PERSONAL_DEFAULT')) {
-                    showWarning(
-                      'Cannot delete personal workspace',
-                      'Your default personal workspace cannot be deleted.'
-                    );
-                  } else {
-                    showError('Failed to delete workspace');
+                    setDeleting(true);
+                    await workspaceAPI.remove(currentWorkspace.id);
+                    const ws = await workspaceAPI.list(50, 0);
+                    const items = ws?.items || [];
+                    setWorkspaces(items);
+                    const next = items[0] || null;
+                    setCurrentWorkspace(next);
+                    if (next) {
+                      const res = await workspaceAPI.listMembers(
+                        next.id,
+                        100,
+                        0
+                      );
+                      setMembers(res?.items || []);
+                      await reloadInvitations(next.id);
+                    } else {
+                      setMembers([]);
+                      setPendingInvitations([]);
+                    }
+                    try {
+                      window.dispatchEvent(
+                        new CustomEvent('tt:workspaces-updated', {
+                          detail: { deletedId: currentWorkspace.id },
+                        })
+                      );
+                    } catch (_) {}
+                  } catch (e) {
+                    const msg = String(e?.message || '').toUpperCase();
+                    if (msg.includes('PERSONAL_DEFAULT')) {
+                      showWarning(
+                        'Cannot delete personal workspace',
+                        'Your default personal workspace cannot be deleted.'
+                      );
+                    } else {
+                      showError('Failed to delete workspace');
+                    }
+                  } finally {
+                    setDeleting(false);
+                    setConfirmOpen(false);
+                    window.__confirmName = '';
                   }
-                } finally {
-                  setDeleting(false);
-                  setConfirmOpen(false);
-                  window.__confirmName = '';
-                }
-              }}
-            >
-              Delete
-            </Button>
+                }}
+              >
+                Delete
+              </Button>
+            </HStack>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
