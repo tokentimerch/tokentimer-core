@@ -1,7 +1,18 @@
-FROM golang:1.26.2-alpine3.23 AS subfinder-builder
+FROM golang:1.26.4-alpine3.23 AS subfinder-builder
 
-RUN apk add --no-cache ca-certificates git && \
-    CGO_ENABLED=0 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.13.0
+RUN apk update && apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates git
+
+RUN git clone --depth 1 --branch v2.14.0 https://github.com/projectdiscovery/subfinder.git /src
+
+WORKDIR /src/cmd/subfinder
+RUN go get \
+      golang.org/x/crypto@v0.52.0 \
+      golang.org/x/net@v0.55.0 \
+      golang.org/x/sys@v0.45.0 \
+      github.com/cloudflare/circl@v1.6.3 && \
+    go mod tidy && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /go/bin/subfinder .
 
 FROM node:22.22.2-slim
 
@@ -18,7 +29,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     && groupadd -r nodejs -g 1001 \
     && useradd -r -u 1001 -g nodejs nodejs
 
-# Install subfinder v2.13.0 for Domain Checker discovery.
+# Install subfinder v2.14.0 for Domain Checker discovery.
 COPY --from=subfinder-builder /go/bin/subfinder /usr/local/bin/subfinder
 RUN subfinder -version
 
@@ -35,11 +46,12 @@ ENV NODE_ENV=production
 RUN pnpm install --prod --frozen-lockfile && \
     pnpm audit --audit-level=high || true
 
-# Copy source code (node_modules should not be in build context)
-COPY . .
+# Copy source code (node_modules should not be in build context).
+# --chown instead of a later `RUN chown -R /app`: the blanket chown duplicated
+# every layer (source + node_modules) and roughly doubled the image size.
+# node_modules stays root-owned; the app only needs read access at runtime.
+COPY --chown=nodejs:nodejs . .
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expose port

@@ -32,6 +32,8 @@
     "check:contracts": "node scripts/check-contracts-manifest.js && node scripts/check-openapi-runtime-coverage.js",
     "check:contracts:integrity": "node scripts/check-contracts-integrity.js",
     "check:openapi:coverage": "node scripts/check-openapi-runtime-coverage.js",
+    "check:lockfile-overrides": "node scripts/check-lockfile-overrides.js",
+    "check:secret-logging": "node scripts/check-secret-logging.js",
     "test:baseline": "node scripts/run-baseline.js",
     "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",
     "test:ci:all": "NODE_ENV=test pnpm exec mocha tests/integration/**/*.test.js --timeout 60000 --exit --reporter mocha-junit-reporter --reporter-options mochaFile=./test-results/results.xml",

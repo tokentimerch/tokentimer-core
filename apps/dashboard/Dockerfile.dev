@@ -1,6 +1,9 @@
 FROM node:22.22.2-alpine3.23
 
-RUN apk update && apk upgrade --no-cache
+# Explicit pin avoids stale cache layers reporting pre-fix libcrypto3/libssl3 revisions.
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0"
 
 # Create app directory
 WORKDIR /app
@@ -9,8 +12,11 @@ WORKDIR /app
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
-# Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+# Enable pnpm via corepack. COREPACK_HOME makes the prepared pnpm cache
+# world-readable so the non-root runtime user reuses it instead of
+# downloading pnpm again (or worse, an unpinned latest) at container start.
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate && chmod -R a+rX /opt/corepack
 
 # Copy package files
 COPY package.json ./
@@ -18,11 +24,16 @@ COPY package.json ./
 # Install dependencies (including dev dependencies for Vite)
 RUN pnpm install --no-frozen-lockfile
 
-# Copy source code
-COPY . .
+# Copy source code. --chown instead of a blanket `RUN chown -R /app`, which
+# duplicated source + node_modules into a second layer. Vite only writes its
+# dependency cache under node_modules/.vite, so that is the one path that
+# needs ownership; the rest of node_modules stays root-owned (read-only).
+COPY --chown=nodejs:nodejs . .
+# Vite writes its dep cache to node_modules/.vite and a transient bundled
+# config (vite.config.js.timestamp-*.mjs) into the project root, so chown the
+# /app directory inode (non-recursive: metadata only, no layer duplication).
+RUN mkdir -p node_modules/.vite && chown -R nodejs:nodejs node_modules/.vite && chown nodejs:nodejs /app
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expose Vite dev server port
