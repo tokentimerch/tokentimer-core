@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/dashboard",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "license": "BUSL-1.1",
   "packageManager": "pnpm@10.33.4",
@@ -25,7 +25,7 @@
     "@emotion/styled": "11.14.1",
     "axios": "1.16.0",
     "framer-motion": "11.18.2",
-    "js-yaml": "4.1.1",
+    "js-yaml": "4.2.0",
     "lucide-react": "0.553.0",
     "papaparse": "5.5.3",
     "react": "18.3.1",
@@ -59,7 +59,7 @@
     "jsdom": "26.1.0",
     "sharp": "0.33.5",
     "typescript": "5.9.3",
-    "vite": "6.4.2",
+    "vite": "6.4.3",
     "vitest": "4.1.8"
   },
   "engines": {

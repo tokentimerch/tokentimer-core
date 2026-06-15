@@ -17,6 +17,11 @@ import {
   pushMetrics,
 } from "./metrics.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
+import {
+  buildWeeklyDigestWhatsAppTemplateVariables,
+  sanitizeWhatsAppTemplateVars,
+  WHATSAPP_WEEKLY_DIGEST_TOKENS_LIST_MAX_LEN,
+} from "./shared/whatsappTemplateVars.js";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173").replace(
   /\/$/,
@@ -661,26 +666,21 @@ export async function weeklyDigestJob() {
 
                 let res;
                 if (contentSid) {
-                  // Use Twilio Content Template
-                  // Sanitize variables (remove null/undefined/empty)
-                  const sanitizeVars = (obj) => {
-                    const out = {};
-                    for (const [k, v] of Object.entries(obj || {})) {
-                      if (v === null || v === undefined) continue;
-                      const s = String(v).trim();
-                      if (s.length === 0) continue;
-                      out[k] = s;
-                    }
-                    return out;
-                  };
-
-                  const contentVariables = sanitizeVars({
-                    recipient_name: recipientName,
-                    workspace_name: ws.workspace_name,
-                    contact_group_name: group.name,
-                    tokens_count: String(tokens.length),
-                    tokens_list: tokensListText,
-                  });
+                  // WEEKLY_DIGEST template: five placeholders only (see DocsAlerts).
+                  const contentVariables = sanitizeWhatsAppTemplateVars(
+                    buildWeeklyDigestWhatsAppTemplateVariables({
+                      recipientName,
+                      workspaceName: ws.workspace_name,
+                      contactGroupName: group.name,
+                      tokensCount: tokens.length,
+                      tokensListText,
+                    }),
+                    {
+                      maxLens: {
+                        tokens_list: WHATSAPP_WEEKLY_DIGEST_TOKENS_LIST_MAX_LEN,
+                      },
+                    },
+                  );
 
                   res = await sendWhatsApp({
                     to: contact.phone_e164,

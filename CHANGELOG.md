@@ -9,6 +9,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-15
+
+### Added
+
+- **WhatsApp template sanitization** — shared `apps/worker/src/shared/whatsappTemplateVars.js` strips invalid characters and enforces placeholder contracts before Twilio `ContentVariables` are sent.
+- **CI supply-chain checks** — `check:lockfile-overrides` verifies security override pins in `pnpm-lock.yaml`; `check:secret-logging` blocks credential leakage in log statements.
+- **Dev command map** — `pnpm dev:help` prints the local development command reference (`scripts/dev-help.js`).
+
+### Changed
+
+- **Root package scripts** — reorganized `package.json` scripts into labelled sections; contract and CI check scripts grouped under `// --- CI / contract checks ---`.
+- **Docker images** — `COPY --chown` shrinks layers; Corepack pnpm caches are reusable in dev containers; dashboard Compose image pins nginx `1.28.3-r3` and routes nginx logs to stdout/stderr for non-root startup.
+- **CI** — Grype action pinned by checksum; security override pins enforced at lockfile level.
+- **Logger redaction** — API and worker loggers sanitize tokens, passwords, and connection strings before output.
+- **Version metadata bumped to 0.7.2** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **WhatsApp alert delivery** — delivery worker sends only the six EXPIRES/EXPIRED placeholders and sanitizes values (removes extra keys like `expiration_date_iso` that Twilio rejects).
+- **WhatsApp weekly digest** — weekly digest worker uses the shared sanitizer; `tokens_list` keeps all tokens on one line without a 250-character cap.
+- **API runtime** — PostgreSQL server identity verified in production when `DB_SSL=require`; `testConnection` pool leaks closed; `User.update` no longer wipes omitted fields.
+- **Domain checker** — `binaryRunner` reliably kills child process trees after scans complete.
+- **Prometheus metrics** — API route labels bound to matched Express patterns instead of raw URLs.
+- **Dashboard import deep-links** — unknown provider query params no longer open the import modal on an invalid tab.
+- **Dashboard Compose nginx** — non-root container creates `/var/lib/nginx/logs` and symlinks access/error logs for reliable startup.
+
+### Security
+
+- **Dependency patches** — `nodemailer` bumped to `8.0.11` (GHSA-wqvq-jvpq-h66f, GHSA-r7g4-qg5f-qqm2, GHSA-268h-hp4c-crq3); `js-yaml` bumped to `4.2.0` (GHSA-h67p-54hq-rp68); `vite` bumped to `6.4.3`; `form-data` workspace override pinned to `4.0.6` (GHSA-hmw2-7cc7-3qxx); worker `ajv@6` aligned to `6.15.0` via workspace overrides.
+- **Grype exclusions** — `.grype.yaml` updated for known false positives after image hardening.
+
 ## [0.7.1] - 2026-06-03
 
 ### Added
