@@ -17,7 +17,13 @@ function run(command, args, envPatch = {}) {
   return typeof result.status === "number" ? result.status : 1;
 }
 
-let code = run("pnpm", ["run", "check:contracts"]);
+let code = run("pnpm", ["run", "check:lockfile-overrides"]);
+if (code !== 0) process.exit(code);
+
+code = run("pnpm", ["run", "check:secret-logging"]);
+if (code !== 0) process.exit(code);
+
+code = run("pnpm", ["run", "check:contracts"]);
 if (code !== 0) process.exit(code);
 
 code = run("pnpm", ["run", "check:contracts:integrity"]);

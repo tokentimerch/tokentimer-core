@@ -1,7 +1,10 @@
 FROM node:22.22.2-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-RUN apk update && apk upgrade --no-cache
+# Explicit pin avoids stale GHA cache layers reporting pre-fix libcrypto3/libssl3 revisions.
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0"
 
 WORKDIR /app
 
@@ -18,9 +21,11 @@ ENV NODE_ENV=production
 # Copy workspace config, root package.json, and lockfile from repo root
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 
-# Copy workspace packages and the worker app
-COPY packages ./packages
-COPY apps/worker ./apps/worker
+# Copy workspace packages and the worker app. --chown instead of a later
+# `RUN chown -R /app`, which duplicated source + node_modules into a second
+# layer. node_modules stays root-owned; the worker only reads it at runtime.
+COPY --chown=nodejs:nodejs packages ./packages
+COPY --chown=nodejs:nodejs apps/worker ./apps/worker
 
 # Install production dependencies using frozen lockfile
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...
@@ -28,8 +33,6 @@ RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...
 # Set working directory to worker
 WORKDIR /app/apps/worker
 
-# Change ownership to nodejs user
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Default command (overridden by tests/orchestration)

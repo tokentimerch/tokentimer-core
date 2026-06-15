@@ -7,6 +7,16 @@ const { logger } = require("../utils/logger.js");
 const caPath = process.env.PGSSLROOTCERT;
 const sslMode = process.env.DB_SSL;
 const hasCA = !!caPath;
+const isProduction = process.env.NODE_ENV === "production";
+
+// SSL semantics:
+//   verify (or a CA provided)  -> encrypted + server identity verified
+//   require                    -> encrypted; identity verified in production
+//                                 unless DB_SSL=require-no-verify is set
+//   require-no-verify          -> encrypted, identity NOT verified (explicit
+//                                 opt-in for controlled environments)
+// Plain "require" used to map to rejectUnauthorized:false everywhere, which
+// encrypts but does not authenticate the server.
 const sslConfig =
   sslMode === "verify" || hasCA
     ? {
@@ -15,8 +25,10 @@ const sslConfig =
         minVersion: "TLSv1.3",
       }
     : sslMode === "require"
-      ? { rejectUnauthorized: false, minVersion: "TLSv1.3" }
-      : false;
+      ? { rejectUnauthorized: isProduction, minVersion: "TLSv1.3" }
+      : sslMode === "require-no-verify"
+        ? { rejectUnauthorized: false, minVersion: "TLSv1.3" }
+        : false;
 
 const dbConfig = {
   user: process.env.DB_USER || "tokentimer",
@@ -126,10 +138,10 @@ pool.on("error", (err) => {
 
 // Enhanced connection test function
 async function testConnection() {
+  let dbClient;
   try {
-    const client = await pool.connect();
-    await client.query("SELECT 1");
-    client.release();
+    dbClient = await pool.connect();
+    await dbClient.query("SELECT 1");
     logger.info("Database connection test successful");
     return true;
   } catch (error) {
@@ -145,6 +157,8 @@ async function testConnection() {
       dbErrors.labels("test").inc();
     } catch (_) {}
     return false;
+  } finally {
+    if (dbClient) dbClient.release();
   }
 }
 
