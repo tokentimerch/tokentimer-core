@@ -21,6 +21,7 @@ import { postJson, formatPayload } from "./notify/webhooks.js";
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import { computeDaysLeft } from "./shared/thresholds.js";
+import { sanitizeWhatsAppTemplateVars } from "./shared/whatsappTemplateVars.js";
 import {
   resolveContactGroup,
   hasEmailContacts,
@@ -435,6 +436,30 @@ function buildEndpointHealthWebhookPayload(
     timestamp: new Date().toISOString(),
     type: "endpoint_health_alert",
     endpoint: endpointData,
+  };
+}
+
+// Twilio/WhatsApp approved templates reject newlines, long runs of spaces, and
+// unknown or overlong variable keys (max 16 chars). See DocsAlerts placeholder contracts.
+/**
+ * EXPIRES and EXPIRED templates share the same six placeholders.
+ * Do not add extra keys (e.g. expiration_date_iso is 19 chars and breaks Twilio).
+ */
+function buildTokenExpiryWhatsAppTemplateVariables({
+  recipientName,
+  tokenName,
+  tokenType,
+  expirationDatePretty,
+  daysText,
+  details,
+}) {
+  return {
+    recipient_name: recipientName || "User",
+    token_type: tokenType || "security",
+    token_name: tokenName || "token",
+    days_text: String(daysText),
+    expiration_date: expirationDatePretty,
+    details,
   };
 }
 
@@ -1325,7 +1350,7 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                     : "No additional details available";
                 };
 
-                // Format expiration date as a long, locale-stable string (UTC) and also provide ISO
+                // Format expiration date as a long, locale-stable string (UTC)
                 const expirationDatePretty = alert.expiration
                   ? (() => {
                       try {
@@ -1343,79 +1368,28 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       }
                     })()
                   : "";
-                const expirationDateIso = alert.expiration
-                  ? (() => {
-                      try {
-                        return new Date(alert.expiration)
-                          .toISOString()
-                          .slice(0, 10);
-                      } catch (_) {
-                        return String(alert.expiration).slice(0, 10);
-                      }
-                    })()
-                  : "";
 
+                const daysTextForTemplate = isExpired
+                  ? String(daysText)
+                  : String(daysLeft);
+
+                // Token expiry and endpoint health use different Twilio ContentSids;
+                // only include placeholders defined for each template (see DocsAlerts).
                 const contentVariablesBase = selectedContentSid
                   ? isEndpointHealthWhatsApp
                     ? buildEndpointHealthWhatsAppTemplateVariables(
                         alert,
                         contactInfos[0]?.first_name || "User",
                       )
-                    : isExpired
-                    ? {
-                        recipient_name: contactInfos[0]?.first_name || "User",
-                        token_name: name,
-                        token_type: String(alert.type || "security"),
-                        token_category: String(alert.category || ""),
-                        status_text: "EXPIRED",
-                        expiration_date: expirationDatePretty,
-                        expiration_date_iso: expirationDateIso,
-                        days_text: String(daysText),
+                    : buildTokenExpiryWhatsAppTemplateVariables({
+                        recipientName: contactInfos[0]?.first_name || "User",
+                        tokenName: name,
+                        tokenType: String(alert.type || "security"),
+                        expirationDatePretty,
+                        daysText: daysTextForTemplate,
                         details: buildDetails(alert),
-                        renewal_url: alert.renewal_url
-                          ? String(alert.renewal_url)
-                          : null,
-                        description: alert.description
-                          ? String(alert.description)
-                          : null,
-                        notes: alert.notes ? String(alert.notes) : null,
-                        contacts: alert.contacts
-                          ? String(alert.contacts)
-                          : null,
-                      }
-                    : {
-                        recipient_name: contactInfos[0]?.first_name || "User",
-                        token_name: name,
-                        token_type: String(alert.type || "security"),
-                        token_category: String(alert.category || ""),
-                        status_text: "EXPIRING",
-                        expiration_date: expirationDatePretty,
-                        expiration_date_iso: expirationDateIso,
-                        days_text: String(daysLeft),
-                        details: buildDetails(alert),
-                        renewal_url: alert.renewal_url
-                          ? String(alert.renewal_url)
-                          : null,
-                        description: alert.description
-                          ? String(alert.description)
-                          : null,
-                        notes: alert.notes ? String(alert.notes) : null,
-                        contacts: alert.contacts
-                          ? String(alert.contacts)
-                          : null,
-                      }
+                      })
                   : null;
-
-                const sanitizeVars = (obj) => {
-                  const out = {};
-                  for (const [k, v] of Object.entries(obj || {})) {
-                    if (v === null || v === undefined) continue;
-                    const s = String(v).trim();
-                    if (s.length === 0) continue;
-                    out[k] = s;
-                  }
-                  return out;
-                };
 
                 let allOk = true;
                 for (const rcpt of trimmed) {
@@ -1431,8 +1405,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                           "there",
                       }
                     : null;
+                  // Sanitize all values before send; Twilio rejects invalid ContentVariables.
                   const contentVariables = perRecipientBase
-                    ? sanitizeVars(perRecipientBase)
+                    ? sanitizeWhatsAppTemplateVars(perRecipientBase)
                     : null;
                   const res = await sendWhatsApp({
                     to: rcpt,
