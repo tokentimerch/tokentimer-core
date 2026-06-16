@@ -18,12 +18,19 @@ import {
   Badge,
   Checkbox,
   Switch,
+  Alert,
+  AlertIcon,
+  AlertDescription,
   AlertDialog,
   AlertDialogBody,
+  AlertDialogCloseButton,
   AlertDialogContent,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
+  Flex,
+  SimpleGrid,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiEdit2, FiCheck, FiX } from 'react-icons/fi';
 import DashboardPageLayout from '../components/DashboardPageLayout';
@@ -55,6 +62,235 @@ const MEMBER_ROLE_OPTIONS = [
   { value: 'viewer', label: MEMBER_ROLE_LABELS.viewer },
   { value: 'workspace_manager', label: MEMBER_ROLE_LABELS.workspace_manager },
 ];
+
+function WorkspaceConfirmSectionTitle({ children, tokens }) {
+  return (
+    <Text
+      gridColumn={{ base: 'auto', sm: '1 / -1' }}
+      fontSize='sm'
+      fontWeight='bold'
+      color={tokens.text}
+      pl={3}
+      borderLeft='3px solid'
+      borderColor={tokens.sectionAccent}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function WorkspaceConfirmFieldCard({ label, children, tokens }) {
+  return (
+    <Box
+      bg={tokens.fieldBg}
+      border='1px solid'
+      borderColor={tokens.border}
+      borderRadius='12px'
+      p={{ base: 3.5, md: 4 }}
+      minH='88px'
+    >
+      <Text
+        fontSize='sm'
+        fontWeight='semibold'
+        color={tokens.muted}
+        mb={2}
+      >
+        {label}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+function WorkspaceConfirmValue({ children, tokens }) {
+  return (
+    <Text fontSize={{ base: 'sm', md: 'md' }} color={tokens.text}>
+      {children || '-'}
+    </Text>
+  );
+}
+
+function getMemberName(member) {
+  return member?.display_name || member?.email || 'Workspace member';
+}
+
+function getWorkspaceActionCopy(action) {
+  const isMemberRemoval = action?.type === 'remove-member';
+  return {
+    title: isMemberRemoval ? 'Remove Member' : 'Cancel Invite',
+    description: isMemberRemoval
+      ? 'Review this workspace member before removing access.'
+      : 'Review this pending invitation before canceling it.',
+    warning: isMemberRemoval
+      ? 'This member will lose access to the workspace. Existing assets and audit records remain unchanged.'
+      : 'This pending invitation will be canceled and the recipient will no longer be able to accept it.',
+    confirmLabel: isMemberRemoval ? 'Remove' : 'Cancel Invite',
+    sectionTitle: isMemberRemoval
+      ? 'Member Information'
+      : 'Invitation Information',
+  };
+}
+
+function WorkspaceActionConfirmModal({
+  isOpen,
+  action,
+  isLoading,
+  onClose,
+  onConfirm,
+}) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    tokens,
+  } = useDashboardModalProps();
+  const cancelButtonRef = React.useRef(null);
+  const warningBg = useColorModeValue('#fff7ed', 'rgba(146, 64, 14, 0.22)');
+  const warningBorder = useColorModeValue(
+    '#fed7aa',
+    'rgba(251, 191, 36, 0.34)'
+  );
+  const warningText = useColorModeValue('#9a3412', '#fde68a');
+  const deleteButtonBg = useColorModeValue('#dc2626', '#ef4444');
+  const deleteButtonHoverBg = useColorModeValue('#b91c1c', '#dc2626');
+  const copy = getWorkspaceActionCopy(action);
+  const member = action?.member;
+  const invitation = action?.invitation;
+  const role = member?.role || invitation?.role;
+  const roleLabel = MEMBER_ROLE_LABELS[role] || role || '-';
+
+  return (
+    <AlertDialog
+      isOpen={isOpen}
+      leastDestructiveRef={cancelButtonRef}
+      onClose={onClose}
+      isCentered
+      scrollBehavior='inside'
+    >
+      <AlertDialogOverlay {...overlayProps} />
+      <AlertDialogContent
+        maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        {...{
+          bg: tokens.surfaceBg,
+          color: tokens.text,
+          border: '1px solid',
+          borderColor: tokens.border,
+          borderRadius: { base: '14px', md: '18px' },
+          boxShadow: tokens.shadow,
+          overflow: 'hidden',
+        }}
+      >
+        <AlertDialogHeader {...headerProps}>
+          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight='bold'>
+            {copy.title}
+          </Text>
+          <Text
+            fontSize={{ base: 'xs', md: 'sm' }}
+            color={tokens.subtleText}
+            mt={1.5}
+            fontWeight='medium'
+          >
+            {copy.description}
+          </Text>
+        </AlertDialogHeader>
+        <AlertDialogCloseButton {...closeButtonProps} />
+        <AlertDialogBody {...bodyProps}>
+          <VStack spacing={4} align='stretch'>
+            <Alert
+              status='warning'
+              bg={warningBg}
+              border='1px solid'
+              borderColor={warningBorder}
+              color={warningText}
+              borderRadius='12px'
+            >
+              <AlertIcon />
+              <AlertDescription>{copy.warning}</AlertDescription>
+            </Alert>
+
+            {action ? (
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                <WorkspaceConfirmSectionTitle tokens={tokens}>
+                  {copy.sectionTitle}
+                </WorkspaceConfirmSectionTitle>
+                <WorkspaceConfirmFieldCard
+                  label={member ? 'Member' : 'Invitee'}
+                  tokens={tokens}
+                >
+                  <WorkspaceConfirmValue tokens={tokens}>
+                    {member ? getMemberName(member) : invitation?.email}
+                  </WorkspaceConfirmValue>
+                </WorkspaceConfirmFieldCard>
+                <WorkspaceConfirmFieldCard label='Email' tokens={tokens}>
+                  <WorkspaceConfirmValue tokens={tokens}>
+                    {member?.email || invitation?.email}
+                  </WorkspaceConfirmValue>
+                </WorkspaceConfirmFieldCard>
+                <WorkspaceConfirmFieldCard label='Workspace' tokens={tokens}>
+                  <WorkspaceConfirmValue tokens={tokens}>
+                    {action.workspaceName}
+                  </WorkspaceConfirmValue>
+                </WorkspaceConfirmFieldCard>
+                <WorkspaceConfirmFieldCard
+                  label={member ? 'Workspace Role' : 'Invited Role'}
+                  tokens={tokens}
+                >
+                  <WorkspaceConfirmValue tokens={tokens}>
+                    {roleLabel}
+                  </WorkspaceConfirmValue>
+                </WorkspaceConfirmFieldCard>
+                {!member && invitation?.created_at ? (
+                  <WorkspaceConfirmFieldCard label='Sent' tokens={tokens}>
+                    <WorkspaceConfirmValue tokens={tokens}>
+                      {new Date(invitation.created_at).toLocaleString()}
+                    </WorkspaceConfirmValue>
+                  </WorkspaceConfirmFieldCard>
+                ) : null}
+              </SimpleGrid>
+            ) : null}
+          </VStack>
+        </AlertDialogBody>
+        <AlertDialogFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              ref={cancelButtonRef}
+              variant='outline'
+              onClick={onClose}
+              borderColor={tokens.buttonBorder}
+              color={tokens.subtleText}
+              minW={{ base: '100%', sm: '104px' }}
+              isDisabled={isLoading}
+              _hover={{
+                bg: tokens.fieldBg,
+                borderColor: tokens.focusBorder,
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              bg={deleteButtonBg}
+              color='white'
+              onClick={onConfirm}
+              minW={{ base: '100%', sm: '128px' }}
+              isLoading={isLoading}
+              _hover={{ bg: deleteButtonHoverBg }}
+            >
+              {copy.confirmLabel}
+            </Button>
+          </Flex>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 export default function Workspaces({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
@@ -105,6 +341,10 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
   const [renaming, setRenaming] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState('');
   const [renameSaving, setRenameSaving] = React.useState(false);
+  const [workspaceActionConfirm, setWorkspaceActionConfirm] =
+    React.useState(null);
+  const [workspaceActionSubmitting, setWorkspaceActionSubmitting] =
+    React.useState(false);
 
   // Fetch all tokens for a workspace by paging to avoid missing items (incl. duplicates by name)
   const fetchAllTokensForWorkspace = React.useCallback(async workspaceId => {
@@ -336,6 +576,47 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
     }
   }
 
+  function openWorkspaceActionConfirm(type, payload) {
+    if (!currentWorkspace) return;
+    setWorkspaceActionConfirm({
+      type,
+      workspaceId: currentWorkspace.id,
+      workspaceName: currentWorkspace.name,
+      ...payload,
+    });
+  }
+
+  function closeWorkspaceActionConfirm() {
+    if (workspaceActionSubmitting) return;
+    setWorkspaceActionConfirm(null);
+  }
+
+  async function confirmWorkspaceAction() {
+    if (!workspaceActionConfirm) return;
+
+    setWorkspaceActionSubmitting(true);
+    try {
+      if (workspaceActionConfirm.type === 'remove-member') {
+        await workspaceAPI.removeMember(
+          workspaceActionConfirm.workspaceId,
+          workspaceActionConfirm.member.user_id
+        );
+        await reloadMembers(workspaceActionConfirm.workspaceId);
+      } else if (workspaceActionConfirm.type === 'cancel-invite') {
+        await workspaceAPI.cancelInvitation(
+          workspaceActionConfirm.workspaceId,
+          workspaceActionConfirm.invitation.id
+        );
+        await reloadInvitations(workspaceActionConfirm.workspaceId);
+      }
+      setWorkspaceActionConfirm(null);
+    } catch (_) {
+      // workspaceAPI already routes request failures through the global API toast.
+    } finally {
+      setWorkspaceActionSubmitting(false);
+    }
+  }
+
   return (
     <>
       <SEO
@@ -359,25 +640,24 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
             />
           </DashboardPanel>
         ) : (
-          <VStack align='stretch' spacing={6}>
-            {
-              <DashboardPanel>
-                <DashboardPanelHeader
-                  title='Create workspace'
-                  description='Create an isolated workspace for another team, project, or environment.'
-                  mb={3}
+          <VStack align='stretch' spacing={6} w='full'>
+            <DashboardPanel h='fit-content'>
+              <DashboardPanelHeader
+                title='Create workspace'
+                description='Create an isolated workspace for another team, project, or environment.'
+                mb={3}
+              />
+              <HStack spacing={3} align='center' flexWrap='wrap'>
+                <Input
+                  placeholder='Workspace name'
+                  value={newWorkspaceName}
+                  onChange={e => setNewWorkspaceName(e.target.value)}
+                  maxW={{ base: '100%', sm: '320px' }}
+                  size='sm'
                 />
-                <HStack spacing={3} align='center' flexWrap='wrap'>
-                  <Input
-                    placeholder='Workspace name'
-                    value={newWorkspaceName}
-                    onChange={e => setNewWorkspaceName(e.target.value)}
-                    maxW={{ base: '100%', sm: '320px' }}
-                    size='sm'
-                  />
-                  <DashboardActionButton
-                    isLoading={creatingWorkspace}
-                    onClick={async () => {
+                <DashboardActionButton
+                  isLoading={creatingWorkspace}
+                  onClick={async () => {
                       const name = (newWorkspaceName || '').trim();
                       if (!name) return;
                       try {
@@ -471,15 +751,14 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                       } finally {
                         setCreatingWorkspace(false);
                       }
-                    }}
-                  >
-                    Create
-                  </DashboardActionButton>
-                </HStack>
-              </DashboardPanel>
-            }
+                  }}
+                >
+                  Create
+                </DashboardActionButton>
+              </HStack>
+            </DashboardPanel>
 
-            <DashboardPanel>
+            <DashboardPanel minW={0}>
               <DashboardPanelHeader
                 title='Workspace management'
                 description='Select a workspace, manage its members, and transfer assets between workspaces.'
@@ -828,14 +1107,11 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                           <Button
                             size='sm'
                             variant='outline'
-                            onClick={async () => {
-                              if (!currentWorkspace) return;
-                              await workspaceAPI.removeMember(
-                                currentWorkspace.id,
-                                m.user_id
-                              );
-                              await reloadMembers(currentWorkspace.id);
-                            }}
+                            onClick={() =>
+                              openWorkspaceActionConfirm('remove-member', {
+                                member: m,
+                              })
+                            }
                             isDisabled={
                               (currentWorkspace?.role !== 'admin' &&
                                 m.role === 'admin') ||
@@ -953,14 +1229,11 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                         size='sm'
                         variant='outline'
                         alignSelf='flex-start'
-                        onClick={async () => {
-                          if (!currentWorkspace) return;
-                          await workspaceAPI.removeMember(
-                            currentWorkspace.id,
-                            m.user_id
-                          );
-                          await reloadMembers(currentWorkspace.id);
-                        }}
+                        onClick={() =>
+                          openWorkspaceActionConfirm('remove-member', {
+                            member: m,
+                          })
+                        }
                         isDisabled={
                           (currentWorkspace?.role !== 'admin' &&
                             m.role === 'admin') ||
@@ -1009,21 +1282,11 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                                 size='sm'
                                 variant='outline'
                                 isDisabled={!canManage}
-                                onClick={async () => {
-                                  if (!currentWorkspace) return;
-                                  try {
-                                    await workspaceAPI.cancelInvitation(
-                                      currentWorkspace.id,
-                                      inv.id
-                                    );
-                                  } catch (e) {
-                                    showError(
-                                      'Failed to cancel invitation',
-                                      String(e?.message || '')
-                                    );
-                                  }
-                                  await reloadInvitations(currentWorkspace.id);
-                                }}
+                                onClick={() =>
+                                  openWorkspaceActionConfirm('cancel-invite', {
+                                    invitation: inv,
+                                  })
+                                }
                               >
                                 Cancel invite
                               </Button>
@@ -1071,21 +1334,11 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                             variant='outline'
                             alignSelf='flex-start'
                             isDisabled={!canManage}
-                            onClick={async () => {
-                              if (!currentWorkspace) return;
-                              try {
-                                await workspaceAPI.cancelInvitation(
-                                  currentWorkspace.id,
-                                  inv.id
-                                );
-                              } catch (e) {
-                                showError(
-                                  'Failed to cancel invitation',
-                                  String(e?.message || '')
-                                );
-                              }
-                              await reloadInvitations(currentWorkspace.id);
-                            }}
+                            onClick={() =>
+                              openWorkspaceActionConfirm('cancel-invite', {
+                                invitation: inv,
+                              })
+                            }
                           >
                             Cancel invite
                           </Button>
@@ -1099,6 +1352,14 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
           </VStack>
         )}
       </DashboardPageLayout>
+
+      <WorkspaceActionConfirmModal
+        isOpen={Boolean(workspaceActionConfirm)}
+        action={workspaceActionConfirm}
+        isLoading={workspaceActionSubmitting}
+        onClose={closeWorkspaceActionConfirm}
+        onConfirm={confirmWorkspaceAction}
+      />
 
       {/* Transfer Modal */}
       <AlertDialog

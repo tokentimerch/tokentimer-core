@@ -15,6 +15,7 @@ import {
   AlertTitle,
   AlertDescription,
   HStack,
+  Flex,
   Stack,
   useColorModeValue,
   useBreakpointValue,
@@ -26,6 +27,7 @@ import {
   Badge,
   AlertDialog,
   AlertDialogBody,
+  AlertDialogCloseButton,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogContent,
@@ -58,7 +60,7 @@ import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { trackEvent } from '../utils/analytics.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { logger } from '../utils/logger';
-import { FiCopy, FiGlobe } from 'react-icons/fi';
+import { FiCopy, FiGlobe, FiX } from 'react-icons/fi';
 import { SiDiscord, SiPagerduty } from 'react-icons/si';
 import {
   TOUR_MOCK_WEBHOOKS,
@@ -88,6 +90,244 @@ function isValidEmail(email) {
   return emailRegex.test(trimmed);
 }
 
+const CONTACT_DETAIL_ORDER = ['department', 'title', 'email', 'note'];
+
+function formatContactDetailLabel(key) {
+  if (!key) return key;
+  return key.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function getContactDisplayName(contact) {
+  return (
+    [contact?.first_name, contact?.last_name]
+      .filter(Boolean)
+      .join(' ')
+      .trim() || 'Unnamed contact'
+  );
+}
+
+function getContactDetailDisplay(contact, whatsappAvailable) {
+  const rawDetails =
+    contact?.details && typeof contact.details === 'object'
+      ? contact.details
+      : {};
+  const seenDetailKeys = new Set();
+  const detailDisplay = [];
+
+  const pushDetail = (key, value) => {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed || seenDetailKeys.has(key)) return;
+    seenDetailKeys.add(key);
+    detailDisplay.push({
+      key,
+      label: formatContactDetailLabel(key),
+      value: trimmed,
+    });
+  };
+
+  CONTACT_DETAIL_ORDER.forEach(key => {
+    if (Object.prototype.hasOwnProperty.call(rawDetails, key)) {
+      pushDetail(key, rawDetails[key]);
+    }
+  });
+
+  Object.entries(rawDetails)
+    .filter(([key]) => !CONTACT_DETAIL_ORDER.includes(key))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([key, value]) => pushDetail(key, value));
+
+  if (!whatsappAvailable && contact?.phone_e164) {
+    pushDetail('phone', contact.phone_e164);
+  }
+
+  return detailDisplay;
+}
+
+function PreferencesPanelHeader({ title, description, muted }) {
+  const titleColor = useColorModeValue('black', 'inherit');
+
+  return (
+    <Box color={titleColor}>
+      <DashboardPanelHeader title={title}>
+        <Text mt={1} color={muted} fontSize='sm' lineHeight='1.45'>
+          {description}
+        </Text>
+      </DashboardPanelHeader>
+    </Box>
+  );
+}
+
+function PreferenceConfirmFieldCard({ label, children, tokens }) {
+  return (
+    <Box
+      bg={tokens.fieldBg}
+      border='1px solid'
+      borderColor={tokens.border}
+      borderRadius='12px'
+      p={{ base: 3.5, md: 4 }}
+      minH='88px'
+    >
+      <Text
+        fontSize='sm'
+        fontWeight='semibold'
+        color={tokens.muted}
+        mb={2}
+      >
+        {label}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+function PreferenceConfirmValue({ children, tokens, ...rest }) {
+  return (
+    <Text
+      fontSize={{ base: 'sm', md: 'md' }}
+      color={tokens.text}
+      {...rest}
+    >
+      {children || '-'}
+    </Text>
+  );
+}
+
+function formatWebhookKindLabel(kind) {
+  const normalized = String(kind || 'generic').toLowerCase();
+  const labels = {
+    discord: 'Discord',
+    generic: 'Generic',
+    pagerduty: 'PagerDuty',
+    slack: 'Slack',
+    teams: 'Microsoft Teams',
+  };
+  return labels[normalized] || normalized;
+}
+
+function isWebhookReadyToPersist(webhook) {
+  const url = (webhook?.url || '').trim();
+  const verifiedUrl = (webhook?.verifiedUrl || '').trim();
+  if (!url) return false;
+  if (!webhook?.verified || verifiedUrl !== url) return false;
+  if (!webhook._verifiedSnapshot) return true;
+  return areWebhookParametersEqual(
+    getWebhookParameterSnapshot(webhook),
+    webhook._verifiedSnapshot
+  );
+}
+
+const WEBHOOK_PARAMETER_FIELDS = [
+  'name',
+  'kind',
+  'url',
+  'severity',
+  'template',
+  'routingKey',
+];
+
+function getWebhookParameterSnapshot(webhook) {
+  return WEBHOOK_PARAMETER_FIELDS.reduce((snapshot, field) => {
+    snapshot[field] = String(webhook?.[field] ?? '').trim();
+    return snapshot;
+  }, {});
+}
+
+function areWebhookParametersEqual(a, b) {
+  return WEBHOOK_PARAMETER_FIELDS.every(
+    field => String(a?.[field] ?? '') === String(b?.[field] ?? '')
+  );
+}
+
+function isSavedWebhook(webhook) {
+  if (!webhook) return false;
+  if (Object.prototype.hasOwnProperty.call(webhook, '_persisted')) {
+    return webhook._persisted === true;
+  }
+  return Boolean((webhook.verifiedUrl || '').trim());
+}
+
+function hasWebhookParameterChanges(webhook) {
+  if (!isSavedWebhook(webhook)) return true;
+  const savedSnapshot = webhook?._savedSnapshot;
+  if (!savedSnapshot) return false;
+  return !areWebhookParametersEqual(
+    getWebhookParameterSnapshot(webhook),
+    savedSnapshot
+  );
+}
+
+function isWebhookEditable(webhook) {
+  return !isSavedWebhook(webhook) || webhook?._editing === true;
+}
+
+function shouldShowWebhookSave(webhook) {
+  return !isSavedWebhook(webhook) || webhook?._editing === true;
+}
+
+function canSaveWebhook(webhook) {
+  return (
+    isWebhookReadyToPersist(webhook) &&
+    Boolean((webhook?.name || '').trim()) &&
+    hasWebhookParameterChanges(webhook)
+  );
+}
+
+function withWebhookPersistedState(webhook, persisted) {
+  const next = {
+    ...webhook,
+    _persisted: persisted,
+    _editing: !persisted,
+  };
+  if (persisted) {
+    next._savedSnapshot = getWebhookParameterSnapshot(webhook);
+    next._verifiedSnapshot = getWebhookParameterSnapshot(webhook);
+  } else {
+    delete next._savedSnapshot;
+    delete next._verifiedSnapshot;
+  }
+  return next;
+}
+
+function stripWebhookClientState(webhook) {
+  const safeWebhook = { ...(webhook || {}) };
+  delete safeWebhook._persisted;
+  delete safeWebhook._editing;
+  delete safeWebhook._savedSnapshot;
+  delete safeWebhook._verifiedSnapshot;
+  return safeWebhook;
+}
+
+function savedWebhookPayload(webhook) {
+  if (!isSavedWebhook(webhook)) return null;
+  const snapshot =
+    webhook?._savedSnapshot || getWebhookParameterSnapshot(webhook);
+  const payload = stripWebhookClientState({
+    ...webhook,
+    ...snapshot,
+    verified: Boolean(snapshot.url),
+    verifiedUrl: snapshot.url || null,
+  });
+  return isWebhookReadyToPersist(payload) ? payload : null;
+}
+
+function webhookPayloadForSave(webhook) {
+  if (isWebhookReadyToPersist(webhook)) {
+    return stripWebhookClientState(webhook);
+  }
+  return savedWebhookPayload(webhook);
+}
+
+function getSavedWebhookForDisplay(webhook) {
+  if (!webhook?._savedSnapshot) return webhook;
+  const snapshot = webhook._savedSnapshot;
+  return {
+    ...webhook,
+    ...snapshot,
+    verified: Boolean(snapshot.url),
+    verifiedUrl: snapshot.url || null,
+  };
+}
+
 export default function AlertPreferences({
   session,
   showProductTour,
@@ -108,6 +348,7 @@ export default function AlertPreferences({
   const [thresholdError, setThresholdError] = useState('');
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [webhookUrls, setWebhookUrls] = useState([]);
+  const [webhookDeleteTarget, setWebhookDeleteTarget] = useState(null);
   const [testingWebhook, setTestingWebhook] = useState(null);
   const [testCooldowns, setTestCooldowns] = useState({});
   const [waContactCooldowns, setWaContactCooldowns] = useState({}); // contactId -> until timestamp
@@ -140,6 +381,7 @@ export default function AlertPreferences({
   const [groupWeeklyDigestWebhooks, setGroupWeeklyDigestWebhooks] =
     useState(false);
   const [contacts, setContacts] = useState([]);
+  const [contactDeleteTarget, setContactDeleteTarget] = useState(null);
   const [newContactFirstName, setNewContactFirstName] = useState('');
   const [newContactLastName, setNewContactLastName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
@@ -233,13 +475,17 @@ export default function AlertPreferences({
   const [_workspaceRole, setWorkspaceRole] = useState('');
 
   const theme = useDashboardTheme();
-  const { border, muted, dashboard } = theme;
+  const { border, muted, dashboard, text } = theme;
+  const webhookDeleteIconColor = dashboard.state.danger;
+  const labelColor = useColorModeValue('black', text);
+  const readableMuted = useColorModeValue(dashboard.text.secondary, muted);
   const {
     overlayProps,
     contentProps,
     headerProps,
     bodyProps,
     footerProps,
+    closeButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
   const modalOutlineButtonProps = {
@@ -255,6 +501,17 @@ export default function AlertPreferences({
   const discordColor = '#5865F2';
   const pagerdutyColor = '#06AC38';
   const internetColor = useColorModeValue('cyan.500', 'cyan.400');
+  const modalWarningBg = useColorModeValue(
+    '#fff7ed',
+    'rgba(146, 64, 14, 0.22)'
+  );
+  const modalWarningBorder = useColorModeValue(
+    '#fed7aa',
+    'rgba(251, 191, 36, 0.34)'
+  );
+  const modalWarningText = useColorModeValue('#9a3412', '#fde68a');
+  const modalDeleteButtonBg = useColorModeValue('#dc2626', '#ef4444');
+  const modalDeleteButtonHoverBg = useColorModeValue('#b91c1c', '#dc2626');
 
   // Helper function to render webhook vendor logo - must be defined after all hooks
   const renderWebhookLogo = kind => {
@@ -325,7 +582,11 @@ export default function AlertPreferences({
         setDwTz('UTC');
         setContacts(TOUR_MOCK_WORKSPACE_CONTACTS);
         setEmailEnabled(true);
-        setWebhookUrls(TOUR_MOCK_WEBHOOKS);
+        setWebhookUrls(
+          TOUR_MOCK_WEBHOOKS.map(webhook =>
+            withWebhookPersistedState(webhook, true)
+          )
+        );
         setContactGroups(TOUR_MOCK_CONTACT_GROUPS);
         setDefaultContactGroupId(TOUR_MOCK_CONTACT_GROUPS[0]?.id);
         setSelectedGroupId(TOUR_MOCK_CONTACT_GROUPS[0]?.id);
@@ -363,11 +624,16 @@ export default function AlertPreferences({
         setEmailEnabled(data.email_alerts_enabled !== false);
         setWebhookUrls(
           Array.isArray(data.webhook_urls)
-            ? data.webhook_urls.map(w => ({
-                ...w,
-                verified: Boolean((w.url || '').trim()),
-                verifiedUrl: (w.url || '').trim(),
-              }))
+            ? data.webhook_urls.map(w =>
+                withWebhookPersistedState(
+                  {
+                    ...w,
+                    verified: Boolean((w.url || '').trim()),
+                    verifiedUrl: (w.url || '').trim(),
+                  },
+                  true
+                )
+              )
             : []
         );
         // Contact groups
@@ -554,12 +820,7 @@ export default function AlertPreferences({
     try {
       if (isViewer) return; // viewers cannot modify webhooks
       setSavingToggles(true);
-      // Persist only verified or unchanged (verifiedUrl===url) non-empty webhooks
-      const toPersist = webhookUrls.filter(w => {
-        const url = (w.url || '').trim();
-        if (!url) return false;
-        return (w.verified && w.verifiedUrl === url) || w.verifiedUrl === url;
-      });
+      const toPersist = webhookUrls.map(webhookPayloadForSave).filter(Boolean);
       const wsId = workspaceId;
       if (!wsId) {
         setError('Please select a workspace first');
@@ -569,6 +830,13 @@ export default function AlertPreferences({
         webhook_urls: toPersist,
       };
       await workspaceAPI.updateAlertSettings(wsId, payload);
+      setWebhookUrls(prev =>
+        prev.map(webhook =>
+          isWebhookReadyToPersist(webhook)
+            ? withWebhookPersistedState(webhook, true)
+            : webhook
+        )
+      );
       setSuccess('Webhooks saved');
       showSuccess('Webhooks saved');
       // Preserve current group editor state when saving webhooks list
@@ -863,8 +1131,9 @@ export default function AlertPreferences({
         setError('Please select a workspace first');
         return;
       }
+      const savedPayload = listToSave.map(savedWebhookPayload).filter(Boolean);
       const payload = {
-        webhook_urls: listToSave,
+        webhook_urls: savedPayload,
       };
       await workspaceAPI.updateAlertSettings(wsId, payload);
       setSuccess('Webhooks updated');
@@ -909,7 +1178,12 @@ export default function AlertPreferences({
       setWebhookUrls(prev =>
         prev.map((w, i) =>
           i === index
-            ? { ...w, verified: true, verifiedUrl: (w.url || '').trim() }
+            ? {
+                ...w,
+                verified: true,
+                verifiedUrl: (w.url || '').trim(),
+                _verifiedSnapshot: getWebhookParameterSnapshot(w),
+              }
             : w
         )
       );
@@ -918,7 +1192,14 @@ export default function AlertPreferences({
       // Ensure not verified on failure
       setWebhookUrls(prev =>
         prev.map((w, i) =>
-          i === index ? { ...w, verified: false, verifiedUrl: null } : w
+          i === index
+            ? {
+                ...w,
+                verified: false,
+                verifiedUrl: null,
+                _verifiedSnapshot: null,
+              }
+            : w
         )
       );
     } finally {
@@ -931,8 +1212,21 @@ export default function AlertPreferences({
     if (isViewer) return; // viewers cannot add webhooks
     setWebhookUrls([
       ...webhookUrls,
-      { url: '', kind: 'generic', verified: false, verifiedUrl: null },
+      withWebhookPersistedState(
+        {
+          url: '',
+          kind: 'generic',
+          verified: false,
+          verifiedUrl: null,
+        },
+        false
+      ),
     ]);
+  }
+
+  function removeUnsavedWebhook(index) {
+    if (isViewer) return;
+    setWebhookUrls(prev => prev.filter((_, i) => i !== index));
   }
 
   function removeWebhook(index) {
@@ -943,21 +1237,75 @@ export default function AlertPreferences({
     saveWebhooksListImmediate(newUrls).catch(() => {});
   }
 
+  function openWebhookDeleteConfirm(index) {
+    if (isViewer) return;
+    setWebhookDeleteTarget({
+      index,
+      webhook: getSavedWebhookForDisplay(webhookUrls[index]) || null,
+    });
+  }
+
+  function closeWebhookDeleteConfirm() {
+    setWebhookDeleteTarget(null);
+  }
+
+  function confirmWebhookDelete() {
+    if (!webhookDeleteTarget) return;
+    removeWebhook(webhookDeleteTarget.index);
+    setWebhookDeleteTarget(null);
+  }
+
+  function handleWebhookDeleteClick(index) {
+    if (isViewer) return;
+    const webhook = webhookUrls[index];
+    if (isSavedWebhook(webhook)) {
+      openWebhookDeleteConfirm(index);
+      return;
+    }
+    removeUnsavedWebhook(index);
+  }
+
+  function startWebhookEdit(index) {
+    if (isViewer) return;
+    setWebhookUrls(prev =>
+      prev.map((webhook, i) =>
+        i === index && isSavedWebhook(webhook)
+          ? { ...webhook, _editing: true }
+          : webhook
+      )
+    );
+  }
+
+  function cancelWebhookEdit(index) {
+    if (isViewer) return;
+    setWebhookUrls(prev =>
+      prev.map((webhook, i) => {
+        if (i !== index || !isSavedWebhook(webhook)) return webhook;
+        const snapshot =
+          webhook._savedSnapshot || getWebhookParameterSnapshot(webhook);
+        return {
+          ...webhook,
+          ...snapshot,
+          verified: Boolean(snapshot.url),
+          verifiedUrl: snapshot.url || null,
+          _editing: false,
+        };
+      })
+    );
+  }
+
   function updateWebhook(index, field, value) {
     if (isViewer) return; // viewers cannot edit webhooks
     const updated = [...webhookUrls];
     const prev = updated[index] || {};
-    // Only reset verification when URL changes
-    if (field === 'url') {
-      updated[index] = {
-        ...prev,
-        [field]: value,
-        verified: false,
-        verifiedUrl: null,
-      };
-    } else {
-      updated[index] = { ...prev, [field]: value };
-    }
+    if (!isWebhookEditable(prev)) return;
+    updated[index] = {
+      ...prev,
+      [field]: value,
+      verified: false,
+      verifiedUrl: null,
+      _verifiedSnapshot: null,
+    };
     setWebhookUrls(updated);
   }
 
@@ -987,10 +1335,381 @@ export default function AlertPreferences({
     }
   }
 
+  function handleStartContactEdit(contact) {
+    setEditingContactId(contact.id);
+    setEditContactFirstName(contact.first_name);
+    setEditContactLastName(contact.last_name);
+    setEditContactPhone(contact.phone_e164);
+    setEditContactDetails(contact.details || {});
+  }
+
+  const isEditedContactInvalid =
+    isViewer ||
+    !String(editContactFirstName || '').trim() ||
+    !String(editContactLastName || '').trim() ||
+    (!String(editContactPhone || '').trim() &&
+      !isValidEmail(String(editContactDetails.email || '').trim())) ||
+    (String(editContactPhone || '').trim() &&
+      !/^\+?[1-9]\d{6,14}$/.test(String(editContactPhone || '').trim()));
+
+  async function handleSaveEditedContact(contactId) {
+    try {
+      const res = await apiClient.put(
+        `/api/v1/workspaces/${workspaceId}/contacts/${contactId}`,
+        {
+          first_name: editContactFirstName,
+          last_name: editContactLastName,
+          phone_e164: editContactPhone,
+          details: editContactDetails,
+        }
+      );
+      setContacts(contacts.map(x => (x.id === contactId ? res.data : x)));
+      setEditingContactId(null);
+      showSuccess('Contact updated');
+    } catch (e) {
+      setError(e?.response?.data?.error || 'Failed to update contact');
+    }
+  }
+
+  function openContactDeleteConfirm(contact) {
+    if (isViewer) return;
+    setContactDeleteTarget(contact || null);
+  }
+
+  function closeContactDeleteConfirm() {
+    setContactDeleteTarget(null);
+  }
+
+  async function confirmContactDelete() {
+    if (!contactDeleteTarget) return;
+    const target = contactDeleteTarget;
+    setContactDeleteTarget(null);
+    await handleRemoveContact(target);
+  }
+
+  async function handleRemoveContact(contact) {
+    try {
+      const deletedContactId = contact.id;
+      await apiClient.delete(
+        `/api/v1/workspaces/${workspaceId}/contacts/${deletedContactId}`
+      );
+
+      setContacts(contacts.filter(x => x.id !== deletedContactId));
+
+      setContactGroups(
+        contactGroups.map(group => ({
+          ...group,
+          email_contact_ids: (group.email_contact_ids || []).filter(
+            id => id !== deletedContactId
+          ),
+          whatsapp_contact_ids: (group.whatsapp_contact_ids || []).filter(
+            id => id !== deletedContactId
+          ),
+        }))
+      );
+
+      if (editingGroupId) {
+        setGroupEmailContactIds(prev =>
+          prev.filter(id => id !== deletedContactId)
+        );
+        setGroupWhatsappContactIds(prev =>
+          prev.filter(id => id !== deletedContactId)
+        );
+        const updatedEmailIds = groupEmailContactIds.filter(
+          id => id !== deletedContactId
+        );
+        setGroupEmailsText(emailListFromIds(updatedEmailIds).join(', '));
+      }
+
+      showSuccess('Contact deleted');
+    } catch (_) {
+      setError('Failed to delete contact');
+    }
+  }
+
+  async function handleTestWhatsappContact(contact) {
+    try {
+      const now = Date.now();
+      const until = waContactCooldowns[contact.id] || 0;
+      if (until > now) {
+        const secs = Math.ceil((until - now) / 1000);
+        setError(`Please wait ${secs}s before sending another test.`);
+        return;
+      }
+      setTestingContact(contact.id);
+      await apiClient.post(
+        `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
+        { phone_e164: contact.phone_e164 }
+      );
+      showSuccess('Test message sent');
+      setWaContactCooldowns(prev => ({
+        ...prev,
+        [contact.id]: now + 120000,
+      }));
+    } catch (e) {
+      const code = e?.response?.data?.code;
+      const retryAfter = e?.response?.data?.retryAfter;
+      let msg = e?.response?.data?.error || e?.message || 'Test failed';
+      if (code === 'TEST_WHATSAPP_COOLDOWN' && Number.isFinite(retryAfter)) {
+        msg = `Please wait ${retryAfter}s before testing this number again`;
+      } else if (code === 'INVALID_PHONE_FORMAT') {
+        msg = 'Invalid phone format. Use E.164, e.g., +14155550100.';
+      } else if (String(code || '') === '63016') {
+        msg =
+          'Outside WhatsApp 24-hour session. Sending via approved template... please try again if it still fails.';
+      } else if (code === 'WHATSAPP_NOT_CONFIGURED') {
+        msg = 'WhatsApp is not configured. Please contact support.';
+      } else if (code === 'INVALID_RECIPIENT') {
+        msg = 'Invalid recipient. Verify the phone number and try again.';
+      }
+      setError(msg);
+    } finally {
+      setTestingContact(null);
+    }
+  }
+
+  function renderContactEditFields(contactId) {
+    return (
+      <VStack align='stretch' spacing={3}>
+        <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+          <FormControl>
+            <FormLabel m={0} fontSize='sm'>
+              First name
+            </FormLabel>
+            <Input
+              size='sm'
+              value={editContactFirstName}
+              onChange={e => setEditContactFirstName(e.target.value)}
+              placeholder='First name'
+            />
+          </FormControl>
+          <FormControl>
+            <FormLabel m={0} fontSize='sm'>
+              Last name
+            </FormLabel>
+            <Input
+              size='sm'
+              value={editContactLastName}
+              onChange={e => setEditContactLastName(e.target.value)}
+              placeholder='Last name'
+            />
+          </FormControl>
+        </SimpleGrid>
+        <FormControl>
+          <FormLabel m={0} fontSize='sm'>
+            Phone
+          </FormLabel>
+          <Input
+            size='sm'
+            value={editContactPhone}
+            onChange={e => setEditContactPhone(e.target.value)}
+            placeholder='+14155550100'
+          />
+        </FormControl>
+        <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+          <FormControl>
+            <FormLabel m={0} fontSize='sm'>
+              Department
+            </FormLabel>
+            <Input
+              size='sm'
+              placeholder='Department'
+              value={editContactDetails.department || ''}
+              onChange={e =>
+                setEditContactDetails({
+                  ...editContactDetails,
+                  department: e.target.value,
+                })
+              }
+            />
+          </FormControl>
+          <FormControl>
+            <FormLabel m={0} fontSize='sm'>
+              Title / Role
+            </FormLabel>
+            <Input
+              size='sm'
+              placeholder='Title / Role'
+              value={editContactDetails.title || ''}
+              onChange={e =>
+                setEditContactDetails({
+                  ...editContactDetails,
+                  title: e.target.value,
+                })
+              }
+            />
+          </FormControl>
+        </SimpleGrid>
+        <FormControl>
+          <FormLabel m={0} fontSize='sm'>
+            Email
+          </FormLabel>
+          <Input
+            size='sm'
+            placeholder='Email'
+            value={editContactDetails.email || ''}
+            onChange={e =>
+              setEditContactDetails({
+                ...editContactDetails,
+                email: e.target.value,
+              })
+            }
+          />
+        </FormControl>
+        <FormControl>
+          <FormLabel m={0} fontSize='sm'>
+            Note
+          </FormLabel>
+          <Textarea
+            size='sm'
+            rows={2}
+            placeholder='Note'
+            value={editContactDetails.note || ''}
+            onChange={e =>
+              setEditContactDetails({
+                ...editContactDetails,
+                note: e.target.value,
+              })
+            }
+          />
+        </FormControl>
+        <HStack spacing={2} flexWrap='wrap'>
+          <Button
+            size='sm'
+            colorScheme='blue'
+            isDisabled={isEditedContactInvalid}
+            onClick={() => handleSaveEditedContact(contactId)}
+          >
+            Save
+          </Button>
+          <Button
+            size='sm'
+            variant='ghost'
+            onClick={() => setEditingContactId(null)}
+          >
+            Cancel
+          </Button>
+        </HStack>
+      </VStack>
+    );
+  }
+
+  function renderMobileContactCard(contact) {
+    const detailDisplay = getContactDetailDisplay(contact, whatsappAvailable);
+    const isEditing = editingContactId === contact.id;
+    const phone = String(contact.phone_e164 || '').trim();
+
+    return (
+      <Box
+        key={contact.id}
+        border='1px solid'
+        borderColor={border}
+        borderRadius='md'
+        bg={isEditing ? dashboard.bg.panelHover : 'transparent'}
+        p={4}
+        minW={0}
+      >
+        {isEditing ? (
+          renderContactEditFields(contact.id)
+        ) : (
+          <VStack align='stretch' spacing={3}>
+            <Flex align='flex-start' justify='space-between' gap={3} minW={0}>
+              <Box minW={0}>
+                <Text
+                  fontSize='sm'
+                  fontWeight='semibold'
+                  wordBreak='break-word'
+                >
+                  {getContactDisplayName(contact)}
+                </Text>
+                {whatsappAvailable ? (
+                  <Text
+                    color={readableMuted}
+                    fontSize='sm'
+                    wordBreak='break-word'
+                  >
+                    {phone || 'No phone number'}
+                  </Text>
+                ) : null}
+              </Box>
+              <Badge
+                variant='outline'
+                colorScheme='blue'
+                borderRadius='md'
+                flexShrink={0}
+              >
+                Contact
+              </Badge>
+            </Flex>
+
+            <VStack align='stretch' spacing={1}>
+              {detailDisplay.length > 0 ? (
+                detailDisplay.map(detail => (
+                  <Text
+                    key={detail.key}
+                    color={readableMuted}
+                    fontSize='sm'
+                    wordBreak='break-word'
+                  >
+                    <Text as='span' fontWeight='semibold'>
+                      {detail.label}:
+                    </Text>{' '}
+                    {detail.value}
+                  </Text>
+                ))
+              ) : (
+                <Text color={readableMuted} fontSize='sm'>
+                  No details
+                </Text>
+              )}
+            </VStack>
+
+            <Stack direction={{ base: 'column', sm: 'row' }} spacing={2}>
+              {whatsappAvailable && phone ? (
+                <Button
+                  size='sm'
+                  variant='outline'
+                  isLoading={testingContact === contact.id}
+                  isDisabled={isViewer}
+                  onClick={() => handleTestWhatsappContact(contact)}
+                >
+                  {waContactCooldowns[contact.id] > Date.now()
+                    ? `Test WhatsApp (${Math.ceil((waContactCooldowns[contact.id] - Date.now()) / 1000)}s)`
+                    : 'Test WhatsApp'}
+                </Button>
+              ) : null}
+              <Button
+                size='sm'
+                variant='outline'
+                onClick={() => handleStartContactEdit(contact)}
+                isDisabled={isViewer}
+              >
+                Edit
+              </Button>
+              <Button
+                size='sm'
+                variant='outline'
+                colorScheme='red'
+                onClick={() => openContactDeleteConfirm(contact)}
+                isDisabled={isViewer}
+              >
+                Remove
+              </Button>
+            </Stack>
+          </VStack>
+        )}
+      </Box>
+    );
+  }
+
   function handleResetDefaults() {
     setThresholdsCsv('30,14,7,1,0');
     setThresholdError('');
   }
+
+  const contactDeleteDetails = contactDeleteTarget
+    ? getContactDetailDisplay(contactDeleteTarget, whatsappAvailable)
+    : [];
 
   return (
     <>
@@ -1009,9 +1728,21 @@ export default function AlertPreferences({
         contentProps={{
           overflowX: 'hidden',
           'data-tour': 'preferences-page',
+          w: 'full',
+          maxW: '100%',
         }}
       >
-        <VStack spacing={6} align='stretch'>
+        <VStack
+          spacing={6}
+          align='stretch'
+          w='full'
+          sx={{
+            '.chakra-form__label': {
+              color: labelColor,
+              fontWeight: '600',
+            },
+          }}
+        >
           {isViewer && (
             <Alert status='info' borderRadius='md'>
               <AlertIcon />
@@ -1038,11 +1769,11 @@ export default function AlertPreferences({
             </Alert>
           )}
 
-          <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={6} w='full'>
-            <DashboardPanel data-tour='preferences-thresholds'>
-              <DashboardPanelHeader
+          <DashboardPanel data-tour='preferences-thresholds'>
+              <PreferencesPanelHeader
                 title='Default workspace thresholds'
                 description='Control when alert notifications are created for assets in this workspace.'
+                muted={readableMuted}
               />
               {/* Plan gating removed: thresholds editable for all plans */}
               <FormControl
@@ -1056,11 +1787,11 @@ export default function AlertPreferences({
                   placeholder='30,14,7,1,0'
                 />
                 <FormErrorMessage>{thresholdError}</FormErrorMessage>
-                <Text fontSize='sm' color={muted} mt={2}>
+                <Text fontSize='sm' color={readableMuted} mt={2}>
                   Allowed range: -365 (after expiry) to 730 (2 years). Values
                   are sorted automatically.
                 </Text>
-                <Text fontSize='sm' color={muted} mt={1}>
+                <Text fontSize='sm' color={readableMuted} mt={1}>
                   1 alert per threshold crossed.
                 </Text>
               </FormControl>
@@ -1081,13 +1812,14 @@ export default function AlertPreferences({
                   Save
                 </DashboardActionButton>
               </HStack>
-            </DashboardPanel>
+          </DashboardPanel>
 
-            {/* Workspace Delivery Window */}
-            <DashboardPanel data-tour='preferences-delivery-window'>
-              <DashboardPanelHeader
+          {/* Workspace Delivery Window */}
+          <DashboardPanel data-tour='preferences-delivery-window'>
+              <PreferencesPanelHeader
                 title='Workspace delivery window'
-                description='Applies to all alert channels. Alerts outside this window are deferred.'
+                description='Applies to all alert channels. Alerts outside this window will be sent when the window reopens.'
+                muted={readableMuted}
               />
               <Stack direction={{ base: 'column', lg: 'row' }} spacing={3}>
                 <FormControl
@@ -1325,16 +2057,16 @@ export default function AlertPreferences({
                   Save
                 </DashboardActionButton>
               </HStack>
-            </DashboardPanel>
-          </SimpleGrid>
+          </DashboardPanel>
 
           {/* Email Panel replaced by Contact Groups */}
 
           {/* Contacts (& WhatsApp if configured) */}
-          <DashboardPanel data-tour='preferences-contacts'>
-            <DashboardPanelHeader
+          <DashboardPanel data-tour='preferences-contacts' minW={0}>
+            <PreferencesPanelHeader
               title='Contacts'
               description='Manage people and contact details that can receive workspace alerts.'
+              muted={readableMuted}
             />
             <VStack align='stretch' spacing={4}>
               {isViewer && (
@@ -1347,663 +2079,652 @@ export default function AlertPreferences({
                 </Alert>
               )}
 
-              <Box overflowX='auto' data-tour='preferences-contacts-list'>
-                <Table size='sm' width='100%' sx={{ tableLayout: 'fixed' }}>
-                  <Thead>
-                    <Tr>
-                      <Th width='22%'>Name</Th>
-                      {whatsappAvailable && <Th width='28%'>Phone</Th>}
-                      <Th width={whatsappAvailable ? '30%' : '58%'}>Details</Th>
-                      <Th width='20%' textAlign='right'></Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {contacts.map(c => {
-                      const rawDetails =
-                        c.details && typeof c.details === 'object'
-                          ? c.details
-                          : {};
+              <Box data-tour='preferences-contacts-list'>
+                <Box display={{ base: 'block', md: 'none' }}>
+                  {contacts.length === 0 ? (
+                    <Text color={readableMuted} fontSize='sm'>
+                      No contacts defined.
+                    </Text>
+                  ) : (
+                    <VStack align='stretch' spacing={3}>
+                      {contacts.map(contact =>
+                        renderMobileContactCard(contact)
+                      )}
+                    </VStack>
+                  )}
+                </Box>
 
-                      const formatDetailLabel = key => {
-                        if (!key) return key;
-                        return key
-                          .replace(/_/g, ' ')
-                          .replace(/\b\w/g, ch => ch.toUpperCase());
-                      };
+                <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
+                  <Table size='sm' width='100%' sx={{ tableLayout: 'fixed' }}>
+                    <Thead>
+                      <Tr>
+                        <Th width='22%'>Name</Th>
+                        {whatsappAvailable && <Th width='28%'>Phone</Th>}
+                        <Th width={whatsappAvailable ? '30%' : '58%'}>
+                          Details
+                        </Th>
+                        <Th width='20%' textAlign='right'></Th>
+                      </Tr>
+                    </Thead>
+                    <Tbody>
+                      {contacts.map(c => {
+                        const rawDetails =
+                          c.details && typeof c.details === 'object'
+                            ? c.details
+                            : {};
 
-                      const iconForDetail = key => {
-                        switch (key) {
-                          case 'department':
-                            return '🏢';
-                          case 'title':
-                          case 'role':
-                            return '👤';
-                          case 'note':
-                            return '📝';
-                          case 'email':
-                            return '✉️';
-                          case 'phone':
-                            return '📱';
-                          default:
-                            return '•';
-                        }
-                      };
+                        const formatDetailLabel = key => {
+                          if (!key) return key;
+                          return key
+                            .replace(/_/g, ' ')
+                            .replace(/\b\w/g, ch => ch.toUpperCase());
+                        };
 
-                      const orderedKeys = [
-                        'department',
-                        'title',
-                        'email',
-                        'note',
-                      ];
-                      const seenDetailKeys = new Set();
-                      const detailDisplay = [];
+                        const iconForDetail = key => {
+                          switch (key) {
+                            case 'department':
+                              return '🏢';
+                            case 'title':
+                            case 'role':
+                              return '👤';
+                            case 'note':
+                              return '📝';
+                            case 'email':
+                              return '✉️';
+                            case 'phone':
+                              return '📱';
+                            default:
+                              return '•';
+                          }
+                        };
 
-                      const pushDetail = (key, value) => {
-                        const trimmed = String(value ?? '').trim();
-                        if (!trimmed || seenDetailKeys.has(key)) return;
-                        seenDetailKeys.add(key);
-                        detailDisplay.push({
-                          key,
-                          icon: iconForDetail(key),
-                          label: formatDetailLabel(key),
-                          value: trimmed,
+                        const orderedKeys = [
+                          'department',
+                          'title',
+                          'email',
+                          'note',
+                        ];
+                        const seenDetailKeys = new Set();
+                        const detailDisplay = [];
+
+                        const pushDetail = (key, value) => {
+                          const trimmed = String(value ?? '').trim();
+                          if (!trimmed || seenDetailKeys.has(key)) return;
+                          seenDetailKeys.add(key);
+                          detailDisplay.push({
+                            key,
+                            icon: iconForDetail(key),
+                            label: formatDetailLabel(key),
+                            value: trimmed,
+                          });
+                        };
+
+                        orderedKeys.forEach(key => {
+                          if (
+                            Object.prototype.hasOwnProperty.call(
+                              rawDetails,
+                              key
+                            )
+                          ) {
+                            pushDetail(key, rawDetails[key]);
+                          }
                         });
-                      };
 
-                      orderedKeys.forEach(key => {
-                        if (
-                          Object.prototype.hasOwnProperty.call(rawDetails, key)
-                        ) {
-                          pushDetail(key, rawDetails[key]);
+                        Object.entries(rawDetails)
+                          .filter(([key]) => !orderedKeys.includes(key))
+                          .sort(([a], [b]) => a.localeCompare(b))
+                          .forEach(([key, value]) => pushDetail(key, value));
+
+                        // When WhatsApp is not available, show phone in details column
+                        if (!whatsappAvailable && c.phone_e164) {
+                          pushDetail('phone', c.phone_e164);
                         }
-                      });
 
-                      Object.entries(rawDetails)
-                        .filter(([key]) => !orderedKeys.includes(key))
-                        .sort(([a], [b]) => a.localeCompare(b))
-                        .forEach(([key, value]) => pushDetail(key, value));
-
-                      // When WhatsApp is not available, show phone in details column
-                      if (!whatsappAvailable && c.phone_e164) {
-                        pushDetail('phone', c.phone_e164);
-                      }
-
-                      return editingContactId === c.id ? (
-                        isMobile ? (
-                          <Tr key={c.id} bg={dashboard.bg.panelHover}>
-                            <Td colSpan={4}>
-                              <VStack align='stretch' spacing={3}>
-                                <HStack spacing={2} flexWrap='wrap'>
-                                  <FormControl maxW='100%'>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      First name
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      value={editContactFirstName}
-                                      onChange={e =>
-                                        setEditContactFirstName(e.target.value)
-                                      }
-                                      placeholder='First name'
-                                    />
-                                  </FormControl>
-                                  <FormControl maxW='100%'>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Last name
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      value={editContactLastName}
-                                      onChange={e =>
-                                        setEditContactLastName(e.target.value)
-                                      }
-                                      placeholder='Last name'
-                                    />
-                                  </FormControl>
-                                </HStack>
-                                <FormControl>
-                                  <FormLabel m={0} fontSize='sm'>
-                                    Phone
-                                  </FormLabel>
-                                  <Input
-                                    size='sm'
-                                    value={editContactPhone}
-                                    onChange={e =>
-                                      setEditContactPhone(e.target.value)
-                                    }
-                                    placeholder='+14155550100'
-                                  />
-                                </FormControl>
-                                <HStack spacing={2} flexWrap='wrap'>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Department
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      placeholder='Department'
-                                      value={
-                                        editContactDetails.department || ''
-                                      }
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          department: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Title / Role
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      placeholder='Title / Role'
-                                      value={editContactDetails.title || ''}
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          title: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                </HStack>
-                                <FormControl>
-                                  <FormLabel m={0} fontSize='sm'>
-                                    Email
-                                  </FormLabel>
-                                  <Input
-                                    size='sm'
-                                    placeholder='Email'
-                                    value={editContactDetails.email || ''}
-                                    onChange={e =>
-                                      setEditContactDetails({
-                                        ...editContactDetails,
-                                        email: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </FormControl>
-                                <FormControl>
-                                  <FormLabel m={0} fontSize='sm'>
-                                    Note
-                                  </FormLabel>
-                                  <Textarea
-                                    size='sm'
-                                    rows={2}
-                                    placeholder='Note'
-                                    value={editContactDetails.note || ''}
-                                    onChange={e =>
-                                      setEditContactDetails({
-                                        ...editContactDetails,
-                                        note: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </FormControl>
-                                <HStack spacing={2}>
-                                  <Button
-                                    size='sm'
-                                    colorScheme='blue'
-                                    isDisabled={
-                                      isViewer ||
-                                      !String(
-                                        editContactFirstName || ''
-                                      ).trim() ||
-                                      !String(
-                                        editContactLastName || ''
-                                      ).trim() ||
-                                      (!String(editContactPhone || '').trim() &&
-                                        !isValidEmail(
-                                          String(
-                                            editContactDetails.email || ''
-                                          ).trim()
-                                        )) ||
-                                      (String(editContactPhone || '').trim() &&
-                                        !/^\+?[1-9]\d{6,14}$/.test(
-                                          String(editContactPhone || '').trim()
-                                        ))
-                                    }
-                                    onClick={async () => {
-                                      try {
-                                        const res = await apiClient.put(
-                                          `/api/v1/workspaces/${workspaceId}/contacts/${c.id}`,
-                                          {
-                                            first_name: editContactFirstName,
-                                            last_name: editContactLastName,
-                                            phone_e164: editContactPhone,
-                                            details: editContactDetails,
-                                          }
-                                        );
-                                        setContacts(
-                                          contacts.map(x =>
-                                            x.id === c.id ? res.data : x
+                        return editingContactId === c.id ? (
+                          isMobile ? (
+                            <Tr key={c.id} bg={dashboard.bg.panelHover}>
+                              <Td colSpan={4}>
+                                <VStack align='stretch' spacing={3}>
+                                  <HStack spacing={2} flexWrap='wrap'>
+                                    <FormControl maxW='100%'>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        First name
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        value={editContactFirstName}
+                                        onChange={e =>
+                                          setEditContactFirstName(
+                                            e.target.value
                                           )
-                                        );
-                                        setEditingContactId(null);
-                                        showSuccess('Contact updated');
-                                      } catch (e) {
-                                        setError(
-                                          e?.response?.data?.error ||
-                                            'Failed to update contact'
-                                        );
+                                        }
+                                        placeholder='First name'
+                                      />
+                                    </FormControl>
+                                    <FormControl maxW='100%'>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        Last name
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        value={editContactLastName}
+                                        onChange={e =>
+                                          setEditContactLastName(e.target.value)
+                                        }
+                                        placeholder='Last name'
+                                      />
+                                    </FormControl>
+                                  </HStack>
+                                  <FormControl>
+                                    <FormLabel m={0} fontSize='sm'>
+                                      Phone
+                                    </FormLabel>
+                                    <Input
+                                      size='sm'
+                                      value={editContactPhone}
+                                      onChange={e =>
+                                        setEditContactPhone(e.target.value)
                                       }
-                                    }}
-                                  >
-                                    Save
-                                  </Button>
+                                      placeholder='+14155550100'
+                                    />
+                                  </FormControl>
+                                  <HStack spacing={2} flexWrap='wrap'>
+                                    <FormControl>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        Department
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        placeholder='Department'
+                                        value={
+                                          editContactDetails.department || ''
+                                        }
+                                        onChange={e =>
+                                          setEditContactDetails({
+                                            ...editContactDetails,
+                                            department: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </FormControl>
+                                    <FormControl>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        Title / Role
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        placeholder='Title / Role'
+                                        value={editContactDetails.title || ''}
+                                        onChange={e =>
+                                          setEditContactDetails({
+                                            ...editContactDetails,
+                                            title: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </FormControl>
+                                  </HStack>
+                                  <FormControl>
+                                    <FormLabel m={0} fontSize='sm'>
+                                      Email
+                                    </FormLabel>
+                                    <Input
+                                      size='sm'
+                                      placeholder='Email'
+                                      value={editContactDetails.email || ''}
+                                      onChange={e =>
+                                        setEditContactDetails({
+                                          ...editContactDetails,
+                                          email: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormControl>
+                                    <FormLabel m={0} fontSize='sm'>
+                                      Note
+                                    </FormLabel>
+                                    <Textarea
+                                      size='sm'
+                                      rows={2}
+                                      placeholder='Note'
+                                      value={editContactDetails.note || ''}
+                                      onChange={e =>
+                                        setEditContactDetails({
+                                          ...editContactDetails,
+                                          note: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </FormControl>
+                                  <HStack spacing={2}>
+                                    <Button
+                                      size='sm'
+                                      colorScheme='blue'
+                                      isDisabled={
+                                        isViewer ||
+                                        !String(
+                                          editContactFirstName || ''
+                                        ).trim() ||
+                                        !String(
+                                          editContactLastName || ''
+                                        ).trim() ||
+                                        (!String(
+                                          editContactPhone || ''
+                                        ).trim() &&
+                                          !isValidEmail(
+                                            String(
+                                              editContactDetails.email || ''
+                                            ).trim()
+                                          )) ||
+                                        (String(
+                                          editContactPhone || ''
+                                        ).trim() &&
+                                          !/^\+?[1-9]\d{6,14}$/.test(
+                                            String(
+                                              editContactPhone || ''
+                                            ).trim()
+                                          ))
+                                      }
+                                      onClick={async () => {
+                                        try {
+                                          const res = await apiClient.put(
+                                            `/api/v1/workspaces/${workspaceId}/contacts/${c.id}`,
+                                            {
+                                              first_name: editContactFirstName,
+                                              last_name: editContactLastName,
+                                              phone_e164: editContactPhone,
+                                              details: editContactDetails,
+                                            }
+                                          );
+                                          setContacts(
+                                            contacts.map(x =>
+                                              x.id === c.id ? res.data : x
+                                            )
+                                          );
+                                          setEditingContactId(null);
+                                          showSuccess('Contact updated');
+                                        } catch (e) {
+                                          setError(
+                                            e?.response?.data?.error ||
+                                              'Failed to update contact'
+                                          );
+                                        }
+                                      }}
+                                    >
+                                      Save
+                                    </Button>
 
-                                  <Button
-                                    size='sm'
-                                    variant='ghost'
-                                    onClick={() => setEditingContactId(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </HStack>
-                              </VStack>
-                            </Td>
-                          </Tr>
+                                    <Button
+                                      size='sm'
+                                      variant='ghost'
+                                      onClick={() => setEditingContactId(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </HStack>
+                                </VStack>
+                              </Td>
+                            </Tr>
+                          ) : (
+                            <Tr key={c.id} bg={dashboard.bg.panelHover}>
+                              <Td colSpan={4}>
+                                <VStack align='stretch' spacing={3}>
+                                  <HStack spacing={2} flexWrap='wrap'>
+                                    <FormControl maxW='100%'>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        First name
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        value={editContactFirstName}
+                                        onChange={e =>
+                                          setEditContactFirstName(
+                                            e.target.value
+                                          )
+                                        }
+                                        placeholder='First name'
+                                      />
+                                    </FormControl>
+                                    <FormControl maxW='100%'>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        Last name
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        value={editContactLastName}
+                                        onChange={e =>
+                                          setEditContactLastName(e.target.value)
+                                        }
+                                        placeholder='Last name'
+                                      />
+                                    </FormControl>
+                                  </HStack>
+                                  <FormControl>
+                                    <FormLabel m={0} fontSize='sm'>
+                                      Phone
+                                    </FormLabel>
+                                    <Input
+                                      size='sm'
+                                      value={editContactPhone}
+                                      onChange={e =>
+                                        setEditContactPhone(e.target.value)
+                                      }
+                                      placeholder='+14155550100'
+                                    />
+                                  </FormControl>
+                                  <HStack spacing={2} flexWrap='wrap'>
+                                    <FormControl>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        Department
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        placeholder='Department'
+                                        value={
+                                          editContactDetails.department || ''
+                                        }
+                                        onChange={e =>
+                                          setEditContactDetails({
+                                            ...editContactDetails,
+                                            department: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </FormControl>
+                                    <FormControl>
+                                      <FormLabel m={0} fontSize='sm'>
+                                        Title / Role
+                                      </FormLabel>
+                                      <Input
+                                        size='sm'
+                                        placeholder='Title / Role'
+                                        value={editContactDetails.title || ''}
+                                        onChange={e =>
+                                          setEditContactDetails({
+                                            ...editContactDetails,
+                                            title: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </FormControl>
+                                  </HStack>
+                                  <FormControl>
+                                    <FormLabel m={0} fontSize='sm'>
+                                      Email
+                                    </FormLabel>
+                                    <Input
+                                      size='sm'
+                                      placeholder='Email'
+                                      value={editContactDetails.email || ''}
+                                      onChange={e =>
+                                        setEditContactDetails({
+                                          ...editContactDetails,
+                                          email: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </FormControl>
+                                  <FormControl>
+                                    <FormLabel m={0} fontSize='sm'>
+                                      Note
+                                    </FormLabel>
+                                    <Textarea
+                                      size='sm'
+                                      rows={2}
+                                      placeholder='Note'
+                                      value={editContactDetails.note || ''}
+                                      onChange={e =>
+                                        setEditContactDetails({
+                                          ...editContactDetails,
+                                          note: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </FormControl>
+                                  <HStack spacing={2}>
+                                    <Button
+                                      size='sm'
+                                      colorScheme='blue'
+                                      isDisabled={
+                                        isViewer ||
+                                        !String(
+                                          editContactFirstName || ''
+                                        ).trim() ||
+                                        !String(
+                                          editContactLastName || ''
+                                        ).trim() ||
+                                        (!String(
+                                          editContactPhone || ''
+                                        ).trim() &&
+                                          !isValidEmail(
+                                            String(
+                                              editContactDetails.email || ''
+                                            ).trim()
+                                          )) ||
+                                        (String(
+                                          editContactPhone || ''
+                                        ).trim() &&
+                                          !/^\+?[1-9]\d{6,14}$/.test(
+                                            String(
+                                              editContactPhone || ''
+                                            ).trim()
+                                          ))
+                                      }
+                                      onClick={async () => {
+                                        try {
+                                          const res = await apiClient.put(
+                                            `/api/v1/workspaces/${workspaceId}/contacts/${c.id}`,
+                                            {
+                                              first_name: editContactFirstName,
+                                              last_name: editContactLastName,
+                                              phone_e164: editContactPhone,
+                                              details: editContactDetails,
+                                            }
+                                          );
+                                          setContacts(
+                                            contacts.map(x =>
+                                              x.id === c.id ? res.data : x
+                                            )
+                                          );
+                                          setEditingContactId(null);
+                                          showSuccess('Contact updated');
+                                        } catch (e) {
+                                          setError(
+                                            e?.response?.data?.error ||
+                                              'Failed to update contact'
+                                          );
+                                        }
+                                      }}
+                                    >
+                                      Save
+                                    </Button>
+                                    <Button
+                                      size='sm'
+                                      variant='ghost'
+                                      onClick={() => setEditingContactId(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </HStack>
+                                </VStack>
+                              </Td>
+                            </Tr>
+                          )
                         ) : (
-                          <Tr key={c.id} bg={dashboard.bg.panelHover}>
-                            <Td colSpan={4}>
-                              <VStack align='stretch' spacing={3}>
-                                <HStack spacing={2} flexWrap='wrap'>
-                                  <FormControl maxW='100%'>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      First name
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      value={editContactFirstName}
-                                      onChange={e =>
-                                        setEditContactFirstName(e.target.value)
-                                      }
-                                      placeholder='First name'
-                                    />
-                                  </FormControl>
-                                  <FormControl maxW='100%'>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Last name
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      value={editContactLastName}
-                                      onChange={e =>
-                                        setEditContactLastName(e.target.value)
-                                      }
-                                      placeholder='Last name'
-                                    />
-                                  </FormControl>
-                                </HStack>
-                                <FormControl>
-                                  <FormLabel m={0} fontSize='sm'>
-                                    Phone
-                                  </FormLabel>
-                                  <Input
-                                    size='sm'
-                                    value={editContactPhone}
-                                    onChange={e =>
-                                      setEditContactPhone(e.target.value)
-                                    }
-                                    placeholder='+14155550100'
-                                  />
-                                </FormControl>
-                                <HStack spacing={2} flexWrap='wrap'>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Department
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      placeholder='Department'
-                                      value={
-                                        editContactDetails.department || ''
-                                      }
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          department: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Title / Role
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      placeholder='Title / Role'
-                                      value={editContactDetails.title || ''}
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          title: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                </HStack>
-                                <FormControl>
-                                  <FormLabel m={0} fontSize='sm'>
-                                    Email
-                                  </FormLabel>
-                                  <Input
-                                    size='sm'
-                                    placeholder='Email'
-                                    value={editContactDetails.email || ''}
-                                    onChange={e =>
-                                      setEditContactDetails({
-                                        ...editContactDetails,
-                                        email: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </FormControl>
-                                <FormControl>
-                                  <FormLabel m={0} fontSize='sm'>
-                                    Note
-                                  </FormLabel>
-                                  <Textarea
-                                    size='sm'
-                                    rows={2}
-                                    placeholder='Note'
-                                    value={editContactDetails.note || ''}
-                                    onChange={e =>
-                                      setEditContactDetails({
-                                        ...editContactDetails,
-                                        note: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </FormControl>
-                                <HStack spacing={2}>
-                                  <Button
-                                    size='sm'
-                                    colorScheme='blue'
-                                    isDisabled={
-                                      isViewer ||
-                                      !String(
-                                        editContactFirstName || ''
-                                      ).trim() ||
-                                      !String(
-                                        editContactLastName || ''
-                                      ).trim() ||
-                                      (!String(editContactPhone || '').trim() &&
-                                        !isValidEmail(
-                                          String(
-                                            editContactDetails.email || ''
-                                          ).trim()
-                                        )) ||
-                                      (String(editContactPhone || '').trim() &&
-                                        !/^\+?[1-9]\d{6,14}$/.test(
-                                          String(editContactPhone || '').trim()
-                                        ))
-                                    }
-                                    onClick={async () => {
-                                      try {
-                                        const res = await apiClient.put(
-                                          `/api/v1/workspaces/${workspaceId}/contacts/${c.id}`,
-                                          {
-                                            first_name: editContactFirstName,
-                                            last_name: editContactLastName,
-                                            phone_e164: editContactPhone,
-                                            details: editContactDetails,
-                                          }
-                                        );
-                                        setContacts(
-                                          contacts.map(x =>
-                                            x.id === c.id ? res.data : x
-                                          )
-                                        );
-                                        setEditingContactId(null);
-                                        showSuccess('Contact updated');
-                                      } catch (e) {
-                                        setError(
-                                          e?.response?.data?.error ||
-                                            'Failed to update contact'
-                                        );
-                                      }
-                                    }}
-                                  >
-                                    Save
-                                  </Button>
-                                  <Button
-                                    size='sm'
-                                    variant='ghost'
-                                    onClick={() => setEditingContactId(null)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </HStack>
-                              </VStack>
-                            </Td>
-                          </Tr>
-                        )
-                      ) : (
-                        <Tr key={c.id}>
-                          <Td
-                            width='22%'
-                            pr={2}
-                            whiteSpace='normal'
-                            wordBreak='break-word'
-                          >
-                            <Text fontSize='sm' fontWeight='medium'>
-                              {c.first_name} {c.last_name}
-                            </Text>
-                          </Td>
-                          {whatsappAvailable && (
+                          <Tr key={c.id}>
                             <Td
-                              width='28%'
+                              width='22%'
                               pr={2}
                               whiteSpace='normal'
                               wordBreak='break-word'
                             >
-                              <VStack align='stretch' spacing={1} fontSize='sm'>
-                                <Text>{c.phone_e164 || '-'}</Text>
-                                {String(c.phone_e164 || '').trim() ? (
-                                  <Button
-                                    size='xs'
-                                    variant='outline'
-                                    width='100%'
-                                    minW='0'
-                                    fontSize='xs'
-                                    px={1}
-                                    whiteSpace='normal'
-                                    wordBreak='break-word'
-                                    height='auto'
-                                    py={1}
-                                    onClick={async () => {
-                                      try {
-                                        const now = Date.now();
-                                        const until =
-                                          waContactCooldowns[c.id] || 0;
-                                        if (until > now) {
-                                          const secs = Math.ceil(
-                                            (until - now) / 1000
-                                          );
-                                          setError(
-                                            `Please wait ${secs}s before sending another test.`
-                                          );
-                                          return;
-                                        }
-                                        setTestingContact(c.id);
-                                        await apiClient.post(
-                                          `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
-                                          { phone_e164: c.phone_e164 }
-                                        );
-                                        showSuccess('Test message sent');
-                                        setWaContactCooldowns(prev => ({
-                                          ...prev,
-                                          [c.id]: now + 120000,
-                                        }));
-                                      } catch (e) {
-                                        const code = e?.response?.data?.code;
-                                        const retryAfter =
-                                          e?.response?.data?.retryAfter;
-                                        let msg =
-                                          e?.response?.data?.error ||
-                                          e?.message ||
-                                          'Test failed';
-                                        if (
-                                          code === 'TEST_WHATSAPP_COOLDOWN' &&
-                                          Number.isFinite(retryAfter)
-                                        ) {
-                                          msg = `Please wait ${retryAfter}s before testing this number again`;
-                                        } else if (
-                                          code === 'INVALID_PHONE_FORMAT'
-                                        ) {
-                                          msg =
-                                            'Invalid phone format. Use E.164, e.g., +14155550100.';
-                                        } else if (
-                                          String(code || '') === '63016'
-                                        ) {
-                                          msg =
-                                            'Outside WhatsApp 24-hour session. Sending via approved template... please try again if it still fails.';
-                                        } else if (
-                                          code === 'WHATSAPP_NOT_CONFIGURED'
-                                        ) {
-                                          msg =
-                                            'WhatsApp is not configured. Please contact support.';
-                                        } else if (
-                                          code === 'INVALID_RECIPIENT'
-                                        ) {
-                                          msg =
-                                            'Invalid recipient. Verify the phone number and try again.';
-                                        }
-                                        setError(msg);
-                                      } finally {
-                                        setTestingContact(null);
-                                      }
-                                    }}
-                                    isLoading={testingContact === c.id}
-                                    isDisabled={isViewer}
-                                  >
-                                    {waContactCooldowns[c.id] > Date.now()
-                                      ? `Test WhatsApp message (${Math.ceil((waContactCooldowns[c.id] - Date.now()) / 1000)}s)`
-                                      : 'Test WhatsApp message'}
-                                  </Button>
-                                ) : null}
-                              </VStack>
+                              <Text fontSize='sm' fontWeight='medium'>
+                                {c.first_name} {c.last_name}
+                              </Text>
                             </Td>
-                          )}
-                          <Td
-                            width={whatsappAvailable ? '30%' : '58%'}
-                            fontSize='xs'
-                            color={muted}
-                            pr={2}
-                            whiteSpace='normal'
-                            wordBreak='break-word'
-                          >
-                            {detailDisplay.length > 0 ? (
-                              <VStack
-                                align='stretch'
-                                spacing={0.5}
+                            {whatsappAvailable && (
+                              <Td
+                                width='28%'
+                                pr={2}
                                 whiteSpace='normal'
                                 wordBreak='break-word'
-                                overflowWrap='anywhere'
                               >
-                                {detailDisplay.map(detail => (
-                                  <Text key={detail.key} color={muted}>
-                                    {detail.icon} {detail.label}: {detail.value}
-                                  </Text>
-                                ))}
-                              </VStack>
-                            ) : (
-                              <Text>-</Text>
+                                <VStack
+                                  align='stretch'
+                                  spacing={1}
+                                  fontSize='sm'
+                                >
+                                  <Text>{c.phone_e164 || '-'}</Text>
+                                  {String(c.phone_e164 || '').trim() ? (
+                                    <Button
+                                      size='xs'
+                                      variant='outline'
+                                      width='100%'
+                                      minW='0'
+                                      fontSize='xs'
+                                      px={1}
+                                      whiteSpace='normal'
+                                      wordBreak='break-word'
+                                      height='auto'
+                                      py={1}
+                                      onClick={async () => {
+                                        try {
+                                          const now = Date.now();
+                                          const until =
+                                            waContactCooldowns[c.id] || 0;
+                                          if (until > now) {
+                                            const secs = Math.ceil(
+                                              (until - now) / 1000
+                                            );
+                                            setError(
+                                              `Please wait ${secs}s before sending another test.`
+                                            );
+                                            return;
+                                          }
+                                          setTestingContact(c.id);
+                                          await apiClient.post(
+                                            `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
+                                            { phone_e164: c.phone_e164 }
+                                          );
+                                          showSuccess('Test message sent');
+                                          setWaContactCooldowns(prev => ({
+                                            ...prev,
+                                            [c.id]: now + 120000,
+                                          }));
+                                        } catch (e) {
+                                          const code = e?.response?.data?.code;
+                                          const retryAfter =
+                                            e?.response?.data?.retryAfter;
+                                          let msg =
+                                            e?.response?.data?.error ||
+                                            e?.message ||
+                                            'Test failed';
+                                          if (
+                                            code === 'TEST_WHATSAPP_COOLDOWN' &&
+                                            Number.isFinite(retryAfter)
+                                          ) {
+                                            msg = `Please wait ${retryAfter}s before testing this number again`;
+                                          } else if (
+                                            code === 'INVALID_PHONE_FORMAT'
+                                          ) {
+                                            msg =
+                                              'Invalid phone format. Use E.164, e.g., +14155550100.';
+                                          } else if (
+                                            String(code || '') === '63016'
+                                          ) {
+                                            msg =
+                                              'Outside WhatsApp 24-hour session. Sending via approved template... please try again if it still fails.';
+                                          } else if (
+                                            code === 'WHATSAPP_NOT_CONFIGURED'
+                                          ) {
+                                            msg =
+                                              'WhatsApp is not configured. Please contact support.';
+                                          } else if (
+                                            code === 'INVALID_RECIPIENT'
+                                          ) {
+                                            msg =
+                                              'Invalid recipient. Verify the phone number and try again.';
+                                          }
+                                          setError(msg);
+                                        } finally {
+                                          setTestingContact(null);
+                                        }
+                                      }}
+                                      isLoading={testingContact === c.id}
+                                      isDisabled={isViewer}
+                                    >
+                                      {waContactCooldowns[c.id] > Date.now()
+                                        ? `Test WhatsApp message (${Math.ceil((waContactCooldowns[c.id] - Date.now()) / 1000)}s)`
+                                        : 'Test WhatsApp message'}
+                                    </Button>
+                                  ) : null}
+                                </VStack>
+                              </Td>
                             )}
-                          </Td>
-                          <Td width='20%' textAlign='right' pl={2}>
-                            <HStack spacing={1} justify='flex-end'>
-                              <Button
-                                size='xs'
-                                variant='outline'
-                                onClick={() => {
-                                  setEditingContactId(c.id);
-                                  setEditContactFirstName(c.first_name);
-                                  setEditContactLastName(c.last_name);
-                                  setEditContactPhone(c.phone_e164);
-                                  setEditContactDetails(c.details || {});
-                                }}
-                                isDisabled={isViewer}
-                              >
-                                Edit
-                              </Button>
+                            <Td
+                              width={whatsappAvailable ? '30%' : '58%'}
+                              fontSize='xs'
+                              color={readableMuted}
+                              pr={2}
+                              whiteSpace='normal'
+                              wordBreak='break-word'
+                            >
+                              {detailDisplay.length > 0 ? (
+                                <VStack
+                                  align='stretch'
+                                  spacing={0.5}
+                                  whiteSpace='normal'
+                                  wordBreak='break-word'
+                                  overflowWrap='anywhere'
+                                >
+                                  {detailDisplay.map(detail => (
+                                    <Text
+                                      key={detail.key}
+                                      color={readableMuted}
+                                    >
+                                      {detail.label}: {detail.value}
+                                    </Text>
+                                  ))}
+                                </VStack>
+                              ) : (
+                                <Text>-</Text>
+                              )}
+                            </Td>
+                            <Td width='20%' textAlign='right' pl={2}>
+                              <HStack spacing={1} justify='flex-end'>
+                                <Button
+                                  size='xs'
+                                  variant='outline'
+                                  onClick={() => {
+                                    setEditingContactId(c.id);
+                                    setEditContactFirstName(c.first_name);
+                                    setEditContactLastName(c.last_name);
+                                    setEditContactPhone(c.phone_e164);
+                                    setEditContactDetails(c.details || {});
+                                  }}
+                                  isDisabled={isViewer}
+                                >
+                                  Edit
+                                </Button>
 
-                              <Button
-                                size='xs'
-                                variant='outline'
-                                colorScheme='red'
-                                onClick={async () => {
-                                  try {
-                                    const deletedContactId = c.id;
-                                    await apiClient.delete(
-                                      `/api/v1/workspaces/${workspaceId}/contacts/${deletedContactId}`
-                                    );
-
-                                    // Update contacts list
-                                    setContacts(
-                                      contacts.filter(
-                                        x => x.id !== deletedContactId
-                                      )
-                                    );
-
-                                    // Clean up deleted contact from all contact groups
-                                    setContactGroups(
-                                      contactGroups.map(group => ({
-                                        ...group,
-                                        email_contact_ids: (
-                                          group.email_contact_ids || []
-                                        ).filter(id => id !== deletedContactId),
-                                        whatsapp_contact_ids: (
-                                          group.whatsapp_contact_ids || []
-                                        ).filter(id => id !== deletedContactId),
-                                      }))
-                                    );
-
-                                    // If currently editing a group, update the editor state too
-                                    if (editingGroupId) {
-                                      setGroupEmailContactIds(prev =>
-                                        prev.filter(
-                                          id => id !== deletedContactId
-                                        )
-                                      );
-                                      setGroupWhatsappContactIds(prev =>
-                                        prev.filter(
-                                          id => id !== deletedContactId
-                                        )
-                                      );
-                                      // Update the email text display
-                                      const updatedEmailIds =
-                                        groupEmailContactIds.filter(
-                                          id => id !== deletedContactId
-                                        );
-                                      setGroupEmailsText(
-                                        emailListFromIds(updatedEmailIds).join(
-                                          ', '
-                                        )
-                                      );
-                                    }
-
-                                    showSuccess('Contact deleted');
-                                  } catch (e) {
-                                    setError('Failed to delete contact');
-                                  }
-                                }}
-                                isDisabled={isViewer}
-                              >
-                                Remove
-                              </Button>
-                            </HStack>
-                          </Td>
-                        </Tr>
-                      );
-                    })}
-                  </Tbody>
-                </Table>
+                                <Button
+                                  size='xs'
+                                  variant='outline'
+                                  colorScheme='red'
+                                  onClick={() => openContactDeleteConfirm(c)}
+                                  isDisabled={isViewer}
+                                >
+                                  Remove
+                                </Button>
+                              </HStack>
+                            </Td>
+                          </Tr>
+                        );
+                      })}
+                    </Tbody>
+                  </Table>
+                </Box>
               </Box>
 
               {!isViewer && (
@@ -2227,10 +2948,11 @@ export default function AlertPreferences({
           </DashboardPanel>
 
           {/* Webhooks Panel */}
-          <DashboardPanel data-tour='preferences-webhooks'>
-            <DashboardPanelHeader
+          <DashboardPanel data-tour='preferences-webhooks' minW={0}>
+            <PreferencesPanelHeader
               title='Webhooks'
               description='Configure outgoing webhook targets for workspace alerts.'
+              muted={readableMuted}
             />
             {isViewer && (
               <Alert status='info' mb={3} borderRadius='md'>
@@ -2242,10 +2964,10 @@ export default function AlertPreferences({
               </Alert>
             )}
             <FormControl isDisabled={isViewer || !roleKnown}>
-              <HStack justify='space-between' mb={2}>
+              <HStack justify='space-between' mb={2} align='start'>
                 <VStack align='start' spacing={1}>
                   <FormLabel m={0}>Webhooks</FormLabel>
-                  <HStack spacing={2}>
+                  <HStack spacing={2} flexWrap='wrap' rowGap={1}>
                     <Link
                       href='https://api.slack.com/messaging/webhooks'
                       isExternal
@@ -2304,9 +3026,9 @@ export default function AlertPreferences({
                           updateWebhook(index, 'name', e.target.value)
                         }
                         size='sm'
-                        isDisabled={isViewer}
+                        isDisabled={isViewer || !isWebhookEditable(webhook)}
                       />
-                      <Text fontSize='xs' color={muted}>
+                      <Text fontSize='xs' color={readableMuted}>
                         Used to pick this webhook in a contact group.
                       </Text>
                       {String(webhook.kind || '').toLowerCase() ===
@@ -2321,7 +3043,7 @@ export default function AlertPreferences({
                               }
                               size='sm'
                               maxW='160px'
-                              isDisabled={isViewer}
+                              isDisabled={isViewer || !isWebhookEditable(webhook)}
                             >
                               <option value='generic'>Generic</option>
                               <option value='discord'>Discord</option>
@@ -2337,7 +3059,7 @@ export default function AlertPreferences({
                               updateWebhook(index, 'url', e.target.value)
                             }
                             size='sm'
-                            isDisabled={isViewer}
+                            isDisabled={isViewer || !isWebhookEditable(webhook)}
                           />
                           <Select
                             value={webhook.severity || ''}
@@ -2345,7 +3067,7 @@ export default function AlertPreferences({
                               updateWebhook(index, 'severity', e.target.value)
                             }
                             size='sm'
-                            isDisabled={isViewer}
+                            isDisabled={isViewer || !isWebhookEditable(webhook)}
                           >
                             <option value=''>Severity (auto)</option>
                             <option value='critical'>critical</option>
@@ -2360,7 +3082,7 @@ export default function AlertPreferences({
                               updateWebhook(index, 'template', e.target.value)
                             }
                             size='sm'
-                            isDisabled={isViewer}
+                            isDisabled={isViewer || !isWebhookEditable(webhook)}
                           />
                           <Input
                             placeholder='PagerDuty Routing Key'
@@ -2369,9 +3091,9 @@ export default function AlertPreferences({
                               updateWebhook(index, 'routingKey', e.target.value)
                             }
                             size='sm'
-                            isDisabled={isViewer}
+                            isDisabled={isViewer || !isWebhookEditable(webhook)}
                           />
-                          <HStack>
+                          <HStack flexWrap='wrap' rowGap={2}>
                             <Button
                               size='sm'
                               variant='outline'
@@ -2381,24 +3103,41 @@ export default function AlertPreferences({
                             >
                               Test
                             </Button>
-                            <Button
-                              size='sm'
-                              colorScheme='blue'
-                              onClick={handleSaveWebhooks}
-                              isLoading={savingToggles}
-                              disabled={
-                                isViewer ||
-                                !workspaceId ||
-                                !(
-                                  webhook.verified &&
-                                  (webhook.verifiedUrl || '') ===
-                                    (webhook.url || '').trim()
-                                ) ||
-                                !(webhook.name || '').trim()
-                              }
-                            >
-                              Save
-                            </Button>
+                            {shouldShowWebhookSave(webhook) ? (
+                              <Button
+                                size='sm'
+                                colorScheme='blue'
+                                onClick={handleSaveWebhooks}
+                                isLoading={savingToggles}
+                                isDisabled={
+                                  isViewer ||
+                                  !workspaceId ||
+                                  !canSaveWebhook(webhook)
+                                }
+                              >
+                                Save
+                              </Button>
+                            ) : (
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                onClick={() => startWebhookEdit(index)}
+                                isDisabled={isViewer}
+                              >
+                                Edit
+                              </Button>
+                            )}
+                            {isSavedWebhook(webhook) &&
+                            webhook._editing === true ? (
+                              <Button
+                                size='sm'
+                                variant='ghost'
+                                onClick={() => cancelWebhookEdit(index)}
+                                isDisabled={savingToggles}
+                              >
+                                Cancel
+                              </Button>
+                            ) : null}
                             {webhook.verified &&
                               (webhook.verifiedUrl || '') ===
                                 (webhook.url || '').trim() && (
@@ -2408,9 +3147,16 @@ export default function AlertPreferences({
                               size='sm'
                               variant='outline'
                               colorScheme='red'
-                              onClick={() => removeWebhook(index)}
+                              aria-label='Delete webhook'
+                              onClick={() => handleWebhookDeleteClick(index)}
                               isDisabled={isViewer}
-                              icon={<Text>×</Text>}
+                              icon={
+                                <Icon
+                                  as={FiX}
+                                  boxSize={4}
+                                  color={webhookDeleteIconColor}
+                                />
+                              }
                             />
                           </HStack>
                         </VStack>
@@ -2425,7 +3171,7 @@ export default function AlertPreferences({
                               }
                               size='sm'
                               maxW='160px'
-                              isDisabled={isViewer}
+                              isDisabled={isViewer || !isWebhookEditable(webhook)}
                             >
                               <option value='generic'>Generic</option>
                               <option value='discord'>Discord</option>
@@ -2442,9 +3188,9 @@ export default function AlertPreferences({
                             }
                             size='sm'
                             rows={2}
-                            isDisabled={isViewer}
+                            isDisabled={isViewer || !isWebhookEditable(webhook)}
                           />
-                          <HStack>
+                          <HStack flexWrap='wrap' rowGap={2}>
                             <Button
                               size='sm'
                               variant='outline'
@@ -2454,24 +3200,41 @@ export default function AlertPreferences({
                             >
                               Test
                             </Button>
-                            <Button
-                              size='sm'
-                              colorScheme='blue'
-                              onClick={handleSaveWebhooks}
-                              isLoading={savingToggles}
-                              disabled={
-                                isViewer ||
-                                !workspaceId ||
-                                !(
-                                  webhook.verified &&
-                                  (webhook.verifiedUrl || '') ===
-                                    (webhook.url || '').trim()
-                                ) ||
-                                !(webhook.name || '').trim()
-                              }
-                            >
-                              Save
-                            </Button>
+                            {shouldShowWebhookSave(webhook) ? (
+                              <Button
+                                size='sm'
+                                colorScheme='blue'
+                                onClick={handleSaveWebhooks}
+                                isLoading={savingToggles}
+                                isDisabled={
+                                  isViewer ||
+                                  !workspaceId ||
+                                  !canSaveWebhook(webhook)
+                                }
+                              >
+                                Save
+                              </Button>
+                            ) : (
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                onClick={() => startWebhookEdit(index)}
+                                isDisabled={isViewer}
+                              >
+                                Edit
+                              </Button>
+                            )}
+                            {isSavedWebhook(webhook) &&
+                            webhook._editing === true ? (
+                              <Button
+                                size='sm'
+                                variant='ghost'
+                                onClick={() => cancelWebhookEdit(index)}
+                                isDisabled={savingToggles}
+                              >
+                                Cancel
+                              </Button>
+                            ) : null}
                             {webhook.verified &&
                               (webhook.verifiedUrl || '') ===
                                 (webhook.url || '').trim() && (
@@ -2481,9 +3244,16 @@ export default function AlertPreferences({
                               size='sm'
                               variant='outline'
                               colorScheme='red'
-                              onClick={() => removeWebhook(index)}
+                              aria-label='Delete webhook'
+                              onClick={() => handleWebhookDeleteClick(index)}
                               isDisabled={isViewer}
-                              icon={<Text>×</Text>}
+                              icon={
+                                <Icon
+                                  as={FiX}
+                                  boxSize={4}
+                                  color={webhookDeleteIconColor}
+                                />
+                              }
                             />
                           </HStack>
                         </VStack>
@@ -2506,9 +3276,10 @@ export default function AlertPreferences({
 
           {/* Contact Groups (per workspace) */}
           <DashboardPanel data-tour='preferences-contact-groups'>
-            <DashboardPanelHeader
+            <PreferencesPanelHeader
               title='Contact groups'
               description={`Create groups to organize who receives alerts. Each person can receive via email${whatsappAvailable ? ', WhatsApp,' : ''} or webhooks.`}
+              muted={readableMuted}
             />
             {isViewer && (
               <Alert status='info' mb={4} borderRadius='md'>
@@ -2581,7 +3352,7 @@ export default function AlertPreferences({
                   </HStack>
                   {selectedGroupId ? (
                     <HStack mt={2} spacing={2} align='center'>
-                      <Text fontSize='xs' color={muted}>
+                      <Text fontSize='xs' color={readableMuted}>
                         ID:
                       </Text>
                       <Code fontSize='xs'>{selectedGroupId}</Code>
@@ -2600,7 +3371,7 @@ export default function AlertPreferences({
                       />
                     </HStack>
                   ) : null}
-                  <Text fontSize='xs' color={muted} mt={1}>
+                  <Text fontSize='xs' color={readableMuted} mt={1}>
                     Pick a contact group to edit it. Use {'"'}+ Add New Group
                     {'"'} to create one, then click {'"'}Save group{'"'}.
                   </Text>
@@ -2662,7 +3433,7 @@ export default function AlertPreferences({
                     <Heading size='sm'>
                       {editingGroupId ? 'Edit Group' : 'New Group'}
                     </Heading>
-                    <Text fontSize='xs' color={muted}>
+                    <Text fontSize='xs' color={readableMuted}>
                       Groups used: {(contactGroups || []).length}/
                       {groupCap === Infinity ? 'unlimited' : groupCap}
                     </Text>
@@ -2687,7 +3458,7 @@ export default function AlertPreferences({
                     </FormControl>
                     <FormControl data-tour='preferences-contact-groups-contacts-channels'>
                       <FormLabel>Contacts and channels</FormLabel>
-                      <Text fontSize='xs' color={muted} mb={1}>
+                      <Text fontSize='xs' color={readableMuted} mb={1}>
                         Select per-contact which channels to use.
                         {whatsappAvailable
                           ? ' Each person can have both email and WhatsApp.'
@@ -2698,7 +3469,7 @@ export default function AlertPreferences({
                       </Text>
                       <VStack align='stretch' spacing={2}>
                         {contacts.length === 0 ? (
-                          <Text fontSize='sm' color={muted}>
+                          <Text fontSize='sm' color={readableMuted}>
                             No contacts defined. Add contacts in the Contacts
                             section above.
                           </Text>
@@ -2901,7 +3672,7 @@ export default function AlertPreferences({
                           );
                           if (options.length === 0) {
                             return (
-                              <Text fontSize='xs' color={muted}>
+                              <Text fontSize='xs' color={readableMuted}>
                                 No verified named webhooks available.
                               </Text>
                             );
@@ -2943,7 +3714,7 @@ export default function AlertPreferences({
                         onChange={e => setGroupThresholdsCsv(e.target.value)}
                         size='sm'
                       />
-                      <Text fontSize='xs' color={muted} mt={1}>
+                      <Text fontSize='xs' color={readableMuted} mt={1}>
                         Leave equal to defaults to inherit workspace thresholds.
                         Allowed range: -365 to 730.
                       </Text>
@@ -2952,7 +3723,7 @@ export default function AlertPreferences({
                     <FormLabel m={0} fontSize='sm'>
                       Weekly Digest
                     </FormLabel>
-                    <Text fontSize='xs' color={muted} mb={2}>
+                    <Text fontSize='xs' color={readableMuted} mb={2}>
                       Send a weekly summary of tokens expiring soon (within the
                       highest threshold).
                     </Text>
@@ -2994,12 +3765,12 @@ export default function AlertPreferences({
                         Webhook weekly digest
                       </Checkbox>
                     </VStack>
-                    <Text fontSize='xs' color={muted}>
+                    <Text fontSize='xs' color={readableMuted}>
                       Weekly digest supports Slack, Discord, Teams, and generic
                       webhooks. PagerDuty is not supported as it&apos;s designed
                       for incident alerting.
                     </Text>
-                    <Text fontSize='xs' color={muted}>
+                    <Text fontSize='xs' color={readableMuted}>
                       Changes are not saved until you click {'"'}Save group{'"'}
                       .
                     </Text>
@@ -3038,6 +3809,280 @@ export default function AlertPreferences({
           {/* Global Save removed; saves are per section */}
         </VStack>
       </DashboardPageLayout>
+
+      <AlertDialog
+        isOpen={Boolean(webhookDeleteTarget)}
+        leastDestructiveRef={cancelRef}
+        onClose={closeWebhookDeleteConfirm}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Delete Webhook
+            </Text>
+            <Text
+              fontSize={{ base: 'xs', md: 'sm' }}
+              color={modalTokens.subtleText}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Review this webhook before removing it from workspace alerts.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogCloseButton {...closeButtonProps} />
+          <AlertDialogBody {...bodyProps}>
+            <VStack spacing={4} align='stretch'>
+              <Alert
+                status='warning'
+                bg={modalWarningBg}
+                border='1px solid'
+                borderColor={modalWarningBorder}
+                color={modalWarningText}
+                borderRadius='12px'
+              >
+                <AlertIcon />
+                <AlertDescription>
+                  This webhook will be removed from the workspace and will no
+                  longer receive alerts. This change is saved immediately.
+                </AlertDescription>
+              </Alert>
+
+              {webhookDeleteTarget?.webhook ? (
+                <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                  <Text
+                    gridColumn={{ base: 'auto', sm: '1 / -1' }}
+                    fontSize='sm'
+                    fontWeight='bold'
+                    color={modalTokens.text}
+                    pl={3}
+                    borderLeft='3px solid'
+                    borderColor={modalTokens.sectionAccent}
+                  >
+                    Webhook Information
+                  </Text>
+                  <PreferenceConfirmFieldCard
+                    label='Name'
+                    tokens={modalTokens}
+                  >
+                    <PreferenceConfirmValue tokens={modalTokens}>
+                      {webhookDeleteTarget.webhook.name}
+                    </PreferenceConfirmValue>
+                  </PreferenceConfirmFieldCard>
+                  <PreferenceConfirmFieldCard
+                    label='Type'
+                    tokens={modalTokens}
+                  >
+                    <PreferenceConfirmValue tokens={modalTokens}>
+                      {formatWebhookKindLabel(webhookDeleteTarget.webhook.kind)}
+                    </PreferenceConfirmValue>
+                  </PreferenceConfirmFieldCard>
+                  <PreferenceConfirmFieldCard
+                    label='URL'
+                    tokens={modalTokens}
+                  >
+                    <PreferenceConfirmValue
+                      tokens={modalTokens}
+                      wordBreak='break-all'
+                    >
+                      {webhookDeleteTarget.webhook.url}
+                    </PreferenceConfirmValue>
+                  </PreferenceConfirmFieldCard>
+                  <PreferenceConfirmFieldCard
+                    label='Verification'
+                    tokens={modalTokens}
+                  >
+                    <PreferenceConfirmValue tokens={modalTokens}>
+                      {webhookDeleteTarget.webhook.verified &&
+                      (webhookDeleteTarget.webhook.verifiedUrl || '') ===
+                        (webhookDeleteTarget.webhook.url || '').trim()
+                        ? 'Verified'
+                        : 'Not verified'}
+                    </PreferenceConfirmValue>
+                  </PreferenceConfirmFieldCard>
+                </SimpleGrid>
+              ) : null}
+            </VStack>
+          </AlertDialogBody>
+          <AlertDialogFooter {...footerProps}>
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+            >
+              <Button
+                ref={cancelRef}
+                onClick={closeWebhookDeleteConfirm}
+                minW={{ base: '100%', sm: '104px' }}
+                {...modalOutlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Button
+                bg={modalDeleteButtonBg}
+                color='white'
+                minW={{ base: '100%', sm: '128px' }}
+                onClick={confirmWebhookDelete}
+                _hover={{ bg: modalDeleteButtonHoverBg }}
+              >
+                Delete Webhook
+              </Button>
+            </Flex>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        isOpen={Boolean(contactDeleteTarget)}
+        leastDestructiveRef={cancelRef}
+        onClose={closeContactDeleteConfirm}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <AlertDialogOverlay {...overlayProps} />
+        <AlertDialogContent
+          {...contentProps}
+          maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <AlertDialogHeader {...headerProps}>
+            <Text
+              fontSize={{ base: 'md', md: 'lg' }}
+              fontWeight='bold'
+              color={modalTokens.text}
+            >
+              Remove Contact
+            </Text>
+            <Text
+              fontSize={{ base: 'xs', md: 'sm' }}
+              color={modalTokens.subtleText}
+              mt={1.5}
+              fontWeight='medium'
+            >
+              Review this contact before removing them from workspace alerts.
+            </Text>
+          </AlertDialogHeader>
+          <AlertDialogCloseButton {...closeButtonProps} />
+          <AlertDialogBody {...bodyProps}>
+            <VStack spacing={4} align='stretch'>
+              <Alert
+                status='warning'
+                bg={modalWarningBg}
+                border='1px solid'
+                borderColor={modalWarningBorder}
+                color={modalWarningText}
+                borderRadius='12px'
+              >
+                <AlertIcon />
+                <AlertDescription>
+                  This contact will be removed from the workspace and from any
+                  contact groups that use them. This change is saved
+                  immediately.
+                </AlertDescription>
+              </Alert>
+
+              {contactDeleteTarget ? (
+                <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                  <Text
+                    gridColumn={{ base: 'auto', sm: '1 / -1' }}
+                    fontSize='sm'
+                    fontWeight='bold'
+                    color={modalTokens.text}
+                    pl={3}
+                    borderLeft='3px solid'
+                    borderColor={modalTokens.sectionAccent}
+                  >
+                    Contact Information
+                  </Text>
+                  <PreferenceConfirmFieldCard
+                    label='Name'
+                    tokens={modalTokens}
+                  >
+                    <PreferenceConfirmValue tokens={modalTokens}>
+                      {getContactDisplayName(contactDeleteTarget)}
+                    </PreferenceConfirmValue>
+                  </PreferenceConfirmFieldCard>
+                  <PreferenceConfirmFieldCard
+                    label='Phone'
+                    tokens={modalTokens}
+                  >
+                    <PreferenceConfirmValue
+                      tokens={modalTokens}
+                      wordBreak='break-word'
+                    >
+                      {contactDeleteTarget.phone_e164 || '-'}
+                    </PreferenceConfirmValue>
+                  </PreferenceConfirmFieldCard>
+                  <Box gridColumn={{ base: 'auto', sm: '1 / -1' }}>
+                    <PreferenceConfirmFieldCard
+                      label='Details'
+                      tokens={modalTokens}
+                    >
+                      {contactDeleteDetails.length > 0 ? (
+                        <VStack align='stretch' spacing={1}>
+                          {contactDeleteDetails.map(detail => (
+                            <PreferenceConfirmValue
+                              key={detail.key}
+                              tokens={modalTokens}
+                              wordBreak='break-word'
+                            >
+                              <Text as='span' fontWeight='semibold'>
+                                {detail.label}:
+                              </Text>{' '}
+                              {detail.value}
+                            </PreferenceConfirmValue>
+                          ))}
+                        </VStack>
+                      ) : (
+                        <PreferenceConfirmValue tokens={modalTokens}>
+                          -
+                        </PreferenceConfirmValue>
+                      )}
+                    </PreferenceConfirmFieldCard>
+                  </Box>
+                </SimpleGrid>
+              ) : null}
+            </VStack>
+          </AlertDialogBody>
+          <AlertDialogFooter {...footerProps}>
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+            >
+              <Button
+                ref={cancelRef}
+                onClick={closeContactDeleteConfirm}
+                minW={{ base: '100%', sm: '104px' }}
+                {...modalOutlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Button
+                bg={modalDeleteButtonBg}
+                color='white'
+                minW={{ base: '100%', sm: '128px' }}
+                onClick={confirmContactDelete}
+                _hover={{ bg: modalDeleteButtonHoverBg }}
+              >
+                Remove Contact
+              </Button>
+            </Flex>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         isOpen={deleteDialogOpen}

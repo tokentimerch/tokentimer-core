@@ -21,7 +21,6 @@ import {
   Divider,
   Badge,
   Flex,
-  Spacer,
   useColorModeValue,
   FormControl,
   FormLabel,
@@ -74,14 +73,14 @@ function resolveLoginMethodDisplay(session) {
 function AccountInfoRow({ label, children, muted, text }) {
   return (
     <Flex
-      direction={{ base: 'column', sm: 'row' }}
-      align={{ base: 'stretch', sm: 'center' }}
-      gap={{ base: 1, sm: 0 }}
+      direction='row'
+      align='center'
+      gap={2}
+      flexWrap='wrap'
     >
       <Text color={muted} fontSize='sm' fontWeight='medium' minW='fit-content'>
         {label}:
       </Text>
-      <Spacer display={{ base: 'none', sm: 'block' }} />
       <Box
         color={text}
         fontSize='sm'
@@ -92,6 +91,29 @@ function AccountInfoRow({ label, children, muted, text }) {
         {children}
       </Box>
     </Flex>
+  );
+}
+
+function AccountPanelHeader({ title, description, muted }) {
+  return (
+    <DashboardPanelHeader title={title} mb={4}>
+      <Text mt={1} color={muted} fontSize='sm'>
+        {description}
+      </Text>
+    </DashboardPanelHeader>
+  );
+}
+
+function AccountSectionHeading({ children, text }) {
+  return (
+    <Text
+      fontSize={{ base: 'sm', md: 'md' }}
+      fontWeight='semibold'
+      color={text}
+      lineHeight='short'
+    >
+      {children}
+    </Text>
   );
 }
 
@@ -126,8 +148,9 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
 
   const dangerBorderColor = useColorModeValue('red.200', 'red.700');
   const dangerTextColor = useColorModeValue('red.600', 'red.300');
+  const readableMuted = useColorModeValue(dashboard.text.secondary, muted);
   const formLabelProps = {
-    color: muted,
+    color: readableMuted,
     fontSize: 'sm',
     fontWeight: 'medium',
     mb: 2,
@@ -165,12 +188,12 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
   }, [session]);
 
   const layoutProps = {
-    variant: 'narrow',
+    variant: 'wide',
     pageTitle: 'Account Settings',
     session,
     onLogout,
     onAccountClick,
-    contentProps: { overflowX: 'hidden' },
+    contentProps: { overflowX: 'hidden', w: 'full', maxW: '100%' },
   };
 
   // Safety check for session
@@ -183,7 +206,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
           noindex
         />
         <DashboardPageLayout {...layoutProps}>
-          <VStack spacing={6} align='stretch'>
+          <VStack spacing={6} align='stretch' w='full'>
             <Alert status='error'>
               <AlertIcon />
               <AlertDescription>
@@ -275,12 +298,13 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
         noindex
       />
       <DashboardPageLayout {...layoutProps}>
-        <VStack spacing={6} align='stretch'>
+        <VStack spacing={6} align='stretch' w='full'>
           {/* Account Information */}
           <DashboardPanel p={{ base: 4, md: 5 }}>
-            <DashboardPanelHeader
+            <AccountPanelHeader
               title='Account information'
               description='Profile identity and authentication details for this session.'
+              muted={readableMuted}
             />
             <VStack align='stretch' spacing={3}>
               {info && (
@@ -290,13 +314,17 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                 </Alert>
               )}
 
-              <AccountInfoRow label='Name' muted={muted} text={text}>
+              <AccountInfoRow label='Name' muted={readableMuted} text={text}>
                 {session.displayName}
               </AccountInfoRow>
-              <AccountInfoRow label='Email' muted={muted} text={text}>
+              <AccountInfoRow label='Email' muted={readableMuted} text={text}>
                 {session.email}
               </AccountInfoRow>
-              <AccountInfoRow label='Login Method' muted={muted} text={text}>
+              <AccountInfoRow
+                label='Login Method'
+                muted={readableMuted}
+                text={text}
+              >
                 <Badge
                   colorScheme={loginMethodDisplay.colorScheme}
                   maxW='fit-content'
@@ -304,7 +332,11 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                   {loginMethodDisplay.label}
                 </Badge>
               </AccountInfoRow>
-              <AccountInfoRow label='Account Created' muted={muted} text={text}>
+              <AccountInfoRow
+                label='Account Created'
+                muted={readableMuted}
+                text={text}
+              >
                 {new Date(
                   session.created_at || Date.now()
                 ).toLocaleDateString()}
@@ -314,9 +346,10 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
 
           {/* Security */}
           <DashboardPanel p={{ base: 4, md: 5 }}>
-            <DashboardPanelHeader
+            <AccountPanelHeader
               title='Security'
               description='Manage password and two-factor authentication for your account.'
+              muted={readableMuted}
             />
             <VStack align='stretch' spacing={4}>
               {pwdMessage && (
@@ -331,9 +364,9 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                   <AlertDescription>{pwdError}</AlertDescription>
                 </Alert>
               )}
-              <Text fontSize='sm' fontWeight='medium' color={text}>
+              <AccountSectionHeading text={text}>
                 Change password
-              </Text>
+              </AccountSectionHeading>
               <form
                 onSubmit={async e => {
                   e.preventDefault();
@@ -414,10 +447,10 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
 
               {String(session?.authMethod || '').toLowerCase() !== 'google' && (
                 <>
-                  <Text fontSize='sm' fontWeight='medium' color={text}>
+                  <AccountSectionHeading text={text}>
                     Two-factor authentication (2FA)
-                  </Text>
-                  <Text fontSize='sm' color={muted}>
+                  </AccountSectionHeading>
+                  <Text fontSize='sm' color={readableMuted}>
                     Protect your account with a one-time code from an
                     authenticator app.
                   </Text>
@@ -515,7 +548,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                                 alignItems='center'
                                 justifyContent='center'
                                 mt={3}
-                                color={muted}
+                                color={readableMuted}
                               >
                                 QR will appear here
                               </Box>
@@ -524,7 +557,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                               <Text
                                 mt={2}
                                 fontSize='xs'
-                                color={muted}
+                                color={readableMuted}
                                 noOfLines={2}
                               >
                                 Secret: {secret}
@@ -579,9 +612,10 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
 
           {/* Data Management */}
           <DashboardPanel p={{ base: 4, md: 5 }}>
-            <DashboardPanelHeader
+            <AccountPanelHeader
               title='Data management'
               description='Export account data or review permanent account actions.'
+              muted={readableMuted}
             />
             <VStack align='stretch' spacing={4}>
               <Alert status='info' borderRadius='md'>
@@ -605,19 +639,19 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
               >
                 Export my data
               </DashboardActionButton>
-              <Text fontSize='sm' color={muted}>
+              <Text fontSize='sm' color={readableMuted}>
                 Exports a JSON with your profile and settings, your personal
                 tokens, and (when applicable) workspace settings and tokens
                 according to your role.
               </Text>
               <VStack align='stretch' spacing={1} pl={2}>
-                <Text fontSize='xs' color={muted}>
+                <Text fontSize='xs' color={readableMuted}>
                   Includes: Profile, user settings (webhooks hashed, phone,
                   WhatsApp opt-in), personal tokens, and for admin/manager: all
                   admin/managed workspaces (settings, contact groups with
                   phones, delivery window, WhatsApp opt-in evidence, tokens).
                 </Text>
-                <Text fontSize='xs' color={muted}>
+                <Text fontSize='xs' color={readableMuted}>
                   Viewers: only personal workspace. For audit history, use the
                   Audit export page.
                 </Text>
@@ -626,7 +660,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
           </DashboardPanel>
 
           {canSeeManagerNav && (
-            <Text fontSize='sm' color={muted}>
+            <Text fontSize='sm' color={readableMuted}>
               Workspace alerting settings live on{' '}
               <Link
                 as={RouterLink}
@@ -647,9 +681,10 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
             bg={dashboard.bg.panelHover}
             borderColor={dangerBorderColor}
           >
-            <DashboardPanelHeader
+            <AccountPanelHeader
               title='Danger zone'
               description='Destructive account actions that cannot be undone.'
+              muted={readableMuted}
             />
             <Alert status='warning' mb={4}>
               <AlertIcon />
@@ -714,7 +749,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                     </AlertDescription>
                   </Box>
                 </Alert>
-                <Text fontSize='sm' color={muted}>
+                <Text fontSize='sm' color={readableMuted}>
                   Deleting your account removes your personal workspace data and
                   memberships. Other workspace data remains according to
                   ownership and role rules.
@@ -723,7 +758,7 @@ function Account({ session, onAccountDeleted, onLogout, onAccountClick }) {
                   Are you sure you want to delete your account{' '}
                   <strong>{session.displayName}</strong>?
                 </Text>
-                <Text fontSize='sm' color={muted}>
+                <Text fontSize='sm' color={readableMuted}>
                   Consider exporting your data first if you need a backup.
                 </Text>
               </VStack>

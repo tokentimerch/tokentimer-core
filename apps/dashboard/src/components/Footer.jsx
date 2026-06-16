@@ -114,8 +114,12 @@ const Footer = () => {
           '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
         }}
         pr={{ base: 4, lg: 4, '2xl': 5 }}
-        minH='58px'
-        py={2}
+        minH={{ base: '104px', md: '58px' }}
+        pt={{ base: 3, md: 2 }}
+        pb={{
+          base: 'calc(0.75rem + env(safe-area-inset-bottom))',
+          md: 2,
+        }}
         position='relative'
         zIndex={1}
         display='flex'
@@ -125,11 +129,16 @@ const Footer = () => {
           direction={{ base: 'column', md: 'row' }}
           justify='space-between'
           align='center'
-          gap={3}
+          gap={{ base: 2, md: 3 }}
           w='100%'
           minW={0}
         >
-          <Text color={muted} fontSize='xs' noOfLines={1}>
+          <Text
+            color={muted}
+            fontSize='xs'
+            lineHeight='1.4'
+            textAlign='center'
+          >
             © {currentYear} TokenTimer - Privacy by Design
           </Text>
 

@@ -28,6 +28,8 @@ export function DashboardPanel({
       borderRadius={borderRadius}
       p={p}
       overflow='hidden'
+      w='full'
+      maxW='100%'
       {...props}
     >
       {children}

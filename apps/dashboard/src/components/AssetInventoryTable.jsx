@@ -27,8 +27,9 @@ import {
   KeyRound,
   LockKeyhole,
   MoreVertical,
+  Trash2,
 } from 'lucide-react';
-import { FiActivity, FiExternalLink, FiTrash2 } from 'react-icons/fi';
+import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
 import { domainValueToUrl } from '../utils/domains.jsx';
@@ -564,18 +565,31 @@ function InventoryRowActions({
     'gray.600',
     'rgba(203, 213, 225, 0.9)'
   );
-  const renewColor = useColorModeValue('teal.600', 'rgba(45, 212, 191, 0.95)');
-  const deleteColor = useColorModeValue('red.600', 'rgba(248, 113, 113, 0.95)');
   const actionHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
+  const actionFocusShadow = useColorModeValue(
+    '0 0 0 2px rgba(37, 99, 235, 0.28)',
+    '0 0 0 2px rgba(96, 165, 250, 0.34)'
+  );
+  const actionButtonProps = {
+    size: 'sm',
+    variant: 'ghost',
+    color: detailsColor,
+    borderRadius: 'md',
+    transition:
+      'background 140ms ease, color 140ms ease, box-shadow 140ms ease',
+    _hover: { bg: actionHoverBg },
+    _active: { bg: actionHoverBg },
+    _focusVisible: {
+      bg: actionHoverBg,
+      boxShadow: actionFocusShadow,
+    },
+  };
 
   return (
     <HStack spacing={1} justify='flex-end'>
       <Tooltip label='Details'>
         <IconButton
-          size='sm'
-          variant='ghost'
-          color={detailsColor}
-          _hover={{ bg: actionHoverBg }}
+          {...actionButtonProps}
           aria-label={`Show full details for token ${token.name}`}
           icon={<MoreVertical size={16} />}
           onClick={() => onOpenTokenModal(token)}
@@ -585,10 +599,7 @@ function InventoryRowActions({
         <>
           <Tooltip label='Renew'>
             <IconButton
-              size='sm'
-              variant='ghost'
-              color={renewColor}
-              _hover={{ bg: actionHoverBg }}
+              {...actionButtonProps}
               aria-label={`Renew token ${token.name}`}
               icon={<CalendarClock size={16} />}
               onClick={() => onOpenRenew(token)}
@@ -596,12 +607,9 @@ function InventoryRowActions({
           </Tooltip>
           <Tooltip label='Delete'>
             <IconButton
-              size='sm'
-              variant='ghost'
-              color={deleteColor}
-              _hover={{ bg: actionHoverBg }}
+              {...actionButtonProps}
               aria-label={`Delete token ${token.name}`}
-              icon={<FiTrash2 />}
+              icon={<Trash2 size={16} />}
               onClick={() => onDeleteToken(token.id)}
             />
           </Tooltip>
@@ -753,13 +761,38 @@ function AssetInventoryMobileCard({
     'gray.100',
     'rgba(148, 163, 184, 0.14)'
   );
-  const detailsButtonColor = useColorModeValue('blue.700', '#93c5fd');
-  const renewButtonColor = useColorModeValue('teal.700', '#5eead4');
-  const deleteButtonColor = useColorModeValue('red.600', '#f87171');
+  const neutralButtonColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.9)'
+  );
   const actionHoverBg = useColorModeValue(
-    'rgba(37, 99, 235, 0.08)',
+    'gray.100',
     'rgba(30, 41, 59, 0.72)'
   );
+  const actionFocusShadow = useColorModeValue(
+    '0 0 0 2px rgba(37, 99, 235, 0.28)',
+    '0 0 0 2px rgba(96, 165, 250, 0.34)'
+  );
+  const mobileActionButtonProps = {
+    size: 'sm',
+    h: '38px',
+    flex: '1',
+    minW: 0,
+    borderRadius: '0',
+    variant: 'ghost',
+    color: neutralButtonColor,
+    fontSize: 'xs',
+    fontWeight: 'semibold',
+    transition:
+      'background 140ms ease, color 140ms ease, box-shadow 140ms ease',
+    _hover: { bg: actionHoverBg },
+    _active: { bg: actionHoverBg },
+    _focusVisible: {
+      bg: actionHoverBg,
+      boxShadow: actionFocusShadow,
+      zIndex: 1,
+    },
+  };
   const visual = helpers.getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
   const nameSubtitle = getNameSubtitle(token, mode);
@@ -870,17 +903,8 @@ function AssetInventoryMobileCard({
           align='stretch'
         >
           <Button
-            size='sm'
-            h='38px'
-            flex='1'
-            minW={0}
-            borderRadius='0'
-            variant='ghost'
-            color={detailsButtonColor}
-            fontSize='xs'
-            fontWeight='semibold'
+            {...mobileActionButtonProps}
             leftIcon={<MoreVertical size={14} />}
-            _hover={{ bg: actionHoverBg }}
             onClick={() => helpers.onOpenTokenModal(token)}
           >
             Details
@@ -888,33 +912,15 @@ function AssetInventoryMobileCard({
           {!isViewer && (
             <>
               <Button
-                size='sm'
-                h='38px'
-                flex='1'
-                minW={0}
-                borderRadius='0'
-                variant='ghost'
-                color={renewButtonColor}
-                fontSize='xs'
-                fontWeight='semibold'
+                {...mobileActionButtonProps}
                 leftIcon={<CalendarClock size={14} />}
-                _hover={{ bg: actionHoverBg }}
                 onClick={() => helpers.onOpenRenew(token)}
               >
                 Renew
               </Button>
               <Button
-                size='sm'
-                h='38px'
-                flex='1'
-                minW={0}
-                borderRadius='0'
-                variant='ghost'
-                color={deleteButtonColor}
-                fontSize='xs'
-                fontWeight='semibold'
-                leftIcon={<FiTrash2 size={14} />}
-                _hover={{ bg: actionHoverBg }}
+                {...mobileActionButtonProps}
+                leftIcon={<Trash2 size={14} />}
                 onClick={() => helpers.onDeleteToken(token.id)}
               >
                 Delete

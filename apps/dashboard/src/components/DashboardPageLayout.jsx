@@ -71,8 +71,12 @@ export default function DashboardPageLayout({
     dashboardCanSeeManagerNav,
   });
 
-  const maxW =
-    DASHBOARD_PAGE_MAX_WIDTHS[variant] ?? DASHBOARD_PAGE_MAX_WIDTHS.standard;
+  const maxW = Object.prototype.hasOwnProperty.call(
+    DASHBOARD_PAGE_MAX_WIDTHS,
+    variant
+  )
+    ? DASHBOARD_PAGE_MAX_WIDTHS[variant]
+    : DASHBOARD_PAGE_MAX_WIDTHS.standard;
   const hideWorkspaceSelectorSx = hideWorkspaceSelector
     ? { '[data-tour="workspace-selector"]': { display: 'none !important' } }
     : undefined;

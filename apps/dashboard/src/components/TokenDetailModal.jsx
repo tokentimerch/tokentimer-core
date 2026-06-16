@@ -26,49 +26,8 @@ import {
 import { getColorFromString } from '../styles/colors.js';
 import { formatDate, tokenAPI } from '../utils/apiClient';
 
-/**
- * Token Detail Modal Component
- * Displays detailed information about a token with inline editing capability
- */
-function TokenDetailModal({
-  token,
-  isOpen,
-  onClose,
-  TOKEN_CATEGORIES,
-  onTokenUpdated,
-  isViewer,
-  contactGroups,
-  workspaceContacts = [],
-}) {
-  const surfaceBg = useColorModeValue('#ffffff', '#0d131a');
-  const fieldBg = useColorModeValue('#f8fafc', 'rgba(9, 13, 21, 0.66)');
-  const headerBg = useColorModeValue('#f8fafc', '#0d131a');
-  const footerBg = useColorModeValue('#f8fafc', '#0b1118');
-  const borderColor = useColorModeValue(
-    'rgba(148, 163, 184, 0.34)',
-    'rgba(148, 163, 184, 0.18)'
-  );
-  const textColor = useColorModeValue('#0f172a', '#f8fafc');
-  const labelColor = useColorModeValue('#64748b', '#94a3b8');
-  const subtleTextColor = useColorModeValue('#475569', '#cbd5e1');
-  const inputBg = useColorModeValue('#ffffff', '#090d15');
-  const inputBorder = useColorModeValue(
-    'rgba(100, 116, 139, 0.5)',
-    'rgba(148, 163, 184, 0.28)'
-  );
-  const focusBorderColor = useColorModeValue('#2563eb', '#3b82f6');
-  const sectionAccent = useColorModeValue('#2563eb', '#60a5fa');
-  const dangerBg = useColorModeValue('#fef2f2', 'rgba(127, 29, 29, 0.28)');
-  const dangerBorder = useColorModeValue('#fecaca', 'rgba(248, 113, 113, 0.3)');
-  const dangerText = useColorModeValue('#b91c1c', '#fecaca');
-  const buttonBorder = useColorModeValue(
-    'rgba(100, 116, 139, 0.48)',
-    'rgba(148, 163, 184, 0.34)'
-  );
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [editData, setEditData] = useState({
+function createTokenEditData(token) {
+  return {
     name: token?.name || '',
     section: Array.isArray(token?.section)
       ? token.section.join(', ')
@@ -94,7 +53,52 @@ function TokenDetailModal({
     notes: token?.notes || '',
     privileges: token?.privileges || '',
     contact_group_id: token?.contact_group_id || '',
-  });
+  };
+}
+
+/**
+ * Token Detail Modal Component
+ * Displays detailed information about a token with inline editing capability
+ */
+function TokenDetailModal({
+  token,
+  isOpen,
+  onClose,
+  TOKEN_CATEGORIES,
+  onTokenUpdated,
+  isViewer,
+  contactGroups,
+  workspaceContacts = [],
+}) {
+  const surfaceBg = useColorModeValue('#ffffff', '#0d131a');
+  const fieldBg = useColorModeValue('#f8fafc', '#0d131a');
+  const headerBg = useColorModeValue('#f8fafc', '#0d131a');
+  const footerBg = useColorModeValue('#f8fafc', '#0d131a');
+  const borderColor = useColorModeValue(
+    'rgba(148, 163, 184, 0.34)',
+    'rgba(148, 163, 184, 0.18)'
+  );
+  const textColor = useColorModeValue('#0f172a', '#f8fafc');
+  const labelColor = useColorModeValue('#64748b', '#94a3b8');
+  const subtleTextColor = useColorModeValue('#475569', '#cbd5e1');
+  const inputBg = useColorModeValue('#ffffff', '#090d15');
+  const inputBorder = useColorModeValue(
+    'rgba(100, 116, 139, 0.5)',
+    'rgba(148, 163, 184, 0.28)'
+  );
+  const focusBorderColor = useColorModeValue('#2563eb', '#3b82f6');
+  const sectionAccent = useColorModeValue('#2563eb', '#60a5fa');
+  const dangerBg = useColorModeValue('#fef2f2', 'rgba(127, 29, 29, 0.28)');
+  const dangerBorder = useColorModeValue('#fecaca', 'rgba(248, 113, 113, 0.3)');
+  const dangerText = useColorModeValue('#b91c1c', '#fecaca');
+  const buttonBorder = useColorModeValue(
+    'rgba(100, 116, 139, 0.48)',
+    'rgba(148, 163, 184, 0.34)'
+  );
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editData, setEditData] = useState(() => createTokenEditData(token));
 
   // Memoize category/type lookups to avoid recomputing on every render
   const category = useMemo(
@@ -107,36 +111,10 @@ function TokenDetailModal({
   );
 
   useEffect(() => {
-    if (token) {
-      setSaveError('');
-      setEditData({
-        name: token?.name || '',
-        section: Array.isArray(token?.section)
-          ? token.section.join(', ')
-          : token?.section || '',
-        expiresAt: token?.expiresAt || '',
-        domains: Array.isArray(token?.domains)
-          ? token.domains.join(', ')
-          : token?.domains || '',
-        location: token?.location || '',
-        used_by: token?.used_by || '',
-        issuer: token?.issuer || '',
-        serial_number: token?.serial_number || '',
-        subject: token?.subject || '',
-        key_size: token?.key_size || '',
-        algorithm: token?.algorithm || '',
-        license_type: token?.license_type || '',
-        vendor: token?.vendor || '',
-        cost: token?.cost || '',
-        renewal_url: token?.renewal_url || '',
-        renewal_date: token?.renewal_date || '',
-        contacts: token?.contacts || '',
-        description: token?.description || '',
-        notes: token?.notes || '',
-        privileges: token?.privileges || '',
-        contact_group_id: token?.contact_group_id || '',
-      });
-    }
+    setSaveError('');
+    setSaving(false);
+    setIsEditing(false);
+    setEditData(createTokenEditData(token));
   }, [token]);
 
   const renderRenewalInfo = useCallback(() => {
@@ -457,7 +435,7 @@ function TokenDetailModal({
               wordBreak='break-word'
             >
               {(() => {
-                const id = editData[key] || '';
+                const id = (isEditing ? editData[key] : token?.[key]) || '';
                 if (!id) return 'Use workspace default';
                 const g = Array.isArray(contactGroups)
                   ? contactGroups.find(x => String(x.id) === String(id))
@@ -481,6 +459,7 @@ function TokenDetailModal({
       size='xl'
       scrollBehavior='inside'
       isCentered
+      motionPreset='none'
     >
       <ModalOverlay bg='rgba(2, 6, 23, 0.72)' />
       <ModalContent

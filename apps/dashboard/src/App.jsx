@@ -11,6 +11,7 @@ import {
   lazy,
   useMemo,
   memo,
+  startTransition,
 } from 'react';
 import { flushSync } from 'react-dom';
 import {
@@ -440,6 +441,403 @@ function ThemeBackgroundOverlay() {
   );
 }
 
+function DashboardModalSectionTitle({ children, tokens, withDivider = false }) {
+  return (
+    <Box
+      gridColumn={{ base: '1', sm: '1 / -1' }}
+      borderTop={withDivider ? '1px solid' : '0'}
+      borderColor={tokens.border}
+      pt={withDivider ? { base: 4, md: 5 } : 0}
+      mt={withDivider ? { base: 1, md: 2 } : 0}
+    >
+      <HStack spacing={3}>
+        <Box
+          w='3px'
+          h='18px'
+          borderRadius='full'
+          bg={tokens.sectionAccent}
+          flexShrink={0}
+        />
+        <Text
+          fontSize={{ base: 'md', md: 'lg' }}
+          fontWeight='bold'
+          color={tokens.text}
+        >
+          {children}
+        </Text>
+      </HStack>
+    </Box>
+  );
+}
+
+function DashboardModalFieldCard({ label, children, tokens, gridColumn }) {
+  return (
+    <Box
+      bg={tokens.fieldBg}
+      border='1px solid'
+      borderColor={tokens.border}
+      borderRadius='12px'
+      p={{ base: 3.5, md: 4 }}
+      minH='88px'
+      gridColumn={gridColumn}
+    >
+      <Text fontSize='sm' fontWeight='semibold' color={tokens.muted} mb={2}>
+        {label}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+function DashboardModalValue({ children, tokens }) {
+  return (
+    <Text
+      fontSize={{ base: 'sm', md: 'md' }}
+      fontWeight='semibold'
+      color={tokens.text}
+      lineHeight='1.45'
+      wordBreak='break-word'
+    >
+      {children || '-'}
+    </Text>
+  );
+}
+
+function getTokenDisplayMeta(token) {
+  const category = TOKEN_CATEGORIES.find(cat => cat.value === token?.category);
+  const type = category?.types?.find(t => t.value === token?.type);
+
+  return {
+    categoryLabel: category?.label || token?.category || 'Asset',
+    typeLabel: type?.label || token?.type || 'Unknown type',
+  };
+}
+
+function TokenDeletionModal({
+  isOpen,
+  onClose,
+  tokenToDelete,
+  onConfirm,
+}) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    tokens,
+  } = useDashboardModalProps();
+  const warningBg = useColorModeValue('#fff7ed', 'rgba(146, 64, 14, 0.22)');
+  const warningBorder = useColorModeValue(
+    '#fed7aa',
+    'rgba(251, 191, 36, 0.34)'
+  );
+  const warningText = useColorModeValue('#9a3412', '#fde68a');
+  const dangerBg = useColorModeValue('#fef2f2', 'rgba(127, 29, 29, 0.28)');
+  const dangerBorder = useColorModeValue(
+    '#fecaca',
+    'rgba(248, 113, 113, 0.3)'
+  );
+  const dangerText = useColorModeValue('#991b1b', '#fecaca');
+  const deleteButtonBg = useColorModeValue('#dc2626', '#ef4444');
+  const deleteButtonHoverBg = useColorModeValue('#b91c1c', '#dc2626');
+  const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToDelete);
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      isCentered
+      scrollBehavior='inside'
+    >
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame
+        maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+      >
+        <ModalHeader {...headerProps}>
+          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight='bold'>
+            Delete Token
+          </Text>
+          <Text
+            fontSize={{ base: 'xs', md: 'sm' }}
+            color={tokens.subtleText}
+            mt={1.5}
+            fontWeight='medium'
+          >
+            Review this asset before permanently deleting it.
+          </Text>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <VStack spacing={4} align='stretch'>
+            <Alert
+              status='warning'
+              bg={warningBg}
+              border='1px solid'
+              borderColor={warningBorder}
+              color={warningText}
+              borderRadius='12px'
+            >
+              <AlertIcon />
+              <AlertDescription>
+                This action cannot be undone. The token will be permanently
+                deleted.
+              </AlertDescription>
+            </Alert>
+
+            {tokenToDelete?.monitor_url && (
+              <Alert
+                status='error'
+                bg={dangerBg}
+                border='1px solid'
+                borderColor={dangerBorder}
+                color={dangerText}
+                borderRadius='12px'
+              >
+                <AlertIcon />
+                <AlertDescription>
+                  This token has a linked endpoint monitor (
+                  {tokenToDelete.monitor_url}). Deleting this token will also
+                  remove the monitor and stop health checks.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {tokenToDelete && (
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                <DashboardModalSectionTitle tokens={tokens}>
+                  Basic Information
+                </DashboardModalSectionTitle>
+                <DashboardModalFieldCard label='Name' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToDelete.name}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Type' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {typeLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Category' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {categoryLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Expiration Date' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToDelete.expiresAt
+                      ? formatDate(tokenToDelete.expiresAt)
+                      : '-'}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+              </SimpleGrid>
+            )}
+          </VStack>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              variant='outline'
+              onClick={onClose}
+              borderColor={tokens.buttonBorder}
+              color={tokens.subtleText}
+              minW={{ base: '100%', sm: '104px' }}
+              _hover={{
+                bg: tokens.fieldBg,
+                borderColor: tokens.focusBorder,
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              bg={deleteButtonBg}
+              color='white'
+              onClick={onConfirm}
+              minW={{ base: '100%', sm: '128px' }}
+              _hover={{ bg: deleteButtonHoverBg }}
+            >
+              Delete Token
+            </Button>
+          </Flex>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+function TokenRenewModal({
+  isOpen,
+  onClose,
+  tokenToRenew,
+  renewDate,
+  renewErrors,
+  isRenewSubmitting,
+  onRenewDateChange,
+  onConfirm,
+}) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    tokens,
+  } = useDashboardModalProps();
+  const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToRenew);
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      isCentered
+      scrollBehavior='inside'
+    >
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame
+        maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+      >
+        <ModalHeader {...headerProps}>
+          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight='bold'>
+            Renew Token
+          </Text>
+          <Text
+            fontSize={{ base: 'xs', md: 'sm' }}
+            color={tokens.subtleText}
+            mt={1.5}
+            fontWeight='medium'
+          >
+            Choose the next expiration date for this asset.
+          </Text>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+            {tokenToRenew && (
+              <>
+                <DashboardModalSectionTitle tokens={tokens}>
+                  Basic Information
+                </DashboardModalSectionTitle>
+                <DashboardModalFieldCard label='Name' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToRenew.name}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Type' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {typeLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Category' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {categoryLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard
+                  label='Current Expiration Date'
+                  tokens={tokens}
+                >
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToRenew.expiresAt
+                      ? formatDate(tokenToRenew.expiresAt)
+                      : '-'}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+              </>
+            )}
+
+            <DashboardModalSectionTitle tokens={tokens} withDivider>
+              Renewal
+            </DashboardModalSectionTitle>
+            <FormControl
+              isInvalid={!!renewErrors.renewDate}
+              bg={tokens.fieldBg}
+              border='1px solid'
+              borderColor={tokens.border}
+              borderRadius='12px'
+              p={{ base: 3.5, md: 4 }}
+              minH='88px'
+              gridColumn={{ base: '1', sm: '1 / -1' }}
+            >
+              <FormLabel
+                htmlFor='renewDate'
+                color={tokens.muted}
+                fontWeight='semibold'
+                fontSize='sm'
+              >
+                New Expiration Date
+              </FormLabel>
+              <Input
+                id='renewDate'
+                type='date'
+                value={renewDate}
+                onChange={e => onRenewDateChange(e.target.value)}
+                bg={tokens.inputBg}
+                borderColor={
+                  renewErrors.renewDate ? tokens.danger : tokens.inputBorder
+                }
+                borderRadius='10px'
+                color={tokens.text}
+                minH='40px'
+                _hover={{ borderColor: tokens.focusBorder }}
+                _focusVisible={{
+                  borderColor: tokens.focusBorder,
+                  boxShadow: `0 0 0 1px ${tokens.focusBorder}`,
+                }}
+              />
+              {renewErrors.renewDate && (
+                <FormErrorMessage color={tokens.danger}>
+                  {renewErrors.renewDate}
+                </FormErrorMessage>
+              )}
+              <Text fontSize='sm' color={tokens.muted} lineHeight='1.5' mt={3}>
+                Default set based on token category/type. You can pick any
+                future date.
+              </Text>
+            </FormControl>
+          </SimpleGrid>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              variant='outline'
+              onClick={onClose}
+              borderColor={tokens.buttonBorder}
+              color={tokens.subtleText}
+              minW={{ base: '100%', sm: '104px' }}
+              _hover={{
+                bg: tokens.fieldBg,
+                borderColor: tokens.focusBorder,
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme='green'
+              onClick={onConfirm}
+              isLoading={isRenewSubmitting}
+              minW={{ base: '100%', sm: '128px' }}
+            >
+              Confirm
+            </Button>
+          </Flex>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
 /**
  * Main App Component
  */
@@ -509,6 +907,7 @@ function App() {
 
   // Token detail modal state
   const [selectedToken, setSelectedToken] = useState(null);
+  const pendingTokenUrlFrameRef = useRef(null);
 
   // Per-category sort configurations (default to expiration ascending)
   const [sortConfigs, setSortConfigs] = useState(() =>
@@ -2174,43 +2573,66 @@ function App() {
   /**
    * Handle opening token detail modal
    */
+  const cancelPendingTokenUrlUpdate = useCallback(() => {
+    if (
+      pendingTokenUrlFrameRef.current != null &&
+      typeof window !== 'undefined'
+    ) {
+      window.cancelAnimationFrame(pendingTokenUrlFrameRef.current);
+      pendingTokenUrlFrameRef.current = null;
+    }
+  }, []);
+
+  const updateTokenIdInUrl = useCallback(
+    tokenId => {
+      const search = new URLSearchParams(window.location.search);
+      if (tokenId == null) {
+        search.delete('token-id');
+      } else {
+        search.set('token-id', tokenId);
+      }
+      const query = search.toString();
+      startTransition(() => {
+        navigate(`${window.location.pathname}${query ? `?${query}` : ''}`, {
+          replace: true,
+        });
+      });
+    },
+    [navigate]
+  );
+
+  const scheduleTokenIdUrlUpdate = useCallback(
+    tokenId => {
+      if (typeof window === 'undefined') return;
+      cancelPendingTokenUrlUpdate();
+      pendingTokenUrlFrameRef.current = window.requestAnimationFrame(() => {
+        pendingTokenUrlFrameRef.current = window.requestAnimationFrame(() => {
+          pendingTokenUrlFrameRef.current = null;
+          updateTokenIdInUrl(tokenId);
+        });
+      });
+    },
+    [cancelPendingTokenUrlUpdate, updateTokenIdInUrl]
+  );
+
+  useEffect(() => cancelPendingTokenUrlUpdate, [cancelPendingTokenUrlUpdate]);
+
   const handleOpenTokenModal = token => {
     setSelectedToken(token);
-    // Add token ID to URL for shareable links
-    const search = new URLSearchParams(window.location.search);
-    search.set('token-id', token.id);
-    navigate(`?${search.toString()}`, { replace: true });
+    hasOpenedFromUrl.current = true;
+    hasTriggeredLoad.current = false;
+    // Defer the shareable URL update so the modal can paint before route work.
+    scheduleTokenIdUrlUpdate(token.id);
   };
 
   /**
    * Handle closing token detail modal
    */
   const handleCloseTokenModal = () => {
+    cancelPendingTokenUrlUpdate();
     setSelectedToken(null);
-    // Remove token ID from URL
-    const search = new URLSearchParams(window.location.search);
-    search.delete('token-id');
-    navigate(`?${search.toString()}`, { replace: true });
+    updateTokenIdInUrl(null);
   };
-
-  const dashboardModalSurfaceBg = '#0d131a';
-  const dashboardModalFieldBg = 'rgba(9, 13, 21, 0.66)';
-  const dashboardModalHeaderBg = '#0d131a';
-  const dashboardModalFooterBg = '#0b1118';
-  const dashboardModalBorder = 'rgba(148, 163, 184, 0.18)';
-  const dashboardModalText = '#f8fafc';
-  const dashboardModalMuted = '#94a3b8';
-  const dashboardModalSubtleText = '#cbd5e1';
-  const dashboardModalInputBg = '#090d15';
-  const dashboardModalInputBorder = 'rgba(148, 163, 184, 0.28)';
-  const dashboardModalFocusBorder = '#3b82f6';
-  const dashboardModalButtonBorder = 'rgba(148, 163, 184, 0.34)';
-  const dashboardModalWarningBg = 'rgba(146, 64, 14, 0.22)';
-  const dashboardModalWarningBorder = 'rgba(251, 191, 36, 0.34)';
-  const dashboardModalWarningText = '#fde68a';
-  const dashboardModalDangerBg = 'rgba(127, 29, 29, 0.28)';
-  const dashboardModalDangerBorder = 'rgba(248, 113, 113, 0.3)';
-  const dashboardModalDangerText = '#fecaca';
 
   return (
     <ChakraProvider theme={theme}>
@@ -2582,219 +3004,12 @@ function App() {
 
             <Toaster />
 
-            {/* Token Deletion Confirmation Modal */}
-            <Modal
+            <TokenDeletionModal
               isOpen={isDeleteModalOpen}
               onClose={cancelDeleteToken}
-              isCentered
-            >
-              <ModalOverlay bg='rgba(2, 6, 23, 0.72)' />
-              <ModalContent
-                bg={dashboardModalSurfaceBg}
-                border='1px solid'
-                borderColor={dashboardModalBorder}
-                borderRadius={{ base: '14px', md: '18px' }}
-                boxShadow='0 24px 70px rgba(0, 0, 0, 0.42)'
-                maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
-                overflow='hidden'
-              >
-                <ModalHeader
-                  bg={dashboardModalHeaderBg}
-                  borderBottom='1px solid'
-                  borderColor={dashboardModalBorder}
-                  px={{ base: 4, md: 6 }}
-                  py={{ base: 4, md: 5 }}
-                  pr={{ base: 12, md: 14 }}
-                >
-                  <Text
-                    fontSize={{ base: 'md', md: 'lg' }}
-                    fontWeight='bold'
-                    color={dashboardModalText}
-                  >
-                    Confirm Token Deletion
-                  </Text>
-                  <Text
-                    fontSize='sm'
-                    color={dashboardModalMuted}
-                    mt={1.5}
-                    fontWeight='medium'
-                  >
-                    Review the asset before permanently deleting it.
-                  </Text>
-                </ModalHeader>
-                <ModalCloseButton
-                  color={dashboardModalMuted}
-                  top={{ base: 3, md: 4 }}
-                  right={{ base: 3, md: 4 }}
-                  borderRadius='10px'
-                  _hover={{
-                    bg: dashboardModalFieldBg,
-                    color: dashboardModalText,
-                  }}
-                />
-                <ModalBody px={{ base: 4, md: 6 }} py={{ base: 5, md: 6 }}>
-                  <VStack spacing={3} align='stretch'>
-                    <Alert
-                      status='warning'
-                      bg={dashboardModalWarningBg}
-                      border='1px solid'
-                      borderColor={dashboardModalWarningBorder}
-                      color={dashboardModalWarningText}
-                      borderRadius='12px'
-                    >
-                      <AlertIcon />
-                      <AlertDescription>
-                        This action cannot be undone. The token will be
-                        permanently deleted.
-                      </AlertDescription>
-                    </Alert>
-                    {tokenToDelete?.monitor_url && (
-                      <Alert
-                        status='error'
-                        bg={dashboardModalDangerBg}
-                        border='1px solid'
-                        borderColor={dashboardModalDangerBorder}
-                        color={dashboardModalDangerText}
-                        borderRadius='12px'
-                      >
-                        <AlertIcon />
-                        <AlertDescription>
-                          This token has a linked endpoint monitor (
-                          {tokenToDelete.monitor_url}). Deleting this token will
-                          also remove the monitor and stop health checks.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                    {tokenToDelete && (
-                      <Box
-                        p={{ base: 3.5, md: 4 }}
-                        bg={dashboardModalFieldBg}
-                        border='1px solid'
-                        borderColor={dashboardModalBorder}
-                        borderRadius='12px'
-                      >
-                        <Text
-                          fontSize='sm'
-                          fontWeight='semibold'
-                          mb={3}
-                          color={dashboardModalMuted}
-                        >
-                          Token to delete:
-                        </Text>
-                        <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
-                          <Box>
-                            <Text
-                              fontSize='xs'
-                              fontWeight='semibold'
-                              color={dashboardModalMuted}
-                              mb={1}
-                            >
-                              Name
-                            </Text>
-                            <Text
-                              fontSize='sm'
-                              fontWeight='bold'
-                              color={dashboardModalText}
-                              wordBreak='break-word'
-                            >
-                              {tokenToDelete.name}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text
-                              fontSize='xs'
-                              fontWeight='semibold'
-                              color={dashboardModalMuted}
-                              mb={1}
-                            >
-                              Type
-                            </Text>
-                            <Text
-                              fontSize='sm'
-                              fontWeight='bold'
-                              color={dashboardModalText}
-                            >
-                              {tokenToDelete.type}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text
-                              fontSize='xs'
-                              fontWeight='semibold'
-                              color={dashboardModalMuted}
-                              mb={1}
-                            >
-                              Category
-                            </Text>
-                            <Text
-                              fontSize='sm'
-                              fontWeight='bold'
-                              color={dashboardModalText}
-                            >
-                              {tokenToDelete.category}
-                            </Text>
-                          </Box>
-                          {tokenToDelete.expiresAt && (
-                            <Box>
-                              <Text
-                                fontSize='xs'
-                                fontWeight='semibold'
-                                color={dashboardModalMuted}
-                                mb={1}
-                              >
-                                Expires
-                              </Text>
-                              <Text
-                                fontSize='sm'
-                                fontWeight='bold'
-                                color={dashboardModalText}
-                              >
-                                {formatDate(tokenToDelete.expiresAt)}
-                              </Text>
-                            </Box>
-                          )}
-                        </SimpleGrid>
-                      </Box>
-                    )}
-                  </VStack>
-                </ModalBody>
-                <ModalFooter
-                  bg={dashboardModalFooterBg}
-                  borderTop='1px solid'
-                  borderColor={dashboardModalBorder}
-                  px={{ base: 4, md: 6 }}
-                  py={{ base: 4, md: 5 }}
-                >
-                  <Flex
-                    w='100%'
-                    gap={3}
-                    justify={{ base: 'stretch', sm: 'flex-end' }}
-                    direction={{ base: 'column-reverse', sm: 'row' }}
-                  >
-                    <Button
-                      variant='outline'
-                      onClick={cancelDeleteToken}
-                      borderColor={dashboardModalButtonBorder}
-                      color={dashboardModalSubtleText}
-                      minW={{ base: '100%', sm: '104px' }}
-                      _hover={{
-                        bg: dashboardModalFieldBg,
-                        borderColor: dashboardModalFocusBorder,
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      colorScheme='red'
-                      onClick={confirmDeleteToken}
-                      minW={{ base: '100%', sm: '128px' }}
-                    >
-                      Delete Token
-                    </Button>
-                  </Flex>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
+              tokenToDelete={tokenToDelete}
+              onConfirm={confirmDeleteToken}
+            />
 
             {/* Duplicate Token Confirmation Modal */}
             <Modal
@@ -2894,185 +3109,16 @@ function App() {
               </ModalContent>
             </Modal>
 
-            {/* Token Renew Modal */}
-            <Modal
+            <TokenRenewModal
               isOpen={isRenewModalOpen}
               onClose={handleCloseRenew}
-              isCentered
-            >
-              <ModalOverlay bg='rgba(2, 6, 23, 0.72)' />
-              <ModalContent
-                bg={dashboardModalSurfaceBg}
-                border='1px solid'
-                borderColor={dashboardModalBorder}
-                borderRadius={{ base: '14px', md: '18px' }}
-                boxShadow='0 24px 70px rgba(0, 0, 0, 0.42)'
-                maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
-                overflow='hidden'
-              >
-                <ModalHeader
-                  bg={dashboardModalHeaderBg}
-                  borderBottom='1px solid'
-                  borderColor={dashboardModalBorder}
-                  px={{ base: 4, md: 6 }}
-                  py={{ base: 4, md: 5 }}
-                  pr={{ base: 12, md: 14 }}
-                >
-                  <Text
-                    fontSize={{ base: 'md', md: 'lg' }}
-                    fontWeight='bold'
-                    color={dashboardModalText}
-                  >
-                    Renew Token
-                  </Text>
-                  <Text
-                    fontSize='sm'
-                    color={dashboardModalMuted}
-                    mt={1.5}
-                    fontWeight='medium'
-                  >
-                    Choose the next expiration date for this asset.
-                  </Text>
-                </ModalHeader>
-                <ModalCloseButton
-                  color={dashboardModalMuted}
-                  top={{ base: 3, md: 4 }}
-                  right={{ base: 3, md: 4 }}
-                  borderRadius='10px'
-                  _hover={{
-                    bg: dashboardModalFieldBg,
-                    color: dashboardModalText,
-                  }}
-                />
-                <ModalBody px={{ base: 4, md: 6 }} py={{ base: 5, md: 6 }}>
-                  <VStack spacing={3} align='stretch'>
-                    {tokenToRenew && (
-                      <Box
-                        p={{ base: 3.5, md: 4 }}
-                        bg={dashboardModalFieldBg}
-                        border='1px solid'
-                        borderColor={dashboardModalBorder}
-                        borderRadius='12px'
-                      >
-                        <Text
-                          fontSize='sm'
-                          fontWeight='semibold'
-                          color={dashboardModalMuted}
-                          mb={2}
-                        >
-                          Asset
-                        </Text>
-                        <Text
-                          fontSize={{ base: 'md', md: 'lg' }}
-                          fontWeight='bold'
-                          color={dashboardModalText}
-                          mb={2}
-                          wordBreak='break-word'
-                        >
-                          {tokenToRenew.name}
-                        </Text>
-                        <Text
-                          fontSize='sm'
-                          color={dashboardModalSubtleText}
-                          fontWeight='medium'
-                        >
-                          Current expiration:{' '}
-                          {tokenToRenew.expiresAt
-                            ? formatDate(tokenToRenew.expiresAt)
-                            : '-'}
-                        </Text>
-                      </Box>
-                    )}
-                    <FormControl
-                      isInvalid={!!renewErrors.renewDate}
-                      bg={dashboardModalFieldBg}
-                      border='1px solid'
-                      borderColor={dashboardModalBorder}
-                      borderRadius='12px'
-                      p={{ base: 3.5, md: 4 }}
-                    >
-                      <FormLabel
-                        htmlFor='renewDate'
-                        color={dashboardModalMuted}
-                        fontWeight='semibold'
-                        fontSize='sm'
-                      >
-                        New Expiration Date
-                      </FormLabel>
-                      <Input
-                        id='renewDate'
-                        type='date'
-                        value={renewDate}
-                        onChange={e => setRenewDate(e.target.value)}
-                        bg={dashboardModalInputBg}
-                        borderColor={
-                          renewErrors.renewDate
-                            ? 'red.400'
-                            : dashboardModalInputBorder
-                        }
-                        borderRadius='10px'
-                        color={dashboardModalText}
-                        minH='40px'
-                        _hover={{ borderColor: dashboardModalFocusBorder }}
-                        _focusVisible={{
-                          borderColor: dashboardModalFocusBorder,
-                          boxShadow: `0 0 0 1px ${dashboardModalFocusBorder}`,
-                        }}
-                      />
-                      {renewErrors.renewDate && (
-                        <FormErrorMessage color={dashboardModalDangerText}>
-                          {renewErrors.renewDate}
-                        </FormErrorMessage>
-                      )}
-                    </FormControl>
-                    <Text
-                      fontSize='sm'
-                      color={dashboardModalMuted}
-                      lineHeight='1.5'
-                    >
-                      Default set based on token category/type. You can pick any
-                      future date.
-                    </Text>
-                  </VStack>
-                </ModalBody>
-                <ModalFooter
-                  bg={dashboardModalFooterBg}
-                  borderTop='1px solid'
-                  borderColor={dashboardModalBorder}
-                  px={{ base: 4, md: 6 }}
-                  py={{ base: 4, md: 5 }}
-                >
-                  <Flex
-                    w='100%'
-                    gap={3}
-                    justify={{ base: 'stretch', sm: 'flex-end' }}
-                    direction={{ base: 'column-reverse', sm: 'row' }}
-                  >
-                    <Button
-                      variant='outline'
-                      onClick={handleCloseRenew}
-                      borderColor={dashboardModalButtonBorder}
-                      color={dashboardModalSubtleText}
-                      minW={{ base: '100%', sm: '104px' }}
-                      _hover={{
-                        bg: dashboardModalFieldBg,
-                        borderColor: dashboardModalFocusBorder,
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      colorScheme='green'
-                      onClick={handleConfirmRenew}
-                      isLoading={isRenewSubmitting}
-                      minW={{ base: '100%', sm: '104px' }}
-                    >
-                      Confirm
-                    </Button>
-                  </Flex>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
+              tokenToRenew={tokenToRenew}
+              renewDate={renewDate}
+              renewErrors={renewErrors}
+              isRenewSubmitting={isRenewSubmitting}
+              onRenewDateChange={setRenewDate}
+              onConfirm={handleConfirmRenew}
+            />
           </ErrorBoundary>
 
           {!isViewer && (
@@ -3345,53 +3391,51 @@ function DashboardWrapper({
         data={welcomeData}
       />
 
-      {selectedToken && (
-        <TokenDetailModal
-          token={selectedToken}
-          isOpen={true}
-          onClose={handleCloseTokenModal}
-          TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-          isViewer={isViewer}
-          contactGroups={contactGroups}
-          workspaceContacts={workspaceContacts}
-          onTokenUpdated={updated => {
-            if (!updated?.id) return;
-            const prevSection = selectedToken?.section || '';
-            let __nextTokens = null;
-            setTokens(prev => {
-              const arr = prev.map(t => (t.id === updated.id ? updated : t));
-              __nextTokens = arr;
-              return arr;
-            });
-            setSelectedToken(current =>
-              current?.id === updated.id ? updated : current
+      <TokenDetailModal
+        token={selectedToken}
+        isOpen={Boolean(selectedToken)}
+        onClose={handleCloseTokenModal}
+        TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+        isViewer={isViewer}
+        contactGroups={contactGroups}
+        workspaceContacts={workspaceContacts}
+        onTokenUpdated={updated => {
+          if (!updated?.id) return;
+          const prevSection = selectedToken?.section || '';
+          let __nextTokens = null;
+          setTokens(prev => {
+            const arr = prev.map(t => (t.id === updated.id ? updated : t));
+            __nextTokens = arr;
+            return arr;
+          });
+          setSelectedToken(current =>
+            current?.id === updated.id ? updated : current
+          );
+          // Trigger a single dashboard reload so facets/sections update
+          try {
+            window.dispatchEvent(
+              new CustomEvent('tt:tokens-updated', {
+                detail: { t: Date.now() },
+              })
             );
-            // Trigger a single dashboard reload so facets/sections update
-            try {
-              window.dispatchEvent(
-                new CustomEvent('tt:tokens-updated', {
-                  detail: { t: Date.now() },
-                })
-              );
-            } catch (_) {}
-            // If section changed, clear section filter in URL so the token remains visible
-            try {
-              const before = String(prevSection || '');
-              const after = String(updated.section || '');
-              if (before !== after) {
-                const search = new URLSearchParams(window.location.search);
-                if (search.get('section')) {
-                  search.delete('section');
-                  const qs = search.toString();
-                  navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, {
-                    replace: true,
-                  });
-                }
+          } catch (_) {}
+          // If section changed, clear section filter in URL so the token remains visible
+          try {
+            const before = String(prevSection || '');
+            const after = String(updated.section || '');
+            if (before !== after) {
+              const search = new URLSearchParams(window.location.search);
+              if (search.get('section')) {
+                search.delete('section');
+                const qs = search.toString();
+                navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, {
+                  replace: true,
+                });
               }
-            } catch (_) {}
-          }}
-        />
-      )}
+            }
+          } catch (_) {}
+        }}
+      />
     </div>
   );
 }
@@ -3564,6 +3608,59 @@ function DashboardView({
     closeButtonProps: dashboardModalCloseButtonProps,
     tokens: dashboardModalTokens,
   } = useDashboardModalProps();
+  const createTokenModalBodyProps = {
+    ...dashboardModalBodyProps,
+    sx: {
+      ...dashboardModalBodyProps.sx,
+      '.chakra-form__label': {
+        ...dashboardModalBodyProps.sx?.['.chakra-form__label'],
+        fontSize: '0.875rem',
+        lineHeight: '1.25rem',
+        mb: 1.5,
+      },
+      '.chakra-input, .chakra-select, .chakra-textarea': {
+        ...dashboardModalBodyProps.sx?.[
+          '.chakra-input, .chakra-select, .chakra-textarea'
+        ],
+        background: `${dashboardModalTokens.inputBg} !important`,
+        borderColor: `${dashboardModalTokens.inputBorder} !important`,
+        color: `${dashboardModalTokens.text} !important`,
+        fontSize: '0.875rem !important',
+        borderRadius: '10px !important',
+      },
+      '.chakra-input, .chakra-select': {
+        height: '32px !important',
+        minHeight: '32px !important',
+        lineHeight: '1.25rem !important',
+        paddingInlineStart: '0.75rem !important',
+        paddingInlineEnd: '0.75rem !important',
+      },
+      '.chakra-textarea': {
+        minHeight: '72px',
+        padding: '0.5rem 0.75rem !important',
+      },
+      '.chakra-input::placeholder, .chakra-textarea::placeholder': {
+        color: `${dashboardModalTokens.muted} !important`,
+        opacity: 1,
+      },
+      '.chakra-input:hover, .chakra-select:hover, .chakra-textarea:hover': {
+        borderColor: `${dashboardModalTokens.focusBorder} !important`,
+      },
+      '.chakra-input:focus-visible, .chakra-select:focus-visible, .chakra-textarea:focus-visible':
+        {
+          borderColor: `${dashboardModalTokens.focusBorder} !important`,
+          boxShadow: `0 0 0 1px ${dashboardModalTokens.focusBorder} !important`,
+        },
+      '.chakra-input[aria-invalid=true], .chakra-select[aria-invalid=true], .chakra-textarea[aria-invalid=true]':
+        {
+          borderColor: `${dashboardModalTokens.danger} !important`,
+        },
+      '.chakra-form__error-message': {
+        fontSize: '0.75rem',
+        color: dashboardModalTokens.danger,
+      },
+    },
+  };
   const createTokenFormId = 'create-token-form';
   const canSubmitCreateToken =
     (typeof canCreateToken === 'boolean' ? canCreateToken : true) &&
@@ -3890,9 +3987,9 @@ function DashboardView({
       borderColor={dashboardModalTokens.inputBorder}
       borderRadius='10px'
       bg={dashboardModalTokens.inputBg}
-      px={2}
-      py='6px'
-      minH='40px'
+      px={3}
+      py='3px'
+      minH='32px'
       color={dashboardModalTokens.text}
       cursor='text'
       transition='border-color 120ms ease, box-shadow 120ms ease'
@@ -3915,15 +4012,16 @@ function DashboardView({
             borderRadius='8px'
             px={2}
             py='2px'
-            fontSize='sm'
+            fontSize='xs'
             gap={1}
           >
-            <Text fontSize='sm' lineHeight='short'>
+            <Text fontSize='xs' lineHeight='short'>
               {tag}
             </Text>
             <Box
               as='button'
               type='button'
+              aria-label={`Remove contact ${tag}`}
               onClick={e => {
                 e.stopPropagation();
                 removeContactTag(i);
@@ -3932,39 +4030,53 @@ function DashboardView({
               cursor='pointer'
               opacity={0.7}
               _hover={{ opacity: 1 }}
-              fontSize='xs'
+              fontSize='0'
               fontWeight='bold'
+              sx={{
+                '&::after': {
+                  content: '"x"',
+                  fontSize: '0.75rem',
+                },
+              }}
             >
               ×
             </Box>
           </Flex>
         ))}
-        <Input
+        <Box
+          as='input'
           ref={contactInputRef}
-          variant='unstyled'
           type='text'
           value={contactInputValue}
           onChange={handleContactInputChange}
           onKeyDown={handleContactKeyDown}
           list='workspace-contacts-suggestions'
           placeholder={contactTags.length === 0 ? placeholder : ''}
-          _placeholder={{ color: dashboardModalTokens.muted }}
+          aria-label='Contacts'
           border='none'
           bg='transparent'
           color={dashboardModalTokens.text}
+          caretColor={dashboardModalTokens.text}
           p={0}
-          h='28px'
+          h='24px'
           flex={1}
           minW='120px'
-          fontSize='md'
+          fontFamily='inherit'
+          fontSize='0.875rem'
+          fontWeight='normal'
           lineHeight='1.5'
           outline='none'
           boxShadow='none'
           sx={{
+            appearance: 'none',
             border: '0 !important',
             borderRadius: '0 !important',
             background: 'transparent !important',
             boxShadow: 'none !important',
+            '&::placeholder': {
+              color: dashboardModalTokens.muted,
+              opacity: 1,
+            },
             '&:hover': {
               border: '0 !important',
               boxShadow: 'none !important',
@@ -3978,8 +4090,6 @@ function DashboardView({
               boxShadow: 'none !important',
             },
           }}
-          _focus={{ boxShadow: 'none' }}
-          _focusVisible={{ boxShadow: 'none' }}
         />
       </Flex>
     </Box>
@@ -5488,7 +5598,7 @@ function DashboardView({
                     </Text>
                   </ModalHeader>
                   <ModalCloseButton {...dashboardModalCloseButtonProps} />
-                  <ModalBody {...dashboardModalBodyProps}>
+                  <ModalBody {...createTokenModalBodyProps}>
                     <Box pt={0}>
                       <form id={createTokenFormId} onSubmit={onTokenAdd}>
                         <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
@@ -6198,9 +6308,9 @@ function DashboardView({
                             parentNotes={formData.notes}
                             onCommitNotes={commitCreateNotes}
                             submitFlushRef={createTokenNotesFlushRef}
-                            inputBg={inputBg}
-                            inputBorder={inputBorder}
-                            placeholderColor={placeholderColor}
+                            inputBg={dashboardModalTokens.inputBg}
+                            inputBorder={dashboardModalTokens.inputBorder}
+                            placeholderColor={dashboardModalTokens.muted}
                           />
                         </FormControl>
                       </form>

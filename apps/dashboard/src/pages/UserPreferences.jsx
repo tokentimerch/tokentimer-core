@@ -3,12 +3,12 @@ import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   FormControl,
-  FormLabel,
   HStack,
   Link,
   Switch,
   Text,
   useColorMode,
+  useColorModeValue,
   VStack,
 } from '@chakra-ui/react';
 import DashboardPageLayout from '../components/DashboardPageLayout';
@@ -26,22 +26,21 @@ function PreferenceToggle({
   description,
   isChecked,
   onChange,
-  text,
+  labelColor,
   muted,
 }) {
   return (
     <FormControl display='flex' alignItems='center'>
       <HStack justify='space-between' w='full'>
         <Box pr={4}>
-          <FormLabel
-            mb={0}
-            color={text}
+          <Text
+            color={labelColor}
             fontSize='sm'
-            fontWeight='medium'
+            fontWeight='semibold'
             lineHeight='short'
           >
             {label}
-          </FormLabel>
+          </Text>
           <Text fontSize='sm' color={muted} lineHeight='1.45'>
             {description}
           </Text>
@@ -49,6 +48,20 @@ function PreferenceToggle({
         <Switch isChecked={isChecked} onChange={onChange} aria-label={label} />
       </HStack>
     </FormControl>
+  );
+}
+
+function PreferencesPanelHeader({ title, description, muted }) {
+  const titleColor = useColorModeValue('black', 'inherit');
+
+  return (
+    <Box color={titleColor}>
+      <DashboardPanelHeader title={title}>
+        <Text mt={1} color={muted} fontSize='sm' lineHeight='1.45'>
+          {description}
+        </Text>
+      </DashboardPanelHeader>
+    </Box>
   );
 }
 
@@ -71,7 +84,9 @@ export default function UserPreferences({
   isViewer = false,
 }) {
   const { colorMode, toggleColorMode } = useColorMode();
-  const { text, muted } = useDashboardTheme();
+  const { text, muted, dashboard } = useDashboardTheme();
+  const labelColor = useColorModeValue('black', text);
+  const readableMuted = useColorModeValue(dashboard.text.secondary, muted);
   const [viewerOnly, setViewerOnly] = useState(isViewer);
 
   const [reducedMotion, setReducedMotion] = useLocalPreference(
@@ -126,33 +141,37 @@ export default function UserPreferences({
         noindex
       />
       <DashboardPageLayout
-        variant='narrow'
+        variant='wide'
         pageTitle='Preferences'
         session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
         isViewer={viewerOnly}
-        contentProps={{ 'data-tour': 'user-preferences-page' }}
+        contentProps={{
+          'data-tour': 'user-preferences-page',
+          w: 'full',
+          maxW: '100%',
+        }}
       >
-        <VStack spacing={6} align='stretch'>
+        <VStack spacing={6} align='stretch' w='full'>
           <DashboardPanel p={{ base: 4, md: 5 }}>
-            <DashboardPanelHeader
+            <PreferencesPanelHeader
               title='Appearance'
               description='Control the visual theme used across the app.'
+              muted={readableMuted}
             />
             <FormControl display='flex' alignItems='center'>
               <HStack justify='space-between' w='full'>
                 <Box>
-                  <FormLabel
-                    mb={0}
-                    color={text}
+                  <Text
+                    color={labelColor}
                     fontSize='sm'
-                    fontWeight='medium'
+                    fontWeight='semibold'
                     lineHeight='short'
                   >
                     Color mode
-                  </FormLabel>
-                  <Text fontSize='sm' color={muted} lineHeight='1.45'>
+                  </Text>
+                  <Text fontSize='sm' color={readableMuted} lineHeight='1.45'>
                     {isDarkMode ? 'Dark mode' : 'Light mode'}
                   </Text>
                 </Box>
@@ -166,9 +185,10 @@ export default function UserPreferences({
           </DashboardPanel>
 
           <DashboardPanel p={{ base: 4, md: 5 }}>
-            <DashboardPanelHeader
+            <PreferencesPanelHeader
               title='Display'
               description='These preferences are stored on this device only.'
+              muted={readableMuted}
             />
             <VStack spacing={5} align='stretch'>
               <PreferenceToggle
@@ -176,34 +196,35 @@ export default function UserPreferences({
                 description='Minimize animations and transitions across the app.'
                 isChecked={reducedMotion}
                 onChange={() => setReducedMotion(value => !value)}
-                text={text}
-                muted={muted}
+                labelColor={labelColor}
+                muted={readableMuted}
               />
               <PreferenceToggle
                 label='Compact density'
                 description='Tighten spacing in tables and lists to fit more on screen.'
                 isChecked={compactDensity}
                 onChange={() => setCompactDensity(value => !value)}
-                text={text}
-                muted={muted}
+                labelColor={labelColor}
+                muted={readableMuted}
               />
               <PreferenceToggle
                 label='Relative timestamps'
                 description='Show dates as "3 days ago" instead of an absolute date.'
                 isChecked={relativeTimes}
                 onChange={() => setRelativeTimes(value => !value)}
-                text={text}
-                muted={muted}
+                labelColor={labelColor}
+                muted={readableMuted}
               />
             </VStack>
           </DashboardPanel>
 
           <DashboardPanel p={{ base: 4, md: 5 }}>
-            <DashboardPanelHeader
+            <PreferencesPanelHeader
               title='Account'
               description='Manage profile, password, security, and exports from your account page.'
+              muted={readableMuted}
             />
-            <Text color={muted} fontSize='sm' lineHeight='1.6'>
+            <Text color={readableMuted} fontSize='sm' lineHeight='1.6'>
               Manage your profile, password, and security on the{' '}
               <Link
                 as={RouterLink}
@@ -219,11 +240,12 @@ export default function UserPreferences({
 
           {!viewerOnly && (
             <DashboardPanel p={{ base: 4, md: 5 }}>
-              <DashboardPanelHeader
+              <PreferencesPanelHeader
                 title='Workspace preferences'
                 description='Alert thresholds, contacts, webhooks, and delivery windows are configured per workspace.'
+                muted={readableMuted}
               />
-              <Text color={muted} fontSize='sm' lineHeight='1.6'>
+              <Text color={readableMuted} fontSize='sm' lineHeight='1.6'>
                 Open{' '}
                 <Link
                   as={RouterLink}

@@ -62,30 +62,12 @@ function formatDateTime(dateString) {
   }
 }
 
-const AUDIT_FILTER_VALUE_RE =
-  /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/;
+const AUDIT_FILTER_VALUE_RE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/;
 
 function dateInputToAuditDateParam(value) {
   if (!value) return null;
   return AUDIT_FILTER_VALUE_RE.test(value) ? value : null;
 }
-
-const ACTION_COLORS = {
-  ALERT_QUEUED: 'blue',
-  ALERT_SENT: 'green',
-  ALERT_SEND_FAILED: 'red',
-  ALERT_SKIPPED_LIMIT: 'orange',
-  AUTO_SYNC_FAILED: 'red',
-  AUTO_SYNC_CREATED: 'green',
-  AUTO_SYNC_UPDATED: 'blue',
-  AUTO_SYNC_DELETED: 'orange',
-  AUTO_SYNC_TRIGGERED: 'purple',
-  LIMIT_REMINDER_SENT: 'purple',
-  LOGIN_SUCCESS: 'green',
-  LOGIN_FAILED: 'red',
-  LOGIN_SUCCESS_2FA: 'green',
-  MEMBERSHIP_SYNCED_FROM_SSO: 'blue',
-};
 
 // Exhaustive list of all possible audit actions
 // This allows filtering for any action type, even if not present in the current loaded events
@@ -234,15 +216,15 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     'rgba(59, 130, 246, 0.38)'
   );
   const mobileCardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.78)');
-  const mobileDetailBg = useColorModeValue(
-    'gray.50',
-    'rgba(8, 13, 22, 0.58)'
-  );
+  const mobileDetailBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.58)');
   const mobileSubtleBorder = useColorModeValue(
     'gray.200',
     'rgba(148, 163, 184, 0.16)'
   );
-  const mobileAccentBg = useColorModeValue('blue.50', 'rgba(147, 197, 253, 0.1)');
+  const mobileAccentBg = useColorModeValue(
+    'blue.50',
+    'rgba(147, 197, 253, 0.1)'
+  );
   const mobileAccentBorder = useColorModeValue(
     'blue.200',
     'rgba(147, 197, 253, 0.34)'
@@ -1314,7 +1296,9 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           </Box>
 
           <IconButton
-            aria-label={isExpanded ? 'Collapse audit event' : 'Expand audit event'}
+            aria-label={
+              isExpanded ? 'Collapse audit event' : 'Expand audit event'
+            }
             icon={isExpanded ? <FiChevronUp /> : <FiChevronDown />}
             size='sm'
             variant='ghost'
@@ -1360,7 +1344,12 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                   <Text color={text} fontSize='sm' wordBreak='break-word'>
                     {userLabel}
                   </Text>
-                  <Text color={muted} fontSize='xs' mt={2} fontWeight='semibold'>
+                  <Text
+                    color={muted}
+                    fontSize='xs'
+                    mt={2}
+                    fontWeight='semibold'
+                  >
                     Workspace
                   </Text>
                   <Text color={text} fontSize='sm' wordBreak='break-word'>
@@ -1543,7 +1532,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                   size='sm'
                   flex={{ base: '1 1 auto', lg: '0 1 360px' }}
                 >
-                  <InputLeftElement pointerEvents='none' h={AUDIT_CONTROL_HEIGHT}>
+                  <InputLeftElement
+                    pointerEvents='none'
+                    h={AUDIT_CONTROL_HEIGHT}
+                  >
                     <FiSearch size={16} color={searchIconColor} />
                   </InputLeftElement>
                   <Input
@@ -1755,7 +1747,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                         ))}
                       </Select>
                     </HStack>
-                    <HStack spacing={3} justify={{ base: 'space-between', sm: 'end' }}>
+                    <HStack
+                      spacing={3}
+                      justify={{ base: 'space-between', sm: 'end' }}
+                    >
                       <Text color={muted} fontSize='sm' whiteSpace='nowrap'>
                         {auditRangeLabel}
                       </Text>
@@ -1813,7 +1808,11 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                   </Text>
                 ) : (
                   <>
-                    <Box display={{ base: 'block', lg: 'none' }} w='100%' minW={0}>
+                    <Box
+                      display={{ base: 'block', lg: 'none' }}
+                      w='100%'
+                      minW={0}
+                    >
                       <VStack spacing={3} align='stretch'>
                         {filtered.map(ev => renderMobileAuditCard(ev))}
                       </VStack>
@@ -1874,9 +1873,14 @@ export default function Audit({ session, onLogout, onAccountClick }) {
                               </Td>
                               <Td w={AUDIT_TABLE_COLUMN_WIDTHS.action} py={3}>
                                 <Badge
-                                  colorScheme={ACTION_COLORS[ev.action] || 'gray'}
-                                  variant='subtle'
+                                  bg={mobileAccentBg}
+                                  color={accentColor}
+                                  border='1px solid'
+                                  borderColor={mobileAccentBorder}
+                                  variant='outline'
                                   borderRadius='md'
+                                  px={2}
+                                  py={1}
                                   whiteSpace='normal'
                                   textAlign='left'
                                   maxW='100%'

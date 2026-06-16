@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -112,6 +112,29 @@ function MobileDrawerSection({
         {children}
       </VStack>
     </Box>
+  );
+}
+
+function getDashboardLinkTarget() {
+  if (typeof window === 'undefined') return '/dashboard';
+
+  try {
+    const search = new URLSearchParams(window.location.search);
+    search.delete('view');
+    const qs = search.toString();
+    return `/dashboard${qs ? `?${qs}` : ''}`;
+  } catch (_) {
+    return '/dashboard';
+  }
+}
+
+function isModifiedLinkClick(event) {
+  return (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.shiftKey
   );
 }
 
@@ -300,13 +323,30 @@ export default function DashboardShell({
     );
   }, []);
 
-  const navigateToDashboard = () => {
-    try {
-      const search = new URLSearchParams(window.location.search);
-      search.delete('view');
-      const qs = search.toString();
-      navigate(`/dashboard${qs ? `?${qs}` : ''}`, { replace: true });
-    } catch (_) {}
+  const dashboardLinkTarget = getDashboardLinkTarget();
+
+  const createNavLinkProps = item => {
+    if (item.to) {
+      return {
+        as: RouterLink,
+        to: item.to,
+        replace: item.replace,
+      };
+    }
+
+    if (item.href) {
+      return {
+        as: 'a',
+        href: item.href,
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      };
+    }
+
+    return {
+      as: 'button',
+      type: 'button',
+    };
   };
 
   const menuItems = [
@@ -316,7 +356,8 @@ export default function DashboardShell({
       icon: Layers,
       active:
         currentPath === '/dashboard' || currentPath.startsWith('/dashboard'),
-      onClick: navigateToDashboard,
+      to: dashboardLinkTarget,
+      replace: true,
     },
     ...(dashboardCanSeeManagerNav
       ? [
@@ -325,7 +366,7 @@ export default function DashboardShell({
             label: 'Control center',
             icon: Gauge,
             active: currentPath === '/control-center',
-            onClick: () => navigate('/control-center'),
+            to: '/control-center',
           },
           {
             key: 'docs',
@@ -338,21 +379,21 @@ export default function DashboardShell({
             label: 'Audit',
             icon: ActivityIcon,
             active: currentPath === '/audit',
-            onClick: () => navigate('/audit'),
+            to: '/audit',
           },
           {
             key: 'workspaces',
             label: 'Workspaces',
             icon: Building2,
             active: currentPath === '/workspaces',
-            onClick: () => navigate('/workspaces'),
+            to: '/workspaces',
           },
           {
             key: 'alert-settings',
             label: 'Workspace preferences',
             icon: Bell,
             active: currentPath === '/workspace-preferences',
-            onClick: () => navigate('/workspace-preferences'),
+            to: '/workspace-preferences',
           },
         ]
       : [
@@ -370,7 +411,7 @@ export default function DashboardShell({
             label: 'System',
             icon: Settings,
             active: currentPath === '/system-settings',
-            onClick: () => navigate('/system-settings'),
+            to: '/system-settings',
           },
         ]
       : []),
@@ -404,14 +445,15 @@ export default function DashboardShell({
       label: 'Preferences',
       icon: Settings,
       active: currentPath === '/preferences',
-      onClick: () => navigate('/preferences'),
+      to: '/preferences',
       tourAttr: 'preferences-nav',
     },
     {
       key: 'account',
       label: 'Account',
       icon: User,
-      active: false,
+      active: currentPath === '/account',
+      to: '/account',
       onClick: handleAccountClick,
     },
     {
@@ -427,18 +469,24 @@ export default function DashboardShell({
   const renderMobileNavItem = item => {
     const Icon = item.icon;
     const tourAttr = item.tourAttr || mobileNavTourAttr(item.key);
+    const navLinkProps = createNavLinkProps(item);
+    const isNavigationLink = Boolean(item.to || item.href);
     const handleClick = () => {
       if (item.onClick) item.onClick();
+      onMobileNavClose();
+    };
+    const handleNavigationClick = event => {
+      if (item.onClick && !isModifiedLinkClick(event)) {
+        event.preventDefault();
+        item.onClick();
+      }
       onMobileNavClose();
     };
 
     return (
       <Button
         key={item.key}
-        as={item.href ? 'a' : 'button'}
-        href={item.href}
-        target={item.href ? '_blank' : undefined}
-        rel={item.href ? 'noopener noreferrer' : undefined}
+        {...navLinkProps}
         data-tour={tourAttr}
         aria-current={item.active ? 'page' : undefined}
         variant='ghost'
@@ -472,7 +520,7 @@ export default function DashboardShell({
               ? navActiveColor
               : chromeHoverColor,
         }}
-        onClick={item.href ? onMobileNavClose : handleClick}
+        onClick={isNavigationLink ? handleNavigationClick : handleClick}
       >
         {item.label}
       </Button>
@@ -511,10 +559,11 @@ export default function DashboardShell({
             flexShrink={0}
           >
             <Button
-              type='button'
+              as={RouterLink}
+              to={dashboardLinkTarget}
+              replace
               variant='ghost'
               aria-label='Go to dashboard'
-              onClick={navigateToDashboard}
               h={isDashboardSidebarExpanded ? '50px' : '48px'}
               w='100%'
               minW={0}
@@ -612,12 +661,10 @@ export default function DashboardShell({
               {menuItems.map(item => {
                 const Icon = item.icon;
                 const navTourAttr = dashboardNavTourAttr(item.key);
+                const navLinkProps = createNavLinkProps(item);
                 const navControl = isDashboardSidebarExpanded ? (
                   <Button
-                    as={item.href ? 'a' : 'button'}
-                    href={item.href}
-                    target={item.href ? '_blank' : undefined}
-                    rel={item.href ? 'noopener noreferrer' : undefined}
+                    {...navLinkProps}
                     aria-label={item.label}
                     aria-current={item.active ? 'page' : undefined}
                     data-tour={navTourAttr}
@@ -640,16 +687,12 @@ export default function DashboardShell({
                       color: item.active ? navActiveColor : chromeHoverColor,
                     }}
                     _active={{ bg: navActiveHoverBg }}
-                    onClick={item.onClick || undefined}
                   >
                     <Text noOfLines={1}>{item.label}</Text>
                   </Button>
                 ) : (
                   <IconButton
-                    as={item.href ? 'a' : 'button'}
-                    href={item.href}
-                    target={item.href ? '_blank' : undefined}
-                    rel={item.href ? 'noopener noreferrer' : undefined}
+                    {...navLinkProps}
                     aria-label={item.label}
                     aria-current={item.active ? 'page' : undefined}
                     data-tour={navTourAttr}
@@ -668,7 +711,6 @@ export default function DashboardShell({
                       color: item.active ? navActiveColor : chromeHoverColor,
                     }}
                     _active={{ bg: navActiveHoverBg }}
-                    onClick={item.onClick || undefined}
                   />
                 );
                 return (
@@ -1052,11 +1094,12 @@ export default function DashboardShell({
             >
               <Flex align='center' justify='space-between' gap={3}>
                 <Button
-                  type='button'
+                  as={RouterLink}
+                  to={dashboardLinkTarget}
+                  replace
                   variant='ghost'
                   aria-label='Go to dashboard'
                   onClick={() => {
-                    navigateToDashboard();
                     onMobileNavClose();
                   }}
                   h='40px'

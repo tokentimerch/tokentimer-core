@@ -335,7 +335,7 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
           onLogout={onLogout}
           onAccountClick={onAccountClick}
           pageTitle='System settings'
-          variant='standard'
+          variant='wide'
         >
           <DashboardPanel>
             <DashboardState type='loading' title='Loading system settings...' />
@@ -353,9 +353,9 @@ export default function SystemSettings({ session, onLogout, onAccountClick }) {
         onLogout={onLogout}
         onAccountClick={onAccountClick}
         pageTitle='System settings'
-        variant='standard'
+        variant='wide'
       >
-        <VStack align='stretch' spacing={6}>
+        <VStack align='stretch' spacing={6} w='full'>
           {/* SMTP Configuration */}
           <DashboardPanel>
             <DashboardPanelHeader
