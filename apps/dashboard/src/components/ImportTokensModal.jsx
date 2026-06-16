@@ -2103,14 +2103,18 @@ export default function ImportTokensModal({
                           ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
                           : ''
                       : '';
-                    return (
+                    const selectCard = () => {
+                      if (!isLocked) setSource(card.key);
+                    };
+
+                    const cardContent = (
                       <VStack
-                        key={card.key}
                         spacing={2}
                         align='center'
                         justify='center'
                         p={3}
                         minH={{ base: '116px', md: '132px' }}
+                        w='100%'
                         bg={modalTokens.fieldBg}
                         border='1px solid'
                         borderColor={
@@ -2124,6 +2128,37 @@ export default function ImportTokensModal({
                             ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
                             : 'none'
                         }
+                        cursor={isLocked ? 'not-allowed' : 'pointer'}
+                        opacity={isLocked ? 0.6 : 1}
+                        onClick={selectCard}
+                        onKeyDown={e => {
+                          if (
+                            !isLocked &&
+                            (e.key === 'Enter' || e.key === ' ')
+                          ) {
+                            e.preventDefault();
+                            selectCard();
+                          }
+                        }}
+                        tabIndex={isLocked ? -1 : 0}
+                        role='button'
+                        aria-label={card.alt}
+                        aria-disabled={isLocked}
+                        aria-pressed={source === card.key}
+                        transition='border-color 0.15s ease, box-shadow 0.15s ease'
+                        _hover={
+                          isLocked
+                            ? undefined
+                            : {
+                                borderColor: modalTokens.focusBorder,
+                                bg: modalTokens.fieldBg,
+                              }
+                        }
+                        _focusVisible={{
+                          outline: '2px solid',
+                          outlineColor: modalTokens.focusBorder,
+                          outlineOffset: '2px',
+                        }}
                       >
                         <HStack spacing={1}>
                           <Text
@@ -2134,126 +2169,93 @@ export default function ImportTokensModal({
                             {card.label}
                           </Text>
                           {isLocked && (
-                            <Tooltip label={lockReason} fontSize='xs'>
-                              <Badge colorScheme='orange' fontSize='2xs'>
-                                {isViewer ? 'ADMIN' : 'LIMIT'}
-                              </Badge>
-                            </Tooltip>
+                            <Badge colorScheme='orange' fontSize='2xs'>
+                              {isViewer ? 'ADMIN' : 'LIMIT'}
+                            </Badge>
                           )}
                         </HStack>
                         {card.type === 'icon' ? (
-                          <Box
-                            p={2}
-                            border={
-                              source === card.key
-                                ? '2px solid'
-                                : '2px solid transparent'
-                            }
-                            borderColor={
-                              source === card.key ? 'blue.400' : 'transparent'
-                            }
-                            borderRadius='md'
-                            cursor='pointer'
-                            onClick={() => setSource(card.key)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ' ')
-                                setSource(card.key);
-                            }}
-                            tabIndex={0}
-                            role='button'
-                            aria-label={card.alt}
-                            _focus={{
-                              outline: '2px solid',
-                              outlineColor: 'blue.400',
-                            }}
-                          >
+                          <Box p={2}>
                             <Box
                               as={FiDownload}
                               boxSize={{ base: '40px', md: '56px' }}
                               color={
-                                source === card.key ? 'blue.500' : 'inherit'
+                                source === card.key
+                                  ? modalTokens.focusBorder
+                                  : modalTokens.muted
                               }
                             />
                           </Box>
                         ) : (
-                          <Tooltip
-                            label={isLocked ? lockReason : ''}
-                            fontSize='xs'
-                            isDisabled={!isLocked}
-                          >
-                            <Box position='relative'>
-                              <Image
-                                src={card.src}
-                                alt={card.alt}
-                                maxH={{ base: '56px', md: '72px' }}
-                                maxW='100%'
-                                objectFit='contain'
-                                cursor={isLocked ? 'not-allowed' : 'pointer'}
-                                onClick={() => !isLocked && setSource(card.key)}
-                                onKeyDown={e => {
-                                  if (
-                                    !isLocked &&
-                                    (e.key === 'Enter' || e.key === ' ')
-                                  )
-                                    setSource(card.key);
-                                }}
-                                tabIndex={isLocked ? -1 : 0}
-                                role='button'
-                                aria-label={card.alt}
-                                border={source === card.key ? '2px solid' : '0'}
-                                borderColor='blue.400'
-                                borderRadius='md'
-                                opacity={isLocked ? 0.4 : 1}
-                                filter={isLocked ? 'grayscale(100%)' : 'none'}
-                              />
-                              {/* Icon badge to differentiate Azure services */}
-                              {card.key === 'azure' && (
-                                <Tooltip label='Azure Key Vault' fontSize='xs'>
-                                  <Box
-                                    position='absolute'
-                                    top='-6px'
-                                    right='-6px'
-                                    bg='blue.500'
-                                    borderRadius='full'
-                                    p={1.5}
-                                    boxShadow='md'
-                                    border='2px solid white'
-                                  >
-                                    <Box
-                                      as={FiKey}
-                                      boxSize='14px'
-                                      color='white'
-                                    />
-                                  </Box>
-                                </Tooltip>
-                              )}
-                              {card.key === 'azure-ad' && (
-                                <Tooltip
-                                  label='Azure Active Directory'
-                                  fontSize='xs'
+                          <Box position='relative'>
+                            <Image
+                              src={card.src}
+                              alt=''
+                              aria-hidden
+                              maxH={{ base: '56px', md: '72px' }}
+                              maxW='100%'
+                              objectFit='contain'
+                              opacity={isLocked ? 0.4 : 1}
+                              filter={isLocked ? 'grayscale(100%)' : 'none'}
+                            />
+                            {/* Icon badge to differentiate Azure services */}
+                            {card.key === 'azure' && (
+                              <Tooltip label='Azure Key Vault' fontSize='xs'>
+                                <Box
+                                  position='absolute'
+                                  top='-6px'
+                                  right='-6px'
+                                  bg='blue.500'
+                                  borderRadius='full'
+                                  p={1.5}
+                                  boxShadow='md'
+                                  border='2px solid white'
                                 >
                                   <Box
-                                    position='absolute'
-                                    top='-6px'
-                                    right='-6px'
-                                    bg='purple.500'
-                                    borderRadius='full'
-                                    p={1.5}
-                                    boxShadow='md'
-                                    border='2px solid white'
-                                  >
-                                    <Box
-                                      as={FiUsers}
-                                      boxSize='14px'
-                                      color='white'
-                                    />
-                                  </Box>
-                                </Tooltip>
-                              )}
-                            </Box>
-                          </Tooltip>
+                                    as={FiKey}
+                                    boxSize='14px'
+                                    color='white'
+                                  />
+                                </Box>
+                              </Tooltip>
+                            )}
+                            {card.key === 'azure-ad' && (
+                              <Tooltip
+                                label='Azure Active Directory'
+                                fontSize='xs'
+                              >
+                                <Box
+                                  position='absolute'
+                                  top='-6px'
+                                  right='-6px'
+                                  bg='purple.500'
+                                  borderRadius='full'
+                                  p={1.5}
+                                  boxShadow='md'
+                                  border='2px solid white'
+                                >
+                                  <Box
+                                    as={FiUsers}
+                                    boxSize='14px'
+                                    color='white'
+                                  />
+                                </Box>
+                              </Tooltip>
+                            )}
+                          </Box>
                         )}
                       </VStack>
+                    );
+
+                    return (
+                      <Tooltip
+                        key={card.key}
+                        label={lockReason}
+                        fontSize='xs'
+                        isDisabled={!isLocked || !lockReason}
+                      >
+                        {cardContent}
+                      </Tooltip>
                     );
                   })}
                 </Box>
@@ -3186,7 +3188,7 @@ export default function ImportTokensModal({
               <Button
                 variant='outline'
                 onClick={onCloseInternal}
-                borderColor='rgba(148, 163, 184, 0.34)'
+                borderColor={modalTokens.outlineBorder}
                 color={modalTokens.subtleText}
                 _hover={{
                   bg: modalTokens.fieldBg,
@@ -3316,7 +3318,7 @@ export default function ImportTokensModal({
               <Button
                 variant='outline'
                 onClick={onEnableAutoSyncClose}
-                borderColor='rgba(148, 163, 184, 0.34)'
+                borderColor={modalTokens.outlineBorder}
                 color={modalTokens.subtleText}
                 _hover={{
                   bg: modalTokens.fieldBg,
@@ -3406,7 +3408,7 @@ export default function ImportTokensModal({
               <Button
                 variant='outline'
                 onClick={onDisableAutoSyncClose}
-                borderColor='rgba(148, 163, 184, 0.34)'
+                borderColor={modalTokens.outlineBorder}
                 color={modalTokens.subtleText}
                 _hover={{
                   bg: modalTokens.fieldBg,
