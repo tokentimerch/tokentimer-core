@@ -101,7 +101,12 @@ if (metricsEnabled) {
   app.use((req, res, next) => {
     const start = process.hrtime.bigint();
     res.on("finish", () => {
-      const route = req.route?.path || req.path || "unknown";
+      // Bound metric label cardinality: only emit the matched Express route
+      // pattern (e.g. /api/v1/workspaces/:id), never the raw req.path, which
+      // would let arbitrary/404 URLs explode the label set.
+      const route = req.route?.path
+        ? (req.baseUrl || "") + req.route.path
+        : "unmatched";
       const { method } = req;
       const status = String(res.statusCode);
       try {

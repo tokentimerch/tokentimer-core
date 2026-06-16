@@ -75,8 +75,36 @@ function sanitizeForLogging(value) {
   return redact(value);
 }
 
+/**
+ * Escape a value for safe interpolation into HTML.
+ * @param {*} value
+ * @returns {string}
+ */
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Strip ASCII control characters (incl. CR/LF) from a single-line value,
+ * e.g. email subject parts, to prevent header/format injection.
+ * @param {*} value
+ * @param {number} maxLength
+ * @returns {string}
+ */
+function sanitizeSingleLine(value, maxLength = 200) {
+  // eslint-disable-next-line no-control-regex
+  return String(value ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, maxLength);
+}
+
 module.exports = {
   hashPhone,
   maskPhone,
   sanitizeForLogging,
+  escapeHtml,
+  sanitizeSingleLine,
 };

@@ -2,7 +2,10 @@
 FROM node:22.22.2-alpine3.23 AS builder
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-RUN apk update && apk upgrade --no-cache
+# Explicit pin avoids stale GHA cache layers reporting pre-fix libcrypto3/libssl3 revisions.
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0"
 
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
@@ -40,17 +43,20 @@ RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm --filter @tokentimer/dashboard
 FROM nginx:1.28.3-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
-# CVE-2026-9256: pin nginx=1.28.3-r2. Drop unused nginx-module-* packages first; their r1
+# CVE-2026-9256 / CVE-2026-49975: pin nginx=1.28.3-r3 (r2 superseded in Alpine 3.23 repos).
+# Drop unused nginx-module-* packages first; their r1
 # revisions block apk from replacing nginx while those modules stay installed.
 RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
     && apk del --no-cache \
         nginx-module-acme \
         nginx-module-geoip \
         nginx-module-image-filter \
         nginx-module-njs \
         nginx-module-xslt \
-    && apk add --no-cache nginx=1.28.3-r2 \
-    && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r2"
+    && apk add --no-cache nginx=1.28.3-r3 \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0" \
+    && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r3"
 
 # Create non-root nginx user and prepare writable directories
 RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentimer && \
@@ -62,8 +68,11 @@ RUN addgroup -g 1000 -S tokentimer && adduser -u 1000 -S tokentimer -G tokentime
         /var/cache/nginx/scgi_temp \
         /var/run \
         /var/log/nginx \
+        /var/lib/nginx/logs \
         /usr/share/nginx/html && \
-    chown -R tokentimer:tokentimer /var/cache/nginx /var/run /var/log/nginx /usr/share/nginx/html
+    ln -sf /dev/stderr /var/lib/nginx/logs/error.log && \
+    ln -sf /dev/stdout /var/log/nginx/access.log && \
+    chown -R tokentimer:tokentimer /var/cache/nginx /var/run /var/log/nginx /var/lib/nginx /usr/share/nginx/html
 
 # Copy nginx configuration
 COPY deploy/compose/nginx.conf /etc/nginx/nginx.conf

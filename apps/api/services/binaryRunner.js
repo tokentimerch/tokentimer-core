@@ -71,29 +71,72 @@ async function runBinary({
   let timedOut = false;
   const toolHome = createToolWorkspace();
   const effectiveArgs = args;
+  const isWindows = process.platform === "win32";
 
   const child = spawn(bin, effectiveArgs, {
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     env: createToolEnv(toolHome),
+    // Own process group on POSIX so the whole tree (incl. grandchildren)
+    // can be killed, not just the direct child.
+    detached: !isWindows,
   });
 
-  const killChild = (signalName) => {
-    if (!child.killed) {
-      child.kill(signalName);
+  const killTree = (signalName) => {
+    if (isWindows) {
+      if (signalName === "SIGKILL") {
+        try {
+          spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+            stdio: "ignore",
+          });
+        } catch (_err) {
+          try {
+            child.kill("SIGKILL");
+          } catch (_e) {
+            /* already gone */
+          }
+        }
+      } else {
+        try {
+          child.kill(signalName);
+        } catch (_e) {
+          /* already gone */
+        }
+      }
+      return;
+    }
+    try {
+      process.kill(-child.pid, signalName);
+    } catch (_err) {
+      try {
+        child.kill(signalName);
+      } catch (_e) {
+        /* already gone */
+      }
+    }
+  };
+
+  // SIGTERM with SIGKILL escalation scheduled IMMEDIATELY (not after the
+  // close event): a child that ignores SIGTERM must not hang the runner.
+  let killEscalation = null;
+  const terminate = () => {
+    killTree("SIGTERM");
+    if (!killEscalation) {
+      killEscalation = setTimeout(() => killTree("SIGKILL"), 2000);
+      killEscalation.unref?.();
     }
   };
 
   const timeout = setTimeout(
     () => {
       timedOut = true;
-      killChild("SIGTERM");
+      terminate();
     },
     Math.max(1000, Number(timeoutMs) || 90000),
   );
 
   const abortHandler = () => {
-    killChild("SIGTERM");
+    terminate();
   };
   if (signal) {
     if (signal.aborted) abortHandler();
@@ -106,7 +149,7 @@ async function runBinary({
   child.stdout.on("data", (chunk) => {
     stdoutBytes += Buffer.byteLength(chunk, "utf8");
     if (stdoutBytes > maxStdoutBytes) {
-      killChild("SIGTERM");
+      terminate();
       return;
     }
     stdoutBuffer += chunk;
@@ -137,6 +180,7 @@ async function runBinary({
     child.once("close", (code) => resolve(code));
   }).finally(() => {
     clearTimeout(timeout);
+    if (killEscalation) clearTimeout(killEscalation);
     if (signal) signal.removeEventListener("abort", abortHandler);
     fs.rmSync(toolHome, { recursive: true, force: true });
   });
@@ -146,7 +190,6 @@ async function runBinary({
 
   const durationMs = Date.now() - startedAt;
   if (signal?.aborted) {
-    setTimeout(() => killChild("SIGKILL"), 2000).unref?.();
     throw createRunnerError(
       "Discovery process was aborted",
       "DOMAIN_CHECKER_ABORTED",
@@ -158,7 +201,6 @@ async function runBinary({
     );
   }
   if (timedOut) {
-    setTimeout(() => killChild("SIGKILL"), 2000).unref?.();
     throw createRunnerError(
       "Discovery process timed out",
       "DOMAIN_CHECKER_TOOL_TIMEOUT",
