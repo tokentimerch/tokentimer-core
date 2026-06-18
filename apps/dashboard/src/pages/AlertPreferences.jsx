@@ -12,7 +12,6 @@ import {
   Button,
   Alert,
   AlertIcon,
-  AlertTitle,
   AlertDescription,
   HStack,
   Flex,
@@ -47,7 +46,7 @@ import {
   SimpleGrid,
 } from '@chakra-ui/react';
 import apiClient, { alertAPI, workspaceAPI } from '../utils/apiClient';
-import { showSuccess, showWarning } from '../utils/toast.js';
+import { showSuccess, showWarning, showError } from '../utils/toast.js';
 import DashboardPageLayout from '../components/DashboardPageLayout';
 import {
   DashboardActionButton,
@@ -340,8 +339,6 @@ export default function AlertPreferences({
   const { workspaceId } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
 
   const [whatsappAvailable, setWhatsappAvailable] = useState(false);
   const [thresholdsCsv, setThresholdsCsv] = useState('30,14,7,1,0');
@@ -695,10 +692,7 @@ export default function AlertPreferences({
       } catch (e) {
         if (!mounted) return;
         if (e?.response?.status !== 403) {
-          setError('Failed to load alert preferences');
-        } else {
-          // Viewer or insufficient role: show info panel only, suppress error banner
-          setError('');
+          showError('Failed to load alert preferences');
         }
       } finally {
         if (mounted) setLoading(false);
@@ -773,42 +767,24 @@ export default function AlertPreferences({
 
   async function handleSave() {
     // Clear previous error/success states at the start
-    setError('');
-    setSuccess('');
     const list = validate();
     if (!list) return;
     const wsId = workspaceId;
     if (!wsId) {
-      setError('Please select a workspace first');
-      setSuccess('');
+      showError('Please select a workspace first');
       return;
     }
     try {
       setSaving(true);
-      setError('');
-      setSuccess('');
-      // Persist thresholds only - this is the ONLY operation that uses handleSave
       await workspaceAPI.updateAlertSettings(wsId, { alert_thresholds: list });
-      // If we get here, the save was successful
-      // Explicitly clear error and set success for Default Workspace Thresholds save
-      setError('');
-      setSuccess('Preferences updated successfully');
-      try {
-        showSuccess('Alert thresholds saved');
-      } catch (_) {
-        // Ignore toast errors - don't affect main error/success state
-      }
+      showSuccess('Alert thresholds saved');
       try {
         trackEvent('alert_pref_updated', { field: 'thresholds' });
-      } catch (_) {
-        // Ignore analytics errors - don't affect main error/success state
-      }
+      } catch (_) {}
     } catch (e) {
-      // Only set error if this specific save operation failed
       const errorMessage =
         e?.response?.data?.error || e?.message || 'Failed to save preferences';
-      setError(errorMessage);
-      setSuccess('');
+      showError(errorMessage);
       logger.error('Failed to save thresholds:', e);
     } finally {
       setSaving(false);
@@ -823,7 +799,7 @@ export default function AlertPreferences({
       const toPersist = webhookUrls.map(webhookPayloadForSave).filter(Boolean);
       const wsId = workspaceId;
       if (!wsId) {
-        setError('Please select a workspace first');
+        showError('Please select a workspace first');
         return;
       }
       const payload = {
@@ -837,7 +813,6 @@ export default function AlertPreferences({
             : webhook
         )
       );
-      setSuccess('Webhooks saved');
       showSuccess('Webhooks saved');
       // Preserve current group editor state when saving webhooks list
       try {
@@ -853,9 +828,9 @@ export default function AlertPreferences({
       } catch (_) {}
     } catch (e) {
       if (e?.response?.status === 403) {
-        return; // suppress banner for viewers
+        return;
       }
-      setError(e?.response?.data?.error || 'Failed to save webhooks');
+      showError(e?.response?.data?.error || 'Failed to save webhooks');
     } finally {
       setSavingToggles(false);
     }
@@ -1056,7 +1031,6 @@ export default function AlertPreferences({
       }
     } catch (_) {}
     setGroupSaveAttempted(false);
-    setError('');
     // Persist via settings
     try {
       if (!workspaceId) return;
@@ -1064,14 +1038,9 @@ export default function AlertPreferences({
         contact_groups: next,
         default_contact_group_id: defaultContactGroupId || next[0]?.id || null,
       });
-      setSuccess(
-        wasCreate
-          ? 'Contact group was successfully created'
-          : 'Contact group was successfully saved'
-      );
       showSuccess(wasCreate ? 'Contact group created' : 'Contact group saved');
     } catch (e) {
-      setError('Failed to save contact groups');
+      showError('Failed to save contact groups');
     }
   }
 
@@ -1128,7 +1097,7 @@ export default function AlertPreferences({
       setSavingToggles(true);
       const wsId = workspaceId;
       if (!wsId) {
-        setError('Please select a workspace first');
+        showError('Please select a workspace first');
         return;
       }
       const savedPayload = listToSave.map(savedWebhookPayload).filter(Boolean);
@@ -1136,16 +1105,15 @@ export default function AlertPreferences({
         webhook_urls: savedPayload,
       };
       await workspaceAPI.updateAlertSettings(wsId, payload);
-      setSuccess('Webhooks updated');
       showSuccess('Webhooks updated');
       try {
         trackEvent('alert_pref_updated', { field: 'webhooks_list' });
       } catch (_) {}
     } catch (e) {
       if (e?.response?.status === 403) {
-        return; // suppress banner for viewers
+        return;
       }
-      setError(e?.response?.data?.error || 'Failed to update webhooks');
+      showError(e?.response?.data?.error || 'Failed to update webhooks');
     } finally {
       setSavingToggles(false);
     }
@@ -1157,14 +1125,14 @@ export default function AlertPreferences({
     if (isViewer) return; // viewers cannot test webhooks
     const webhook = webhookUrls[index];
     if (!webhook?.url) {
-      setError('Please enter a webhook URL first');
+      showError('Please enter a webhook URL first');
       return;
     }
     // Client-side cooldown guard (5 seconds per webhook row)
     const until = testCooldowns[index] || 0;
     if (until > Date.now()) {
       const secs = Math.ceil((until - Date.now()) / 1000);
-      setError(`Please wait ${secs}s before sending another test.`);
+      showError(`Please wait ${secs}s before sending another test.`);
       return;
     }
     try {
@@ -1188,7 +1156,7 @@ export default function AlertPreferences({
         )
       );
     } catch (e) {
-      setError(e.message || 'Failed to test webhook');
+      showError(e.message || 'Failed to test webhook');
       // Ensure not verified on failure
       setWebhookUrls(prev =>
         prev.map((w, i) =>
@@ -1309,27 +1277,22 @@ export default function AlertPreferences({
     setWebhookUrls(updated);
   }
 
-  async function savePartialSettings(partial, showSuccess = true) {
+  async function savePartialSettings(partial, notify = true) {
     try {
       setSavingToggles(true);
       if (!workspaceId) {
-        // Workspace not selected yet; skip persisting
         return;
       }
       const payload = {};
       if ('emailEnabled' in partial)
         payload.email_alerts_enabled = partial.emailEnabled;
-      // webhooks_enabled flag removed
       await workspaceAPI.updateAlertSettings(workspaceId, payload);
-      if (showSuccess) setSuccess('Preferences updated');
-      if (showSuccess) {
-        showSuccess('Preferences updated');
-      }
+      if (notify) showSuccess('Preferences updated');
     } catch (e) {
       if (e?.response?.status === 403) {
         showWarning('Forbidden: insufficient role');
       }
-      setError(e?.response?.data?.error || 'Failed to update preferences');
+      showError(e?.response?.data?.error || 'Failed to update preferences');
     } finally {
       setSavingToggles(false);
     }
@@ -1367,7 +1330,7 @@ export default function AlertPreferences({
       setEditingContactId(null);
       showSuccess('Contact updated');
     } catch (e) {
-      setError(e?.response?.data?.error || 'Failed to update contact');
+      showError(e?.response?.data?.error || 'Failed to update contact');
     }
   }
 
@@ -1423,7 +1386,7 @@ export default function AlertPreferences({
 
       showSuccess('Contact deleted');
     } catch (_) {
-      setError('Failed to delete contact');
+      showError('Failed to delete contact');
     }
   }
 
@@ -1433,7 +1396,7 @@ export default function AlertPreferences({
       const until = waContactCooldowns[contact.id] || 0;
       if (until > now) {
         const secs = Math.ceil((until - now) / 1000);
-        setError(`Please wait ${secs}s before sending another test.`);
+        showError(`Please wait ${secs}s before sending another test.`);
         return;
       }
       setTestingContact(contact.id);
@@ -1462,7 +1425,7 @@ export default function AlertPreferences({
       } else if (code === 'INVALID_RECIPIENT') {
         msg = 'Invalid recipient. Verify the phone number and try again.';
       }
-      setError(msg);
+      showError(msg);
     } finally {
       setTestingContact(null);
     }
@@ -1754,20 +1717,6 @@ export default function AlertPreferences({
             </Alert>
           )}
 
-          {error && (
-            <Alert status='error'>
-              <AlertIcon />
-              <AlertTitle mr={2}>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          {success && (
-            <Alert status='success'>
-              <AlertIcon />
-              <AlertTitle mr={2}>Saved</AlertTitle>
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          )}
 
           <DashboardPanel data-tour='preferences-thresholds'>
               <PreferencesPanelHeader
@@ -2043,7 +1992,7 @@ export default function AlertPreferences({
                       });
                       showSuccess('Delivery window saved');
                     } catch (e) {
-                      setError(
+                      showError(
                         e?.response?.data?.error ||
                           'Failed to save delivery window'
                       );
@@ -2345,7 +2294,7 @@ export default function AlertPreferences({
                                           setEditingContactId(null);
                                           showSuccess('Contact updated');
                                         } catch (e) {
-                                          setError(
+                                          showError(
                                             e?.response?.data?.error ||
                                               'Failed to update contact'
                                           );
@@ -2530,7 +2479,7 @@ export default function AlertPreferences({
                                           setEditingContactId(null);
                                           showSuccess('Contact updated');
                                         } catch (e) {
-                                          setError(
+                                          showError(
                                             e?.response?.data?.error ||
                                               'Failed to update contact'
                                           );
@@ -2597,7 +2546,7 @@ export default function AlertPreferences({
                                             const secs = Math.ceil(
                                               (until - now) / 1000
                                             );
-                                            setError(
+                                            showError(
                                               `Please wait ${secs}s before sending another test.`
                                             );
                                             return;
@@ -2646,7 +2595,7 @@ export default function AlertPreferences({
                                             msg =
                                               'Invalid recipient. Verify the phone number and try again.';
                                           }
-                                          setError(msg);
+                                          showError(msg);
                                         } finally {
                                           setTestingContact(null);
                                         }
@@ -2882,7 +2831,7 @@ export default function AlertPreferences({
                           } else {
                             // Require a valid email if no phone provided
                             if (!isValidEmail(emailVal)) {
-                              setError(
+                              showError(
                                 'Provide a phone number or a valid email'
                               );
                               return;
@@ -2892,7 +2841,7 @@ export default function AlertPreferences({
                             !newContactFirstName.trim() ||
                             !newContactLastName.trim()
                           ) {
-                            setError('First and last name are required');
+                            showError('First and last name are required');
                             return;
                           }
                           try {
@@ -2920,7 +2869,7 @@ export default function AlertPreferences({
                             setContactPhoneError('');
                             showSuccess('Contact added');
                           } catch (e) {
-                            setError(
+                            showError(
                               e?.response?.data?.error ||
                                 'Failed to add contact'
                             );
@@ -3393,9 +3342,9 @@ export default function AlertPreferences({
                             contact_groups: contactGroups,
                           });
                           setDefaultContactGroupId(selectedGroupId);
-                          setSuccess('Default contact group updated');
+                          showSuccess('Default contact group updated');
                         } catch (_) {
-                          setError('Failed to update default contact group');
+                          showError('Failed to update default contact group');
                         }
                       }}
                     >

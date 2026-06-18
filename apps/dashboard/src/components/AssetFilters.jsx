@@ -40,6 +40,8 @@ const STATUS_CHIP_LAYOUT = {
   borderRadius: 'md',
   borderWidth: '1px',
   borderStyle: 'solid',
+  _focus: { boxShadow: 'none' },
+  _focusVisible: { boxShadow: 'outline' },
 };
 
 function getFilterChipProps({
@@ -89,6 +91,8 @@ function getFilterChipProps({
         bg: `${colorScheme}.600`,
         color: 'white',
       },
+      _focus: { boxShadow: 'none' },
+      _focusVisible: { boxShadow: 'outline' },
     };
   }
 
@@ -104,6 +108,8 @@ function getFilterChipProps({
         bg: `${colorScheme}.600`,
         borderColor: `${colorScheme}.700`,
       },
+      _focus: { boxShadow: 'none' },
+      _focusVisible: { boxShadow: 'outline' },
     };
   }
 
@@ -117,6 +123,8 @@ function getFilterChipProps({
       bg: isLight ? `${colorScheme}.100` : `${colorScheme}.800`,
       borderColor: `${colorScheme}.500`,
     },
+    _focus: { boxShadow: 'none' },
+    _focusVisible: { boxShadow: 'outline' },
   };
 }
 
@@ -275,7 +283,7 @@ export default function AssetFilters({
           {statusFilterOptions.map(option => {
             const active = statusFilter === option.value;
             const colorScheme = getStatusColorScheme(option.value);
-            const isStatusChip = option.value !== 'all';
+            const isStatusChip = true;
             const chipProps = getFilterChipProps({
               colorScheme,
               active,

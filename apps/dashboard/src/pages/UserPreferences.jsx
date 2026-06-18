@@ -148,12 +148,11 @@ export default function UserPreferences({
         onAccountClick={onAccountClick}
         isViewer={viewerOnly}
         contentProps={{
-          'data-tour': 'user-preferences-page',
           w: 'full',
           maxW: '100%',
         }}
       >
-        <VStack spacing={6} align='stretch' w='full'>
+        <VStack spacing={6} align='stretch' w='full' data-tour='user-preferences-page'>
           <DashboardPanel p={{ base: 4, md: 5 }}>
             <PreferencesPanelHeader
               title='Appearance'

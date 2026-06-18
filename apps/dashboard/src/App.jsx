@@ -4056,7 +4056,7 @@ function DashboardView({
           border='none'
           bg='transparent'
           color={dashboardModalTokens.text}
-          caretColor={dashboardModalTokens.text}
+          sx={{ caretColor: dashboardModalTokens.text }}
           p={0}
           h='24px'
           flex={1}
@@ -5575,8 +5575,7 @@ function DashboardView({
                 isOpen={isCreateTokenModalOpen}
                 onClose={() => setCreateTokenModalOpen(false)}
                 size='6xl'
-                scrollBehavior='inside'
-                isCentered
+                motionPreset='none'
               >
                 <ModalOverlay {...dashboardModalOverlayProps} />
                 <DashboardModalFrame maxW='1100px'>

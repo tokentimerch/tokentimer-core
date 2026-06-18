@@ -75,12 +75,14 @@ function dashboardNavTourAttr(itemKey) {
   if (itemKey === 'tokens') return 'tokens-nav';
   if (itemKey === 'control-center') return 'usage-nav';
   if (itemKey === 'docs') return 'docs-nav';
+  if (itemKey === 'alert-settings') return 'workspace-alert-settings-nav';
   return undefined;
 }
 
 function mobileNavTourAttr(itemKey) {
   if (itemKey === 'tokens') return 'mobile-tokens-nav';
   if (itemKey === 'docs') return 'mobile-docs-nav';
+  if (itemKey === 'alert-settings') return 'mobile-alert-settings-nav';
   return dashboardNavTourAttr(itemKey);
 }
 
@@ -741,6 +743,8 @@ export default function DashboardShell({
           as='header'
           data-dashboard-shell-header='true'
           display={{ base: 'none', lg: 'flex' }}
+          position='relative'
+          zIndex={1}
           align='center'
           justify='space-between'
           gap={4}
@@ -849,7 +853,7 @@ export default function DashboardShell({
                   as={IconButton}
                   aria-label='Notifications'
                   icon={<FiBell />}
-                  size='sm'
+                  size='md'
                   variant='ghost'
                   color={iconButtonColor}
                   borderRadius='md'
@@ -901,8 +905,8 @@ export default function DashboardShell({
             </Menu>
             <IconButton
               aria-label={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`}
-              icon={isDarkMode ? <Sun size={17} /> : <Moon size={17} />}
-              size='sm'
+              icon={isDarkMode ? <Sun size={19} /> : <Moon size={19} />}
+              size='md'
               variant='ghost'
               color={iconButtonColor}
               borderRadius='md'

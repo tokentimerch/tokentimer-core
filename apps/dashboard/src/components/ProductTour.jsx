@@ -2371,7 +2371,8 @@ export default function ProductTour({
             setTimeout(() => {
               setIsRunning(true);
               setStepIndex(nextIndex);
-            }, 10);
+              window.dispatchEvent(new Event('resize'));
+            }, 80);
 
             // Track the event
             trackEvent('product_tour_step', {
@@ -2931,10 +2932,48 @@ export default function ProductTour({
           return;
         }
 
+        // Special case: after preferences-contact-groups-digest, navigate back to dashboard for usage-nav (desktop)
+        if (
+          tourStepMatches(step, '[data-tour="preferences-contact-groups-digest"]') &&
+          tourStepMatches(nextStep, '[data-tour="usage-nav"]')
+        ) {
+          setIsRunning(false);
+
+          setTimeout(async () => {
+            if (!isDashboardPath()) {
+              navigate('/dashboard', { replace: true });
+              await wait(400);
+            }
+
+            const found = await waitForElement('[data-tour="usage-nav"]', {
+              timeout: 8000,
+              interval: 150,
+            });
+
+            if (found) {
+              await wait(300);
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+            } else {
+              await wait(500);
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+            }
+          }, 100);
+
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'next',
+          });
+          return;
+        }
+
         // Special case: after preferences-contact-groups-digest (last contact groups step), navigate to control center (on mobile, usage-nav is skipped)
         if (
-          step?.target === '[data-tour="preferences-contact-groups-digest"]' &&
-          nextStep?.target === '[data-tour="control-center-page"]'
+          tourStepMatches(step, '[data-tour="preferences-contact-groups-digest"]') &&
+          tourStepMatches(nextStep, '[data-tour="control-center-page"]')
         ) {
           setIsRunning(false); // pause tour during navigation
 
@@ -2973,8 +3012,8 @@ export default function ProductTour({
 
         // Special case: after the usage-nav step, navigate to control center
         if (
-          step?.target === '[data-tour="usage-nav"]' &&
-          nextStep?.target === '[data-tour="control-center-page"]'
+          tourStepMatches(step, '[data-tour="usage-nav"]') &&
+          tourStepMatches(nextStep, '[data-tour="control-center-page"]')
         ) {
           setIsRunning(false); // pause tour during navigation
 
