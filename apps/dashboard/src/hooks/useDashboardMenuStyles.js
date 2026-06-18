@@ -1,8 +1,10 @@
 import { useColorModeValue } from '@chakra-ui/react';
+import { useDashboardTheme } from './useDashboardTheme';
 
 export function useDashboardMenuStyles() {
+  const { border } = useDashboardTheme();
   const menuBg = useColorModeValue('white', 'rgba(15, 23, 42, 0.98)');
-  const menuBorder = useColorModeValue('gray.200', 'rgba(148, 163, 184, 0.2)');
+  const menuBorder = border;
   const chromeHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
   const chromeHoverColor = useColorModeValue('gray.900', 'white');
 

@@ -50,7 +50,7 @@ export function useDashboardShellProps({
   const location = useLocation();
   const { workspaceId, selectWorkspace } = useWorkspace();
   const theme = useDashboardTheme();
-  const { pageBg, surface, text, muted, border, inputBg } = theme;
+  const { pageBg, surface, text, muted, border, borderStrong, inputBg } = theme;
 
   const { sessionName, sessionEmail, sessionInitials } = useMemo(
     () => buildSessionIdentity(session),
@@ -266,6 +266,7 @@ export function useDashboardShellProps({
         text,
         muted,
         border,
+        borderStrong,
         inputBg,
       },
       currentPath: location.pathname,
@@ -304,6 +305,7 @@ export function useDashboardShellProps({
       text,
       muted,
       border,
+      borderStrong,
       inputBg,
       location.pathname,
       sessionName,

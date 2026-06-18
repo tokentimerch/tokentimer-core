@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -11,10 +12,11 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
+import { SETTINGS_PANEL_PADDING } from '../styles/dashboardLayout';
 
 export function DashboardPanel({
   children,
-  p = { base: 4, md: 5 },
+  p = SETTINGS_PANEL_PADDING,
   borderRadius = 'md',
   ...props
 }) {
@@ -77,9 +79,13 @@ export function DashboardPanelHeader({
   );
 }
 
-export function DashboardActionButton({ children, ...props }) {
+export const DashboardActionButton = forwardRef(function DashboardActionButton(
+  { children, ...props },
+  ref
+) {
   return (
     <Button
+      ref={ref}
       size='sm'
       h='36px'
       px={4}
@@ -91,7 +97,7 @@ export function DashboardActionButton({ children, ...props }) {
       {children}
     </Button>
   );
-}
+});
 
 export function DashboardState({
   type = 'empty',

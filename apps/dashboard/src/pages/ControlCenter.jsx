@@ -954,16 +954,18 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                         <Tooltip
                           label={alertData.requeueDisabledReason}
                           hasArrow
-                          placement='top-start'
+                          placement='top'
                         >
-                          <DashboardActionButton
-                            colorScheme='blue'
-                            variant='solid'
-                            onClick={() => alertData.requeueAlerts()}
-                            isDisabled={!alertData.canRequeue}
-                          >
-                            Requeue blocked/failed
-                          </DashboardActionButton>
+                          <Box as='span' display='inline-block'>
+                            <DashboardActionButton
+                              colorScheme='blue'
+                              variant='solid'
+                              onClick={() => alertData.requeueAlerts()}
+                              isDisabled={!alertData.canRequeue}
+                            >
+                              Requeue blocked/failed
+                            </DashboardActionButton>
+                          </Box>
                         </Tooltip>
                         <Text fontSize='xs' color={muted}>
                           Admins can requeue failed alerts for the selected

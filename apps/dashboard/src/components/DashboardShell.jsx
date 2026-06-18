@@ -43,6 +43,7 @@ import {
   User,
 } from 'lucide-react';
 import { useDashboardMenuStyles } from '../hooks/useDashboardMenuStyles.js';
+import { DASHBOARD_PAGE_GUTTER_X } from '../styles/dashboardLayout';
 
 const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
 const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
@@ -83,6 +84,7 @@ function mobileNavTourAttr(itemKey) {
   if (itemKey === 'tokens') return 'mobile-tokens-nav';
   if (itemKey === 'docs') return 'mobile-docs-nav';
   if (itemKey === 'alert-settings') return 'mobile-alert-settings-nav';
+  if (itemKey === 'control-center') return 'usage-nav';
   return dashboardNavTourAttr(itemKey);
 }
 
@@ -174,6 +176,8 @@ export default function DashboardShell({
   const pageBg = dashboardColors?.pageBg ?? 'transparent';
   const mutedTextColor = dashboardColors?.muted ?? 'rgba(148, 163, 184, 0.92)';
   const borderColor = dashboardColors?.border ?? 'rgba(148, 163, 184, 0.13)';
+  const borderStrongColor =
+    dashboardColors?.borderStrong ?? borderColor;
 
   const {
     menuBg,
@@ -201,18 +205,16 @@ export default function DashboardShell({
     'rgba(37, 99, 235, 0.32)'
   );
   const sidebarToggleColor = useColorModeValue('gray.700', 'white');
-  const sidebarToggleBorder = useColorModeValue(
-    'gray.200',
-    'rgba(148, 163, 184, 0.12)'
-  );
+  const sidebarToggleBorder = isDarkMode
+    ? 'rgba(148, 163, 184, 0.12)'
+    : borderColor;
   const sidebarToggleHoverBg = useColorModeValue(
     'blue.50',
     'rgba(37, 99, 235, 0.18)'
   );
-  const dividerColor = useColorModeValue(
-    'gray.200',
-    'rgba(148, 163, 184, 0.14)'
-  );
+  const dividerColor = isDarkMode
+    ? 'rgba(148, 163, 184, 0.14)'
+    : borderColor;
   const workspaceButtonBg = isDarkMode
     ? 'rgba(8, 13, 22, 0.92)'
     : (dashboardColors?.inputBg ?? 'white');
@@ -224,7 +226,7 @@ export default function DashboardShell({
     : borderColor;
   const workspaceButtonHoverBorder = isDarkMode
     ? 'rgba(148, 163, 184, 0.28)'
-    : '#cbd5e1';
+    : borderStrongColor;
   const workspaceNameColor = isDarkMode ? 'white' : textColor;
   const workspaceLabelColor = mutedTextColor;
   const iconButtonColor = useColorModeValue(
@@ -749,7 +751,7 @@ export default function DashboardShell({
           justify='space-between'
           gap={4}
           minH='54px'
-          px={{ base: 4, lg: 6, '2xl': 8 }}
+          px={DASHBOARD_PAGE_GUTTER_X}
           py={2}
           bg={pageBg}
           borderBottom='1px solid'
@@ -852,7 +854,7 @@ export default function DashboardShell({
                 <MenuButton
                   as={IconButton}
                   aria-label='Notifications'
-                  icon={<FiBell />}
+                  icon={<FiBell size={20} />}
                   size='md'
                   variant='ghost'
                   color={iconButtonColor}
@@ -995,7 +997,7 @@ export default function DashboardShell({
           justify='space-between'
           gap={3}
           minH='54px'
-          px={4}
+          px={DASHBOARD_PAGE_GUTTER_X}
           py={2}
           bg={pageBg}
           borderBottom='1px solid'

@@ -65,6 +65,8 @@ import {
 } from '../utils/domains.jsx';
 import {
   DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
   useDashboardModalProps,
 } from './DashboardModalFrame.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
@@ -870,21 +872,12 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame maxW='1100px'>
         <ModalHeader {...headerProps}>
-          <Text
-            fontSize={{ base: 'md', md: 'lg' }}
-            fontWeight='bold'
-            color={modalTokens.text}
-          >
+          <DashboardModalTitle color={modalTokens.text}>
             Endpoint & SSL monitoring
-          </Text>
-          <Text
-            fontSize='sm'
-            color={modalTokens.muted}
-            mt={1.5}
-            fontWeight='medium'
-          >
+          </DashboardModalTitle>
+          <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
             Monitor SSL certificates and endpoint health for your URLs.
-          </Text>
+          </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps} data-endpoint-ssl-modal-body='true'>
@@ -1190,18 +1183,22 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                 <Td whiteSpace='nowrap'>
                                   {d.last_health_status ? (
                                     <Tooltip
+                                      hasArrow
+                                      placement='top'
                                       label={
                                         d.last_health_error ||
                                         `HTTP ${d.last_health_status_code}`
                                       }
                                     >
-                                      <Badge
-                                        colorScheme={domainStatusColor(
-                                          d.last_health_status
-                                        )}
-                                      >
-                                        {d.last_health_status}
-                                      </Badge>
+                                      <Box as='span' display='inline-block'>
+                                        <Badge
+                                          colorScheme={domainStatusColor(
+                                            d.last_health_status
+                                          )}
+                                        >
+                                          {d.last_health_status}
+                                        </Badge>
+                                      </Box>
                                     </Tooltip>
                                   ) : (
                                     <Badge colorScheme='gray'>Pending</Badge>
@@ -1226,14 +1223,18 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                                 </Td>
                                 <Td>
                                   <Tooltip
+                                    hasArrow
+                                    placement='top'
                                     label={`Alert sent after ${d.alert_after_failures || 2} consecutive failures`}
                                   >
-                                    <Badge
-                                      variant='outline'
-                                      colorScheme='orange'
-                                    >
-                                      {d.alert_after_failures || 2}x
-                                    </Badge>
+                                    <Box as='span' display='inline-block'>
+                                      <Badge
+                                        variant='outline'
+                                        colorScheme='orange'
+                                      >
+                                        {d.alert_after_failures || 2}x
+                                      </Badge>
+                                    </Box>
                                   </Tooltip>
                                 </Td>
                                 <Td textAlign='right'>

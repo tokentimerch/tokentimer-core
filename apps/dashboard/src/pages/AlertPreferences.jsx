@@ -2,9 +2,14 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   Box,
-  Heading,
   Text,
   VStack,
+  Modal,
+  ModalOverlay,
+  ModalHeader,
+  ModalFooter,
+  ModalBody,
+  ModalCloseButton,
   FormControl,
   FormLabel,
   FormErrorMessage,
@@ -18,6 +23,7 @@ import {
   Stack,
   useColorModeValue,
   useBreakpointValue,
+  useDisclosure,
   Link,
   Select,
   Textarea,
@@ -33,6 +39,7 @@ import {
   AlertDialogOverlay,
   Checkbox,
   CheckboxGroup,
+  Collapse,
   Table,
   Thead,
   Tbody,
@@ -43,6 +50,8 @@ import {
   Tooltip,
   Image,
   Icon,
+  List,
+  ListItem,
   SimpleGrid,
 } from '@chakra-ui/react';
 import apiClient, { alertAPI, workspaceAPI } from '../utils/apiClient';
@@ -53,13 +62,38 @@ import {
   DashboardPanel,
   DashboardPanelHeader,
 } from '../components/DashboardPrimitives';
-import { useDashboardModalProps } from '../components/DashboardModalFrame.jsx';
+import {
+  SettingsNestedSurface,
+  SettingsPageShell,
+  SettingsSection,
+  useSettingsNestedTheme,
+} from '../components/SettingsPageShell.jsx';
+import {
+  SETTINGS_NESTED_RADIUS,
+  SETTINGS_PANEL_PADDING,
+  SETTINGS_SECTION_GAP,
+} from '../styles/dashboardLayout';
+import {
+  DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
+  useDashboardModalProps,
+} from '../components/DashboardModalFrame.jsx';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { trackEvent } from '../utils/analytics.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { logger } from '../utils/logger';
-import { FiCopy, FiGlobe, FiX } from 'react-icons/fi';
+import {
+  FiBookOpen,
+  FiChevronDown,
+  FiChevronUp,
+  FiCopy,
+  FiExternalLink,
+  FiGlobe,
+  FiX,
+} from 'react-icons/fi';
+import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
 import { SiDiscord, SiPagerduty } from 'react-icons/si';
 import {
   TOUR_MOCK_WEBHOOKS,
@@ -89,11 +123,43 @@ function isValidEmail(email) {
   return emailRegex.test(trimmed);
 }
 
+function normalizeContactPhoneE164(raw) {
+  const phoneNorm = String(raw || '').trim();
+  if (!phoneNorm) return '';
+  return phoneNorm.startsWith('+') ? phoneNorm : `+${phoneNorm}`;
+}
+
+function isValidContactPhoneE164(raw) {
+  const phoneE164 = normalizeContactPhoneE164(raw);
+  return phoneE164 ? /^\+[1-9]\d{6,14}$/.test(phoneE164) : false;
+}
+
+const ADD_CONTACT_WHATSAPP_TEST_KEY = '__add_contact_draft__';
+const EDIT_CONTACT_WHATSAPP_TEST_KEY = '__edit_contact_draft__';
+
 const CONTACT_DETAIL_ORDER = ['department', 'title', 'email', 'note'];
 
 function formatContactDetailLabel(key) {
   if (!key) return key;
   return key.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function iconForContactDetail(key) {
+  switch (key) {
+    case 'department':
+      return '🏢';
+    case 'title':
+    case 'role':
+      return '👤';
+    case 'note':
+      return '📝';
+    case 'email':
+      return '✉️';
+    case 'phone':
+      return '📱';
+    default:
+      return '•';
+  }
 }
 
 function getContactDisplayName(contact) {
@@ -119,6 +185,7 @@ function getContactDetailDisplay(contact, whatsappAvailable) {
     seenDetailKeys.add(key);
     detailDisplay.push({
       key,
+      icon: iconForContactDetail(key),
       label: formatContactDetailLabel(key),
       value: trimmed,
     });
@@ -142,12 +209,155 @@ function getContactDetailDisplay(contact, whatsappAvailable) {
   return detailDisplay;
 }
 
-function PreferencesPanelHeader({ title, description, muted }) {
-  const titleColor = useColorModeValue('black', 'inherit');
+function getContactDetailFields(contact) {
+  const rawDetails =
+    contact?.details && typeof contact.details === 'object'
+      ? contact.details
+      : {};
+
+  return {
+    department: String(rawDetails.department ?? '').trim(),
+    title: String(rawDetails.title ?? '').trim(),
+    email: String(rawDetails.email ?? '').trim(),
+    note: String(rawDetails.note ?? '').trim(),
+  };
+}
+
+const CONTACT_TABLE_COLUMN_COUNT = 7;
+
+function getContactSortValue(contact, key) {
+  if (key === 'name') {
+    return getContactDisplayName(contact);
+  }
+  if (key === 'phone') {
+    return String(contact?.phone_e164 ?? '').trim();
+  }
+
+  const fields = getContactDetailFields(contact);
+  return fields[key] || '';
+}
+
+function ContactSortableTh({
+  children,
+  sortKey,
+  sortConfig,
+  onSort,
+  hoverBg,
+  ...props
+}) {
+  const isActive = sortConfig.key === sortKey;
+  const direction = isActive ? sortConfig.direction : null;
 
   return (
-    <Box color={titleColor}>
-      <DashboardPanelHeader title={title}>
+    <Th
+      {...props}
+      cursor='pointer'
+      userSelect='none'
+      onClick={() => onSort(sortKey)}
+      _hover={{ bg: hoverBg }}
+      aria-sort={
+        isActive ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'
+      }
+    >
+      <HStack spacing={1} display='inline-flex'>
+        <Text as='span'>{children}</Text>
+        {isActive ? (
+          <Text as='span' fontSize='xs' color='blue.400' aria-hidden>
+            {direction === 'asc' ? 'A-Z' : 'Z-A'}
+          </Text>
+        ) : null}
+      </HStack>
+    </Th>
+  );
+}
+
+function ContactTableField({ value, muted, text }) {
+  const trimmed = String(value ?? '').trim();
+
+  return (
+    <Text
+      fontSize='sm'
+      wordBreak='break-word'
+      overflowWrap='anywhere'
+      color={trimmed ? text : muted}
+    >
+      {trimmed || '-'}
+    </Text>
+  );
+}
+
+function ContactDetailsList({
+  details,
+  labelColor,
+  valueColor,
+  emptyText = 'No details',
+  compact = false,
+}) {
+  const accentBorder = useColorModeValue('blackAlpha.100', 'whiteAlpha.200');
+
+  if (!details?.length) {
+    return (
+      <Text color={labelColor} fontSize='sm'>
+        {emptyText}
+      </Text>
+    );
+  }
+
+  return (
+    <VStack align='stretch' spacing={compact ? 1.5 : 2}>
+      {details.map(detail => (
+        <Flex
+          key={detail.key}
+          align='flex-start'
+          gap={2}
+          minW={0}
+          pl={2}
+          borderLeft='2px solid'
+          borderColor={accentBorder}
+        >
+          <Text
+            aria-hidden
+            fontSize='sm'
+            lineHeight='1.45'
+            flexShrink={0}
+            mt='1px'
+          >
+            {detail.icon}
+          </Text>
+          <Box minW={0} flex='1'>
+            <Text
+              fontSize='xs'
+              fontWeight='semibold'
+              color={labelColor}
+              textTransform='uppercase'
+              letterSpacing='0.04em'
+              lineHeight='short'
+              mb={0.5}
+            >
+              {detail.label}
+            </Text>
+            <Text
+              fontSize='sm'
+              color={valueColor}
+              lineHeight='1.45'
+              wordBreak='break-word'
+              overflowWrap='anywhere'
+            >
+              {detail.value}
+            </Text>
+          </Box>
+        </Flex>
+      ))}
+    </VStack>
+  );
+}
+
+function PreferencesPanelHeader({ title, description, muted, action }) {
+  const { sectionTitleColor } = useDashboardTheme();
+
+  return (
+    <Box color={sectionTitleColor}>
+      <DashboardPanelHeader title={title} action={action}>
         <Text mt={1} color={muted} fontSize='sm' lineHeight='1.45'>
           {description}
         </Text>
@@ -166,12 +376,7 @@ function PreferenceConfirmFieldCard({ label, children, tokens }) {
       p={{ base: 3.5, md: 4 }}
       minH='88px'
     >
-      <Text
-        fontSize='sm'
-        fontWeight='semibold'
-        color={tokens.muted}
-        mb={2}
-      >
+      <Text fontSize='sm' fontWeight='semibold' color={tokens.muted} mb={2}>
         {label}
       </Text>
       {children}
@@ -181,11 +386,7 @@ function PreferenceConfirmFieldCard({ label, children, tokens }) {
 
 function PreferenceConfirmValue({ children, tokens, ...rest }) {
   return (
-    <Text
-      fontSize={{ base: 'sm', md: 'md' }}
-      color={tokens.text}
-      {...rest}
-    >
+    <Text fontSize={{ base: 'sm', md: 'md' }} color={tokens.text} {...rest}>
       {children || '-'}
     </Text>
   );
@@ -201,6 +402,242 @@ function formatWebhookKindLabel(kind) {
     teams: 'Microsoft Teams',
   };
   return labels[normalized] || normalized;
+}
+
+const WEBHOOK_SETUP_GUIDES = [
+  {
+    kind: 'slack',
+    label: 'Slack',
+    description: 'Incoming webhook URL setup',
+    href: 'https://api.slack.com/messaging/webhooks',
+  },
+  {
+    kind: 'discord',
+    label: 'Discord',
+    description: 'Channel webhook documentation',
+    href: 'https://discord.com/developers/docs/resources/webhook',
+  },
+  {
+    kind: 'teams',
+    label: 'Microsoft Teams',
+    description: 'Incoming webhook connector guide',
+    href: 'https://docs.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook',
+  },
+  {
+    kind: 'pagerduty',
+    label: 'PagerDuty',
+    description: 'Events API v2 overview',
+    href: 'https://developer.pagerduty.com/docs/events-api-v2-overview',
+  },
+];
+
+function WebhookSetupGuidesPanel({ labelColor, muted, renderVendorLogo }) {
+  const { panelBorder, nestedFieldBg } = useSettingsNestedTheme();
+  const { text, muted: themeMuted, dashboard } = useDashboardTheme();
+  const [isOpen, setIsOpen] = useState(false);
+  const defaultTitleColor = useColorModeValue('black', text);
+  const defaultBodyColor = useColorModeValue(
+    dashboard.text.secondary,
+    themeMuted
+  );
+  const titleColor = labelColor ?? defaultTitleColor;
+  const bodyColor = muted ?? defaultBodyColor;
+  const guideCardBg = nestedFieldBg;
+  const guideCardHoverBg = dashboard.bg.panelHover;
+  const logoWrapBg = nestedFieldBg;
+
+  return (
+    <Box
+      mt={5}
+      mb={4}
+      bg={dashboard.purple.surface}
+      border='1px solid'
+      borderColor={dashboard.purple.border}
+      borderRadius={SETTINGS_NESTED_RADIUS}
+      overflow='hidden'
+    >
+      <Flex
+        as='button'
+        type='button'
+        w='full'
+        textAlign='left'
+        px={SETTINGS_PANEL_PADDING}
+        py={{ base: 5, md: 6 }}
+        align='flex-start'
+        gap={4}
+        onClick={() => setIsOpen(prev => !prev)}
+        _hover={{ bg: dashboard.purple.surfaceHover }}
+        transition='background 0.15s ease'
+        aria-expanded={isOpen}
+      >
+        <Icon
+          as={FiBookOpen}
+          boxSize={5}
+          color={dashboard.purple.icon}
+          flexShrink={0}
+          mt={0.5}
+          aria-hidden
+        />
+        <Box flex='1' minW={0}>
+          <Text fontSize='sm' fontWeight='bold' color={titleColor}>
+            Setup guides
+          </Text>
+          {!isOpen ? (
+            <List spacing={1} mt={2} styleType='disc' pl={4} color={bodyColor}>
+              <ListItem fontSize='xs' fontStyle='italic' lineHeight='1.45'>
+                Slack, Discord, Teams, and PagerDuty documentation
+              </ListItem>
+            </List>
+          ) : null}
+        </Box>
+        <Icon
+          as={isOpen ? FiChevronUp : FiChevronDown}
+          boxSize={5}
+          color={bodyColor}
+          flexShrink={0}
+          mt={0.5}
+          aria-hidden
+        />
+      </Flex>
+      <Collapse in={isOpen} animateOpacity>
+        <Box
+          px={SETTINGS_PANEL_PADDING}
+          pb={SETTINGS_PANEL_PADDING}
+          pt={SETTINGS_PANEL_PADDING}
+        >
+          <List spacing={1} mb={4} styleType='disc' pl={4} color={bodyColor}>
+            <ListItem fontSize='sm' fontStyle='italic' lineHeight='1.5'>
+              Create a webhook URL in your vendor console, verify it below, then
+              assign named webhooks to contact groups.
+            </ListItem>
+          </List>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+            {WEBHOOK_SETUP_GUIDES.map(guide => (
+              <Link
+                key={guide.kind}
+                href={guide.href}
+                isExternal
+                _hover={{ textDecoration: 'none' }}
+              >
+                <Flex
+                  align='center'
+                  gap={3}
+                  p={3}
+                  minH='72px'
+                  bg={guideCardBg}
+                  border='1px solid'
+                  borderColor={panelBorder}
+                  borderRadius={SETTINGS_NESTED_RADIUS}
+                  _hover={{ bg: guideCardHoverBg }}
+                  transition='background 0.15s ease'
+                >
+                  <Flex
+                    align='center'
+                    justify='center'
+                    boxSize='40px'
+                    borderRadius='md'
+                    bg={logoWrapBg}
+                    flexShrink={0}
+                  >
+                    {renderVendorLogo(guide.kind)}
+                  </Flex>
+                  <Box flex='1' minW={0}>
+                    <Text
+                      fontSize='sm'
+                      fontWeight='semibold'
+                      color={titleColor}
+                    >
+                      {guide.label}
+                    </Text>
+                    <Text
+                      fontSize='xs'
+                      color={bodyColor}
+                      lineHeight='1.45'
+                      mt={0.5}
+                    >
+                      {guide.description}
+                    </Text>
+                  </Box>
+                  <Icon
+                    as={FiExternalLink}
+                    boxSize={4}
+                    color={bodyColor}
+                    flexShrink={0}
+                    aria-hidden
+                  />
+                </Flex>
+              </Link>
+            ))}
+          </SimpleGrid>
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
+function createEmptyWebhookDraft() {
+  return {
+    name: '',
+    url: '',
+    kind: 'generic',
+    severity: '',
+    template: '',
+    routingKey: '',
+    verified: false,
+    verifiedUrl: null,
+    _verifiedSnapshot: null,
+  };
+}
+
+function WebhookValueField({ label, value, monospace = false }) {
+  const trimmed = String(value ?? '').trim();
+  const display = trimmed || '-';
+  const bg = useColorModeValue('gray.100', 'gray.900');
+  const borderColor = useColorModeValue('gray.300', 'gray.700');
+  const textColor = useColorModeValue('gray.800', 'gray.100');
+  const labelColor = useColorModeValue('gray.600', 'gray.400');
+  const emptyColor = useColorModeValue('gray.500', 'gray.500');
+  const accentColor = useColorModeValue('blue.200', 'blue.500');
+
+  return (
+    <Box w='100%'>
+      <Text
+        fontSize='xs'
+        fontWeight='semibold'
+        color={labelColor}
+        textTransform='uppercase'
+        letterSpacing='0.04em'
+        mb={1}
+      >
+        {label}
+      </Text>
+      <Box
+        as={monospace ? 'pre' : 'div'}
+        p={{ base: 3, md: 4 }}
+        bg={bg}
+        borderRadius='md'
+        overflowX='hidden'
+        whiteSpace='pre-wrap'
+        border='1px solid'
+        borderColor={borderColor}
+        borderLeftWidth='4px'
+        borderLeftColor={accentColor}
+        fontFamily={monospace ? 'mono' : 'body'}
+        fontSize='sm'
+        lineHeight='1.5'
+        color={trimmed ? textColor : emptyColor}
+        w='100%'
+        maxW='100%'
+        sx={{
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {display}
+      </Box>
+    </Box>
+  );
 }
 
 function isWebhookReadyToPersist(webhook) {
@@ -252,22 +689,6 @@ function hasWebhookParameterChanges(webhook) {
   return !areWebhookParametersEqual(
     getWebhookParameterSnapshot(webhook),
     savedSnapshot
-  );
-}
-
-function isWebhookEditable(webhook) {
-  return !isSavedWebhook(webhook) || webhook?._editing === true;
-}
-
-function shouldShowWebhookSave(webhook) {
-  return !isSavedWebhook(webhook) || webhook?._editing === true;
-}
-
-function canSaveWebhook(webhook) {
-  return (
-    isWebhookReadyToPersist(webhook) &&
-    Boolean((webhook?.name || '').trim()) &&
-    hasWebhookParameterChanges(webhook)
   );
 }
 
@@ -349,6 +770,7 @@ export default function AlertPreferences({
   const [testingWebhook, setTestingWebhook] = useState(null);
   const [testCooldowns, setTestCooldowns] = useState({});
   const [waContactCooldowns, setWaContactCooldowns] = useState({}); // contactId -> until timestamp
+  const [, setWaCooldownTick] = useState(0);
   const [savingToggles, setSavingToggles] = useState(false);
   const [disableAllDialogOpen, setDisableAllDialogOpen] = useState(false);
   const [disableAllTarget, setDisableAllTarget] = useState('');
@@ -378,6 +800,10 @@ export default function AlertPreferences({
   const [groupWeeklyDigestWebhooks, setGroupWeeklyDigestWebhooks] =
     useState(false);
   const [contacts, setContacts] = useState([]);
+  const [contactSortConfig, setContactSortConfig] = useState({
+    key: 'name',
+    direction: 'asc',
+  });
   const [contactDeleteTarget, setContactDeleteTarget] = useState(null);
   const [newContactFirstName, setNewContactFirstName] = useState('');
   const [newContactLastName, setNewContactLastName] = useState('');
@@ -391,6 +817,8 @@ export default function AlertPreferences({
   const [editContactLastName, setEditContactLastName] = useState('');
   const [editContactPhone, setEditContactPhone] = useState('');
   const [editContactDetails, setEditContactDetails] = useState({});
+  const [editContactDetailsOpen, setEditContactDetailsOpen] = useState(false);
+  const [editContactPhoneError, setEditContactPhoneError] = useState('');
   const [dwStart, setDwStart] = useState('');
   const [dwEnd, setDwEnd] = useState('');
   const [dwTz, setDwTz] = useState('');
@@ -399,6 +827,143 @@ export default function AlertPreferences({
   const memberCap = Infinity;
   const cancelRef = useRef();
   const didMountRef = useRef(false);
+  const {
+    isOpen: isAddContactOpen,
+    onOpen: onAddContactOpen,
+    onClose: onAddContactClose,
+  } = useDisclosure();
+  const {
+    isOpen: isEditContactOpen,
+    onOpen: onEditContactOpen,
+    onClose: onEditContactClose,
+  } = useDisclosure();
+  const {
+    isOpen: isGroupEditorOpen,
+    onOpen: onGroupEditorOpen,
+    onClose: onGroupEditorClose,
+  } = useDisclosure();
+  const {
+    isOpen: isWebhookEditorOpen,
+    onOpen: onWebhookEditorOpen,
+    onClose: onWebhookEditorClose,
+  } = useDisclosure();
+  const [editingWebhookIndex, setEditingWebhookIndex] = useState(-1);
+  const [webhookDraft, setWebhookDraft] = useState(createEmptyWebhookDraft);
+  const [testingWebhookDraft, setTestingWebhookDraft] = useState(false);
+  const [webhookSaveAttempted, setWebhookSaveAttempted] = useState(false);
+
+  function resetNewContactForm() {
+    setNewContactFirstName('');
+    setNewContactLastName('');
+    setNewContactPhone('');
+    setNewContactDetails({});
+    setNewContactDetailsOpen(false);
+    setContactPhoneError('');
+  }
+
+  function handleCloseAddContact() {
+    resetNewContactForm();
+    onAddContactClose();
+  }
+
+  async function handleAddContactSubmit() {
+    setContactPhoneError('');
+    const phoneNorm = newContactPhone.trim();
+    const emailVal = String(newContactDetails.email || '').trim();
+    let phoneE164 = '';
+    if (phoneNorm) {
+      phoneE164 = normalizeContactPhoneE164(phoneNorm);
+      if (!isValidContactPhoneE164(phoneNorm)) {
+        setContactPhoneError('Invalid E.164 format (e.g., +14155550100)');
+        return;
+      }
+    } else if (!isValidEmail(emailVal)) {
+      showError('Provide a phone number or a valid email');
+      return;
+    }
+    if (!newContactFirstName.trim() || !newContactLastName.trim()) {
+      showError('First and last name are required');
+      return;
+    }
+    try {
+      await apiClient.post(`/api/v1/workspaces/${workspaceId}/contacts`, {
+        first_name: newContactFirstName.trim(),
+        last_name: newContactLastName.trim(),
+        phone_e164: phoneE164,
+        details: newContactDetails,
+      });
+      try {
+        const refreshed = await apiClient.get(
+          `/api/v1/workspaces/${workspaceId}/contacts`
+        );
+        setContacts(refreshed?.data?.items || []);
+      } catch (_) {}
+      resetNewContactForm();
+      onAddContactClose();
+      showSuccess('Contact added');
+    } catch (e) {
+      showError(e?.response?.data?.error || 'Failed to add contact');
+    }
+  }
+
+  const isNewContactInvalid =
+    !newContactFirstName.trim() ||
+    !newContactLastName.trim() ||
+    (!!newContactPhone.trim() && !!contactPhoneError) ||
+    (!newContactPhone.trim() &&
+      !isValidEmail(String(newContactDetails.email || '').trim()));
+
+  const newContactPhoneE164 = useMemo(
+    () => normalizeContactPhoneE164(newContactPhone),
+    [newContactPhone]
+  );
+  const isNewContactPhoneValid = isValidContactPhoneE164(newContactPhone);
+
+  function resetEditContactForm() {
+    setEditingContactId(null);
+    setEditContactFirstName('');
+    setEditContactLastName('');
+    setEditContactPhone('');
+    setEditContactDetails({});
+    setEditContactDetailsOpen(false);
+    setEditContactPhoneError('');
+  }
+
+  function handleCloseEditContact() {
+    resetEditContactForm();
+    onEditContactClose();
+  }
+
+  const isEditedContactInvalid =
+    !editContactFirstName.trim() ||
+    !editContactLastName.trim() ||
+    (!!editContactPhone.trim() && !!editContactPhoneError) ||
+    (!editContactPhone.trim() &&
+      !isValidEmail(String(editContactDetails.email || '').trim()));
+
+  const editContactPhoneE164 = useMemo(
+    () => normalizeContactPhoneE164(editContactPhone),
+    [editContactPhone]
+  );
+  const isEditContactPhoneValid = isValidContactPhoneE164(editContactPhone);
+
+  useEffect(() => {
+    const hasActiveCooldown = () =>
+      Object.values(waContactCooldowns).some(until => until > Date.now());
+
+    if (!hasActiveCooldown()) return;
+
+    const id = setInterval(() => {
+      if (!hasActiveCooldown()) {
+        clearInterval(id);
+        setWaCooldownTick(t => t + 1);
+        return;
+      }
+      setWaCooldownTick(t => t + 1);
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [waContactCooldowns]);
 
   const contactById = useMemo(() => {
     const map = new Map();
@@ -471,11 +1036,44 @@ export default function AlertPreferences({
   const [roleKnown, setRoleKnown] = useState(false);
   const [_workspaceRole, setWorkspaceRole] = useState('');
 
-  const theme = useDashboardTheme();
-  const { border, muted, dashboard, text } = theme;
+  const {
+    border,
+    muted,
+    dashboard,
+    text,
+    surface,
+    bodySecondary,
+  } = useDashboardTheme();
   const webhookDeleteIconColor = dashboard.state.danger;
-  const labelColor = useColorModeValue('black', text);
-  const readableMuted = useColorModeValue(dashboard.text.secondary, muted);
+  const sortedContacts = useMemo(() => {
+    const { key, direction } = contactSortConfig;
+
+    return [...contacts].sort((a, b) => {
+      const aVal = getContactSortValue(a, key).toLowerCase();
+      const bVal = getContactSortValue(b, key).toLowerCase();
+      let cmp = aVal.localeCompare(bVal, undefined, {
+        sensitivity: 'base',
+        numeric: true,
+      });
+
+      if (cmp === 0) {
+        cmp = getContactDisplayName(a).localeCompare(
+          getContactDisplayName(b),
+          undefined,
+          { sensitivity: 'base' }
+        );
+      }
+
+      return direction === 'asc' ? cmp : -cmp;
+    });
+  }, [contacts, contactSortConfig]);
+  const handleContactSort = useCallback(sortKey => {
+    setContactSortConfig(prev => ({
+      key: sortKey,
+      direction:
+        prev.key === sortKey && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  }, []);
   const {
     overlayProps,
     contentProps,
@@ -484,31 +1082,12 @@ export default function AlertPreferences({
     footerProps,
     closeButtonProps,
     tokens: modalTokens,
+    outlineButtonProps,
   } = useDashboardModalProps();
-  const modalOutlineButtonProps = {
-    variant: 'outline',
-    borderColor: 'rgba(148, 163, 184, 0.34)',
-    color: modalTokens.subtleText,
-    _hover: {
-      bg: modalTokens.fieldBg,
-      borderColor: modalTokens.focusBorder,
-    },
-  };
   const isMobile = useBreakpointValue({ base: true, md: false });
   const discordColor = '#5865F2';
   const pagerdutyColor = '#06AC38';
   const internetColor = useColorModeValue('cyan.500', 'cyan.400');
-  const modalWarningBg = useColorModeValue(
-    '#fff7ed',
-    'rgba(146, 64, 14, 0.22)'
-  );
-  const modalWarningBorder = useColorModeValue(
-    '#fed7aa',
-    'rgba(251, 191, 36, 0.34)'
-  );
-  const modalWarningText = useColorModeValue('#9a3412', '#fde68a');
-  const modalDeleteButtonBg = useColorModeValue('#dc2626', '#ef4444');
-  const modalDeleteButtonHoverBg = useColorModeValue('#b91c1c', '#dc2626');
 
   // Helper function to render webhook vendor logo - must be defined after all hooks
   const renderWebhookLogo = kind => {
@@ -792,11 +1371,13 @@ export default function AlertPreferences({
   }
 
   // Save only webhook URLs (entire list)
-  async function handleSaveWebhooks() {
+  async function persistWebhooksList(listToPersist) {
     try {
       if (isViewer) return; // viewers cannot modify webhooks
       setSavingToggles(true);
-      const toPersist = webhookUrls.map(webhookPayloadForSave).filter(Boolean);
+      const toPersist = listToPersist
+        .map(webhookPayloadForSave)
+        .filter(Boolean);
       const wsId = workspaceId;
       if (!wsId) {
         showError('Please select a workspace first');
@@ -806,8 +1387,8 @@ export default function AlertPreferences({
         webhook_urls: toPersist,
       };
       await workspaceAPI.updateAlertSettings(wsId, payload);
-      setWebhookUrls(prev =>
-        prev.map(webhook =>
+      setWebhookUrls(
+        listToPersist.map(webhook =>
           isWebhookReadyToPersist(webhook)
             ? withWebhookPersistedState(webhook, true)
             : webhook
@@ -831,6 +1412,7 @@ export default function AlertPreferences({
         return;
       }
       showError(e?.response?.data?.error || 'Failed to save webhooks');
+      throw e;
     } finally {
       setSavingToggles(false);
     }
@@ -911,6 +1493,62 @@ export default function AlertPreferences({
     setGroupWeeklyDigestWhatsapp(false);
     setGroupWeeklyDigestWebhooks(false);
   }
+
+  useEffect(() => {
+    if (!showProductTour) return undefined;
+
+    const openGroupEditor = () => {
+      const groupId = selectedGroupId || defaultContactGroupId;
+      const g = (contactGroups || []).find(
+        x => String(x.id) === String(groupId)
+      );
+      if (g) startEditGroup(g);
+      onGroupEditorOpen();
+    };
+
+    window.addEventListener('tt:tour-open-group-editor', openGroupEditor);
+    window.addEventListener('tt:tour-close-group-editor', onGroupEditorClose);
+    window.addEventListener('tt:tour-open-add-contact', onAddContactOpen);
+    window.addEventListener('tt:tour-close-add-contact', handleCloseAddContact);
+    window.addEventListener('tt:tour-open-add-webhook', openAddWebhookEditor);
+    window.addEventListener(
+      'tt:tour-close-add-webhook',
+      handleCloseWebhookEditor
+    );
+
+    return () => {
+      window.removeEventListener('tt:tour-open-group-editor', openGroupEditor);
+      window.removeEventListener(
+        'tt:tour-close-group-editor',
+        onGroupEditorClose
+      );
+      window.removeEventListener('tt:tour-open-add-contact', onAddContactOpen);
+      window.removeEventListener(
+        'tt:tour-close-add-contact',
+        handleCloseAddContact
+      );
+      window.removeEventListener(
+        'tt:tour-open-add-webhook',
+        openAddWebhookEditor
+      );
+      window.removeEventListener(
+        'tt:tour-close-add-webhook',
+        handleCloseWebhookEditor
+      );
+    };
+  }, [
+    showProductTour,
+    contactGroups,
+    selectedGroupId,
+    defaultContactGroupId,
+    startEditGroup,
+    onGroupEditorOpen,
+    onGroupEditorClose,
+    onAddContactOpen,
+    handleCloseAddContact,
+    openAddWebhookEditor,
+    handleCloseWebhookEditor,
+  ]);
 
   async function saveGroup() {
     if (loading) return; // guard against saving while workspace data is refreshing
@@ -1039,6 +1677,7 @@ export default function AlertPreferences({
         default_contact_group_id: defaultContactGroupId || next[0]?.id || null,
       });
       showSuccess(wasCreate ? 'Contact group created' : 'Contact group saved');
+      onGroupEditorClose();
     } catch (e) {
       showError('Failed to save contact groups');
     }
@@ -1176,20 +1815,131 @@ export default function AlertPreferences({
     }
   }
 
-  function addWebhook() {
-    if (isViewer) return; // viewers cannot add webhooks
-    setWebhookUrls([
-      ...webhookUrls,
-      withWebhookPersistedState(
-        {
-          url: '',
-          kind: 'generic',
-          verified: false,
-          verifiedUrl: null,
-        },
-        false
-      ),
-    ]);
+  function resetWebhookEditor() {
+    setEditingWebhookIndex(-1);
+    setWebhookDraft(createEmptyWebhookDraft());
+    setWebhookSaveAttempted(false);
+    setTestingWebhookDraft(false);
+  }
+
+  function handleCloseWebhookEditor() {
+    resetWebhookEditor();
+    onWebhookEditorClose();
+  }
+
+  function openAddWebhookEditor() {
+    if (isViewer || webhookUrls.length >= 5) return;
+    resetWebhookEditor();
+    onWebhookEditorOpen();
+  }
+
+  function openEditWebhookEditor(index) {
+    if (isViewer) return;
+    const webhook = webhookUrls[index];
+    if (!webhook) return;
+    setEditingWebhookIndex(index);
+    setWebhookDraft({
+      name: webhook.name || '',
+      url: webhook.url || '',
+      kind: webhook.kind || 'generic',
+      severity: webhook.severity || '',
+      template: webhook.template || '',
+      routingKey: webhook.routingKey || '',
+      verified: webhook.verified,
+      verifiedUrl: webhook.verifiedUrl,
+      _verifiedSnapshot: webhook._verifiedSnapshot,
+    });
+    setWebhookSaveAttempted(false);
+    onWebhookEditorOpen();
+  }
+
+  function updateWebhookDraft(field, value) {
+    if (isViewer) return;
+    setWebhookDraft(prev => ({
+      ...prev,
+      [field]: value,
+      verified: false,
+      verifiedUrl: null,
+      _verifiedSnapshot: null,
+    }));
+  }
+
+  function buildWebhookFromDraft(existingWebhook = null) {
+    const draft = {
+      ...webhookDraft,
+      name: (webhookDraft.name || '').trim(),
+      url: (webhookDraft.url || '').trim(),
+    };
+    return {
+      ...(existingWebhook || {}),
+      ...draft,
+      _editing: false,
+    };
+  }
+
+  function canSaveWebhookDraft() {
+    const draft = buildWebhookFromDraft();
+    if (!isWebhookReadyToPersist(draft)) return false;
+    if (!draft.name) return false;
+    if (editingWebhookIndex < 0) return true;
+    const existing = webhookUrls[editingWebhookIndex];
+    if (!existing) return false;
+    return hasWebhookParameterChanges({ ...existing, ...draft });
+  }
+
+  async function handleTestWebhookDraft() {
+    if (isViewer) return;
+    const draft = buildWebhookFromDraft();
+    if (!draft.url) {
+      showError('Please enter a webhook URL first');
+      return;
+    }
+    try {
+      setTestingWebhookDraft(true);
+      await alertAPI.testWebhook(draft.url, draft.kind || 'generic', {
+        routingKey: draft.routingKey || undefined,
+        severity: draft.severity || undefined,
+        template: draft.template || undefined,
+      });
+      setWebhookDraft(prev => ({
+        ...prev,
+        verified: true,
+        verifiedUrl: (prev.url || '').trim(),
+        _verifiedSnapshot: getWebhookParameterSnapshot({
+          ...prev,
+          name: (prev.name || '').trim(),
+          url: (prev.url || '').trim(),
+        }),
+      }));
+    } catch (e) {
+      setWebhookDraft(prev => ({
+        ...prev,
+        verified: false,
+        verifiedUrl: null,
+        _verifiedSnapshot: null,
+      }));
+      showError(e?.message || 'Webhook test failed');
+    } finally {
+      setTestingWebhookDraft(false);
+    }
+  }
+
+  async function handleSaveWebhookEditor() {
+    setWebhookSaveAttempted(true);
+    if (!canSaveWebhookDraft()) return;
+    const built = buildWebhookFromDraft(
+      editingWebhookIndex >= 0 ? webhookUrls[editingWebhookIndex] : null
+    );
+    const nextList =
+      editingWebhookIndex >= 0
+        ? webhookUrls.map((webhook, index) =>
+            index === editingWebhookIndex ? built : webhook
+          )
+        : [...webhookUrls, built];
+    try {
+      await persistWebhooksList(nextList);
+      handleCloseWebhookEditor();
+    } catch (_) {}
   }
 
   function removeUnsavedWebhook(index) {
@@ -1233,48 +1983,222 @@ export default function AlertPreferences({
     removeUnsavedWebhook(index);
   }
 
-  function startWebhookEdit(index) {
-    if (isViewer) return;
-    setWebhookUrls(prev =>
-      prev.map((webhook, i) =>
-        i === index && isSavedWebhook(webhook)
-          ? { ...webhook, _editing: true }
-          : webhook
-      )
+  function renderWebhookEditorFields(webhook, onFieldChange) {
+    const isPagerDuty =
+      String(webhook.kind || '').toLowerCase() === 'pagerduty';
+
+    return (
+      <VStack align='stretch' spacing={3}>
+        <Input
+          placeholder='Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
+          value={webhook.name || ''}
+          onChange={e => onFieldChange('name', e.target.value)}
+          size='sm'
+        />
+        <Text fontSize='xs' color={bodySecondary}>
+          Used to pick this webhook in a contact group.
+        </Text>
+        {isPagerDuty ? (
+          <VStack align='stretch' spacing={3}>
+            <HStack spacing={2} align='center'>
+              {renderWebhookLogo(webhook.kind || 'generic')}
+              <Select
+                value={webhook.kind || 'generic'}
+                onChange={e => onFieldChange('kind', e.target.value)}
+                size='sm'
+                maxW='160px'
+              >
+                <option value='generic'>Generic</option>
+                <option value='discord'>Discord</option>
+                <option value='teams'>Teams</option>
+                <option value='slack'>Slack</option>
+                <option value='pagerduty'>PagerDuty</option>
+              </Select>
+            </HStack>
+            <Input
+              placeholder='https://events.pagerduty.com/v2/enqueue'
+              value={webhook.url || ''}
+              onChange={e => onFieldChange('url', e.target.value)}
+              size='sm'
+            />
+            <Select
+              value={webhook.severity || ''}
+              onChange={e => onFieldChange('severity', e.target.value)}
+              size='sm'
+            >
+              <option value=''>Severity (auto)</option>
+              <option value='critical'>critical</option>
+              <option value='error'>error</option>
+              <option value='warning'>warning</option>
+              <option value='info'>info</option>
+            </Select>
+            <Input
+              placeholder='Custom title (optional)'
+              value={webhook.template || ''}
+              onChange={e => onFieldChange('template', e.target.value)}
+              size='sm'
+            />
+            <Input
+              placeholder='PagerDuty Routing Key'
+              value={webhook.routingKey || ''}
+              onChange={e => onFieldChange('routingKey', e.target.value)}
+              size='sm'
+            />
+          </VStack>
+        ) : (
+          <VStack align='stretch' spacing={3}>
+            <HStack spacing={2} align='center'>
+              {renderWebhookLogo(webhook.kind || 'generic')}
+              <Select
+                value={webhook.kind || 'generic'}
+                onChange={e => onFieldChange('kind', e.target.value)}
+                size='sm'
+                maxW='160px'
+              >
+                <option value='generic'>Generic</option>
+                <option value='discord'>Discord</option>
+                <option value='teams'>Teams</option>
+                <option value='slack'>Slack</option>
+                <option value='pagerduty'>PagerDuty</option>
+              </Select>
+            </HStack>
+            <Textarea
+              placeholder='https://...'
+              value={webhook.url || ''}
+              onChange={e => onFieldChange('url', e.target.value)}
+              size='sm'
+              rows={2}
+            />
+          </VStack>
+        )}
+      </VStack>
     );
   }
 
-  function cancelWebhookEdit(index) {
-    if (isViewer) return;
-    setWebhookUrls(prev =>
-      prev.map((webhook, i) => {
-        if (i !== index || !isSavedWebhook(webhook)) return webhook;
-        const snapshot =
-          webhook._savedSnapshot || getWebhookParameterSnapshot(webhook);
-        return {
-          ...webhook,
-          ...snapshot,
-          verified: Boolean(snapshot.url),
-          verifiedUrl: snapshot.url || null,
-          _editing: false,
-        };
-      })
+  function renderWebhookReadOnlyView(index, webhook, actionWebhook = webhook) {
+    const isPagerDuty =
+      String(webhook.kind || '').toLowerCase() === 'pagerduty';
+
+    return (
+      <VStack align='stretch' spacing={4}>
+        <Flex
+          align='flex-start'
+          justify='space-between'
+          gap={3}
+          flexWrap='wrap'
+        >
+          <HStack align='flex-start' spacing={3} minW={0} flex='1'>
+            {renderWebhookLogo(webhook.kind || 'generic')}
+            <Box minW={0}>
+              <Text fontSize='sm' fontWeight='semibold' wordBreak='break-word'>
+                {webhook.name || 'Unnamed webhook'}
+              </Text>
+              <Badge
+                variant='outline'
+                colorScheme='blue'
+                borderRadius='md'
+                mt={1}
+              >
+                {formatWebhookKindLabel(webhook.kind)}
+              </Badge>
+            </Box>
+          </HStack>
+        </Flex>
+
+        <SimpleGrid columns={{ base: 1, lg: isPagerDuty ? 2 : 1 }} spacing={3}>
+          <WebhookValueField label='URL' value={webhook.url} monospace />
+          {isPagerDuty ? (
+            <>
+              <WebhookValueField
+                label='Severity'
+                value={webhook.severity || 'Auto'}
+              />
+              <WebhookValueField
+                label='Custom title'
+                value={webhook.template}
+              />
+              <WebhookValueField
+                label='Routing key'
+                value={webhook.routingKey}
+                monospace
+              />
+            </>
+          ) : null}
+        </SimpleGrid>
+
+        <Text fontSize='xs' color={bodySecondary}>
+          Used to pick this webhook in a contact group.
+        </Text>
+
+        {renderWebhookActionRow(index, actionWebhook)}
+      </VStack>
     );
   }
 
-  function updateWebhook(index, field, value) {
-    if (isViewer) return; // viewers cannot edit webhooks
-    const updated = [...webhookUrls];
-    const prev = updated[index] || {};
-    if (!isWebhookEditable(prev)) return;
-    updated[index] = {
-      ...prev,
-      [field]: value,
-      verified: false,
-      verifiedUrl: null,
-      _verifiedSnapshot: null,
+  function renderWebhookActionRow(index, webhook) {
+    const isVerified =
+      webhook.verified &&
+      (webhook.verifiedUrl || '') === (webhook.url || '').trim();
+    const actionButtonProps = {
+      size: 'sm',
+      h: '30px',
+      minH: '30px',
+      fontSize: 'sm',
+      fontWeight: 'semibold',
     };
-    setWebhookUrls(updated);
+
+    return (
+      <HStack flexWrap='wrap' spacing={2} rowGap={2} columnGap={2} pt={1}>
+        <Button
+          {...actionButtonProps}
+          variant='outline'
+          minW='72px'
+          onClick={() => handleTestWebhook(index)}
+          isLoading={testingWebhook === index}
+          isDisabled={!webhook.url || isViewer}
+        >
+          Test
+        </Button>
+        <Button
+          {...actionButtonProps}
+          variant='outline'
+          minW='72px'
+          onClick={() => openEditWebhookEditor(index)}
+          isDisabled={isViewer}
+        >
+          Edit
+        </Button>
+        {isVerified ? (
+          <Badge
+            colorScheme='green'
+            variant='subtle'
+            display='inline-flex'
+            alignItems='center'
+            h='30px'
+            px={2.5}
+            borderRadius='md'
+            fontSize='xs'
+            fontWeight='semibold'
+            letterSpacing='0.04em'
+            textTransform='uppercase'
+          >
+            Verified
+          </Badge>
+        ) : null}
+        <IconButton
+          {...actionButtonProps}
+          variant='outline'
+          colorScheme='red'
+          w='30px'
+          minW='30px'
+          px={0}
+          aria-label='Delete webhook'
+          onClick={() => handleWebhookDeleteClick(index)}
+          isDisabled={isViewer}
+          icon={<Icon as={FiX} boxSize={4} color={webhookDeleteIconColor} />}
+        />
+      </HStack>
+    );
   }
 
   async function savePartialSettings(partial, notify = true) {
@@ -1299,35 +2223,56 @@ export default function AlertPreferences({
   }
 
   function handleStartContactEdit(contact) {
+    const details =
+      contact.details && typeof contact.details === 'object'
+        ? contact.details
+        : {};
     setEditingContactId(contact.id);
-    setEditContactFirstName(contact.first_name);
-    setEditContactLastName(contact.last_name);
-    setEditContactPhone(contact.phone_e164);
-    setEditContactDetails(contact.details || {});
+    setEditContactFirstName(contact.first_name || '');
+    setEditContactLastName(contact.last_name || '');
+    setEditContactPhone(contact.phone_e164 || '');
+    setEditContactDetails(details);
+    setEditContactPhoneError('');
+    setEditContactDetailsOpen(
+      Boolean(details.department || details.title || details.note)
+    );
+    onEditContactOpen();
   }
 
-  const isEditedContactInvalid =
-    isViewer ||
-    !String(editContactFirstName || '').trim() ||
-    !String(editContactLastName || '').trim() ||
-    (!String(editContactPhone || '').trim() &&
-      !isValidEmail(String(editContactDetails.email || '').trim())) ||
-    (String(editContactPhone || '').trim() &&
-      !/^\+?[1-9]\d{6,14}$/.test(String(editContactPhone || '').trim()));
-
-  async function handleSaveEditedContact(contactId) {
+  async function handleSaveEditedContact() {
+    if (!editingContactId) return;
+    setEditContactPhoneError('');
+    const phoneNorm = editContactPhone.trim();
+    const emailVal = String(editContactDetails.email || '').trim();
+    let phoneE164 = '';
+    if (phoneNorm) {
+      phoneE164 = normalizeContactPhoneE164(phoneNorm);
+      if (!isValidContactPhoneE164(phoneNorm)) {
+        setEditContactPhoneError('Invalid E.164 format (e.g., +14155550100)');
+        return;
+      }
+    } else if (!isValidEmail(emailVal)) {
+      showError('Provide a phone number or a valid email');
+      return;
+    }
+    if (!editContactFirstName.trim() || !editContactLastName.trim()) {
+      showError('First and last name are required');
+      return;
+    }
     try {
       const res = await apiClient.put(
-        `/api/v1/workspaces/${workspaceId}/contacts/${contactId}`,
+        `/api/v1/workspaces/${workspaceId}/contacts/${editingContactId}`,
         {
-          first_name: editContactFirstName,
-          last_name: editContactLastName,
-          phone_e164: editContactPhone,
+          first_name: editContactFirstName.trim(),
+          last_name: editContactLastName.trim(),
+          phone_e164: phoneE164,
           details: editContactDetails,
         }
       );
-      setContacts(contacts.map(x => (x.id === contactId ? res.data : x)));
-      setEditingContactId(null);
+      setContacts(
+        contacts.map(x => (x.id === editingContactId ? res.data : x))
+      );
+      handleCloseEditContact();
       showSuccess('Contact updated');
     } catch (e) {
       showError(e?.response?.data?.error || 'Failed to update contact');
@@ -1390,24 +2335,25 @@ export default function AlertPreferences({
     }
   }
 
-  async function handleTestWhatsappContact(contact) {
+  async function handleTestWhatsappPhone(phoneE164, cooldownKey) {
+    if (!phoneE164) return;
     try {
       const now = Date.now();
-      const until = waContactCooldowns[contact.id] || 0;
+      const until = waContactCooldowns[cooldownKey] || 0;
       if (until > now) {
         const secs = Math.ceil((until - now) / 1000);
         showError(`Please wait ${secs}s before sending another test.`);
         return;
       }
-      setTestingContact(contact.id);
+      setTestingContact(cooldownKey);
       await apiClient.post(
         `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
-        { phone_e164: contact.phone_e164 }
+        { phone_e164: phoneE164 }
       );
       showSuccess('Test message sent');
       setWaContactCooldowns(prev => ({
         ...prev,
-        [contact.id]: now + 120000,
+        [cooldownKey]: now + 120000,
       }));
     } catch (e) {
       const code = e?.response?.data?.code;
@@ -1422,6 +2368,9 @@ export default function AlertPreferences({
           'Outside WhatsApp 24-hour session. Sending via approved template... please try again if it still fails.';
       } else if (code === 'WHATSAPP_NOT_CONFIGURED') {
         msg = 'WhatsApp is not configured. Please contact support.';
+      } else if (code === 'TEMPLATE_NOT_CONFIGURED') {
+        msg =
+          'WhatsApp template not configured. Set TWILIO_WHATSAPP_TEST_CONTENT_SID or configure the test template SID in System Settings.';
       } else if (code === 'INVALID_RECIPIENT') {
         msg = 'Invalid recipient. Verify the phone number and try again.';
       }
@@ -1431,237 +2380,72 @@ export default function AlertPreferences({
     }
   }
 
-  function renderContactEditFields(contactId) {
-    return (
-      <VStack align='stretch' spacing={3}>
-        <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
-          <FormControl>
-            <FormLabel m={0} fontSize='sm'>
-              First name
-            </FormLabel>
-            <Input
-              size='sm'
-              value={editContactFirstName}
-              onChange={e => setEditContactFirstName(e.target.value)}
-              placeholder='First name'
-            />
-          </FormControl>
-          <FormControl>
-            <FormLabel m={0} fontSize='sm'>
-              Last name
-            </FormLabel>
-            <Input
-              size='sm'
-              value={editContactLastName}
-              onChange={e => setEditContactLastName(e.target.value)}
-              placeholder='Last name'
-            />
-          </FormControl>
-        </SimpleGrid>
-        <FormControl>
-          <FormLabel m={0} fontSize='sm'>
-            Phone
-          </FormLabel>
-          <Input
-            size='sm'
-            value={editContactPhone}
-            onChange={e => setEditContactPhone(e.target.value)}
-            placeholder='+14155550100'
-          />
-        </FormControl>
-        <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
-          <FormControl>
-            <FormLabel m={0} fontSize='sm'>
-              Department
-            </FormLabel>
-            <Input
-              size='sm'
-              placeholder='Department'
-              value={editContactDetails.department || ''}
-              onChange={e =>
-                setEditContactDetails({
-                  ...editContactDetails,
-                  department: e.target.value,
-                })
-              }
-            />
-          </FormControl>
-          <FormControl>
-            <FormLabel m={0} fontSize='sm'>
-              Title / Role
-            </FormLabel>
-            <Input
-              size='sm'
-              placeholder='Title / Role'
-              value={editContactDetails.title || ''}
-              onChange={e =>
-                setEditContactDetails({
-                  ...editContactDetails,
-                  title: e.target.value,
-                })
-              }
-            />
-          </FormControl>
-        </SimpleGrid>
-        <FormControl>
-          <FormLabel m={0} fontSize='sm'>
-            Email
-          </FormLabel>
-          <Input
-            size='sm'
-            placeholder='Email'
-            value={editContactDetails.email || ''}
-            onChange={e =>
-              setEditContactDetails({
-                ...editContactDetails,
-                email: e.target.value,
-              })
-            }
-          />
-        </FormControl>
-        <FormControl>
-          <FormLabel m={0} fontSize='sm'>
-            Note
-          </FormLabel>
-          <Textarea
-            size='sm'
-            rows={2}
-            placeholder='Note'
-            value={editContactDetails.note || ''}
-            onChange={e =>
-              setEditContactDetails({
-                ...editContactDetails,
-                note: e.target.value,
-              })
-            }
-          />
-        </FormControl>
-        <HStack spacing={2} flexWrap='wrap'>
-          <Button
-            size='sm'
-            colorScheme='blue'
-            isDisabled={isEditedContactInvalid}
-            onClick={() => handleSaveEditedContact(contactId)}
-          >
-            Save
-          </Button>
-          <Button
-            size='sm'
-            variant='ghost'
-            onClick={() => setEditingContactId(null)}
-          >
-            Cancel
-          </Button>
-        </HStack>
-      </VStack>
-    );
-  }
-
   function renderMobileContactCard(contact) {
     const detailDisplay = getContactDetailDisplay(contact, whatsappAvailable);
-    const isEditing = editingContactId === contact.id;
     const phone = String(contact.phone_e164 || '').trim();
 
     return (
-      <Box
-        key={contact.id}
-        border='1px solid'
-        borderColor={border}
-        borderRadius='md'
-        bg={isEditing ? dashboard.bg.panelHover : 'transparent'}
-        p={4}
-        minW={0}
-      >
-        {isEditing ? (
-          renderContactEditFields(contact.id)
-        ) : (
-          <VStack align='stretch' spacing={3}>
-            <Flex align='flex-start' justify='space-between' gap={3} minW={0}>
-              <Box minW={0}>
+      <SettingsNestedSurface key={contact.id} minW={0}>
+        <VStack align='stretch' spacing={3}>
+          <Flex align='flex-start' justify='space-between' gap={3} minW={0}>
+            <Box minW={0}>
+              <Text fontSize='sm' fontWeight='semibold' wordBreak='break-word'>
+                {getContactDisplayName(contact)}
+              </Text>
+              {whatsappAvailable ? (
                 <Text
+                  color={bodySecondary}
                   fontSize='sm'
-                  fontWeight='semibold'
                   wordBreak='break-word'
+                  minW={0}
                 >
-                  {getContactDisplayName(contact)}
+                  {phone || 'No phone number'}
                 </Text>
-                {whatsappAvailable ? (
-                  <Text
-                    color={readableMuted}
-                    fontSize='sm'
-                    wordBreak='break-word'
-                  >
-                    {phone || 'No phone number'}
-                  </Text>
-                ) : null}
-              </Box>
-              <Badge
-                variant='outline'
-                colorScheme='blue'
-                borderRadius='md'
-                flexShrink={0}
-              >
-                Contact
-              </Badge>
-            </Flex>
-
-            <VStack align='stretch' spacing={1}>
-              {detailDisplay.length > 0 ? (
-                detailDisplay.map(detail => (
-                  <Text
-                    key={detail.key}
-                    color={readableMuted}
-                    fontSize='sm'
-                    wordBreak='break-word'
-                  >
-                    <Text as='span' fontWeight='semibold'>
-                      {detail.label}:
-                    </Text>{' '}
-                    {detail.value}
-                  </Text>
-                ))
-              ) : (
-                <Text color={readableMuted} fontSize='sm'>
-                  No details
-                </Text>
-              )}
-            </VStack>
-
-            <Stack direction={{ base: 'column', sm: 'row' }} spacing={2}>
-              {whatsappAvailable && phone ? (
-                <Button
-                  size='sm'
-                  variant='outline'
-                  isLoading={testingContact === contact.id}
-                  isDisabled={isViewer}
-                  onClick={() => handleTestWhatsappContact(contact)}
-                >
-                  {waContactCooldowns[contact.id] > Date.now()
-                    ? `Test WhatsApp (${Math.ceil((waContactCooldowns[contact.id] - Date.now()) / 1000)}s)`
-                    : 'Test WhatsApp'}
-                </Button>
               ) : null}
-              <Button
-                size='sm'
-                variant='outline'
-                onClick={() => handleStartContactEdit(contact)}
-                isDisabled={isViewer}
-              >
-                Edit
-              </Button>
-              <Button
-                size='sm'
-                variant='outline'
-                colorScheme='red'
-                onClick={() => openContactDeleteConfirm(contact)}
-                isDisabled={isViewer}
-              >
-                Remove
-              </Button>
-            </Stack>
-          </VStack>
-        )}
-      </Box>
+            </Box>
+            <Badge
+              variant='outline'
+              colorScheme='blue'
+              borderRadius='md'
+              flexShrink={0}
+            >
+              Contact
+            </Badge>
+          </Flex>
+
+          <ContactDetailsList
+            details={detailDisplay}
+            labelColor={bodySecondary}
+            valueColor={text}
+          />
+
+          <Stack direction={{ base: 'column', sm: 'row' }} spacing={2}>
+            <Button
+              size='sm'
+              h='30px'
+              minH='30px'
+              minW='76px'
+              variant='outline'
+              onClick={() => handleStartContactEdit(contact)}
+              isDisabled={isViewer}
+            >
+              Edit
+            </Button>
+            <Button
+              size='sm'
+              h='30px'
+              minH='30px'
+              minW='76px'
+              variant='outline'
+              colorScheme='red'
+              onClick={() => openContactDeleteConfirm(contact)}
+              isDisabled={isViewer}
+            >
+              Remove
+            </Button>
+          </Stack>
+        </VStack>
+      </SettingsNestedSurface>
     );
   }
 
@@ -1695,2069 +2479,1650 @@ export default function AlertPreferences({
           maxW: '100%',
         }}
       >
-        <VStack
-          spacing={6}
-          align='stretch'
-          w='full'
-          sx={{
-            '.chakra-form__label': {
-              color: labelColor,
-              fontWeight: '600',
-            },
-          }}
+        <SettingsPageShell
+          intro={
+            isViewer ? (
+              <Alert status='info' borderRadius='md'>
+                <AlertIcon />
+                <AlertDescription>
+                  You can only modify preferences for your own workspace.
+                  Modifying them for organization‑managed workspaces is reserved
+                  to workspace managers or admins.
+                </AlertDescription>
+              </Alert>
+            ) : null
+          }
         >
-          {isViewer && (
-            <Alert status='info' borderRadius='md'>
-              <AlertIcon />
-              <AlertDescription>
-                You can only modify preferences for your own workspace.
-                Modifying them for organization‑managed workspaces is reserved
-                to workspace managers or admins.
-              </AlertDescription>
-            </Alert>
-          )}
-
-
-          <DashboardPanel data-tour='preferences-thresholds'>
-              <PreferencesPanelHeader
-                title='Default workspace thresholds'
-                description='Control when alert notifications are created for assets in this workspace.'
-                muted={readableMuted}
-              />
-              {/* Plan gating removed: thresholds editable for all plans */}
-              <FormControl
-                isInvalid={!!thresholdError}
-                isDisabled={loading || isViewer || !roleKnown}
-              >
-                <FormLabel>Alert thresholds (days, comma-separated)</FormLabel>
-                <Input
-                  value={thresholdsCsv}
-                  onChange={e => setThresholdsCsv(e.target.value)}
-                  placeholder='30,14,7,1,0'
+          <SettingsSection id='alert-timing'>
+            <SimpleGrid
+              columns={{ base: 1, xl: 2 }}
+              spacing={SETTINGS_SECTION_GAP}
+              w='full'
+            >
+              <DashboardPanel data-tour='preferences-thresholds' h='full'>
+                <PreferencesPanelHeader
+                  title='Default workspace thresholds'
+                  description='Control when alert notifications are created for assets in this workspace.'
+                  muted={bodySecondary}
                 />
-                <FormErrorMessage>{thresholdError}</FormErrorMessage>
-                <Text fontSize='sm' color={readableMuted} mt={2}>
-                  Allowed range: -365 (after expiry) to 730 (2 years). Values
-                  are sorted automatically.
-                </Text>
-                <Text fontSize='sm' color={readableMuted} mt={1}>
-                  1 alert per threshold crossed.
-                </Text>
-              </FormControl>
-              <HStack mt={4} spacing={3}>
-                <DashboardActionButton
-                  onClick={handleResetDefaults}
-                  variant='outline'
-                  disabled={loading || isViewer}
+                {/* Plan gating removed: thresholds editable for all plans */}
+                <FormControl
+                  isInvalid={!!thresholdError}
+                  isDisabled={loading || isViewer || !roleKnown}
                 >
-                  Reset to defaults
-                </DashboardActionButton>
-                <DashboardActionButton
-                  colorScheme='blue'
-                  onClick={handleSave}
-                  isLoading={saving}
-                  disabled={loading || !workspaceId || isViewer}
-                >
-                  Save
-                </DashboardActionButton>
-              </HStack>
-          </DashboardPanel>
+                  <FormLabel>
+                    Alert thresholds (days, comma-separated)
+                  </FormLabel>
+                  <Input
+                    value={thresholdsCsv}
+                    onChange={e => setThresholdsCsv(e.target.value)}
+                    placeholder='30,14,7,1,0'
+                  />
+                  <FormErrorMessage>{thresholdError}</FormErrorMessage>
+                  <Text fontSize='sm' color={bodySecondary} mt={2}>
+                    Allowed range: -365 (after expiry) to 730 (2 years). Values
+                    are sorted automatically.
+                  </Text>
+                  <Alert status='info' size='sm' borderRadius='md' mt={3}>
+                    <AlertIcon />
+                    <AlertDescription fontSize='sm' lineHeight='1.45'>
+                      <Text as='span' fontWeight='semibold'>
+                        1 alert per threshold crossed.
+                      </Text>
+                    </AlertDescription>
+                  </Alert>
+                </FormControl>
+                <HStack mt={4} spacing={3}>
+                  <DashboardActionButton
+                    onClick={handleResetDefaults}
+                    variant='outline'
+                    disabled={loading || isViewer}
+                  >
+                    Reset to defaults
+                  </DashboardActionButton>
+                  <DashboardActionButton
+                    colorScheme='blue'
+                    onClick={handleSave}
+                    isLoading={saving}
+                    disabled={loading || !workspaceId || isViewer}
+                  >
+                    Save
+                  </DashboardActionButton>
+                </HStack>
+              </DashboardPanel>
 
-          {/* Workspace Delivery Window */}
-          <DashboardPanel data-tour='preferences-delivery-window'>
-              <PreferencesPanelHeader
-                title='Workspace delivery window'
-                description='Applies to all alert channels. Alerts outside this window will be sent when the window reopens.'
-                muted={readableMuted}
-              />
-              <Stack direction={{ base: 'column', lg: 'row' }} spacing={3}>
-                <FormControl
-                  isDisabled={isViewer}
-                  isInvalid={
-                    !!dwStart &&
-                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwStart).trim())
-                  }
-                >
-                  <FormLabel>Start (HH:mm)</FormLabel>
-                  <Input
-                    placeholder='00:00'
-                    value={dwStart}
-                    onChange={e => setDwStart(e.target.value)}
-                  />
-                  {dwStart &&
-                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(
-                      String(dwStart).trim()
-                    ) && (
-                      <FormErrorMessage>
-                        Use HH:mm (00:00-23:59)
-                      </FormErrorMessage>
-                    )}
-                </FormControl>
-                <FormControl
-                  isDisabled={isViewer}
-                  isInvalid={
-                    !!dwEnd &&
-                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim())
-                  }
-                >
-                  <FormLabel>End (HH:mm)</FormLabel>
-                  <Input
-                    placeholder='23:59'
-                    value={dwEnd}
-                    onChange={e => setDwEnd(e.target.value)}
-                  />
-                  {dwEnd &&
-                    !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim()) && (
-                      <FormErrorMessage>
-                        Use HH:mm (00:00-23:59)
-                      </FormErrorMessage>
-                    )}
-                </FormControl>
-                <FormControl isDisabled={isViewer}>
-                  <FormLabel>Timezone</FormLabel>
-                  <Select value={dwTz} onChange={e => setDwTz(e.target.value)}>
-                    <optgroup label='Common'>
-                      <option value='UTC'>UTC (UTC+0)</option>
-                      <option value='America/New_York'>
-                        America/New_York (UTC-5/-4, EST/EDT)
-                      </option>
-                      <option value='America/Los_Angeles'>
-                        America/Los_Angeles (UTC-8/-7, PST/PDT)
-                      </option>
-                      <option value='Europe/London'>
-                        Europe/London (UTC+0/+1, GMT/BST)
-                      </option>
-                      <option value='Europe/Zurich'>
-                        Europe/Zurich (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Asia/Tokyo'>
-                        Asia/Tokyo (UTC+9, JST)
-                      </option>
-                    </optgroup>
-                    <optgroup label='Americas'>
-                      <option value='America/Chicago'>
-                        America/Chicago (UTC-6/-5, CST/CDT)
-                      </option>
-                      <option value='America/Denver'>
-                        America/Denver (UTC-7/-6, MST/MDT)
-                      </option>
-                      <option value='America/Phoenix'>
-                        America/Phoenix (UTC-7, MST no DST)
-                      </option>
-                      <option value='America/Anchorage'>
-                        America/Anchorage (UTC-9/-8, AKST/AKDT)
-                      </option>
-                      <option value='America/Honolulu'>
-                        America/Honolulu (UTC-10, HST)
-                      </option>
-                      <option value='America/Toronto'>
-                        America/Toronto (UTC-5/-4, EST/EDT)
-                      </option>
-                      <option value='America/Vancouver'>
-                        America/Vancouver (UTC-8/-7, PST/PDT)
-                      </option>
-                      <option value='America/Mexico_City'>
-                        America/Mexico_City (UTC-6/-5, CST/CDT)
-                      </option>
-                      <option value='America/Sao_Paulo'>
-                        America/Sao_Paulo (UTC-3, BRT)
-                      </option>
-                      <option value='America/Buenos_Aires'>
-                        America/Buenos_Aires (UTC-3, ART)
-                      </option>
-                    </optgroup>
-                    <optgroup label='Europe'>
-                      <option value='Europe/Paris'>
-                        Europe/Paris (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Berlin'>
-                        Europe/Berlin (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Rome'>
-                        Europe/Rome (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Madrid'>
-                        Europe/Madrid (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Amsterdam'>
-                        Europe/Amsterdam (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Brussels'>
-                        Europe/Brussels (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Vienna'>
-                        Europe/Vienna (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Stockholm'>
-                        Europe/Stockholm (UTC+1/+2, CET/CEST)
-                      </option>
-                      <option value='Europe/Dublin'>
-                        Europe/Dublin (UTC+0/+1, GMT/IST)
-                      </option>
-                      <option value='Europe/Lisbon'>
-                        Europe/Lisbon (UTC+0/+1, WET/WEST)
-                      </option>
-                      <option value='Europe/Athens'>
-                        Europe/Athens (UTC+2/+3, EET/EEST)
-                      </option>
-                      <option value='Europe/Helsinki'>
-                        Europe/Helsinki (UTC+2/+3, EET/EEST)
-                      </option>
-                      <option value='Europe/Moscow'>
-                        Europe/Moscow (UTC+3, MSK)
-                      </option>
-                      <option value='Europe/Istanbul'>
-                        Europe/Istanbul (UTC+3, TRT)
-                      </option>
-                    </optgroup>
-                    <optgroup label='Asia'>
-                      <option value='Asia/Dubai'>
-                        Asia/Dubai (UTC+4, GST)
-                      </option>
-                      <option value='Asia/Kolkata'>
-                        Asia/Kolkata (UTC+5:30, IST)
-                      </option>
-                      <option value='Asia/Bangkok'>
-                        Asia/Bangkok (UTC+7, ICT)
-                      </option>
-                      <option value='Asia/Singapore'>
-                        Asia/Singapore (UTC+8, SGT)
-                      </option>
-                      <option value='Asia/Hong_Kong'>
-                        Asia/Hong_Kong (UTC+8, HKT)
-                      </option>
-                      <option value='Asia/Shanghai'>
-                        Asia/Shanghai (UTC+8, CST)
-                      </option>
-                      <option value='Asia/Seoul'>
-                        Asia/Seoul (UTC+9, KST)
-                      </option>
-                      <option value='Asia/Taipei'>
-                        Asia/Taipei (UTC+8, CST)
-                      </option>
-                      <option value='Asia/Manila'>
-                        Asia/Manila (UTC+8, PHT)
-                      </option>
-                      <option value='Asia/Jakarta'>
-                        Asia/Jakarta (UTC+7, WIB)
-                      </option>
-                    </optgroup>
-                    <optgroup label='Pacific'>
-                      <option value='Australia/Sydney'>
-                        Australia/Sydney (UTC+10/+11, AEDT/AEST)
-                      </option>
-                      <option value='Australia/Melbourne'>
-                        Australia/Melbourne (UTC+10/+11, AEDT/AEST)
-                      </option>
-                      <option value='Australia/Brisbane'>
-                        Australia/Brisbane (UTC+10, AEST no DST)
-                      </option>
-                      <option value='Australia/Perth'>
-                        Australia/Perth (UTC+8, AWST)
-                      </option>
-                      <option value='Pacific/Auckland'>
-                        Pacific/Auckland (UTC+12/+13, NZDT/NZST)
-                      </option>
-                      <option value='Pacific/Fiji'>
-                        Pacific/Fiji (UTC+12, FJT)
-                      </option>
-                    </optgroup>
-                    <optgroup label='Africa & Middle East'>
-                      <option value='Africa/Cairo'>
-                        Africa/Cairo (UTC+2, EET)
-                      </option>
-                      <option value='Africa/Johannesburg'>
-                        Africa/Johannesburg (UTC+2, SAST)
-                      </option>
-                      <option value='Africa/Lagos'>
-                        Africa/Lagos (UTC+1, WAT)
-                      </option>
-                      <option value='Africa/Nairobi'>
-                        Africa/Nairobi (UTC+3, EAT)
-                      </option>
-                    </optgroup>
-                  </Select>
-                </FormControl>
-              </Stack>
-              <HStack mt={3}>
-                <DashboardActionButton
-                  colorScheme='blue'
-                  onClick={async () => {
-                    try {
-                      setSavingToggles(true);
-                      await workspaceAPI.updateAlertSettings(workspaceId, {
-                        delivery_window_start: dwStart || null,
-                        delivery_window_end: dwEnd || null,
-                        delivery_window_tz: dwTz || null,
-                      });
-                      showSuccess('Delivery window saved');
-                    } catch (e) {
-                      showError(
-                        e?.response?.data?.error ||
-                          'Failed to save delivery window'
-                      );
-                    } finally {
-                      setSavingToggles(false);
+              {/* Workspace Delivery Window */}
+              <DashboardPanel
+                data-tour='preferences-delivery-window'
+                display='flex'
+                flexDirection='column'
+                h='full'
+              >
+                <PreferencesPanelHeader
+                  title='Workspace delivery window'
+                  description='Set start time, end time, and timezone for when alerts may be delivered.'
+                  muted={bodySecondary}
+                />
+                <Stack direction={{ base: 'column', lg: 'row' }} spacing={3}>
+                  <FormControl
+                    isDisabled={isViewer}
+                    isInvalid={
+                      !!dwStart &&
+                      !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwStart).trim())
                     }
-                  }}
-                  isLoading={savingToggles}
-                  disabled={isViewer || !workspaceId}
-                >
-                  Save
-                </DashboardActionButton>
-              </HStack>
-          </DashboardPanel>
-
-          {/* Email Panel replaced by Contact Groups */}
-
-          {/* Contacts (& WhatsApp if configured) */}
-          <DashboardPanel data-tour='preferences-contacts' minW={0}>
-            <PreferencesPanelHeader
-              title='Contacts'
-              description='Manage people and contact details that can receive workspace alerts.'
-              muted={readableMuted}
-            />
-            <VStack align='stretch' spacing={4}>
-              {isViewer && (
-                <Alert status='info' borderRadius='md'>
+                  >
+                    <FormLabel>Start (HH:mm)</FormLabel>
+                    <Input
+                      placeholder='00:00'
+                      value={dwStart}
+                      onChange={e => setDwStart(e.target.value)}
+                    />
+                    {dwStart &&
+                      !/^([01]\d|2[0-3]):[0-5]\d$/.test(
+                        String(dwStart).trim()
+                      ) && (
+                        <FormErrorMessage>
+                          Use HH:mm (00:00-23:59)
+                        </FormErrorMessage>
+                      )}
+                  </FormControl>
+                  <FormControl
+                    isDisabled={isViewer}
+                    isInvalid={
+                      !!dwEnd &&
+                      !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(dwEnd).trim())
+                    }
+                  >
+                    <FormLabel>End (HH:mm)</FormLabel>
+                    <Input
+                      placeholder='23:59'
+                      value={dwEnd}
+                      onChange={e => setDwEnd(e.target.value)}
+                    />
+                    {dwEnd &&
+                      !/^([01]\d|2[0-3]):[0-5]\d$/.test(
+                        String(dwEnd).trim()
+                      ) && (
+                        <FormErrorMessage>
+                          Use HH:mm (00:00-23:59)
+                        </FormErrorMessage>
+                      )}
+                  </FormControl>
+                  <FormControl isDisabled={isViewer}>
+                    <FormLabel>Timezone</FormLabel>
+                    <Select
+                      value={dwTz}
+                      onChange={e => setDwTz(e.target.value)}
+                    >
+                      <optgroup label='Common'>
+                        <option value='UTC'>UTC (UTC+0)</option>
+                        <option value='America/New_York'>
+                          America/New_York (UTC-5/-4, EST/EDT)
+                        </option>
+                        <option value='America/Los_Angeles'>
+                          America/Los_Angeles (UTC-8/-7, PST/PDT)
+                        </option>
+                        <option value='Europe/London'>
+                          Europe/London (UTC+0/+1, GMT/BST)
+                        </option>
+                        <option value='Europe/Zurich'>
+                          Europe/Zurich (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Asia/Tokyo'>
+                          Asia/Tokyo (UTC+9, JST)
+                        </option>
+                      </optgroup>
+                      <optgroup label='Americas'>
+                        <option value='America/Chicago'>
+                          America/Chicago (UTC-6/-5, CST/CDT)
+                        </option>
+                        <option value='America/Denver'>
+                          America/Denver (UTC-7/-6, MST/MDT)
+                        </option>
+                        <option value='America/Phoenix'>
+                          America/Phoenix (UTC-7, MST no DST)
+                        </option>
+                        <option value='America/Anchorage'>
+                          America/Anchorage (UTC-9/-8, AKST/AKDT)
+                        </option>
+                        <option value='America/Honolulu'>
+                          America/Honolulu (UTC-10, HST)
+                        </option>
+                        <option value='America/Toronto'>
+                          America/Toronto (UTC-5/-4, EST/EDT)
+                        </option>
+                        <option value='America/Vancouver'>
+                          America/Vancouver (UTC-8/-7, PST/PDT)
+                        </option>
+                        <option value='America/Mexico_City'>
+                          America/Mexico_City (UTC-6/-5, CST/CDT)
+                        </option>
+                        <option value='America/Sao_Paulo'>
+                          America/Sao_Paulo (UTC-3, BRT)
+                        </option>
+                        <option value='America/Buenos_Aires'>
+                          America/Buenos_Aires (UTC-3, ART)
+                        </option>
+                      </optgroup>
+                      <optgroup label='Europe'>
+                        <option value='Europe/Paris'>
+                          Europe/Paris (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Berlin'>
+                          Europe/Berlin (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Rome'>
+                          Europe/Rome (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Madrid'>
+                          Europe/Madrid (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Amsterdam'>
+                          Europe/Amsterdam (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Brussels'>
+                          Europe/Brussels (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Vienna'>
+                          Europe/Vienna (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Stockholm'>
+                          Europe/Stockholm (UTC+1/+2, CET/CEST)
+                        </option>
+                        <option value='Europe/Dublin'>
+                          Europe/Dublin (UTC+0/+1, GMT/IST)
+                        </option>
+                        <option value='Europe/Lisbon'>
+                          Europe/Lisbon (UTC+0/+1, WET/WEST)
+                        </option>
+                        <option value='Europe/Athens'>
+                          Europe/Athens (UTC+2/+3, EET/EEST)
+                        </option>
+                        <option value='Europe/Helsinki'>
+                          Europe/Helsinki (UTC+2/+3, EET/EEST)
+                        </option>
+                        <option value='Europe/Moscow'>
+                          Europe/Moscow (UTC+3, MSK)
+                        </option>
+                        <option value='Europe/Istanbul'>
+                          Europe/Istanbul (UTC+3, TRT)
+                        </option>
+                      </optgroup>
+                      <optgroup label='Asia'>
+                        <option value='Asia/Dubai'>
+                          Asia/Dubai (UTC+4, GST)
+                        </option>
+                        <option value='Asia/Kolkata'>
+                          Asia/Kolkata (UTC+5:30, IST)
+                        </option>
+                        <option value='Asia/Bangkok'>
+                          Asia/Bangkok (UTC+7, ICT)
+                        </option>
+                        <option value='Asia/Singapore'>
+                          Asia/Singapore (UTC+8, SGT)
+                        </option>
+                        <option value='Asia/Hong_Kong'>
+                          Asia/Hong_Kong (UTC+8, HKT)
+                        </option>
+                        <option value='Asia/Shanghai'>
+                          Asia/Shanghai (UTC+8, CST)
+                        </option>
+                        <option value='Asia/Seoul'>
+                          Asia/Seoul (UTC+9, KST)
+                        </option>
+                        <option value='Asia/Taipei'>
+                          Asia/Taipei (UTC+8, CST)
+                        </option>
+                        <option value='Asia/Manila'>
+                          Asia/Manila (UTC+8, PHT)
+                        </option>
+                        <option value='Asia/Jakarta'>
+                          Asia/Jakarta (UTC+7, WIB)
+                        </option>
+                      </optgroup>
+                      <optgroup label='Pacific'>
+                        <option value='Australia/Sydney'>
+                          Australia/Sydney (UTC+10/+11, AEDT/AEST)
+                        </option>
+                        <option value='Australia/Melbourne'>
+                          Australia/Melbourne (UTC+10/+11, AEDT/AEST)
+                        </option>
+                        <option value='Australia/Brisbane'>
+                          Australia/Brisbane (UTC+10, AEST no DST)
+                        </option>
+                        <option value='Australia/Perth'>
+                          Australia/Perth (UTC+8, AWST)
+                        </option>
+                        <option value='Pacific/Auckland'>
+                          Pacific/Auckland (UTC+12/+13, NZDT/NZST)
+                        </option>
+                        <option value='Pacific/Fiji'>
+                          Pacific/Fiji (UTC+12, FJT)
+                        </option>
+                      </optgroup>
+                      <optgroup label='Africa & Middle East'>
+                        <option value='Africa/Cairo'>
+                          Africa/Cairo (UTC+2, EET)
+                        </option>
+                        <option value='Africa/Johannesburg'>
+                          Africa/Johannesburg (UTC+2, SAST)
+                        </option>
+                        <option value='Africa/Lagos'>
+                          Africa/Lagos (UTC+1, WAT)
+                        </option>
+                        <option value='Africa/Nairobi'>
+                          Africa/Nairobi (UTC+3, EAT)
+                        </option>
+                      </optgroup>
+                    </Select>
+                  </FormControl>
+                </Stack>
+                <Alert status='info' size='sm' borderRadius='md' mt={5}>
                   <AlertIcon />
-                  <AlertDescription>
-                    Contacts are read-only for viewers. Only workspace managers
-                    and admins can add or modify contacts.
+                  <AlertDescription fontSize='sm' lineHeight='1.45'>
+                    <Text as='span' fontWeight='semibold'>
+                      Alerts outside this window will be sent when the window
+                      reopens, for all alert channels.
+                    </Text>
                   </AlertDescription>
                 </Alert>
-              )}
-
-              <Box data-tour='preferences-contacts-list'>
-                <Box display={{ base: 'block', md: 'none' }}>
-                  {contacts.length === 0 ? (
-                    <Text color={readableMuted} fontSize='sm'>
-                      No contacts defined.
-                    </Text>
-                  ) : (
-                    <VStack align='stretch' spacing={3}>
-                      {contacts.map(contact =>
-                        renderMobileContactCard(contact)
-                      )}
-                    </VStack>
-                  )}
-                </Box>
-
-                <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
-                  <Table size='sm' width='100%' sx={{ tableLayout: 'fixed' }}>
-                    <Thead>
-                      <Tr>
-                        <Th width='22%'>Name</Th>
-                        {whatsappAvailable && <Th width='28%'>Phone</Th>}
-                        <Th width={whatsappAvailable ? '30%' : '58%'}>
-                          Details
-                        </Th>
-                        <Th width='20%' textAlign='right'></Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {contacts.map(c => {
-                        const rawDetails =
-                          c.details && typeof c.details === 'object'
-                            ? c.details
-                            : {};
-
-                        const formatDetailLabel = key => {
-                          if (!key) return key;
-                          return key
-                            .replace(/_/g, ' ')
-                            .replace(/\b\w/g, ch => ch.toUpperCase());
-                        };
-
-                        const iconForDetail = key => {
-                          switch (key) {
-                            case 'department':
-                              return '🏢';
-                            case 'title':
-                            case 'role':
-                              return '👤';
-                            case 'note':
-                              return '📝';
-                            case 'email':
-                              return '✉️';
-                            case 'phone':
-                              return '📱';
-                            default:
-                              return '•';
-                          }
-                        };
-
-                        const orderedKeys = [
-                          'department',
-                          'title',
-                          'email',
-                          'note',
-                        ];
-                        const seenDetailKeys = new Set();
-                        const detailDisplay = [];
-
-                        const pushDetail = (key, value) => {
-                          const trimmed = String(value ?? '').trim();
-                          if (!trimmed || seenDetailKeys.has(key)) return;
-                          seenDetailKeys.add(key);
-                          detailDisplay.push({
-                            key,
-                            icon: iconForDetail(key),
-                            label: formatDetailLabel(key),
-                            value: trimmed,
-                          });
-                        };
-
-                        orderedKeys.forEach(key => {
-                          if (
-                            Object.prototype.hasOwnProperty.call(
-                              rawDetails,
-                              key
-                            )
-                          ) {
-                            pushDetail(key, rawDetails[key]);
-                          }
+                <HStack mt='auto' pt={5}>
+                  <DashboardActionButton
+                    colorScheme='blue'
+                    onClick={async () => {
+                      try {
+                        setSavingToggles(true);
+                        await workspaceAPI.updateAlertSettings(workspaceId, {
+                          delivery_window_start: dwStart || null,
+                          delivery_window_end: dwEnd || null,
+                          delivery_window_tz: dwTz || null,
                         });
+                        showSuccess('Delivery window saved');
+                      } catch (e) {
+                        showError(
+                          e?.response?.data?.error ||
+                            'Failed to save delivery window'
+                        );
+                      } finally {
+                        setSavingToggles(false);
+                      }
+                    }}
+                    isLoading={savingToggles}
+                    disabled={isViewer || !workspaceId}
+                  >
+                    Save
+                  </DashboardActionButton>
+                </HStack>
+              </DashboardPanel>
+            </SimpleGrid>
+          </SettingsSection>
 
-                        Object.entries(rawDetails)
-                          .filter(([key]) => !orderedKeys.includes(key))
-                          .sort(([a], [b]) => a.localeCompare(b))
-                          .forEach(([key, value]) => pushDetail(key, value));
+          <SettingsSection id='contacts'>
+            <DashboardPanel data-tour='preferences-contacts' minW={0}>
+              <PreferencesPanelHeader
+                title='Contacts'
+                description='Manage people and contact details that can receive workspace alerts.'
+                muted={bodySecondary}
+                action={
+                  !isViewer ? (
+                    <DashboardActionButton
+                      size='sm'
+                      colorScheme='blue'
+                      onClick={onAddContactOpen}
+                      data-tour='preferences-contacts-add-trigger'
+                    >
+                      Add contact
+                    </DashboardActionButton>
+                  ) : null
+                }
+              />
+              <VStack align='stretch' spacing={4}>
+                {isViewer && (
+                  <Alert status='info' borderRadius='md'>
+                    <AlertIcon />
+                    <AlertDescription>
+                      Contacts are read-only for viewers. Only workspace
+                      managers and admins can add or modify contacts.
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-                        // When WhatsApp is not available, show phone in details column
-                        if (!whatsappAvailable && c.phone_e164) {
-                          pushDetail('phone', c.phone_e164);
-                        }
+                <Box data-tour='preferences-contacts-list'>
+                  <Box display={{ base: 'block', md: 'none' }}>
+                    {contacts.length === 0 ? (
+                      <Text color={bodySecondary} fontSize='sm'>
+                        No contacts defined.
+                      </Text>
+                    ) : (
+                      <VStack align='stretch' spacing={3}>
+                        {sortedContacts.map(contact =>
+                          renderMobileContactCard(contact)
+                        )}
+                      </VStack>
+                    )}
+                  </Box>
 
-                        return editingContactId === c.id ? (
-                          isMobile ? (
-                            <Tr key={c.id} bg={dashboard.bg.panelHover}>
-                              <Td colSpan={4}>
-                                <VStack align='stretch' spacing={3}>
-                                  <HStack spacing={2} flexWrap='wrap'>
-                                    <FormControl maxW='100%'>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        First name
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        value={editContactFirstName}
-                                        onChange={e =>
-                                          setEditContactFirstName(
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder='First name'
-                                      />
-                                    </FormControl>
-                                    <FormControl maxW='100%'>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        Last name
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        value={editContactLastName}
-                                        onChange={e =>
-                                          setEditContactLastName(e.target.value)
-                                        }
-                                        placeholder='Last name'
-                                      />
-                                    </FormControl>
-                                  </HStack>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Phone
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      value={editContactPhone}
-                                      onChange={e =>
-                                        setEditContactPhone(e.target.value)
-                                      }
-                                      placeholder='+14155550100'
-                                    />
-                                  </FormControl>
-                                  <HStack spacing={2} flexWrap='wrap'>
-                                    <FormControl>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        Department
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        placeholder='Department'
-                                        value={
-                                          editContactDetails.department || ''
-                                        }
-                                        onChange={e =>
-                                          setEditContactDetails({
-                                            ...editContactDetails,
-                                            department: e.target.value,
-                                          })
-                                        }
-                                      />
-                                    </FormControl>
-                                    <FormControl>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        Title / Role
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        placeholder='Title / Role'
-                                        value={editContactDetails.title || ''}
-                                        onChange={e =>
-                                          setEditContactDetails({
-                                            ...editContactDetails,
-                                            title: e.target.value,
-                                          })
-                                        }
-                                      />
-                                    </FormControl>
-                                  </HStack>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Email
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      placeholder='Email'
-                                      value={editContactDetails.email || ''}
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          email: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Note
-                                    </FormLabel>
-                                    <Textarea
-                                      size='sm'
-                                      rows={2}
-                                      placeholder='Note'
-                                      value={editContactDetails.note || ''}
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          note: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                  <HStack spacing={2}>
-                                    <Button
-                                      size='sm'
-                                      colorScheme='blue'
-                                      isDisabled={
-                                        isViewer ||
-                                        !String(
-                                          editContactFirstName || ''
-                                        ).trim() ||
-                                        !String(
-                                          editContactLastName || ''
-                                        ).trim() ||
-                                        (!String(
-                                          editContactPhone || ''
-                                        ).trim() &&
-                                          !isValidEmail(
-                                            String(
-                                              editContactDetails.email || ''
-                                            ).trim()
-                                          )) ||
-                                        (String(
-                                          editContactPhone || ''
-                                        ).trim() &&
-                                          !/^\+?[1-9]\d{6,14}$/.test(
-                                            String(
-                                              editContactPhone || ''
-                                            ).trim()
-                                          ))
-                                      }
-                                      onClick={async () => {
-                                        try {
-                                          const res = await apiClient.put(
-                                            `/api/v1/workspaces/${workspaceId}/contacts/${c.id}`,
-                                            {
-                                              first_name: editContactFirstName,
-                                              last_name: editContactLastName,
-                                              phone_e164: editContactPhone,
-                                              details: editContactDetails,
-                                            }
-                                          );
-                                          setContacts(
-                                            contacts.map(x =>
-                                              x.id === c.id ? res.data : x
-                                            )
-                                          );
-                                          setEditingContactId(null);
-                                          showSuccess('Contact updated');
-                                        } catch (e) {
-                                          showError(
-                                            e?.response?.data?.error ||
-                                              'Failed to update contact'
-                                          );
-                                        }
-                                      }}
-                                    >
-                                      Save
-                                    </Button>
+                  <Box overflowX='auto' display={{ base: 'none', md: 'block' }}>
+                    <Table
+                      size='sm'
+                      width='100%'
+                      minW='960px'
+                      sx={{ tableLayout: 'fixed' }}
+                    >
+                      <Thead>
+                        <Tr>
+                          <ContactSortableTh
+                            width='12%'
+                            sortKey='name'
+                            sortConfig={contactSortConfig}
+                            onSort={handleContactSort}
+                            hoverBg={dashboard.table.rowHover}
+                          >
+                            Name
+                          </ContactSortableTh>
+                          <ContactSortableTh
+                            width='14%'
+                            sortKey='phone'
+                            sortConfig={contactSortConfig}
+                            onSort={handleContactSort}
+                            hoverBg={dashboard.table.rowHover}
+                          >
+                            Phone
+                          </ContactSortableTh>
+                          <ContactSortableTh
+                            width='13%'
+                            sortKey='department'
+                            sortConfig={contactSortConfig}
+                            onSort={handleContactSort}
+                            hoverBg={dashboard.table.rowHover}
+                          >
+                            Department
+                          </ContactSortableTh>
+                          <ContactSortableTh
+                            width='13%'
+                            sortKey='title'
+                            sortConfig={contactSortConfig}
+                            onSort={handleContactSort}
+                            hoverBg={dashboard.table.rowHover}
+                          >
+                            Title
+                          </ContactSortableTh>
+                          <ContactSortableTh
+                            width='16%'
+                            sortKey='email'
+                            sortConfig={contactSortConfig}
+                            onSort={handleContactSort}
+                            hoverBg={dashboard.table.rowHover}
+                          >
+                            Email
+                          </ContactSortableTh>
+                          <ContactSortableTh
+                            width='18%'
+                            sortKey='note'
+                            sortConfig={contactSortConfig}
+                            onSort={handleContactSort}
+                            hoverBg={dashboard.table.rowHover}
+                          >
+                            Note
+                          </ContactSortableTh>
+                          <Th width='14%' textAlign='right'></Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {sortedContacts.map(c => {
+                          const detailFields = getContactDetailFields(c);
 
-                                    <Button
-                                      size='sm'
-                                      variant='ghost'
-                                      onClick={() => setEditingContactId(null)}
-                                    >
-                                      Cancel
-                                    </Button>
-                                  </HStack>
-                                </VStack>
-                              </Td>
-                            </Tr>
-                          ) : (
-                            <Tr key={c.id} bg={dashboard.bg.panelHover}>
-                              <Td colSpan={4}>
-                                <VStack align='stretch' spacing={3}>
-                                  <HStack spacing={2} flexWrap='wrap'>
-                                    <FormControl maxW='100%'>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        First name
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        value={editContactFirstName}
-                                        onChange={e =>
-                                          setEditContactFirstName(
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder='First name'
-                                      />
-                                    </FormControl>
-                                    <FormControl maxW='100%'>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        Last name
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        value={editContactLastName}
-                                        onChange={e =>
-                                          setEditContactLastName(e.target.value)
-                                        }
-                                        placeholder='Last name'
-                                      />
-                                    </FormControl>
-                                  </HStack>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Phone
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      value={editContactPhone}
-                                      onChange={e =>
-                                        setEditContactPhone(e.target.value)
-                                      }
-                                      placeholder='+14155550100'
-                                    />
-                                  </FormControl>
-                                  <HStack spacing={2} flexWrap='wrap'>
-                                    <FormControl>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        Department
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        placeholder='Department'
-                                        value={
-                                          editContactDetails.department || ''
-                                        }
-                                        onChange={e =>
-                                          setEditContactDetails({
-                                            ...editContactDetails,
-                                            department: e.target.value,
-                                          })
-                                        }
-                                      />
-                                    </FormControl>
-                                    <FormControl>
-                                      <FormLabel m={0} fontSize='sm'>
-                                        Title / Role
-                                      </FormLabel>
-                                      <Input
-                                        size='sm'
-                                        placeholder='Title / Role'
-                                        value={editContactDetails.title || ''}
-                                        onChange={e =>
-                                          setEditContactDetails({
-                                            ...editContactDetails,
-                                            title: e.target.value,
-                                          })
-                                        }
-                                      />
-                                    </FormControl>
-                                  </HStack>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Email
-                                    </FormLabel>
-                                    <Input
-                                      size='sm'
-                                      placeholder='Email'
-                                      value={editContactDetails.email || ''}
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          email: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                  <FormControl>
-                                    <FormLabel m={0} fontSize='sm'>
-                                      Note
-                                    </FormLabel>
-                                    <Textarea
-                                      size='sm'
-                                      rows={2}
-                                      placeholder='Note'
-                                      value={editContactDetails.note || ''}
-                                      onChange={e =>
-                                        setEditContactDetails({
-                                          ...editContactDetails,
-                                          note: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </FormControl>
-                                  <HStack spacing={2}>
-                                    <Button
-                                      size='sm'
-                                      colorScheme='blue'
-                                      isDisabled={
-                                        isViewer ||
-                                        !String(
-                                          editContactFirstName || ''
-                                        ).trim() ||
-                                        !String(
-                                          editContactLastName || ''
-                                        ).trim() ||
-                                        (!String(
-                                          editContactPhone || ''
-                                        ).trim() &&
-                                          !isValidEmail(
-                                            String(
-                                              editContactDetails.email || ''
-                                            ).trim()
-                                          )) ||
-                                        (String(
-                                          editContactPhone || ''
-                                        ).trim() &&
-                                          !/^\+?[1-9]\d{6,14}$/.test(
-                                            String(
-                                              editContactPhone || ''
-                                            ).trim()
-                                          ))
-                                      }
-                                      onClick={async () => {
-                                        try {
-                                          const res = await apiClient.put(
-                                            `/api/v1/workspaces/${workspaceId}/contacts/${c.id}`,
-                                            {
-                                              first_name: editContactFirstName,
-                                              last_name: editContactLastName,
-                                              phone_e164: editContactPhone,
-                                              details: editContactDetails,
-                                            }
-                                          );
-                                          setContacts(
-                                            contacts.map(x =>
-                                              x.id === c.id ? res.data : x
-                                            )
-                                          );
-                                          setEditingContactId(null);
-                                          showSuccess('Contact updated');
-                                        } catch (e) {
-                                          showError(
-                                            e?.response?.data?.error ||
-                                              'Failed to update contact'
-                                          );
-                                        }
-                                      }}
-                                    >
-                                      Save
-                                    </Button>
-                                    <Button
-                                      size='sm'
-                                      variant='ghost'
-                                      onClick={() => setEditingContactId(null)}
-                                    >
-                                      Cancel
-                                    </Button>
-                                  </HStack>
-                                </VStack>
-                              </Td>
-                            </Tr>
-                          )
-                        ) : (
-                          <Tr key={c.id}>
-                            <Td
-                              width='22%'
-                              pr={2}
-                              whiteSpace='normal'
-                              wordBreak='break-word'
-                            >
-                              <Text fontSize='sm' fontWeight='medium'>
-                                {c.first_name} {c.last_name}
-                              </Text>
-                            </Td>
-                            {whatsappAvailable && (
+                          return (
+                            <Tr key={c.id}>
                               <Td
-                                width='28%'
                                 pr={2}
                                 whiteSpace='normal'
                                 wordBreak='break-word'
                               >
-                                <VStack
-                                  align='stretch'
-                                  spacing={1}
-                                  fontSize='sm'
-                                >
-                                  <Text>{c.phone_e164 || '-'}</Text>
-                                  {String(c.phone_e164 || '').trim() ? (
-                                    <Button
-                                      size='xs'
-                                      variant='outline'
-                                      width='100%'
-                                      minW='0'
-                                      fontSize='xs'
-                                      px={1}
-                                      whiteSpace='normal'
-                                      wordBreak='break-word'
-                                      height='auto'
-                                      py={1}
-                                      onClick={async () => {
-                                        try {
-                                          const now = Date.now();
-                                          const until =
-                                            waContactCooldowns[c.id] || 0;
-                                          if (until > now) {
-                                            const secs = Math.ceil(
-                                              (until - now) / 1000
-                                            );
-                                            showError(
-                                              `Please wait ${secs}s before sending another test.`
-                                            );
-                                            return;
-                                          }
-                                          setTestingContact(c.id);
-                                          await apiClient.post(
-                                            `/api/test-whatsapp?workspace_id=${encodeURIComponent(workspaceId)}&use_template=true`,
-                                            { phone_e164: c.phone_e164 }
-                                          );
-                                          showSuccess('Test message sent');
-                                          setWaContactCooldowns(prev => ({
-                                            ...prev,
-                                            [c.id]: now + 120000,
-                                          }));
-                                        } catch (e) {
-                                          const code = e?.response?.data?.code;
-                                          const retryAfter =
-                                            e?.response?.data?.retryAfter;
-                                          let msg =
-                                            e?.response?.data?.error ||
-                                            e?.message ||
-                                            'Test failed';
-                                          if (
-                                            code === 'TEST_WHATSAPP_COOLDOWN' &&
-                                            Number.isFinite(retryAfter)
-                                          ) {
-                                            msg = `Please wait ${retryAfter}s before testing this number again`;
-                                          } else if (
-                                            code === 'INVALID_PHONE_FORMAT'
-                                          ) {
-                                            msg =
-                                              'Invalid phone format. Use E.164, e.g., +14155550100.';
-                                          } else if (
-                                            String(code || '') === '63016'
-                                          ) {
-                                            msg =
-                                              'Outside WhatsApp 24-hour session. Sending via approved template... please try again if it still fails.';
-                                          } else if (
-                                            code === 'WHATSAPP_NOT_CONFIGURED'
-                                          ) {
-                                            msg =
-                                              'WhatsApp is not configured. Please contact support.';
-                                          } else if (
-                                            code === 'INVALID_RECIPIENT'
-                                          ) {
-                                            msg =
-                                              'Invalid recipient. Verify the phone number and try again.';
-                                          }
-                                          showError(msg);
-                                        } finally {
-                                          setTestingContact(null);
-                                        }
-                                      }}
-                                      isLoading={testingContact === c.id}
-                                      isDisabled={isViewer}
-                                    >
-                                      {waContactCooldowns[c.id] > Date.now()
-                                        ? `Test WhatsApp message (${Math.ceil((waContactCooldowns[c.id] - Date.now()) / 1000)}s)`
-                                        : 'Test WhatsApp message'}
-                                    </Button>
-                                  ) : null}
-                                </VStack>
+                                <Text fontSize='sm' fontWeight='medium'>
+                                  {c.first_name} {c.last_name}
+                                </Text>
                               </Td>
-                            )}
-                            <Td
-                              width={whatsappAvailable ? '30%' : '58%'}
-                              fontSize='xs'
-                              color={readableMuted}
-                              pr={2}
-                              whiteSpace='normal'
-                              wordBreak='break-word'
-                            >
-                              {detailDisplay.length > 0 ? (
-                                <VStack
-                                  align='stretch'
-                                  spacing={0.5}
-                                  whiteSpace='normal'
+                              <Td
+                                pr={2}
+                                whiteSpace='normal'
+                                wordBreak='break-word'
+                              >
+                                <Text
+                                  fontSize='sm'
+                                  minW={0}
                                   wordBreak='break-word'
-                                  overflowWrap='anywhere'
                                 >
-                                  {detailDisplay.map(detail => (
-                                    <Text
-                                      key={detail.key}
-                                      color={readableMuted}
-                                    >
-                                      {detail.label}: {detail.value}
-                                    </Text>
-                                  ))}
-                                </VStack>
-                              ) : (
-                                <Text>-</Text>
-                              )}
-                            </Td>
-                            <Td width='20%' textAlign='right' pl={2}>
-                              <HStack spacing={1} justify='flex-end'>
-                                <Button
-                                  size='xs'
-                                  variant='outline'
-                                  onClick={() => {
-                                    setEditingContactId(c.id);
-                                    setEditContactFirstName(c.first_name);
-                                    setEditContactLastName(c.last_name);
-                                    setEditContactPhone(c.phone_e164);
-                                    setEditContactDetails(c.details || {});
-                                  }}
-                                  isDisabled={isViewer}
-                                >
-                                  Edit
-                                </Button>
+                                  {c.phone_e164 || '-'}
+                                </Text>
+                              </Td>
+                              <Td
+                                pr={2}
+                                whiteSpace='normal'
+                                wordBreak='break-word'
+                              >
+                                <ContactTableField
+                                  value={detailFields.department}
+                                  muted={bodySecondary}
+                                  text={text}
+                                />
+                              </Td>
+                              <Td
+                                pr={2}
+                                whiteSpace='normal'
+                                wordBreak='break-word'
+                              >
+                                <ContactTableField
+                                  value={detailFields.title}
+                                  muted={bodySecondary}
+                                  text={text}
+                                />
+                              </Td>
+                              <Td
+                                pr={2}
+                                whiteSpace='normal'
+                                wordBreak='break-word'
+                              >
+                                <ContactTableField
+                                  value={detailFields.email}
+                                  muted={bodySecondary}
+                                  text={text}
+                                />
+                              </Td>
+                              <Td
+                                pr={2}
+                                whiteSpace='normal'
+                                wordBreak='break-word'
+                              >
+                                <ContactTableField
+                                  value={detailFields.note}
+                                  muted={bodySecondary}
+                                  text={text}
+                                />
+                              </Td>
+                              <Td textAlign='right' pl={2}>
+                                <HStack spacing={2} justify='flex-end'>
+                                  <Button
+                                    size='sm'
+                                    h='30px'
+                                    minH='30px'
+                                    minW='76px'
+                                    variant='outline'
+                                    onClick={() => handleStartContactEdit(c)}
+                                    isDisabled={isViewer}
+                                  >
+                                    Edit
+                                  </Button>
 
-                                <Button
-                                  size='xs'
-                                  variant='outline'
-                                  colorScheme='red'
-                                  onClick={() => openContactDeleteConfirm(c)}
-                                  isDisabled={isViewer}
-                                >
-                                  Remove
-                                </Button>
-                              </HStack>
-                            </Td>
-                          </Tr>
-                        );
-                      })}
-                    </Tbody>
-                  </Table>
+                                  <Button
+                                    size='sm'
+                                    h='30px'
+                                    minH='30px'
+                                    minW='76px'
+                                    variant='outline'
+                                    colorScheme='red'
+                                    onClick={() => openContactDeleteConfirm(c)}
+                                    isDisabled={isViewer}
+                                  >
+                                    Remove
+                                  </Button>
+                                </HStack>
+                              </Td>
+                            </Tr>
+                          );
+                        })}
+                      </Tbody>
+                    </Table>
+                  </Box>
                 </Box>
-              </Box>
+              </VStack>
+            </DashboardPanel>
+          </SettingsSection>
 
-              {!isViewer && (
-                <>
-                  <Heading size='sm'>Add New Contact</Heading>
-                  <VStack
-                    align='stretch'
-                    spacing={2}
-                    data-tour='preferences-contacts-add'
-                  >
-                    <HStack spacing={2} flexWrap='wrap'>
-                      <FormControl isInvalid={!!contactPhoneError} maxW='140px'>
-                        <Input
-                          placeholder='First name'
-                          value={newContactFirstName}
-                          onChange={e => setNewContactFirstName(e.target.value)}
-                          size='sm'
-                        />
-                      </FormControl>
-                      <FormControl maxW='140px'>
-                        <Input
-                          placeholder='Last name'
-                          value={newContactLastName}
-                          onChange={e => setNewContactLastName(e.target.value)}
-                          size='sm'
-                        />
-                      </FormControl>
-                      <FormControl maxW='200px'>
-                        <Input
-                          placeholder='Email'
-                          value={newContactDetails.email || ''}
-                          onChange={e =>
-                            setNewContactDetails({
-                              ...newContactDetails,
-                              email: e.target.value,
-                            })
-                          }
-                          size='sm'
-                        />
-                      </FormControl>
-                      <FormControl isInvalid={!!contactPhoneError} maxW='160px'>
-                        <Input
-                          placeholder='+14155550100'
-                          value={newContactPhone}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setNewContactPhone(val);
-                            setContactPhoneError('');
-                            // Validate E.164
-                            if (val.trim()) {
-                              const normalized = val.trim().startsWith('+')
-                                ? val.trim()
-                                : `+${val.trim()}`;
-                              if (!/^\+[1-9]\d{6,14}$/.test(normalized)) {
-                                setContactPhoneError(
-                                  'Invalid E.164 format (e.g., +14155550100)'
-                                );
-                              }
-                            }
-                          }}
-                          size='sm'
-                        />
-                        {contactPhoneError && (
-                          <Text fontSize='xs' color='red.500' mt={1}>
-                            {contactPhoneError}
-                          </Text>
-                        )}
-                      </FormControl>
-                    </HStack>
-                    <Button
-                      size='xs'
-                      variant='ghost'
-                      onClick={() =>
-                        setNewContactDetailsOpen(!newContactDetailsOpen)
-                      }
-                      leftIcon={
-                        <Text>{newContactDetailsOpen ? '▼' : '▶'}</Text>
-                      }
-                      alignSelf='flex-start'
+          <SettingsSection id='webhooks'>
+            <DashboardPanel data-tour='preferences-webhooks' minW={0}>
+              <PreferencesPanelHeader
+                title='Webhooks'
+                description='Configure outgoing webhook targets for workspace alerts.'
+                muted={bodySecondary}
+                action={
+                  !isViewer ? (
+                    <DashboardActionButton
+                      size='sm'
+                      colorScheme='blue'
+                      onClick={openAddWebhookEditor}
+                      disabled={webhookUrls.length >= 5}
+                      data-tour='preferences-webhooks-add-trigger'
                     >
-                      Additional contact details
-                    </Button>
-                    {newContactDetailsOpen && (
-                      <VStack align='stretch' spacing={2} pl={4}>
-                        <Input
-                          placeholder='Department'
-                          value={newContactDetails.department || ''}
-                          onChange={e =>
-                            setNewContactDetails({
-                              ...newContactDetails,
-                              department: e.target.value,
-                            })
-                          }
-                          size='sm'
-                        />
-                        <Input
-                          placeholder='Title / Role'
-                          value={newContactDetails.title || ''}
-                          onChange={e =>
-                            setNewContactDetails({
-                              ...newContactDetails,
-                              title: e.target.value,
-                            })
-                          }
-                          size='sm'
-                        />
-                        <Textarea
-                          placeholder='Note'
-                          value={newContactDetails.note || ''}
-                          onChange={e =>
-                            setNewContactDetails({
-                              ...newContactDetails,
-                              note: e.target.value,
-                            })
-                          }
-                          size='sm'
-                          rows={2}
-                        />
-                      </VStack>
-                    )}
-                    <Tooltip
-                      label='At least a valid email or phone number should be entered'
-                      isDisabled={
-                        !!newContactFirstName.trim() &&
-                        !!newContactLastName.trim() &&
-                        ((!!newContactPhone.trim() && !contactPhoneError) ||
-                          isValidEmail(
-                            String(newContactDetails.email || '').trim()
-                          )) &&
-                        !isViewer
-                      }
-                      hasArrow
-                      placement='top'
-                    >
-                      <Button
-                        size='sm'
-                        colorScheme='blue'
-                        onClick={async () => {
-                          setContactPhoneError('');
-                          const phoneNorm = newContactPhone.trim();
-                          const emailVal = String(
-                            newContactDetails.email || ''
-                          ).trim();
-                          let phoneE164 = '';
-                          if (phoneNorm) {
-                            phoneE164 = phoneNorm.startsWith('+')
-                              ? phoneNorm
-                              : `+${phoneNorm}`;
-                            if (!/^\+[1-9]\d{6,14}$/.test(phoneE164)) {
-                              setContactPhoneError(
-                                'Invalid E.164 format (e.g., +14155550100)'
-                              );
-                              return;
-                            }
-                          } else {
-                            // Require a valid email if no phone provided
-                            if (!isValidEmail(emailVal)) {
-                              showError(
-                                'Provide a phone number or a valid email'
-                              );
-                              return;
-                            }
-                          }
-                          if (
-                            !newContactFirstName.trim() ||
-                            !newContactLastName.trim()
-                          ) {
-                            showError('First and last name are required');
-                            return;
-                          }
-                          try {
-                            await apiClient.post(
-                              `/api/v1/workspaces/${workspaceId}/contacts`,
-                              {
-                                first_name: newContactFirstName.trim(),
-                                last_name: newContactLastName.trim(),
-                                phone_e164: phoneE164,
-                                details: newContactDetails,
-                              }
-                            );
-                            // Refresh from server to ensure consistent ordering and visibility
-                            try {
-                              const refreshed = await apiClient.get(
-                                `/api/v1/workspaces/${workspaceId}/contacts`
-                              );
-                              setContacts(refreshed?.data?.items || []);
-                            } catch (_) {}
-                            setNewContactFirstName('');
-                            setNewContactLastName('');
-                            setNewContactPhone('');
-                            setNewContactDetails({});
-                            setNewContactDetailsOpen(false);
-                            setContactPhoneError('');
-                            showSuccess('Contact added');
-                          } catch (e) {
-                            showError(
-                              e?.response?.data?.error ||
-                                'Failed to add contact'
-                            );
-                          }
-                        }}
-                        disabled={
-                          !newContactFirstName.trim() ||
-                          !newContactLastName.trim() ||
-                          (!!newContactPhone.trim() && !!contactPhoneError) ||
-                          (!newContactPhone.trim() &&
-                            !isValidEmail(
-                              String(newContactDetails.email || '').trim()
-                            )) ||
-                          isViewer
-                        }
-                        alignSelf='flex-start'
-                      >
-                        Add Contact
-                      </Button>
-                    </Tooltip>
-                  </VStack>
-                </>
+                      Add webhook
+                    </DashboardActionButton>
+                  ) : null
+                }
+              />
+              {isViewer && (
+                <Alert status='info' mb={3} borderRadius='md'>
+                  <AlertIcon />
+                  <AlertDescription>
+                    You have viewer access in this workspace. Webhook settings
+                    are read‑only.
+                  </AlertDescription>
+                </Alert>
               )}
-            </VStack>
-          </DashboardPanel>
-
-          {/* Webhooks Panel */}
-          <DashboardPanel data-tour='preferences-webhooks' minW={0}>
-            <PreferencesPanelHeader
-              title='Webhooks'
-              description='Configure outgoing webhook targets for workspace alerts.'
-              muted={readableMuted}
-            />
-            {isViewer && (
-              <Alert status='info' mb={3} borderRadius='md'>
-                <AlertIcon />
-                <AlertDescription>
-                  You have viewer access in this workspace. Webhook settings are
-                  read‑only.
-                </AlertDescription>
-              </Alert>
-            )}
-            <FormControl isDisabled={isViewer || !roleKnown}>
-              <HStack justify='space-between' mb={2} align='start'>
-                <VStack align='start' spacing={1}>
-                  <FormLabel m={0}>Webhooks</FormLabel>
-                  <HStack spacing={2} flexWrap='wrap' rowGap={1}>
-                    <Link
-                      href='https://api.slack.com/messaging/webhooks'
-                      isExternal
-                      color='blue.500'
-                      fontSize='xs'
-                    >
-                      Slack setup -
-                    </Link>
-                    <Link
-                      href='https://discord.com/developers/docs/resources/webhook'
-                      isExternal
-                      color='blue.500'
-                      fontSize='xs'
-                    >
-                      Discord setup -
-                    </Link>
-                    <Link
-                      href='https://docs.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook'
-                      isExternal
-                      color='blue.500'
-                      fontSize='xs'
-                    >
-                      Teams setup -
-                    </Link>
-                    <Link
-                      href='https://developer.pagerduty.com/docs/events-api-v2-overview'
-                      isExternal
-                      color='blue.500'
-                      fontSize='xs'
-                    >
-                      PagerDuty setup
-                    </Link>
-                  </HStack>
-                </VStack>
-                {/* Global webhooks toggle removed: webhooks are active if configured */}
-              </HStack>
+              <WebhookSetupGuidesPanel
+                labelColor={text}
+                muted={bodySecondary}
+                renderVendorLogo={renderWebhookLogo}
+              />
               <VStack
                 align='stretch'
-                spacing={3}
+                spacing={4}
                 data-tour='preferences-webhooks-list'
               >
-                {webhookUrls.map((webhook, index) => (
-                  <Box
-                    key={index}
-                    p={3}
-                    bg={dashboard.bg.panelHover}
-                    borderRadius='md'
-                    border='1px solid'
-                    borderColor={border}
-                  >
-                    <VStack align='stretch' spacing={2}>
-                      <Input
-                        placeholder='Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
-                        value={webhook.name || ''}
-                        onChange={e =>
-                          updateWebhook(index, 'name', e.target.value)
-                        }
-                        size='sm'
-                        isDisabled={isViewer || !isWebhookEditable(webhook)}
-                      />
-                      <Text fontSize='xs' color={readableMuted}>
-                        Used to pick this webhook in a contact group.
-                      </Text>
-                      {String(webhook.kind || '').toLowerCase() ===
-                      'pagerduty' ? (
-                        <VStack align='stretch' spacing={2}>
-                          <HStack spacing={2} align='center'>
-                            {renderWebhookLogo(webhook.kind || 'generic')}
-                            <Select
-                              value={webhook.kind || 'generic'}
-                              onChange={e =>
-                                updateWebhook(index, 'kind', e.target.value)
-                              }
-                              size='sm'
-                              maxW='160px'
-                              isDisabled={isViewer || !isWebhookEditable(webhook)}
-                            >
-                              <option value='generic'>Generic</option>
-                              <option value='discord'>Discord</option>
-                              <option value='teams'>Teams</option>
-                              <option value='slack'>Slack</option>
-                              <option value='pagerduty'>PagerDuty</option>
-                            </Select>
-                          </HStack>
-                          <Input
-                            placeholder='https://events.pagerduty.com/v2/enqueue'
-                            value={webhook.url || ''}
-                            onChange={e =>
-                              updateWebhook(index, 'url', e.target.value)
-                            }
-                            size='sm'
-                            isDisabled={isViewer || !isWebhookEditable(webhook)}
-                          />
-                          <Select
-                            value={webhook.severity || ''}
-                            onChange={e =>
-                              updateWebhook(index, 'severity', e.target.value)
-                            }
-                            size='sm'
-                            isDisabled={isViewer || !isWebhookEditable(webhook)}
-                          >
-                            <option value=''>Severity (auto)</option>
-                            <option value='critical'>critical</option>
-                            <option value='error'>error</option>
-                            <option value='warning'>warning</option>
-                            <option value='info'>info</option>
-                          </Select>
-                          <Input
-                            placeholder='Custom title (optional)'
-                            value={webhook.template || ''}
-                            onChange={e =>
-                              updateWebhook(index, 'template', e.target.value)
-                            }
-                            size='sm'
-                            isDisabled={isViewer || !isWebhookEditable(webhook)}
-                          />
-                          <Input
-                            placeholder='PagerDuty Routing Key'
-                            value={webhook.routingKey || ''}
-                            onChange={e =>
-                              updateWebhook(index, 'routingKey', e.target.value)
-                            }
-                            size='sm'
-                            isDisabled={isViewer || !isWebhookEditable(webhook)}
-                          />
-                          <HStack flexWrap='wrap' rowGap={2}>
-                            <Button
-                              size='sm'
-                              variant='outline'
-                              onClick={() => handleTestWebhook(index)}
-                              isLoading={testingWebhook === index}
-                              disabled={!webhook.url || isViewer}
-                            >
-                              Test
-                            </Button>
-                            {shouldShowWebhookSave(webhook) ? (
-                              <Button
-                                size='sm'
-                                colorScheme='blue'
-                                onClick={handleSaveWebhooks}
-                                isLoading={savingToggles}
-                                isDisabled={
-                                  isViewer ||
-                                  !workspaceId ||
-                                  !canSaveWebhook(webhook)
-                                }
-                              >
-                                Save
-                              </Button>
-                            ) : (
-                              <Button
-                                size='sm'
-                                variant='outline'
-                                onClick={() => startWebhookEdit(index)}
-                                isDisabled={isViewer}
-                              >
-                                Edit
-                              </Button>
-                            )}
-                            {isSavedWebhook(webhook) &&
-                            webhook._editing === true ? (
-                              <Button
-                                size='sm'
-                                variant='ghost'
-                                onClick={() => cancelWebhookEdit(index)}
-                                isDisabled={savingToggles}
-                              >
-                                Cancel
-                              </Button>
-                            ) : null}
-                            {webhook.verified &&
-                              (webhook.verifiedUrl || '') ===
-                                (webhook.url || '').trim() && (
-                                <Badge colorScheme='green'>Verified</Badge>
-                              )}
-                            <IconButton
-                              size='sm'
-                              variant='outline'
-                              colorScheme='red'
-                              aria-label='Delete webhook'
-                              onClick={() => handleWebhookDeleteClick(index)}
-                              isDisabled={isViewer}
-                              icon={
-                                <Icon
-                                  as={FiX}
-                                  boxSize={4}
-                                  color={webhookDeleteIconColor}
-                                />
-                              }
-                            />
-                          </HStack>
-                        </VStack>
-                      ) : (
-                        <VStack align='stretch' spacing={2}>
-                          <HStack spacing={2} align='center'>
-                            {renderWebhookLogo(webhook.kind || 'generic')}
-                            <Select
-                              value={webhook.kind || 'generic'}
-                              onChange={e =>
-                                updateWebhook(index, 'kind', e.target.value)
-                              }
-                              size='sm'
-                              maxW='160px'
-                              isDisabled={isViewer || !isWebhookEditable(webhook)}
-                            >
-                              <option value='generic'>Generic</option>
-                              <option value='discord'>Discord</option>
-                              <option value='teams'>Teams</option>
-                              <option value='slack'>Slack</option>
-                              <option value='pagerduty'>PagerDuty</option>
-                            </Select>
-                          </HStack>
-                          <Textarea
-                            placeholder='https://...'
-                            value={webhook.url || ''}
-                            onChange={e =>
-                              updateWebhook(index, 'url', e.target.value)
-                            }
-                            size='sm'
-                            rows={2}
-                            isDisabled={isViewer || !isWebhookEditable(webhook)}
-                          />
-                          <HStack flexWrap='wrap' rowGap={2}>
-                            <Button
-                              size='sm'
-                              variant='outline'
-                              onClick={() => handleTestWebhook(index)}
-                              isLoading={testingWebhook === index}
-                              disabled={!webhook.url || isViewer}
-                            >
-                              Test
-                            </Button>
-                            {shouldShowWebhookSave(webhook) ? (
-                              <Button
-                                size='sm'
-                                colorScheme='blue'
-                                onClick={handleSaveWebhooks}
-                                isLoading={savingToggles}
-                                isDisabled={
-                                  isViewer ||
-                                  !workspaceId ||
-                                  !canSaveWebhook(webhook)
-                                }
-                              >
-                                Save
-                              </Button>
-                            ) : (
-                              <Button
-                                size='sm'
-                                variant='outline'
-                                onClick={() => startWebhookEdit(index)}
-                                isDisabled={isViewer}
-                              >
-                                Edit
-                              </Button>
-                            )}
-                            {isSavedWebhook(webhook) &&
-                            webhook._editing === true ? (
-                              <Button
-                                size='sm'
-                                variant='ghost'
-                                onClick={() => cancelWebhookEdit(index)}
-                                isDisabled={savingToggles}
-                              >
-                                Cancel
-                              </Button>
-                            ) : null}
-                            {webhook.verified &&
-                              (webhook.verifiedUrl || '') ===
-                                (webhook.url || '').trim() && (
-                                <Badge colorScheme='green'>Verified</Badge>
-                              )}
-                            <IconButton
-                              size='sm'
-                              variant='outline'
-                              colorScheme='red'
-                              aria-label='Delete webhook'
-                              onClick={() => handleWebhookDeleteClick(index)}
-                              isDisabled={isViewer}
-                              icon={
-                                <Icon
-                                  as={FiX}
-                                  boxSize={4}
-                                  color={webhookDeleteIconColor}
-                                />
-                              }
-                            />
-                          </HStack>
-                        </VStack>
-                      )}
-                    </VStack>
-                  </Box>
-                ))}
-                <DashboardActionButton
-                  size='sm'
-                  variant='outline'
-                  onClick={addWebhook}
-                  disabled={webhookUrls.length >= 5}
-                  data-tour='preferences-webhooks-add'
-                >
-                  Add Webhook
-                </DashboardActionButton>
-              </VStack>
-            </FormControl>
-          </DashboardPanel>
-
-          {/* Contact Groups (per workspace) */}
-          <DashboardPanel data-tour='preferences-contact-groups'>
-            <PreferencesPanelHeader
-              title='Contact groups'
-              description={`Create groups to organize who receives alerts. Each person can receive via email${whatsappAvailable ? ', WhatsApp,' : ''} or webhooks.`}
-              muted={readableMuted}
-            />
-            {isViewer && (
-              <Alert status='info' mb={4} borderRadius='md'>
-                <AlertIcon />
-                <AlertDescription>
-                  Contact groups are not visible for viewers in this workspace.
-                </AlertDescription>
-              </Alert>
-            )}
-            <VStack align='stretch' spacing={4}>
-              {/* Default group selector */}
-              {!isViewer && (
-                <FormControl isDisabled={isViewer}>
-                  <FormLabel>Contact groups</FormLabel>
-                  <HStack>
-                    <Select
-                      data-tour='preferences-contact-groups-selector'
-                      value={selectedGroupId || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        if (val === '__new__') {
-                          // Start creating a new group via the editor
-                          setEditingGroupId('');
-                          setGroupName('');
-                          setGroupEmailsText('');
-                          setGroupWebhookNames([]);
-                          setGroupEmailContactIds([]);
-                          setGroupWhatsappContactIds([]);
-                          // Prefill thresholds with workspace defaults for new group
-                          setGroupThresholdsCsv(thresholdsCsv);
-                          // Focus the editor and scroll into view for better UX
-                          setTimeout(() => {
-                            try {
-                              groupNameInputRef.current &&
-                                groupNameInputRef.current.focus();
-                              groupNameInputRef.current &&
-                                groupNameInputRef.current.scrollIntoView({
-                                  behavior: 'smooth',
-                                  block: 'center',
-                                });
-                            } catch (_) {}
-                          }, 0);
-                          setSelectedGroupId('');
-                          return;
-                        }
-                        setSelectedGroupId(val);
-                        const g = (contactGroups || []).find(
-                          x => String(x.id) === String(val)
-                        );
-                        if (g) startEditGroup(g);
-                      }}
-                      size='sm'
-                    >
-                      {(contactGroups || []).map(g => (
-                        <option key={g.id} value={g.id}>
-                          {g.name}
-                        </option>
-                      ))}
-                      <option
-                        value='__new__'
-                        disabled={(contactGroups || []).length >= groupCap}
-                      >
-                        + Add New Group
-                      </option>
-                    </Select>
-                    {selectedGroupId &&
-                    selectedGroupId === defaultContactGroupId ? (
-                      <Badge>default</Badge>
-                    ) : null}
-                  </HStack>
-                  {selectedGroupId ? (
-                    <HStack mt={2} spacing={2} align='center'>
-                      <Text fontSize='xs' color={readableMuted}>
-                        ID:
-                      </Text>
-                      <Code fontSize='xs'>{selectedGroupId}</Code>
-                      <IconButton
-                        aria-label='Copy contact group ID'
-                        size='xs'
-                        variant='ghost'
-                        icon={<FiCopy />}
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(
-                              String(selectedGroupId)
-                            );
-                          } catch (_) {}
-                        }}
-                      />
-                    </HStack>
-                  ) : null}
-                  <Text fontSize='xs' color={readableMuted} mt={1}>
-                    Pick a contact group to edit it. Use {'"'}+ Add New Group
-                    {'"'} to create one, then click {'"'}Save group{'"'}.
+                {webhookUrls.filter(isSavedWebhook).length === 0 ? (
+                  <Text fontSize='sm' color={bodySecondary}>
+                    No webhooks configured.
                   </Text>
-                  <HStack mt={3} spacing={3}>
-                    <Button
-                      size='sm'
-                      variant='solid'
-                      colorScheme='blue'
-                      isDisabled={
-                        !selectedGroupId ||
-                        selectedGroupId === defaultContactGroupId ||
-                        isViewer
-                      }
-                      onClick={async () => {
-                        try {
-                          if (!workspaceId || !selectedGroupId) return;
-                          await workspaceAPI.updateAlertSettings(workspaceId, {
-                            default_contact_group_id: selectedGroupId,
-                            contact_groups: contactGroups,
-                          });
-                          setDefaultContactGroupId(selectedGroupId);
-                          showSuccess('Default contact group updated');
-                        } catch (_) {
-                          showError('Failed to update default contact group');
-                        }
-                      }}
-                    >
-                      Make this group default
-                    </Button>
-                    <Button
+                ) : (
+                  webhookUrls.map((webhook, index) => {
+                    if (!isSavedWebhook(webhook)) return null;
+                    const displayWebhook =
+                      getSavedWebhookForDisplay(webhook) || webhook;
+
+                    return (
+                      <SettingsNestedSurface key={index}>
+                        {renderWebhookReadOnlyView(
+                          index,
+                          displayWebhook,
+                          webhook
+                        )}
+                      </SettingsNestedSurface>
+                    );
+                  })
+                )}
+              </VStack>
+            </DashboardPanel>
+          </SettingsSection>
+
+          <SettingsSection id='contact-groups'>
+            <DashboardPanel data-tour='preferences-contact-groups'>
+              <PreferencesPanelHeader
+                title='Contact groups'
+                description={`Create groups to organize who receives alerts. Each person can receive via email${whatsappAvailable ? ', WhatsApp,' : ''} or webhooks.`}
+                muted={bodySecondary}
+                action={
+                  !isViewer ? (
+                    <DashboardActionButton
                       size='sm'
                       variant='outline'
-                      colorScheme='red'
-                      isDisabled={!selectedGroupId || isViewer}
-                      onClick={() => {
-                        if (!selectedGroupId) return;
-                        setDeleteTargetId(selectedGroupId);
-                        setDeleteDialogOpen(true);
-                      }}
+                      onClick={onGroupEditorOpen}
+                      data-tour='preferences-contact-groups-edit'
                     >
-                      Delete group
-                    </Button>
-                  </HStack>
-                </FormControl>
+                      Edit group
+                    </DashboardActionButton>
+                  ) : null
+                }
+              />
+              {isViewer && (
+                <Alert status='info' mb={4} borderRadius='md'>
+                  <AlertIcon />
+                  <AlertDescription>
+                    Contact groups are not visible for viewers in this
+                    workspace.
+                  </AlertDescription>
+                </Alert>
               )}
-
-              {/* Groups list removed per UX rework; selection + editor handle edits/deletes */}
-
-              {/* Editor */}
-              {!isViewer && (
-                <Box
-                  p={3}
-                  border='1px dashed'
-                  borderColor={border}
-                  borderRadius='md'
-                  data-tour='preferences-contact-groups-editor'
-                >
-                  <VStack align='stretch' spacing={2}>
-                    <Heading size='sm'>
-                      {editingGroupId ? 'Edit Group' : 'New Group'}
-                    </Heading>
-                    <Text fontSize='xs' color={readableMuted}>
-                      Groups used: {(contactGroups || []).length}/
-                      {groupCap === Infinity ? 'unlimited' : groupCap}
-                    </Text>
-                    <FormControl
-                      isInvalid={groupSaveAttempted && !groupName.trim()}
+              <VStack align='stretch' spacing={4}>
+                {/* Default group selector */}
+                {!isViewer && (
+                  <FormControl isDisabled={isViewer}>
+                    <FormLabel>Contact groups</FormLabel>
+                    <Stack
+                      direction={{ base: 'column', sm: 'row' }}
+                      align={{ base: 'stretch', sm: 'center' }}
+                      spacing={{ base: 2, sm: 3 }}
                     >
-                      <Input
-                        placeholder='Group name (e.g., On-call, Security, Legal)'
-                        value={groupName}
+                      <Select
+                        data-tour='preferences-contact-groups-selector'
+                        value={selectedGroupId || ''}
+                        flex={{ sm: 1 }}
+                        w={{ base: 'full', sm: 'auto' }}
                         onChange={e => {
-                          setGroupName(e.target.value);
-                          setGroupSaveAttempted(false);
+                          const val = e.target.value;
+                          if (val === '__new__') {
+                            resetGroupEditor();
+                            setGroupThresholdsCsv(thresholdsCsv);
+                            setSelectedGroupId('');
+                            onGroupEditorOpen();
+                            return;
+                          }
+                          setSelectedGroupId(val);
+                          const g = (contactGroups || []).find(
+                            x => String(x.id) === String(val)
+                          );
+                          if (g) startEditGroup(g);
+                          onGroupEditorOpen();
                         }}
                         size='sm'
-                        ref={groupNameInputRef}
-                      />
-                      {groupSaveAttempted && !groupName.trim() && (
-                        <FormErrorMessage>
-                          Group name is required.
-                        </FormErrorMessage>
-                      )}
-                    </FormControl>
-                    <FormControl data-tour='preferences-contact-groups-contacts-channels'>
-                      <FormLabel>Contacts and channels</FormLabel>
-                      <Text fontSize='xs' color={readableMuted} mb={1}>
-                        Select per-contact which channels to use.
-                        {whatsappAvailable
-                          ? ' Each person can have both email and WhatsApp.'
-                          : ''}
-                        {memberCap !== Infinity &&
-                          ` (Limit: ${memberCap} people total)`}{' '}
-                        Webhooks are unlimited.
-                      </Text>
-                      <VStack align='stretch' spacing={2}>
-                        {contacts.length === 0 ? (
-                          <Text fontSize='sm' color={readableMuted}>
-                            No contacts defined. Add contacts in the Contacts
-                            section above.
-                          </Text>
-                        ) : (
-                          contacts.map(c => {
-                            const email = (c.details && c.details.email) || '';
-                            const emailDisabled = !isValidEmail(
-                              String(email || '')
-                            );
-                            return (
-                              <Stack
-                                key={c.id}
-                                direction={{ base: 'column', md: 'row' }}
-                                align='center'
-                                spacing={2}
-                                w='100%'
-                              >
-                                <Box flex='1' minW={0}>
-                                  <Text fontSize='sm' fontWeight='medium'>
-                                    {c.first_name} {c.last_name}
-                                  </Text>
-                                </Box>
-                                <HStack
-                                  flexShrink={0}
-                                  spacing={3}
-                                  align='center'
-                                >
-                                  <Checkbox
-                                    isChecked={groupEmailContactIds.includes(
-                                      c.id
-                                    )}
-                                    isDisabled={
-                                      emailDisabled ||
-                                      (!groupEmailContactIds.includes(c.id) &&
-                                        !groupWhatsappContactIds.includes(
-                                          c.id
-                                        ) &&
-                                        totalSelectedPeople >= memberCap)
-                                    }
-                                    onChange={e => {
-                                      if (e.target.checked) {
-                                        setGroupEmailContactIds(
-                                          Array.from(
-                                            new Set([
-                                              ...groupEmailContactIds,
-                                              c.id,
-                                            ])
-                                          )
-                                        );
-                                      } else {
-                                        setGroupEmailContactIds(
-                                          groupEmailContactIds.filter(
-                                            id => id !== c.id
-                                          )
-                                        );
-                                      }
-                                      setGroupSaveAttempted(false);
-                                    }}
-                                    size='sm'
-                                  >
-                                    Email
-                                  </Checkbox>
-                                  {whatsappAvailable && (
-                                    <Checkbox
-                                      isChecked={groupWhatsappContactIds.includes(
-                                        c.id
-                                      )}
-                                      isDisabled={
-                                        !c.phone_e164 ||
-                                        (!groupWhatsappContactIds.includes(
-                                          c.id
-                                        ) &&
-                                          !groupEmailContactIds.includes(
-                                            c.id
-                                          ) &&
-                                          totalSelectedPeople >= memberCap)
-                                      }
-                                      onChange={e => {
-                                        if (e.target.checked) {
-                                          setGroupWhatsappContactIds(
-                                            Array.from(
-                                              new Set([
-                                                ...groupWhatsappContactIds,
-                                                c.id,
-                                              ])
-                                            )
-                                          );
-                                        } else {
-                                          setGroupWhatsappContactIds(
-                                            groupWhatsappContactIds.filter(
-                                              id => id !== c.id
-                                            )
-                                          );
-                                        }
-                                        setGroupSaveAttempted(false);
-                                      }}
-                                      size='sm'
-                                    >
-                                      WhatsApp
-                                    </Checkbox>
-                                  )}
-                                </HStack>
-                              </Stack>
-                            );
-                          })
-                        )}
-                      </VStack>
-                    </FormControl>
-                    <VStack align='stretch' spacing={2}>
-                      <HStack justify='space-between' align='center'>
-                        <Text
-                          fontSize='xs'
-                          color='gray.600'
-                          fontWeight='medium'
+                      >
+                        {(contactGroups || []).map(g => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                          </option>
+                        ))}
+                        <option
+                          value='__new__'
+                          disabled={(contactGroups || []).length >= groupCap}
                         >
-                          {memberCap === Infinity
-                            ? `Selected people: ${totalSelectedPeople}`
-                            : `Selected people: ${totalSelectedPeople} out of ${memberCap}`}
-                        </Text>
-                        {memberCap !== Infinity && (
-                          <Text
-                            fontSize='xs'
-                            color={
-                              totalSelectedPeople === 0
-                                ? 'gray.400'
-                                : totalSelectedPeople < memberCap
-                                  ? 'green.500'
-                                  : totalSelectedPeople === memberCap
-                                    ? 'orange.500'
-                                    : 'red.500'
-                            }
-                            fontWeight='semibold'
-                          >
-                            {totalSelectedPeople === 0
-                              ? 'Empty'
-                              : totalSelectedPeople < memberCap
-                                ? 'Available'
-                                : totalSelectedPeople === memberCap
-                                  ? 'Full'
-                                  : 'Over limit'}
-                          </Text>
-                        )}
-                      </HStack>
-                      {memberCap !== Infinity && (
-                        <Box>
-                          <Box
-                            w='100%'
-                            h='6px'
-                            bg='gray.200'
-                            borderRadius='full'
-                            overflow='hidden'
-                          >
-                            <Box
-                              h='100%'
-                              w={`${Math.min((totalSelectedPeople / memberCap) * 100, 100)}%`}
-                              bg={
-                                totalSelectedPeople === 0
-                                  ? 'gray.300'
-                                  : totalSelectedPeople < memberCap
-                                    ? 'green.400'
-                                    : totalSelectedPeople === memberCap
-                                      ? 'orange.400'
-                                      : 'red.400'
-                              }
-                              transition='all 0.2s'
-                            />
-                          </Box>
-                        </Box>
-                      )}
-                      {isOverMemberLimit && (
-                        <Alert status='warning' size='sm' borderRadius='md'>
-                          <AlertIcon />
-                          <AlertDescription fontSize='xs'>
-                            <strong>Member limit exceeded:</strong> You{"'"}ve
-                            selected {totalSelectedPeople} people, but your plan
-                            allows only {memberCap} people per group. Only the
-                            first {memberCap} people will be saved.
-                          </AlertDescription>
-                        </Alert>
-                      )}
-                    </VStack>
-                    {/* Emails textarea removed in favor of per-contact channel toggles */}
-                    <FormLabel>Webhook channels (unlimited)</FormLabel>
-                    <Box
-                      border='1px solid'
-                      borderColor={border}
-                      borderRadius='md'
-                      p={2}
-                      data-tour='preferences-contact-groups-webhooks'
-                    >
-                      <VStack
-                        align='stretch'
+                          + Add New Group
+                        </option>
+                      </Select>
+                      {selectedGroupId &&
+                      selectedGroupId === defaultContactGroupId ? (
+                        <Badge alignSelf={{ base: 'flex-start', sm: 'center' }}>
+                          default
+                        </Badge>
+                      ) : null}
+                    </Stack>
+                    {selectedGroupId ? (
+                      <Stack
+                        direction='row'
+                        mt={2}
                         spacing={2}
-                        maxH='160px'
-                        overflowY='auto'
+                        align='center'
+                        flexWrap='wrap'
                       >
-                        {(() => {
-                          const options = (webhookUrls || []).filter(
-                            w => (w.name || '').trim() && w.verified
-                          );
-                          if (options.length === 0) {
-                            return (
-                              <Text fontSize='xs' color={readableMuted}>
-                                No verified named webhooks available.
-                              </Text>
-                            );
-                          }
-                          return (
-                            <CheckboxGroup
-                              colorScheme='blue'
-                              value={groupWebhookNames}
-                              onChange={vals => {
-                                setGroupWebhookNames(vals);
-                                setGroupSaveAttempted(false);
-                              }}
-                              isDisabled={isViewer}
-                            >
-                              <VStack align='stretch' spacing={1}>
-                                {options.map((w, i) => (
-                                  <Checkbox
-                                    key={`${w.name}-${i}`}
-                                    value={w.name}
-                                    size='sm'
-                                  >
-                                    {w.name}
-                                  </Checkbox>
-                                ))}
-                              </VStack>
-                            </CheckboxGroup>
-                          );
-                        })()}
-                      </VStack>
-                    </Box>
-                    {/* Thresholds override */}
-                    <FormLabel m={0} fontSize='sm' mt={3}>
-                      Thresholds override (days, comma-separated)
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder={thresholdsCsv}
-                        value={groupThresholdsCsv}
-                        onChange={e => setGroupThresholdsCsv(e.target.value)}
-                        size='sm'
-                      />
-                      <Text fontSize='xs' color={readableMuted} mt={1}>
-                        Leave equal to defaults to inherit workspace thresholds.
-                        Allowed range: -365 to 730.
-                      </Text>
-                    </FormControl>
-                    <Divider my={3} />
-                    <FormLabel m={0} fontSize='sm'>
-                      Weekly Digest
-                    </FormLabel>
-                    <Text fontSize='xs' color={readableMuted} mb={2}>
-                      Send a weekly summary of tokens expiring soon (within the
-                      highest threshold).
+                        <Text fontSize='xs' color={bodySecondary}>
+                          ID:
+                        </Text>
+                        <Code fontSize='xs'>{selectedGroupId}</Code>
+                        <IconButton
+                          aria-label='Copy contact group ID'
+                          size='xs'
+                          variant='ghost'
+                          icon={<FiCopy />}
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(
+                                String(selectedGroupId)
+                              );
+                            } catch (_) {}
+                          }}
+                        />
+                      </Stack>
+                    ) : null}
+                    <Text fontSize='xs' color={bodySecondary} mt={1}>
+                      Pick a group to open the editor, or choose + Add New Group
+                      to create one.
                     </Text>
-                    <VStack
-                      align='stretch'
-                      spacing={2}
-                      data-tour='preferences-contact-groups-digest'
+                    <Stack
+                      direction={{ base: 'column', sm: 'row' }}
+                      mt={3}
+                      spacing={3}
+                      align={{ base: 'stretch', sm: 'center' }}
                     >
-                      <Checkbox
-                        size='sm'
-                        isChecked={groupWeeklyDigestEmail}
-                        onChange={e =>
-                          setGroupWeeklyDigestEmail(e.target.checked)
-                        }
-                        isDisabled={!hasEmailInGroup}
-                      >
-                        Email weekly digest
-                      </Checkbox>
-                      {whatsappAvailable && (
-                        <Checkbox
-                          size='sm'
-                          isChecked={groupWeeklyDigestWhatsapp}
-                          onChange={e =>
-                            setGroupWeeklyDigestWhatsapp(e.target.checked)
-                          }
-                          isDisabled={!hasWhatsappInGroup}
-                        >
-                          WhatsApp weekly digest
-                        </Checkbox>
-                      )}
-                      <Checkbox
-                        size='sm'
-                        isChecked={groupWeeklyDigestWebhooks}
-                        onChange={e =>
-                          setGroupWeeklyDigestWebhooks(e.target.checked)
-                        }
-                        isDisabled={!hasWebhookInGroup}
-                      >
-                        Webhook weekly digest
-                      </Checkbox>
-                    </VStack>
-                    <Text fontSize='xs' color={readableMuted}>
-                      Weekly digest supports Slack, Discord, Teams, and generic
-                      webhooks. PagerDuty is not supported as it&apos;s designed
-                      for incident alerting.
-                    </Text>
-                    <Text fontSize='xs' color={readableMuted}>
-                      Changes are not saved until you click {'"'}Save group{'"'}
-                      .
-                    </Text>
-                    <HStack>
                       <Button
                         size='sm'
+                        variant='solid'
                         colorScheme='blue'
-                        onClick={saveGroup}
+                        w={{ base: 'full', sm: 'auto' }}
                         isDisabled={
-                          loading ||
-                          !groupName.trim() ||
-                          isEmptyGroupInvalid ||
-                          isOverMemberLimit ||
-                          (editingGroupId
-                            ? false
-                            : (contactGroups || []).length >= groupCap)
+                          !selectedGroupId ||
+                          selectedGroupId === defaultContactGroupId ||
+                          isViewer
                         }
+                        onClick={async () => {
+                          try {
+                            if (!workspaceId || !selectedGroupId) return;
+                            await workspaceAPI.updateAlertSettings(
+                              workspaceId,
+                              {
+                                default_contact_group_id: selectedGroupId,
+                                contact_groups: contactGroups,
+                              }
+                            );
+                            setDefaultContactGroupId(selectedGroupId);
+                            showSuccess('Default contact group updated');
+                          } catch (_) {
+                            showError('Failed to update default contact group');
+                          }
+                        }}
                       >
-                        Save group
+                        Make this group default
                       </Button>
                       <Button
                         size='sm'
                         variant='outline'
-                        onClick={resetGroupEditor}
+                        colorScheme='red'
+                        w={{ base: 'full', sm: 'auto' }}
+                        isDisabled={!selectedGroupId || isViewer}
+                        onClick={() => {
+                          if (!selectedGroupId) return;
+                          setDeleteTargetId(selectedGroupId);
+                          setDeleteDialogOpen(true);
+                        }}
                       >
-                        Reset
+                        Delete group
                       </Button>
-                    </HStack>
+                    </Stack>
+                  </FormControl>
+                )}
+
+                {/* Groups list removed per UX rework; selection + editor handle edits/deletes */}
+              </VStack>
+            </DashboardPanel>
+          </SettingsSection>
+        </SettingsPageShell>
+      </DashboardPageLayout>
+
+      <Modal
+        isOpen={isGroupEditorOpen}
+        onClose={onGroupEditorClose}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame
+          data-tour='preferences-contact-groups-editor'
+          maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              {editingGroupId ? 'Edit contact group' : 'New contact group'}
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.subtleText}>
+              Choose contacts, channels, webhooks, and optional threshold
+              overrides for this group.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
+            <VStack align='stretch' spacing={2}>
+              <Text fontSize='xs' color={bodySecondary}>
+                Groups used: {(contactGroups || []).length}/
+                {groupCap === Infinity ? 'unlimited' : groupCap}
+              </Text>
+              <FormControl isInvalid={groupSaveAttempted && !groupName.trim()}>
+                <Input
+                  placeholder='Group name (e.g., On-call, Security, Legal)'
+                  value={groupName}
+                  onChange={e => {
+                    setGroupName(e.target.value);
+                    setGroupSaveAttempted(false);
+                  }}
+                  size='sm'
+                  ref={groupNameInputRef}
+                />
+                {groupSaveAttempted && !groupName.trim() && (
+                  <FormErrorMessage>Group name is required.</FormErrorMessage>
+                )}
+              </FormControl>
+              <FormControl data-tour='preferences-contact-groups-contacts-channels'>
+                <FormLabel>Contacts and channels</FormLabel>
+                <Text fontSize='xs' color={bodySecondary} mb={1}>
+                  Select per-contact which channels to use.
+                  {whatsappAvailable
+                    ? ' Each person can have both email and WhatsApp.'
+                    : ''}
+                  {memberCap !== Infinity &&
+                    ` (Limit: ${memberCap} people total)`}{' '}
+                  Webhooks are unlimited.
+                </Text>
+                <VStack align='stretch' spacing={2}>
+                  {contacts.length === 0 ? (
+                    <Text fontSize='sm' color={bodySecondary}>
+                      No contacts defined. Add contacts in the Contacts section
+                      above.
+                    </Text>
+                  ) : (
+                    contacts.map(c => {
+                      const email = (c.details && c.details.email) || '';
+                      const emailDisabled = !isValidEmail(String(email || ''));
+                      return (
+                        <Stack
+                          key={c.id}
+                          direction={{ base: 'column', md: 'row' }}
+                          align='center'
+                          spacing={2}
+                          w='100%'
+                        >
+                          <Box flex='1' minW={0}>
+                            <Text fontSize='sm' fontWeight='medium'>
+                              {c.first_name} {c.last_name}
+                            </Text>
+                          </Box>
+                          <HStack flexShrink={0} spacing={3} align='center'>
+                            <Checkbox
+                              isChecked={groupEmailContactIds.includes(c.id)}
+                              isDisabled={
+                                emailDisabled ||
+                                (!groupEmailContactIds.includes(c.id) &&
+                                  !groupWhatsappContactIds.includes(c.id) &&
+                                  totalSelectedPeople >= memberCap)
+                              }
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setGroupEmailContactIds(
+                                    Array.from(
+                                      new Set([...groupEmailContactIds, c.id])
+                                    )
+                                  );
+                                } else {
+                                  setGroupEmailContactIds(
+                                    groupEmailContactIds.filter(
+                                      id => id !== c.id
+                                    )
+                                  );
+                                }
+                                setGroupSaveAttempted(false);
+                              }}
+                              size='sm'
+                            >
+                              Email
+                            </Checkbox>
+                            {whatsappAvailable && (
+                              <Checkbox
+                                isChecked={groupWhatsappContactIds.includes(
+                                  c.id
+                                )}
+                                isDisabled={
+                                  !c.phone_e164 ||
+                                  (!groupWhatsappContactIds.includes(c.id) &&
+                                    !groupEmailContactIds.includes(c.id) &&
+                                    totalSelectedPeople >= memberCap)
+                                }
+                                onChange={e => {
+                                  if (e.target.checked) {
+                                    setGroupWhatsappContactIds(
+                                      Array.from(
+                                        new Set([
+                                          ...groupWhatsappContactIds,
+                                          c.id,
+                                        ])
+                                      )
+                                    );
+                                  } else {
+                                    setGroupWhatsappContactIds(
+                                      groupWhatsappContactIds.filter(
+                                        id => id !== c.id
+                                      )
+                                    );
+                                  }
+                                  setGroupSaveAttempted(false);
+                                }}
+                                size='sm'
+                              >
+                                WhatsApp
+                              </Checkbox>
+                            )}
+                          </HStack>
+                        </Stack>
+                      );
+                    })
+                  )}
+                </VStack>
+              </FormControl>
+              <VStack align='stretch' spacing={2}>
+                <HStack justify='space-between' align='center'>
+                  <Text fontSize='xs' color='gray.600' fontWeight='medium'>
+                    {memberCap === Infinity
+                      ? `Selected people: ${totalSelectedPeople}`
+                      : `Selected people: ${totalSelectedPeople} out of ${memberCap}`}
+                  </Text>
+                  {memberCap !== Infinity && (
+                    <Text
+                      fontSize='xs'
+                      color={
+                        totalSelectedPeople === 0
+                          ? 'gray.400'
+                          : totalSelectedPeople < memberCap
+                            ? 'green.500'
+                            : totalSelectedPeople === memberCap
+                              ? 'orange.500'
+                              : 'red.500'
+                      }
+                      fontWeight='semibold'
+                    >
+                      {totalSelectedPeople === 0
+                        ? 'Empty'
+                        : totalSelectedPeople < memberCap
+                          ? 'Available'
+                          : totalSelectedPeople === memberCap
+                            ? 'Full'
+                            : 'Over limit'}
+                    </Text>
+                  )}
+                </HStack>
+                {memberCap !== Infinity && (
+                  <Box>
+                    <Box
+                      w='100%'
+                      h='6px'
+                      bg='gray.200'
+                      borderRadius='full'
+                      overflow='hidden'
+                    >
+                      <Box
+                        h='100%'
+                        w={`${Math.min((totalSelectedPeople / memberCap) * 100, 100)}%`}
+                        bg={
+                          totalSelectedPeople === 0
+                            ? 'gray.300'
+                            : totalSelectedPeople < memberCap
+                              ? 'green.400'
+                              : totalSelectedPeople === memberCap
+                                ? 'orange.400'
+                                : 'red.400'
+                        }
+                        transition='all 0.2s'
+                      />
+                    </Box>
+                  </Box>
+                )}
+                {isOverMemberLimit && (
+                  <Alert status='warning' size='sm' borderRadius='md'>
+                    <AlertIcon />
+                    <AlertDescription fontSize='xs'>
+                      <strong>Member limit exceeded:</strong> You{"'"}
+                      ve selected {totalSelectedPeople} people, but your plan
+                      allows only {memberCap} people per group. Only the first{' '}
+                      {memberCap} people will be saved.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </VStack>
+              {/* Emails textarea removed in favor of per-contact channel toggles */}
+              <FormLabel>Webhook channels (unlimited)</FormLabel>
+              <Box data-tour='preferences-contact-groups-webhooks'>
+                <SettingsNestedSurface>
+                  <VStack
+                    align='stretch'
+                    spacing={2}
+                    maxH='160px'
+                    overflowY='auto'
+                  >
+                    {(() => {
+                      const options = (webhookUrls || []).filter(
+                        w => (w.name || '').trim() && w.verified
+                      );
+                      if (options.length === 0) {
+                        return (
+                          <Text fontSize='xs' color={bodySecondary}>
+                            No verified named webhooks available.
+                          </Text>
+                        );
+                      }
+                      return (
+                        <CheckboxGroup
+                          colorScheme='blue'
+                          value={groupWebhookNames}
+                          onChange={vals => {
+                            setGroupWebhookNames(vals);
+                            setGroupSaveAttempted(false);
+                          }}
+                          isDisabled={isViewer}
+                        >
+                          <VStack align='stretch' spacing={1}>
+                            {options.map((w, i) => (
+                              <Checkbox
+                                key={`${w.name}-${i}`}
+                                value={w.name}
+                                size='sm'
+                              >
+                                {w.name}
+                              </Checkbox>
+                            ))}
+                          </VStack>
+                        </CheckboxGroup>
+                      );
+                    })()}
                   </VStack>
-                </Box>
+                </SettingsNestedSurface>
+              </Box>
+              {/* Thresholds override */}
+              <FormLabel m={0} fontSize='sm' mt={3}>
+                Thresholds override (days, comma-separated)
+              </FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={thresholdsCsv}
+                  value={groupThresholdsCsv}
+                  onChange={e => setGroupThresholdsCsv(e.target.value)}
+                  size='sm'
+                />
+                <Text fontSize='xs' color={bodySecondary} mt={1}>
+                  Leave equal to defaults to inherit workspace thresholds.
+                  Allowed range: -365 to 730.
+                </Text>
+              </FormControl>
+              <Divider my={3} />
+              <FormLabel m={0} fontSize='sm'>
+                Weekly Digest
+              </FormLabel>
+              <Text fontSize='xs' color={bodySecondary} mb={2}>
+                Send a weekly summary of tokens expiring soon (within the
+                highest threshold).
+              </Text>
+              <VStack
+                align='stretch'
+                spacing={2}
+                data-tour='preferences-contact-groups-digest'
+              >
+                <Checkbox
+                  size='sm'
+                  isChecked={groupWeeklyDigestEmail}
+                  onChange={e => setGroupWeeklyDigestEmail(e.target.checked)}
+                  isDisabled={!hasEmailInGroup}
+                >
+                  Email weekly digest
+                </Checkbox>
+                {whatsappAvailable && (
+                  <Checkbox
+                    size='sm'
+                    isChecked={groupWeeklyDigestWhatsapp}
+                    onChange={e =>
+                      setGroupWeeklyDigestWhatsapp(e.target.checked)
+                    }
+                    isDisabled={!hasWhatsappInGroup}
+                  >
+                    WhatsApp weekly digest
+                  </Checkbox>
+                )}
+                <Checkbox
+                  size='sm'
+                  isChecked={groupWeeklyDigestWebhooks}
+                  onChange={e => setGroupWeeklyDigestWebhooks(e.target.checked)}
+                  isDisabled={!hasWebhookInGroup}
+                >
+                  Webhook weekly digest
+                </Checkbox>
+              </VStack>
+              <Text fontSize='xs' color={bodySecondary}>
+                Weekly digest supports Slack, Discord, Teams, and generic
+                webhooks. PagerDuty is not supported as it&apos;s designed for
+                incident alerting.
+              </Text>
+              <Text fontSize='xs' color={bodySecondary}>
+                Changes are not saved until you click {'"'}Save group
+                {'"'}.
+              </Text>
+            </VStack>
+          </ModalBody>
+          <ModalFooter {...footerProps}>
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+              flexWrap='wrap'
+            >
+              <Button
+                variant='outline'
+                onClick={onGroupEditorClose}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant='outline'
+                onClick={resetGroupEditor}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Reset
+              </Button>
+              <DashboardActionButton
+                colorScheme='blue'
+                onClick={saveGroup}
+                minW={{ base: '100%', sm: 'auto' }}
+                isDisabled={
+                  loading ||
+                  !groupName.trim() ||
+                  isEmptyGroupInvalid ||
+                  isOverMemberLimit ||
+                  (editingGroupId
+                    ? false
+                    : (contactGroups || []).length >= groupCap)
+                }
+              >
+                Save group
+              </DashboardActionButton>
+            </Flex>
+          </ModalFooter>
+        </DashboardModalFrame>
+      </Modal>
+
+      <Modal
+        isOpen={isWebhookEditorOpen}
+        onClose={handleCloseWebhookEditor}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame
+          data-tour='preferences-webhooks-editor'
+          maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              {editingWebhookIndex >= 0 ? 'Edit webhook' : 'Add webhook'}
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.subtleText}>
+              Configure the webhook name, type, and URL, then test and save it.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
+            <VStack align='stretch' spacing={4}>
+              {renderWebhookEditorFields(webhookDraft, updateWebhookDraft)}
+              {webhookSaveAttempted && !webhookDraft.name?.trim() ? (
+                <Text fontSize='sm' color='red.500'>
+                  Webhook name is required.
+                </Text>
+              ) : null}
+              {webhookDraft.verified &&
+              (webhookDraft.verifiedUrl || '') ===
+                (webhookDraft.url || '').trim() ? (
+                <Badge
+                  colorScheme='green'
+                  variant='subtle'
+                  alignSelf='flex-start'
+                  borderRadius='md'
+                  px={2.5}
+                  py={1}
+                  fontSize='xs'
+                  fontWeight='semibold'
+                  letterSpacing='0.04em'
+                  textTransform='uppercase'
+                >
+                  Verified
+                </Badge>
+              ) : (
+                <Text fontSize='xs' color={bodySecondary}>
+                  Send a test message before saving a new or changed webhook
+                  URL.
+                </Text>
               )}
             </VStack>
-          </DashboardPanel>
+          </ModalBody>
+          <ModalFooter {...footerProps}>
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+              flexWrap='wrap'
+            >
+              <Button
+                variant='outline'
+                onClick={handleCloseWebhookEditor}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant='outline'
+                onClick={handleTestWebhookDraft}
+                isLoading={testingWebhookDraft}
+                isDisabled={!webhookDraft.url?.trim() || isViewer}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Test
+              </Button>
+              <DashboardActionButton
+                colorScheme='blue'
+                onClick={handleSaveWebhookEditor}
+                isLoading={savingToggles}
+                isDisabled={isViewer || !workspaceId || !canSaveWebhookDraft()}
+                minW={{ base: '100%', sm: 'auto' }}
+              >
+                Save webhook
+              </DashboardActionButton>
+            </Flex>
+          </ModalFooter>
+        </DashboardModalFrame>
+      </Modal>
 
-          {/* Save */}
-          {/* Global Save removed; saves are per section */}
-        </VStack>
-      </DashboardPageLayout>
+      <Modal
+        isOpen={isAddContactOpen}
+        onClose={handleCloseAddContact}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame
+          data-tour='preferences-contacts-add'
+          maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              Add contact
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.subtleText}>
+              Add someone who can receive workspace alert notifications.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
+            <VStack align='stretch' spacing={4}>
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                <FormControl>
+                  <FormLabel>First name</FormLabel>
+                  <Input
+                    placeholder='First name'
+                    value={newContactFirstName}
+                    onChange={e => setNewContactFirstName(e.target.value)}
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel>Last name</FormLabel>
+                  <Input
+                    placeholder='Last name'
+                    value={newContactLastName}
+                    onChange={e => setNewContactLastName(e.target.value)}
+                  />
+                </FormControl>
+              </SimpleGrid>
+              <FormControl>
+                <FormLabel>Email</FormLabel>
+                <Input
+                  placeholder='name@example.com'
+                  value={newContactDetails.email || ''}
+                  onChange={e =>
+                    setNewContactDetails({
+                      ...newContactDetails,
+                      email: e.target.value,
+                    })
+                  }
+                />
+              </FormControl>
+              <FormControl isInvalid={!!contactPhoneError}>
+                <FormLabel>Phone (E.164)</FormLabel>
+                <Input
+                  placeholder='+14155550100'
+                  value={newContactPhone}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setNewContactPhone(val);
+                    setContactPhoneError('');
+                    if (val.trim() && !isValidContactPhoneE164(val)) {
+                      setContactPhoneError(
+                        'Invalid E.164 format (e.g., +14155550100)'
+                      );
+                    }
+                  }}
+                />
+                {contactPhoneError ? (
+                  <FormErrorMessage>{contactPhoneError}</FormErrorMessage>
+                ) : (
+                  <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
+                    Provide a valid email or phone number.
+                  </Text>
+                )}
+                {whatsappAvailable ? (
+                  <TestWhatsappButton
+                    mt={3}
+                    onClick={() =>
+                      handleTestWhatsappPhone(
+                        newContactPhoneE164,
+                        ADD_CONTACT_WHATSAPP_TEST_KEY
+                      )
+                    }
+                    isLoading={testingContact === ADD_CONTACT_WHATSAPP_TEST_KEY}
+                    isDisabled={isViewer || !isNewContactPhoneValid}
+                    cooldownUntil={
+                      waContactCooldowns[ADD_CONTACT_WHATSAPP_TEST_KEY] || 0
+                    }
+                  />
+                ) : null}
+              </FormControl>
+              <Button
+                size='sm'
+                variant='ghost'
+                onClick={() => setNewContactDetailsOpen(!newContactDetailsOpen)}
+                alignSelf='flex-start'
+              >
+                {newContactDetailsOpen ? 'Hide' : 'Show'} additional details
+              </Button>
+              {newContactDetailsOpen ? (
+                <VStack align='stretch' spacing={3}>
+                  <FormControl>
+                    <FormLabel>Department</FormLabel>
+                    <Input
+                      placeholder='Department'
+                      value={newContactDetails.department || ''}
+                      onChange={e =>
+                        setNewContactDetails({
+                          ...newContactDetails,
+                          department: e.target.value,
+                        })
+                      }
+                    />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Title / role</FormLabel>
+                    <Input
+                      placeholder='Title / Role'
+                      value={newContactDetails.title || ''}
+                      onChange={e =>
+                        setNewContactDetails({
+                          ...newContactDetails,
+                          title: e.target.value,
+                        })
+                      }
+                    />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Note</FormLabel>
+                    <Textarea
+                      placeholder='Note'
+                      value={newContactDetails.note || ''}
+                      onChange={e =>
+                        setNewContactDetails({
+                          ...newContactDetails,
+                          note: e.target.value,
+                        })
+                      }
+                      rows={3}
+                    />
+                  </FormControl>
+                </VStack>
+              ) : null}
+            </VStack>
+          </ModalBody>
+          <ModalFooter {...footerProps}>
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+            >
+              <Button
+                variant='outline'
+                onClick={handleCloseAddContact}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Tooltip
+                label='Enter first and last name plus a valid email or phone number'
+                isDisabled={!isNewContactInvalid || isViewer}
+                hasArrow
+                followCursor
+                openDelay={150}
+              >
+                <Box as='span' display='block' w={{ base: '100%', sm: 'auto' }}>
+                  <DashboardActionButton
+                    colorScheme='blue'
+                    onClick={handleAddContactSubmit}
+                    disabled={isNewContactInvalid || isViewer}
+                    w={{ base: '100%', sm: 'auto' }}
+                  >
+                    Add contact
+                  </DashboardActionButton>
+                </Box>
+              </Tooltip>
+            </Flex>
+          </ModalFooter>
+        </DashboardModalFrame>
+      </Modal>
+
+      <Modal
+        isOpen={isEditContactOpen}
+        onClose={handleCloseEditContact}
+        isCentered
+        scrollBehavior='inside'
+      >
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame
+          data-tour='preferences-contacts-edit'
+          maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+          maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+        >
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              Edit contact
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.subtleText}>
+              Update this contact&apos;s details for workspace alert
+              notifications.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
+            <VStack align='stretch' spacing={4}>
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                <FormControl>
+                  <FormLabel>First name</FormLabel>
+                  <Input
+                    placeholder='First name'
+                    value={editContactFirstName}
+                    onChange={e => setEditContactFirstName(e.target.value)}
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel>Last name</FormLabel>
+                  <Input
+                    placeholder='Last name'
+                    value={editContactLastName}
+                    onChange={e => setEditContactLastName(e.target.value)}
+                  />
+                </FormControl>
+              </SimpleGrid>
+              <FormControl>
+                <FormLabel>Email</FormLabel>
+                <Input
+                  placeholder='name@example.com'
+                  value={editContactDetails.email || ''}
+                  onChange={e =>
+                    setEditContactDetails({
+                      ...editContactDetails,
+                      email: e.target.value,
+                    })
+                  }
+                />
+              </FormControl>
+              <FormControl isInvalid={!!editContactPhoneError}>
+                <FormLabel>Phone (E.164)</FormLabel>
+                <Input
+                  placeholder='+14155550100'
+                  value={editContactPhone}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setEditContactPhone(val);
+                    setEditContactPhoneError('');
+                    if (val.trim() && !isValidContactPhoneE164(val)) {
+                      setEditContactPhoneError(
+                        'Invalid E.164 format (e.g., +14155550100)'
+                      );
+                    }
+                  }}
+                />
+                {editContactPhoneError ? (
+                  <FormErrorMessage>{editContactPhoneError}</FormErrorMessage>
+                ) : (
+                  <Text fontSize='xs' color={modalTokens.subtleText} mt={1}>
+                    Provide a valid email or phone number.
+                  </Text>
+                )}
+                {whatsappAvailable ? (
+                  <TestWhatsappButton
+                    mt={3}
+                    onClick={() =>
+                      handleTestWhatsappPhone(
+                        editContactPhoneE164,
+                        EDIT_CONTACT_WHATSAPP_TEST_KEY
+                      )
+                    }
+                    isLoading={
+                      testingContact === EDIT_CONTACT_WHATSAPP_TEST_KEY
+                    }
+                    isDisabled={isViewer || !isEditContactPhoneValid}
+                    cooldownUntil={
+                      waContactCooldowns[EDIT_CONTACT_WHATSAPP_TEST_KEY] || 0
+                    }
+                  />
+                ) : null}
+              </FormControl>
+              <Button
+                size='sm'
+                variant='ghost'
+                onClick={() =>
+                  setEditContactDetailsOpen(!editContactDetailsOpen)
+                }
+                alignSelf='flex-start'
+              >
+                {editContactDetailsOpen ? 'Hide' : 'Show'} additional details
+              </Button>
+              {editContactDetailsOpen ? (
+                <VStack align='stretch' spacing={3}>
+                  <FormControl>
+                    <FormLabel>Department</FormLabel>
+                    <Input
+                      placeholder='Department'
+                      value={editContactDetails.department || ''}
+                      onChange={e =>
+                        setEditContactDetails({
+                          ...editContactDetails,
+                          department: e.target.value,
+                        })
+                      }
+                    />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Title / role</FormLabel>
+                    <Input
+                      placeholder='Title / Role'
+                      value={editContactDetails.title || ''}
+                      onChange={e =>
+                        setEditContactDetails({
+                          ...editContactDetails,
+                          title: e.target.value,
+                        })
+                      }
+                    />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel>Note</FormLabel>
+                    <Textarea
+                      placeholder='Note'
+                      value={editContactDetails.note || ''}
+                      onChange={e =>
+                        setEditContactDetails({
+                          ...editContactDetails,
+                          note: e.target.value,
+                        })
+                      }
+                      rows={3}
+                    />
+                  </FormControl>
+                </VStack>
+              ) : null}
+            </VStack>
+          </ModalBody>
+          <ModalFooter {...footerProps}>
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+            >
+              <Button
+                variant='outline'
+                onClick={handleCloseEditContact}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Tooltip
+                label='Enter first and last name plus a valid email or phone number'
+                isDisabled={!isEditedContactInvalid || isViewer}
+                hasArrow
+                followCursor
+                openDelay={150}
+              >
+                <Box as='span' display='block' w={{ base: '100%', sm: 'auto' }}>
+                  <DashboardActionButton
+                    colorScheme='blue'
+                    onClick={handleSaveEditedContact}
+                    disabled={isEditedContactInvalid || isViewer}
+                    w={{ base: '100%', sm: 'auto' }}
+                  >
+                    Save changes
+                  </DashboardActionButton>
+                </Box>
+              </Tooltip>
+            </Flex>
+          </ModalFooter>
+        </DashboardModalFrame>
+      </Modal>
 
       <AlertDialog
         isOpen={Boolean(webhookDeleteTarget)}
@@ -3773,31 +4138,22 @@ export default function AlertPreferences({
           maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Delete Webhook
-            </Text>
-            <Text
-              fontSize={{ base: 'xs', md: 'sm' }}
-              color={modalTokens.subtleText}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.subtleText}>
               Review this webhook before removing it from workspace alerts.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogCloseButton {...closeButtonProps} />
           <AlertDialogBody {...bodyProps}>
             <VStack spacing={4} align='stretch'>
               <Alert
                 status='warning'
-                bg={modalWarningBg}
+                bg={dashboard.callout.warningSurface}
                 border='1px solid'
-                borderColor={modalWarningBorder}
-                color={modalWarningText}
+                borderColor={dashboard.callout.warningBorder}
+                color={dashboard.callout.warningText}
                 borderRadius='12px'
               >
                 <AlertIcon />
@@ -3820,26 +4176,17 @@ export default function AlertPreferences({
                   >
                     Webhook Information
                   </Text>
-                  <PreferenceConfirmFieldCard
-                    label='Name'
-                    tokens={modalTokens}
-                  >
+                  <PreferenceConfirmFieldCard label='Name' tokens={modalTokens}>
                     <PreferenceConfirmValue tokens={modalTokens}>
                       {webhookDeleteTarget.webhook.name}
                     </PreferenceConfirmValue>
                   </PreferenceConfirmFieldCard>
-                  <PreferenceConfirmFieldCard
-                    label='Type'
-                    tokens={modalTokens}
-                  >
+                  <PreferenceConfirmFieldCard label='Type' tokens={modalTokens}>
                     <PreferenceConfirmValue tokens={modalTokens}>
                       {formatWebhookKindLabel(webhookDeleteTarget.webhook.kind)}
                     </PreferenceConfirmValue>
                   </PreferenceConfirmFieldCard>
-                  <PreferenceConfirmFieldCard
-                    label='URL'
-                    tokens={modalTokens}
-                  >
+                  <PreferenceConfirmFieldCard label='URL' tokens={modalTokens}>
                     <PreferenceConfirmValue
                       tokens={modalTokens}
                       wordBreak='break-all'
@@ -3874,16 +4221,16 @@ export default function AlertPreferences({
                 ref={cancelRef}
                 onClick={closeWebhookDeleteConfirm}
                 minW={{ base: '100%', sm: '104px' }}
-                {...modalOutlineButtonProps}
+                {...outlineButtonProps}
               >
                 Cancel
               </Button>
               <Button
-                bg={modalDeleteButtonBg}
+                bg={dashboard.callout.dangerButton}
                 color='white'
                 minW={{ base: '100%', sm: '128px' }}
                 onClick={confirmWebhookDelete}
-                _hover={{ bg: modalDeleteButtonHoverBg }}
+                _hover={{ bg: dashboard.callout.dangerButtonHover }}
               >
                 Delete Webhook
               </Button>
@@ -3906,31 +4253,22 @@ export default function AlertPreferences({
           maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Remove Contact
-            </Text>
-            <Text
-              fontSize={{ base: 'xs', md: 'sm' }}
-              color={modalTokens.subtleText}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.subtleText}>
               Review this contact before removing them from workspace alerts.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogCloseButton {...closeButtonProps} />
           <AlertDialogBody {...bodyProps}>
             <VStack spacing={4} align='stretch'>
               <Alert
                 status='warning'
-                bg={modalWarningBg}
+                bg={dashboard.callout.warningSurface}
                 border='1px solid'
-                borderColor={modalWarningBorder}
-                color={modalWarningText}
+                borderColor={dashboard.callout.warningBorder}
+                color={dashboard.callout.warningText}
                 borderRadius='12px'
               >
                 <AlertIcon />
@@ -3954,10 +4292,7 @@ export default function AlertPreferences({
                   >
                     Contact Information
                   </Text>
-                  <PreferenceConfirmFieldCard
-                    label='Name'
-                    tokens={modalTokens}
-                  >
+                  <PreferenceConfirmFieldCard label='Name' tokens={modalTokens}>
                     <PreferenceConfirmValue tokens={modalTokens}>
                       {getContactDisplayName(contactDeleteTarget)}
                     </PreferenceConfirmValue>
@@ -4015,16 +4350,16 @@ export default function AlertPreferences({
                 ref={cancelRef}
                 onClick={closeContactDeleteConfirm}
                 minW={{ base: '100%', sm: '104px' }}
-                {...modalOutlineButtonProps}
+                {...outlineButtonProps}
               >
                 Cancel
               </Button>
               <Button
-                bg={modalDeleteButtonBg}
+                bg={dashboard.callout.dangerButton}
                 color='white'
                 minW={{ base: '100%', sm: '128px' }}
                 onClick={confirmContactDelete}
-                _hover={{ bg: modalDeleteButtonHoverBg }}
+                _hover={{ bg: dashboard.callout.dangerButtonHover }}
               >
                 Remove Contact
               </Button>
@@ -4044,21 +4379,12 @@ export default function AlertPreferences({
           maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Delete this contact group?
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Reassign tokens and remove this group permanently.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogBody {...bodyProps}>
             <Text color={modalTokens.subtleText}>
@@ -4067,21 +4393,28 @@ export default function AlertPreferences({
             </Text>
           </AlertDialogBody>
           <AlertDialogFooter {...footerProps}>
-            <Button
-              ref={cancelRef}
-              onClick={() => {
-                setDeleteDialogOpen(false);
-                setDeleteTargetId('');
-              }}
-              {...modalOutlineButtonProps}
+            <Flex
+              w='100%'
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
             >
-              Cancel
-            </Button>
-            <Button
-              colorScheme='red'
-              ml={3}
-              isLoading={deletingGroup}
-              onClick={async () => {
+              <Button
+                ref={cancelRef}
+                onClick={() => {
+                  setDeleteDialogOpen(false);
+                  setDeleteTargetId('');
+                }}
+                minW={{ base: '100%', sm: 'auto' }}
+                {...outlineButtonProps}
+              >
+                Cancel
+              </Button>
+              <Button
+                colorScheme='red'
+                isLoading={deletingGroup}
+                minW={{ base: '100%', sm: 'auto' }}
+                onClick={async () => {
                 if (!deleteTargetId) return;
                 try {
                   setDeletingGroup(true);
@@ -4095,6 +4428,7 @@ export default function AlertPreferences({
             >
               Delete
             </Button>
+            </Flex>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -4110,21 +4444,12 @@ export default function AlertPreferences({
           maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Disable all alerts?
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Confirm this alert channel change.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogBody {...bodyProps}>
             <Text color={modalTokens.subtleText}>
@@ -4138,7 +4463,7 @@ export default function AlertPreferences({
                 setDisableAllDialogOpen(false);
                 setDisableAllTarget('');
               }}
-              {...modalOutlineButtonProps}
+              {...outlineButtonProps}
             >
               Cancel
             </Button>
@@ -4175,21 +4500,12 @@ export default function AlertPreferences({
           maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Default group updated
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Workspace contact group defaults changed.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogBody {...bodyProps}>
             <Text color={modalTokens.subtleText}>

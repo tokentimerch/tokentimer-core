@@ -1,7 +1,7 @@
 import { extendTheme } from '@chakra-ui/react';
 import { chakraSemanticTokens as semanticTokens } from './colors';
 
-/** Dashboard chrome palette (light = soft cool gray, dark = existing shell). */
+/** Dashboard chrome palette (light = soft cool gray, dark = slate layered surfaces). */
 export const dashboardThemeColors = {
   bg: {
     canvas: { light: '#f1f5f9', dark: 'transparent' },
@@ -11,13 +11,26 @@ export const dashboardThemeColors = {
     },
     panel: {
       light: 'rgba(255, 255, 255, 0.98)',
-      dark: 'rgba(13, 19, 26, 0.95)',
+      dark: 'rgba(30, 41, 59, 0.72)',
     },
-    panelHover: { light: '#f8fafc', dark: 'rgba(30, 41, 59, 0.72)' },
+    panelHover: {
+      light: '#e8edf2',
+      dark: 'rgba(51, 65, 85, 0.58)',
+    },
+    nested: {
+      light: '#eef2f6',
+      dark: 'rgba(51, 65, 85, 0.48)',
+    },
+    field: {
+      light: '#f9fafb',
+      dark: 'rgba(51, 65, 85, 0.58)',
+    },
   },
   border: {
-    subtle: { light: '#e2e8f0', dark: 'rgba(100, 116, 139, 0.2)' },
-    strong: { light: '#cbd5e1', dark: 'rgba(148, 163, 184, 0.28)' },
+    subtle: { light: '#b8c5d2', dark: 'rgba(100, 116, 139, 0.32)' },
+    strong: { light: '#9caab8', dark: 'rgba(148, 163, 184, 0.42)' },
+    control: { light: 'rgba(148, 163, 184, 0.34)', dark: 'rgba(148, 163, 184, 0.18)' },
+    divider: { light: 'rgba(148, 163, 184, 0.13)', dark: 'rgba(148, 163, 184, 0.13)' },
   },
   text: {
     primary: { light: '#0f172a', dark: '#ffffff' },
@@ -26,11 +39,35 @@ export const dashboardThemeColors = {
   },
   accent: {
     primary: { light: '#5a7d9a', dark: '#93c5fd' },
+    interactiveSurface: { light: '#eff6ff', dark: 'rgba(255, 255, 255, 0.1)' },
+    interactiveBorder: { light: '#bfdbfe', dark: '#2563eb' },
+    interactiveForeground: { light: '#2563eb', dark: '#bfdbfe' },
+    navActive: { light: '#1d4ed8', dark: '#bfdbfe' },
   },
   state: {
     danger: { light: '#dc2626', dark: '#f87171' },
     warning: { light: '#d97706', dark: '#fbbf24' },
     success: { light: '#16a34a', dark: '#4ade80' },
+  },
+  /** Purple callout surfaces (setup guides, help panels). Uses theme purple scale in light mode. */
+  purple: {
+    surface: { light: '#faf5ff', dark: 'rgba(88, 28, 135, 0.14)' },
+    surfaceHover: { light: '#f3e8ff', dark: 'rgba(88, 28, 135, 0.22)' },
+    border: { light: '#e9d5ff', dark: 'rgba(216, 180, 254, 0.28)' },
+    icon: { light: '#7e22ce', dark: '#d8b4fe' },
+  },
+  /** Warning/danger alert panels and destructive actions in modals and danger zones. */
+  callout: {
+    warningSurface: { light: '#fff7ed', dark: 'rgba(146, 64, 14, 0.22)' },
+    warningBorder: { light: '#fed7aa', dark: 'rgba(251, 191, 36, 0.34)' },
+    warningText: { light: '#9a3412', dark: '#fde68a' },
+    dangerSurface: { light: '#fef2f2', dark: 'rgba(127, 29, 29, 0.14)' },
+    dangerBorder: { light: '#fecaca', dark: 'rgba(248, 113, 113, 0.28)' },
+    dangerButton: { light: '#dc2626', dark: '#ef4444' },
+    dangerButtonHover: { light: '#b91c1c', dark: '#dc2626' },
+  },
+  table: {
+    rowHover: { light: 'rgba(0, 0, 0, 0.04)', dark: 'rgba(255, 255, 255, 0.1)' },
   },
 };
 
@@ -65,7 +102,7 @@ const dashboardDialogBaseStyle = {
     mx: { base: 4, md: 0 },
     _light: {
       bg: '#ffffff',
-      borderColor: '#e2e8f0',
+      borderColor: 'dashboard.border.subtle',
       boxShadow: '0 24px 60px -15px rgba(15, 23, 42, 0.4)',
     },
     _dark: {
@@ -83,7 +120,7 @@ const dashboardDialogBaseStyle = {
     pt: 5,
     pb: 4,
     borderBottom: '1px solid',
-    _light: { borderColor: '#e2e8f0' },
+    _light: { borderColor: 'dashboard.border.subtle' },
     _dark: { borderColor: 'rgba(148, 163, 184, 0.14)' },
   },
   closeButton: {
@@ -100,7 +137,7 @@ const dashboardDialogBaseStyle = {
     py: 4,
     gap: 3,
     borderTop: '1px solid',
-    _light: { borderColor: '#e2e8f0' },
+    _light: { borderColor: 'dashboard.border.subtle' },
     _dark: { borderColor: 'rgba(148, 163, 184, 0.14)' },
   },
 };
@@ -523,7 +560,7 @@ const components = {
   Divider: {
     baseStyle: {
       _light: {
-        borderColor: 'gray.300',
+        borderColor: 'dashboard.border.subtle',
       },
       _dark: {
         borderColor: 'gray.600',
@@ -711,7 +748,7 @@ const components = {
     baseStyle: {
       list: {
         bg: 'rgba(255, 255, 255, 0.95)', // Match landing page aesthetic - more opaque for readability
-        borderColor: 'gray.200',
+        borderColor: 'dashboard.border.subtle',
         borderWidth: '1px',
         _dark: {
           bg: 'gray.800',
@@ -785,7 +822,7 @@ const components = {
       th: {
         _light: {
           color: 'gray.700',
-          borderBottomColor: 'gray.300',
+          borderBottomColor: 'dashboard.border.strong',
         },
         _dark: {
           color: 'gray.300',
@@ -795,7 +832,7 @@ const components = {
       td: {
         _light: {
           color: 'gray.800',
-          borderBottomColor: 'gray.200',
+          borderBottomColor: 'dashboard.border.subtle',
         },
         _dark: {
           color: 'gray.100',
@@ -959,8 +996,8 @@ export const getThemeColors = colorMode => {
           inverse: '#ffffff',
         },
         border: {
-          primary: '#94a3b8', // More visible - slate-400
-          secondary: '#cbd5e1', // More visible - slate-300
+          primary: '#9caab8',
+          secondary: '#b8c5d2',
         },
         surface: {
           primary: '#ffffff',

@@ -30,7 +30,6 @@ import {
   AlertDialogOverlay,
   Flex,
   SimpleGrid,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiEdit2, FiCheck, FiX } from 'react-icons/fi';
 import DashboardPageLayout from '../components/DashboardPageLayout';
@@ -40,7 +39,11 @@ import {
   DashboardPanelHeader,
   DashboardState,
 } from '../components/DashboardPrimitives';
-import { useDashboardModalProps } from '../components/DashboardModalFrame.jsx';
+import {
+  useDashboardModalProps,
+  DashboardModalDescription,
+  DashboardModalTitle,
+} from '../components/DashboardModalFrame.jsx';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import apiClient, {
@@ -89,12 +92,7 @@ function WorkspaceConfirmFieldCard({ label, children, tokens }) {
       p={{ base: 3.5, md: 4 }}
       minH='88px'
     >
-      <Text
-        fontSize='sm'
-        fontWeight='semibold'
-        color={tokens.muted}
-        mb={2}
-      >
+      <Text fontSize='sm' fontWeight='semibold' color={tokens.muted} mb={2}>
         {label}
       </Text>
       {children}
@@ -146,15 +144,8 @@ function WorkspaceActionConfirmModal({
     closeButtonProps,
     tokens,
   } = useDashboardModalProps();
+  const { dashboard } = useDashboardTheme();
   const cancelButtonRef = React.useRef(null);
-  const warningBg = useColorModeValue('#fff7ed', 'rgba(146, 64, 14, 0.22)');
-  const warningBorder = useColorModeValue(
-    '#fed7aa',
-    'rgba(251, 191, 36, 0.34)'
-  );
-  const warningText = useColorModeValue('#9a3412', '#fde68a');
-  const deleteButtonBg = useColorModeValue('#dc2626', '#ef4444');
-  const deleteButtonHoverBg = useColorModeValue('#b91c1c', '#dc2626');
   const copy = getWorkspaceActionCopy(action);
   const member = action?.member;
   const invitation = action?.invitation;
@@ -184,27 +175,20 @@ function WorkspaceActionConfirmModal({
         }}
       >
         <AlertDialogHeader {...headerProps}>
-          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight='bold'>
-            {copy.title}
-          </Text>
-          <Text
-            fontSize={{ base: 'xs', md: 'sm' }}
-            color={tokens.subtleText}
-            mt={1.5}
-            fontWeight='medium'
-          >
+          <DashboardModalTitle>{copy.title}</DashboardModalTitle>
+          <DashboardModalDescription color={tokens.subtleText}>
             {copy.description}
-          </Text>
+          </DashboardModalDescription>
         </AlertDialogHeader>
         <AlertDialogCloseButton {...closeButtonProps} />
         <AlertDialogBody {...bodyProps}>
           <VStack spacing={4} align='stretch'>
             <Alert
               status='warning'
-              bg={warningBg}
+              bg={dashboard.callout.warningSurface}
               border='1px solid'
-              borderColor={warningBorder}
-              color={warningText}
+              borderColor={dashboard.callout.warningBorder}
+              color={dashboard.callout.warningText}
               borderRadius='12px'
             >
               <AlertIcon />
@@ -276,12 +260,12 @@ function WorkspaceActionConfirmModal({
               Cancel
             </Button>
             <Button
-              bg={deleteButtonBg}
+              bg={dashboard.callout.dangerButton}
               color='white'
               onClick={onConfirm}
               minW={{ base: '100%', sm: '128px' }}
               isLoading={isLoading}
-              _hover={{ bg: deleteButtonHoverBg }}
+              _hover={{ bg: dashboard.callout.dangerButtonHover }}
             >
               {copy.confirmLabel}
             </Button>
@@ -294,7 +278,8 @@ function WorkspaceActionConfirmModal({
 
 export default function Workspaces({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
-  const { border, muted } = useDashboardTheme();
+  const { border, muted, dashboard } = useDashboardTheme();
+  const mobileCardBg = dashboard.bg.panelHover;
   const {
     overlayProps,
     contentProps,
@@ -303,16 +288,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
     footerProps,
     fieldProps,
     tokens: modalTokens,
+    outlineButtonProps,
   } = useDashboardModalProps();
-  const modalOutlineButtonProps = {
-    variant: 'outline',
-    borderColor: 'rgba(148, 163, 184, 0.34)',
-    color: modalTokens.subtleText,
-    _hover: {
-      bg: modalTokens.fieldBg,
-      borderColor: modalTokens.focusBorder,
-    },
-  };
   const { selectWorkspace, workspaceId } = useWorkspace();
   const [workspaces, setWorkspaces] = React.useState([]);
   const [currentWorkspace, setCurrentWorkspace] = React.useState(null);
@@ -324,6 +301,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
   const [creatingWorkspace, setCreatingWorkspace] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [deleteConfirmName, setDeleteConfirmName] = React.useState('');
   const cancelRef = React.useRef();
   const [accountPlan, setAccountPlan] = React.useState(null);
   const [transferOpen, setTransferOpen] = React.useState(false);
@@ -658,99 +636,96 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                 <DashboardActionButton
                   isLoading={creatingWorkspace}
                   onClick={async () => {
-                      const name = (newWorkspaceName || '').trim();
-                      if (!name) return;
-                      try {
-                        setCreatingWorkspace(true);
-                        const created = await workspaceAPI.create({
-                          name,
-                          // Reload workspaces after creation
-                          plan: accountPlan || session?.plan || 'oss',
-                        });
-                        setNewWorkspaceName('');
-                        // Retry listing until the newly created workspace appears (eventual consistency)
-                        let attempts = 0;
-                        let items = [];
-                        let sel = null;
-                        while (attempts < 15) {
-                          const ws = await workspaceAPI.list(50, 0);
-                          items = ws?.items || [];
-                          sel =
-                            (created?.id &&
-                              items.find(w => w.id === created.id)) ||
-                            null;
-                          if (sel) break;
-                          attempts++;
-                          await new Promise(r =>
-                            setTimeout(r, 250 + 100 * attempts)
-                          );
-                        }
-                        if (!sel) {
-                          // Fallback to first available if not found
-                          sel = items[0] || null;
-                        }
-                        setWorkspaces(items);
-                        setCurrentWorkspace(sel);
-                        if (sel) {
-                          const res = await workspaceAPI.listMembers(
-                            sel.id,
-                            100,
-                            0
-                          );
-                          setMembers(res?.items || []);
-                          await reloadInvitations(sel.id);
-                          try {
-                            // Keep user on the same page, only refresh context + nav
-                            selectWorkspace(sel.id, { replace: true });
-                          } catch (_) {}
-                          try {
-                            const search = new URLSearchParams(
-                              window.location.search
-                            );
-                            search.set('workspace', sel.id);
-                            const qs = search.toString();
-                            // Ensure we remain on the Workspaces page after creation
-                            if (
-                              (window.location.pathname || '') !== '/workspaces'
-                            ) {
-                              navigate(`/workspaces?${qs}`, { replace: true });
-                            } else {
-                              window.history.replaceState(
-                                null,
-                                '',
-                                `${window.location.pathname}?${qs}`
-                              );
-                            }
-                          } catch (_) {}
-                          try {
-                            localStorage.setItem(
-                              'tt_last_workspace_id',
-                              sel.id
-                            );
-                          } catch (_) {}
-                          try {
-                            window.dispatchEvent(
-                              new CustomEvent('tt:workspaces-updated', {
-                                detail: { createdId: sel.id },
-                              })
-                            );
-                          } catch (_) {}
-                          // Also emit a nav-refresh without navigation
-                          try {
-                            window.dispatchEvent(
-                              new CustomEvent('tt:plan-updated')
-                            );
-                          } catch (_) {}
-                        } else {
-                          setMembers([]);
-                          setPendingInvitations([]);
-                        }
-                        // No redirect to tokens; stay on Workspaces page
-                      } catch (_) {
-                        // no-op
-                      } finally {
-                        setCreatingWorkspace(false);
+                    const name = (newWorkspaceName || '').trim();
+                    if (!name) return;
+                    try {
+                      setCreatingWorkspace(true);
+                      const created = await workspaceAPI.create({
+                        name,
+                        // Reload workspaces after creation
+                        plan: accountPlan || session?.plan || 'oss',
+                      });
+                      setNewWorkspaceName('');
+                      // Retry listing until the newly created workspace appears (eventual consistency)
+                      let attempts = 0;
+                      let items = [];
+                      let sel = null;
+                      while (attempts < 15) {
+                        const ws = await workspaceAPI.list(50, 0);
+                        items = ws?.items || [];
+                        sel =
+                          (created?.id &&
+                            items.find(w => w.id === created.id)) ||
+                          null;
+                        if (sel) break;
+                        attempts++;
+                        await new Promise(r =>
+                          setTimeout(r, 250 + 100 * attempts)
+                        );
                       }
+                      if (!sel) {
+                        // Fallback to first available if not found
+                        sel = items[0] || null;
+                      }
+                      setWorkspaces(items);
+                      setCurrentWorkspace(sel);
+                      if (sel) {
+                        const res = await workspaceAPI.listMembers(
+                          sel.id,
+                          100,
+                          0
+                        );
+                        setMembers(res?.items || []);
+                        await reloadInvitations(sel.id);
+                        try {
+                          // Keep user on the same page, only refresh context + nav
+                          selectWorkspace(sel.id, { replace: true });
+                        } catch (_) {}
+                        try {
+                          const search = new URLSearchParams(
+                            window.location.search
+                          );
+                          search.set('workspace', sel.id);
+                          const qs = search.toString();
+                          // Ensure we remain on the Workspaces page after creation
+                          if (
+                            (window.location.pathname || '') !== '/workspaces'
+                          ) {
+                            navigate(`/workspaces?${qs}`, { replace: true });
+                          } else {
+                            window.history.replaceState(
+                              null,
+                              '',
+                              `${window.location.pathname}?${qs}`
+                            );
+                          }
+                        } catch (_) {}
+                        try {
+                          localStorage.setItem('tt_last_workspace_id', sel.id);
+                        } catch (_) {}
+                        try {
+                          window.dispatchEvent(
+                            new CustomEvent('tt:workspaces-updated', {
+                              detail: { createdId: sel.id },
+                            })
+                          );
+                        } catch (_) {}
+                        // Also emit a nav-refresh without navigation
+                        try {
+                          window.dispatchEvent(
+                            new CustomEvent('tt:plan-updated')
+                          );
+                        } catch (_) {}
+                      } else {
+                        setMembers([]);
+                        setPendingInvitations([]);
+                      }
+                      // No redirect to tokens; stay on Workspaces page
+                    } catch (_) {
+                      // no-op
+                    } finally {
+                      setCreatingWorkspace(false);
+                    }
                   }}
                 >
                   Create
@@ -927,7 +902,10 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                       colorScheme='red'
                       variant='outline'
                       isLoading={deleting}
-                      onClick={() => setConfirmOpen(true)}
+                      onClick={() => {
+                        setDeleteConfirmName('');
+                        setConfirmOpen(true);
+                      }}
                     >
                       Delete workspace
                     </Button>
@@ -1113,6 +1091,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                               })
                             }
                             isDisabled={
+                              m.role === 'admin' ||
                               (currentWorkspace?.role !== 'admin' &&
                                 m.role === 'admin') ||
                               (currentWorkspace?.role !== 'admin' &&
@@ -1138,7 +1117,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                     border='1px solid'
                     borderColor={border}
                     borderRadius='md'
-                    bg='rgba(15, 23, 42, 0.38)'
+                    bg={mobileCardBg}
                     p={4}
                   >
                     <VStack align='stretch' spacing={3}>
@@ -1235,6 +1214,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                           })
                         }
                         isDisabled={
+                          m.role === 'admin' ||
                           (currentWorkspace?.role !== 'admin' &&
                             m.role === 'admin') ||
                           (currentWorkspace?.role !== 'admin' &&
@@ -1307,7 +1287,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                         border='1px solid'
                         borderColor={border}
                         borderRadius='md'
-                        bg='rgba(15, 23, 42, 0.38)'
+                        bg={mobileCardBg}
                         p={4}
                       >
                         <VStack align='stretch' spacing={3}>
@@ -1377,21 +1357,12 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
           flexDirection='column'
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Transfer Tokens
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Move selected assets from one workspace to another.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogBody {...bodyProps} flex='1' minH={0} overflow='hidden'>
             <VStack align='stretch' spacing={4} h='100%' minH={0}>
@@ -1693,7 +1664,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
               <Button
                 ref={cancelRef}
                 onClick={() => setTransferOpen(false)}
-                {...modalOutlineButtonProps}
+                {...outlineButtonProps}
               >
                 Close
               </Button>
@@ -1756,7 +1727,10 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
       <AlertDialog
         isOpen={confirmOpen}
         leastDestructiveRef={cancelRef}
-        onClose={() => setConfirmOpen(false)}
+        onClose={() => {
+          setConfirmOpen(false);
+          setDeleteConfirmName('');
+        }}
       >
         <AlertDialogOverlay {...overlayProps} />
         <AlertDialogContent
@@ -1764,21 +1738,12 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
           maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
         >
           <AlertDialogHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Delete this workspace?
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Confirm the workspace name before deleting it permanently.
-            </Text>
+            </DashboardModalDescription>
           </AlertDialogHeader>
           <AlertDialogBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
@@ -1798,10 +1763,9 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                   Type the workspace name to confirm
                 </Text>
                 <Input
+                  value={deleteConfirmName}
                   placeholder={currentWorkspace?.name}
-                  onChange={e => {
-                    window.__confirmName = e.target.value;
-                  }}
+                  onChange={e => setDeleteConfirmName(e.target.value)}
                 />
               </Box>
             </VStack>
@@ -1810,8 +1774,11 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
             <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
               <Button
                 ref={cancelRef}
-                onClick={() => setConfirmOpen(false)}
-                {...modalOutlineButtonProps}
+                onClick={() => {
+                  setConfirmOpen(false);
+                  setDeleteConfirmName('');
+                }}
+                {...outlineButtonProps}
               >
                 Cancel
               </Button>
@@ -1820,7 +1787,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                 isLoading={deleting}
                 onClick={async () => {
                   if (!currentWorkspace) return;
-                  const typed = window.__confirmName || '';
+                  const typed = deleteConfirmName || '';
                   if (typed.trim() !== (currentWorkspace.name || '').trim()) {
                     showWarning(
                       'Name mismatch',
@@ -1837,6 +1804,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                     const next = items[0] || null;
                     setCurrentWorkspace(next);
                     if (next) {
+                      selectWorkspace(next.id, { replace: true });
                       const res = await workspaceAPI.listMembers(
                         next.id,
                         100,
@@ -1855,6 +1823,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                         })
                       );
                     } catch (_) {}
+                    setConfirmOpen(false);
+                    setDeleteConfirmName('');
                   } catch (e) {
                     const msg = String(e?.message || '').toUpperCase();
                     if (msg.includes('PERSONAL_DEFAULT')) {
@@ -1863,12 +1833,10 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                         'Your default personal workspace cannot be deleted.'
                       );
                     } else {
-                      showError('Failed to delete workspace');
+                      showError(e?.message || 'Failed to delete workspace');
                     }
                   } finally {
                     setDeleting(false);
-                    setConfirmOpen(false);
-                    window.__confirmName = '';
                   }
                 }}
               >

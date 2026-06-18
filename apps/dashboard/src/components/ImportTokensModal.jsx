@@ -73,6 +73,8 @@ import ImportGCPForm from './imports/ImportGCPForm';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
 import {
   DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
   useDashboardModalProps,
 } from './DashboardModalFrame.jsx';
 
@@ -2010,21 +2012,12 @@ export default function ImportTokensModal({
         <ModalOverlay {...overlayProps} />
         <DashboardModalFrame maxW='960px'>
           <ModalHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Import tokens
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Import assets from files or connected infrastructure providers.
-            </Text>
+            </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} />
           <ModalBody {...bodyProps}>
@@ -3207,24 +3200,28 @@ export default function ImportTokensModal({
                         : 'Save current credentials for scheduled automatic scans'
                   }
                   fontSize='xs'
+                  hasArrow
+                  placement='top'
                 >
-                  <Button
-                    colorScheme='blue'
-                    variant='outline'
-                    onClick={handleEnableAutoSync}
-                    isLoading={savingAutoSync}
-                    isDisabled={
-                      !isAutoSyncAllowed || !scanSucceededFor.has(source)
-                    }
-                    opacity={
-                      isAutoSyncAllowed && scanSucceededFor.has(source)
-                        ? 1
-                        : 0.5
-                    }
-                  >
-                    Enable auto-sync
-                    {!isAutoSyncAllowed && ' (unavailable)'}
-                  </Button>
+                  <Box as='span' display='inline-block'>
+                    <Button
+                      colorScheme='blue'
+                      variant='outline'
+                      onClick={handleEnableAutoSync}
+                      isLoading={savingAutoSync}
+                      isDisabled={
+                        !isAutoSyncAllowed || !scanSucceededFor.has(source)
+                      }
+                      opacity={
+                        isAutoSyncAllowed && scanSucceededFor.has(source)
+                          ? 1
+                          : 0.5
+                      }
+                    >
+                      Enable auto-sync
+                      {!isAutoSyncAllowed && ' (unavailable)'}
+                    </Button>
+                  </Box>
                 </Tooltip>
               ) : null}
             </HStack>
@@ -3242,21 +3239,12 @@ export default function ImportTokensModal({
         <ModalOverlay {...overlayProps} />
         <DashboardModalFrame maxW='520px'>
           <ModalHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Enable Auto-Sync
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Save credentials for scheduled infrastructure scans.
-            </Text>
+            </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} />
           <ModalBody {...bodyProps}>
@@ -3349,21 +3337,12 @@ export default function ImportTokensModal({
         <ModalOverlay {...overlayProps} />
         <DashboardModalFrame maxW='460px'>
           <ModalHeader {...headerProps}>
-            <Text
-              fontSize={{ base: 'md', md: 'lg' }}
-              fontWeight='bold'
-              color={modalTokens.text}
-            >
+            <DashboardModalTitle color={modalTokens.text}>
               Disable Auto-Sync
-            </Text>
-            <Text
-              fontSize='sm'
-              color={modalTokens.muted}
-              mt={1.5}
-              fontWeight='medium'
-            >
+            </DashboardModalTitle>
+            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
               Stop scheduled scans for this provider.
-            </Text>
+            </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} />
           <ModalBody {...bodyProps}>

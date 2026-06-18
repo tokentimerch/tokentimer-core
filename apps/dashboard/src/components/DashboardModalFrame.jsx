@@ -1,5 +1,38 @@
 import { useMemo } from 'react';
-import { ModalContent, useColorModeValue } from '@chakra-ui/react';
+import { ModalContent, Text, useColorModeValue } from '@chakra-ui/react';
+
+export const DASHBOARD_MODAL_HEADING_FONT =
+  'Archivo, system-ui, sans-serif';
+
+export function DashboardModalTitle({ children, color, ...props }) {
+  return (
+    <Text
+      fontSize={{ base: 'md', md: 'lg' }}
+      fontWeight='bold'
+      fontFamily={DASHBOARD_MODAL_HEADING_FONT}
+      lineHeight='short'
+      color={color}
+      {...props}
+    >
+      {children}
+    </Text>
+  );
+}
+
+export function DashboardModalDescription({ children, color, ...props }) {
+  return (
+    <Text
+      fontSize={{ base: 'xs', md: 'sm' }}
+      color={color}
+      mt={1.5}
+      fontWeight='medium'
+      lineHeight='1.45'
+      {...props}
+    >
+      {children}
+    </Text>
+  );
+}
 
 const DASHBOARD_MODAL_MAX_WIDTHS = {
   standard: 'xl',
@@ -124,6 +157,7 @@ export function useDashboardModalProps() {
         borderBottom: '1px solid',
         borderColor: dashboardModalTokens.border,
         color: dashboardModalTokens.text,
+        fontFamily: DASHBOARD_MODAL_HEADING_FONT,
         px: { base: 4, md: 6 },
         py: { base: 4, md: 5 },
         pr: { base: 12, md: 14 },
@@ -164,6 +198,15 @@ export function useDashboardModalProps() {
         fontSize: 'sm',
       },
       tokens: dashboardModalTokens,
+      outlineButtonProps: {
+        variant: 'outline',
+        borderColor: dashboardModalTokens.border,
+        color: dashboardModalTokens.subtleText,
+        _hover: {
+          bg: dashboardModalTokens.fieldBg,
+          borderColor: dashboardModalTokens.focusBorder,
+        },
+      },
     }),
     [dashboardModalTokens]
   );

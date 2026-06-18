@@ -25,6 +25,7 @@ import {
 } from '@chakra-ui/react';
 import { getColorFromString } from '../styles/colors.js';
 import { formatDate, tokenAPI } from '../utils/apiClient';
+import { DASHBOARD_MODAL_HEADING_FONT } from './DashboardModalFrame.jsx';
 
 function createTokenEditData(token) {
   return {
@@ -283,8 +284,13 @@ function TokenDetailModal({
     },
   };
 
-  const renderFieldShell = (label, children, colSpan = { base: 1, md: 1 }) => (
-    <GridItem colSpan={colSpan}>
+  const renderFieldShell = (
+    label,
+    children,
+    colSpan = { base: 1, md: 1 },
+    tooltipLabel = null
+  ) => {
+    const shell = (
       <Box
         bg={fieldBg}
         border='1px solid'
@@ -298,8 +304,20 @@ function TokenDetailModal({
         </Text>
         {children}
       </Box>
-    </GridItem>
-  );
+    );
+
+    return (
+      <GridItem colSpan={colSpan}>
+        {tooltipLabel ? (
+          <Tooltip label={tooltipLabel} hasArrow placement='top'>
+            <Box w='full'>{shell}</Box>
+          </Tooltip>
+        ) : (
+          shell
+        )}
+      </GridItem>
+    );
+  };
 
   const renderValueText = (value, isMultiline = false) => (
     <Text
@@ -333,6 +351,7 @@ function TokenDetailModal({
           <Text
             fontSize={{ base: 'md', md: 'lg' }}
             fontWeight='bold'
+            fontFamily={DASHBOARD_MODAL_HEADING_FONT}
             color={textColor}
           >
             {label}
@@ -342,10 +361,15 @@ function TokenDetailModal({
     </GridItem>
   );
 
-  const renderField = (label, value, isMultiline = false) => {
+  const renderField = (label, value, isMultiline = false, tooltipLabel = null) => {
     if (!value) return null;
 
-    return renderFieldShell(label, renderValueText(value, isMultiline));
+    return renderFieldShell(
+      label,
+      renderValueText(value, isMultiline),
+      { base: 1, md: 1 },
+      tooltipLabel
+    );
   };
 
   const renderDateField = (label, value) => {
@@ -490,6 +514,7 @@ function TokenDetailModal({
               <Heading
                 size={{ base: 'sm', md: 'md' }}
                 color={textColor}
+                fontFamily={DASHBOARD_MODAL_HEADING_FONT}
                 noOfLines={2}
               >
                 {token.name}
@@ -534,19 +559,17 @@ function TokenDetailModal({
             {/* Token ID - non-editable identifier */}
             {renderField('Token ID', token.id)}
 
-            {isEditing ? (
-              <Tooltip label='Cannot edit type' hasArrow placement='top'>
-                {renderField('Type', type?.label || token.type)}
-              </Tooltip>
-            ) : (
-              renderField('Type', type?.label || token.type)
+            {renderField(
+              'Type',
+              type?.label || token.type,
+              false,
+              isEditing ? 'Cannot edit type' : null
             )}
-            {isEditing ? (
-              <Tooltip label='Cannot edit category' hasArrow placement='top'>
-                {renderField('Category', category?.label)}
-              </Tooltip>
-            ) : (
-              renderField('Category', category?.label)
+            {renderField(
+              'Category',
+              category?.label,
+              false,
+              isEditing ? 'Cannot edit category' : null
             )}
             {renderEditable('Name', 'name', token.name, {
               inputProps: { maxLength: 100 },

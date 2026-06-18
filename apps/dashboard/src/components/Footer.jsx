@@ -18,6 +18,7 @@ import {
   useBorderColors,
 } from '../hooks/useColors.js';
 import { useDashboardThemeColors } from '../hooks/useDashboardTheme.js';
+import { DASHBOARD_PAGE_GUTTER_X } from '../styles/dashboardLayout';
 
 /**
  * Footer component with comprehensive navigation and branding
@@ -34,14 +35,26 @@ const DASHBOARD_SHELL_PATHS = new Set([
   '/system-settings',
 ]);
 
+const AUTH_SHELL_PATHS = new Set([
+  '/login',
+  '/register',
+  '/reset-password',
+  '/verify-email',
+]);
+
 function isDashboardShellPath(pathname) {
   return DASHBOARD_SHELL_PATHS.has(pathname);
+}
+
+function isAuthShellPath(pathname) {
+  return AUTH_SHELL_PATHS.has(pathname);
 }
 
 const Footer = () => {
   const location = useLocation();
   const isLandingPage = location.pathname === '/';
   const isDashboardShellPage = isDashboardShellPath(location.pathname);
+  const isAuthShellPage = isAuthShellPath(location.pathname);
   const dashboardTheme = useDashboardThemeColors();
 
   // Use navigation colors to match the navigation bar
@@ -74,7 +87,7 @@ const Footer = () => {
 
   const currentYear = new Date().getFullYear();
 
-  if (isDashboardShellPage) {
+  if (isDashboardShellPage || isAuthShellPage) {
     const {
       pageBg,
       muted,
@@ -108,12 +121,16 @@ const Footer = () => {
         borderTopWidth='1px'
         borderColor={border}
         w='100%'
-        pl={{
-          base: 4,
-          lg: `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1rem)`,
-          '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
-        }}
-        pr={{ base: 4, lg: 4, '2xl': 5 }}
+        pl={
+          isAuthShellPage
+            ? DASHBOARD_PAGE_GUTTER_X
+            : {
+                base: 4,
+                lg: `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1rem)`,
+                '2xl': `calc(var(--tt-dashboard-sidebar-width, ${DASHBOARD_SIDEBAR_FALLBACK_WIDTH}) + 1.25rem)`,
+              }
+        }
+        pr={DASHBOARD_PAGE_GUTTER_X}
         minH={{ base: '104px', md: '58px' }}
         pt={{ base: 3, md: 2 }}
         pb={{
@@ -124,6 +141,8 @@ const Footer = () => {
         zIndex={1}
         display='flex'
         alignItems='center'
+        flexShrink={0}
+        mt='auto'
       >
         <Flex
           direction={{ base: 'column', md: 'row' }}

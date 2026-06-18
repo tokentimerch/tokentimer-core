@@ -19,6 +19,10 @@ import {
 import { Search } from 'lucide-react';
 import { getColorFromString } from '../styles/colors.js';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
+import {
+  normInventoryValue,
+  splitInventoryList,
+} from '../utils/inventoryFilterCounts.js';
 
 const STATUS_COLOR_SCHEMES = {
   all: 'blue',
@@ -145,34 +149,39 @@ function getSectionColorScheme(section) {
 }
 
 function isSectionActive(section, currentSection) {
-  const current = currentSection || '__all__';
+  const current = normInventoryValue(currentSection) || '__all__';
+  const sectionNorm = normInventoryValue(section.name);
 
-  if (section.name === '__all__') {
+  if (sectionNorm === '__all__') {
     return current === '__all__';
   }
-  if (section.name === '__none__') {
+  if (sectionNorm === '__none__') {
     return current === '__none__';
   }
-  return current.split(',').includes(section.name);
+  return splitInventoryList(currentSection).some(
+    part => normInventoryValue(part) === sectionNorm
+  );
 }
 
 function getNextSectionValue(section, currentSection) {
-  const currentVal = currentSection || '__all__';
+  const currentVal = normInventoryValue(currentSection) || '__all__';
+  const sectionNorm = normInventoryValue(section.name);
 
-  if (section.name === '__all__') {
+  if (sectionNorm === '__all__') {
     return '__all__';
   }
-  if (section.name === '__none__') {
+  if (sectionNorm === '__none__') {
     return '__none__';
   }
 
   let parts =
     currentVal === '__all__' || currentVal === '__none__'
       ? []
-      : currentVal.split(',').filter(Boolean);
+      : splitInventoryList(currentSection);
 
-  if (parts.includes(section.name)) {
-    parts = parts.filter(part => part !== section.name);
+  const normalizedParts = parts.map(part => normInventoryValue(part));
+  if (normalizedParts.includes(sectionNorm)) {
+    parts = parts.filter((_, index) => normalizedParts[index] !== sectionNorm);
   } else {
     parts.push(section.name);
   }

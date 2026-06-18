@@ -14,6 +14,7 @@ import {
   useColorModeValue,
   HStack,
 } from '@chakra-ui/react';
+import { DashboardModalTitle } from './DashboardModalFrame.jsx';
 import { FaRocket, FaCheckCircle } from 'react-icons/fa';
 import { FiPlay } from 'react-icons/fi';
 
@@ -46,7 +47,9 @@ function WelcomeModal({
         <ModalHeader textAlign='center' color={headerColor}>
           <VStack spacing={3}>
             <Icon as={FaRocket} w={8} h={8} color='blue.500' />
-            <Text>Welcome on board! 🎉</Text>
+            <DashboardModalTitle fontSize='lg' textAlign='center'>
+              Welcome on board! 🎉
+            </DashboardModalTitle>
           </VStack>
         </ModalHeader>
 

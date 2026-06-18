@@ -82,6 +82,8 @@ import TokenDetailModal from './components/TokenDetailModal.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import {
   DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
   useDashboardModalProps,
 } from './components/DashboardModalFrame.jsx';
 import DashboardShell from './components/DashboardShell.jsx';
@@ -99,6 +101,16 @@ import {
   categoriesEqual,
   useInventoryUrlState,
 } from './hooks/useInventoryUrlState.js';
+import {
+  buildCategoryFilterOptions,
+  buildInventoryFilterContext,
+  buildSectionFilterOptions,
+  computeInventoryStatusMetrics,
+  filterTokensForInventoryCounts,
+  isAnyInventoryFilterActive,
+  pruneSelectedCategories,
+  shouldClearSectionSelection,
+} from './utils/inventoryFilterCounts.js';
 
 import apiClient, {
   authAPI,
@@ -461,6 +473,7 @@ function DashboardModalSectionTitle({ children, tokens, withDivider = false }) {
         <Text
           fontSize={{ base: 'md', md: 'lg' }}
           fontWeight='bold'
+          fontFamily='Archivo, system-ui, sans-serif'
           color={tokens.text}
         >
           {children}
@@ -513,70 +526,41 @@ function getTokenDisplayMeta(token) {
   };
 }
 
-function TokenDeletionModal({
-  isOpen,
-  onClose,
-  tokenToDelete,
-  onConfirm,
-}) {
+function TokenDeletionModal({ isOpen, onClose, tokenToDelete, onConfirm }) {
   const {
     overlayProps,
     headerProps,
     bodyProps,
     footerProps,
     closeButtonProps,
+    outlineButtonProps,
     tokens,
   } = useDashboardModalProps();
-  const warningBg = useColorModeValue('#fff7ed', 'rgba(146, 64, 14, 0.22)');
-  const warningBorder = useColorModeValue(
-    '#fed7aa',
-    'rgba(251, 191, 36, 0.34)'
-  );
-  const warningText = useColorModeValue('#9a3412', '#fde68a');
-  const dangerBg = useColorModeValue('#fef2f2', 'rgba(127, 29, 29, 0.28)');
-  const dangerBorder = useColorModeValue(
-    '#fecaca',
-    'rgba(248, 113, 113, 0.3)'
-  );
-  const dangerText = useColorModeValue('#991b1b', '#fecaca');
-  const deleteButtonBg = useColorModeValue('#dc2626', '#ef4444');
-  const deleteButtonHoverBg = useColorModeValue('#b91c1c', '#dc2626');
+  const { dashboard } = useDashboardTheme();
   const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToDelete);
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      isCentered
-      scrollBehavior='inside'
-    >
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
         maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
       >
         <ModalHeader {...headerProps}>
-          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight='bold'>
-            Delete Token
-          </Text>
-          <Text
-            fontSize={{ base: 'xs', md: 'sm' }}
-            color={tokens.subtleText}
-            mt={1.5}
-            fontWeight='medium'
-          >
+          <DashboardModalTitle>Delete Token</DashboardModalTitle>
+          <DashboardModalDescription color={tokens.subtleText}>
             Review this asset before permanently deleting it.
-          </Text>
+          </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
           <VStack spacing={4} align='stretch'>
             <Alert
               status='warning'
-              bg={warningBg}
+              bg={dashboard.callout.warningSurface}
               border='1px solid'
-              borderColor={warningBorder}
-              color={warningText}
+              borderColor={dashboard.callout.warningBorder}
+              color={dashboard.callout.warningText}
               borderRadius='12px'
             >
               <AlertIcon />
@@ -589,10 +573,10 @@ function TokenDeletionModal({
             {tokenToDelete?.monitor_url && (
               <Alert
                 status='error'
-                bg={dangerBg}
+                bg={dashboard.callout.dangerSurface}
                 border='1px solid'
-                borderColor={dangerBorder}
-                color={dangerText}
+                borderColor={dashboard.callout.dangerBorder}
+                color={dashboard.state.danger}
                 borderRadius='12px'
               >
                 <AlertIcon />
@@ -624,7 +608,10 @@ function TokenDeletionModal({
                     {categoryLabel}
                   </DashboardModalValue>
                 </DashboardModalFieldCard>
-                <DashboardModalFieldCard label='Expiration Date' tokens={tokens}>
+                <DashboardModalFieldCard
+                  label='Expiration Date'
+                  tokens={tokens}
+                >
                   <DashboardModalValue tokens={tokens}>
                     {tokenToDelete.expiresAt
                       ? formatDate(tokenToDelete.expiresAt)
@@ -643,24 +630,18 @@ function TokenDeletionModal({
             direction={{ base: 'column-reverse', sm: 'row' }}
           >
             <Button
-              variant='outline'
               onClick={onClose}
-              borderColor={tokens.buttonBorder}
-              color={tokens.subtleText}
               minW={{ base: '100%', sm: '104px' }}
-              _hover={{
-                bg: tokens.fieldBg,
-                borderColor: tokens.focusBorder,
-              }}
+              {...outlineButtonProps}
             >
               Cancel
             </Button>
             <Button
-              bg={deleteButtonBg}
+              bg={dashboard.callout.dangerButton}
               color='white'
               onClick={onConfirm}
               minW={{ base: '100%', sm: '128px' }}
-              _hover={{ bg: deleteButtonHoverBg }}
+              _hover={{ bg: dashboard.callout.dangerButtonHover }}
             >
               Delete Token
             </Button>
@@ -692,29 +673,17 @@ function TokenRenewModal({
   const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToRenew);
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      isCentered
-      scrollBehavior='inside'
-    >
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
         maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
       >
         <ModalHeader {...headerProps}>
-          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight='bold'>
-            Renew Token
-          </Text>
-          <Text
-            fontSize={{ base: 'xs', md: 'sm' }}
-            color={tokens.subtleText}
-            mt={1.5}
-            fontWeight='medium'
-          >
+          <DashboardModalTitle>Renew Token</DashboardModalTitle>
+          <DashboardModalDescription color={tokens.subtleText}>
             Choose the next expiration date for this asset.
-          </Text>
+          </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
@@ -1089,6 +1058,7 @@ function App() {
     onOpen: onDuplicateModalOpen,
     onClose: onDuplicateModalClose,
   } = useDisclosure();
+  const { headerProps: dashboardModalHeaderProps } = useDashboardModalProps();
 
   /**
    * Check user session with retry mechanism
@@ -2757,6 +2727,11 @@ function App() {
                                   onLogout={handleLogout}
                                   onAccountClick={handleHelpAccountClick}
                                   onAccountDeleted={handleAccountDeleted}
+                                  onSessionUpdate={updates =>
+                                    setSession(prev =>
+                                      prev ? { ...prev, ...updates } : prev
+                                    )
+                                  }
                                 />
                               )
                             ) : (
@@ -3019,7 +2994,11 @@ function App() {
             >
               <ModalOverlay />
               <ModalContent>
-                <ModalHeader>Token Already Exists</ModalHeader>
+                <ModalHeader {...dashboardModalHeaderProps}>
+                  <DashboardModalTitle>
+                    Token Already Exists
+                  </DashboardModalTitle>
+                </ModalHeader>
                 <ModalCloseButton />
                 <ModalBody>
                   <VStack spacing={4} align='stretch'>
@@ -3555,10 +3534,6 @@ function DashboardView({
     border,
     inputBg: themeInputBg,
   } = useDashboardTheme();
-  const borderStrong = useColorModeValue(
-    'gray.300',
-    'rgba(148, 163, 184, 0.28)'
-  );
 
   // Move useColorModeValue calls to the top to comply with Rules of Hooks
   const {
@@ -4056,7 +4031,6 @@ function DashboardView({
           border='none'
           bg='transparent'
           color={dashboardModalTokens.text}
-          sx={{ caretColor: dashboardModalTokens.text }}
           p={0}
           h='24px'
           flex={1}
@@ -4068,6 +4042,7 @@ function DashboardView({
           outline='none'
           boxShadow='none'
           sx={{
+            caretColor: dashboardModalTokens.text,
             appearance: 'none',
             border: '0 !important',
             borderRadius: '0 !important',
@@ -4129,20 +4104,16 @@ function DashboardView({
   const [selectedTokenIds, setSelectedTokenIds] = useState([]);
 
   useEffect(() => {
-    if (categoriesEqual(selectedCategories, inventoryUrl.categories)) return;
-    setSelectedCategories(inventoryUrl.categories);
+    setSelectedCategories(prev => {
+      if (categoriesEqual(prev, inventoryUrl.categories)) return prev;
+      return inventoryUrl.categories;
+    });
     setSelectedTokenIds([]);
     setAssetPage(1);
     if (inventoryUrl.offset > 0) {
       inventoryUrl.setOffset(0);
     }
-  }, [
-    inventoryUrl.categories,
-    inventoryUrl.offset,
-    inventoryUrl.setOffset,
-    selectedCategories,
-    setSelectedCategories,
-  ]);
+  }, [inventoryUrl.categories, inventoryUrl.offset, inventoryUrl.setOffset]);
 
   useEffect(() => {
     if (typeof _setSearchQuery === 'function') {
@@ -4719,363 +4690,178 @@ function DashboardView({
     visibleTokens,
   ]);
 
+  const inventoryFilterContext = useMemo(
+    () =>
+      buildInventoryFilterContext({
+        statusFilter,
+        selectedCategoryValues,
+        sectionParam: panelQueries?.__section || '__all__',
+        search: panelQueries?.__global || '',
+      }),
+    [
+      panelQueries?.__global,
+      panelQueries?.__section,
+      selectedCategoryValues,
+      statusFilter,
+    ]
+  );
+
+  const getInventoryStatusKey = useCallback(
+    expiry => getDashboardStatusMeta(expiry).key,
+    []
+  );
+
+  const statusFilterMetrics = useMemo(() => {
+    if (!isAnyInventoryFilterActive(inventoryFilterContext)) {
+      return loadedAssetMetrics;
+    }
+
+    return computeInventoryStatusMetrics(
+      filterTokensForInventoryCounts(
+        allLoadedTokens,
+        inventoryFilterContext,
+        'status',
+        getInventoryStatusKey
+      )
+    );
+  }, [
+    allLoadedTokens,
+    getInventoryStatusKey,
+    inventoryFilterContext,
+    loadedAssetMetrics,
+  ]);
+
   const statusFilterOptions = useMemo(
     () => [
       {
         value: 'all',
         label: 'All',
-        count: loadedAssetMetrics.total,
+        count: statusFilterMetrics.total,
         color: '#3b82f6',
       },
       {
         value: 'critical',
         label: 'Critical',
-        count: loadedAssetMetrics.critical,
+        count: statusFilterMetrics.critical,
         color: '#ef4444',
       },
       {
         value: 'due',
         label: 'Due Soon',
-        count: loadedAssetMetrics.expiring30,
+        count: statusFilterMetrics.expiring30,
         color: '#f97316',
       },
       {
         value: 'healthy',
         label: 'Healthy',
-        count: loadedAssetMetrics.healthy,
+        count: statusFilterMetrics.healthy,
         color: '#22c55e',
       },
       {
         value: 'expired',
         label: 'Expired',
-        count: loadedAssetMetrics.expired,
+        count: statusFilterMetrics.expired,
         color: '#64748b',
       },
     ],
-    [loadedAssetMetrics]
+    [statusFilterMetrics]
   );
 
-  const categoryFilterOptions = useMemo(() => {
-    const norm = v =>
-      String(v || '')
-        .trim()
-        .toLowerCase();
-    const statusActive = Boolean(statusFilter) && statusFilter !== 'all';
-    const tokenMatchesStatus = token => {
-      if (!statusActive) return true;
-      const status = getDashboardStatusMeta(token.expiresAt).key;
-      return (
-        statusFilter === status ||
-        (statusFilter === 'due' && status === 'due-soon') ||
-        (statusFilter === 'critical' &&
-          (status === 'critical' || status === 'expired')) ||
-        (statusFilter === 'healthy' && status === 'healthy')
-      );
-    };
+  const categoryFilterOptions = useMemo(
+    () =>
+      buildCategoryFilterOptions({
+        tokenCategories: TOKEN_CATEGORIES,
+        tokens: allLoadedTokens,
+        ctx: inventoryFilterContext,
+        selectedCategoryValues,
+        globalFacets,
+        tokenFacets,
+        categoryCounts,
+        getStatusKey: getInventoryStatusKey,
+      }),
+    [
+      TOKEN_CATEGORIES,
+      allLoadedTokens,
+      categoryCounts,
+      getInventoryStatusKey,
+      globalFacets,
+      inventoryFilterContext,
+      selectedCategoryValues,
+      tokenFacets,
+    ]
+  );
 
-    const countCategoryTokens = catValue => {
-      const sec = panelQueries?.__section;
-      const sectionActive = (sec || '__all__') !== '__all__';
+  const sectionFilterOptions = useMemo(
+    () =>
+      buildSectionFilterOptions({
+        tokens: allLoadedTokens,
+        ctx: inventoryFilterContext,
+        facetSource: globalFacets?.section || tokenFacets?.section || [],
+        categoryCounts,
+        getSectionColorScheme: _getSectionColorScheme,
+        getStatusKey: getInventoryStatusKey,
+      }),
+    [
+      allLoadedTokens,
+      categoryCounts,
+      getInventoryStatusKey,
+      globalFacets,
+      inventoryFilterContext,
+      tokenFacets,
+    ]
+  );
 
-      if (sectionActive || statusActive) {
-        if (sec === '__none__') {
-          return allLoadedTokens.filter(
-            t =>
-              t.category === catValue &&
-              tokenMatchesStatus(t) &&
-              (!t.section ||
-                (Array.isArray(t.section) && t.section.length === 0) ||
-                String(t.section).trim() === '')
-          ).length;
-        }
+  useEffect(() => {
+    const sectionParam = inventoryUrl.section || '__all__';
+    if (sectionParam === '__all__') return;
 
-        const wantedList =
-          (sec || '__all__') === '__all__'
-            ? []
-            : String(sec)
-                .split(',')
-                .map(s => norm(s))
-                .filter(Boolean);
-
-        return allLoadedTokens.filter(t => {
-          if (t.category !== catValue) return false;
-          if (!tokenMatchesStatus(t)) return false;
-          if (wantedList.length === 0) return true;
-          const tokenSections = Array.isArray(t.section)
-            ? t.section.map(s => norm(s))
-            : [norm(t.section)];
-          return wantedList.some(w => tokenSections.includes(w));
-        }).length;
-      }
-
-      const facetsCount = (
-        globalFacets?.category ||
-        tokenFacets?.category ||
-        []
-      ).find(f => String(f.category) === catValue)?.c;
-
-      if (typeof facetsCount === 'number') return facetsCount;
-      return typeof categoryCounts?.[catValue] === 'number'
-        ? categoryCounts[catValue]
-        : 0;
-    };
-
-    return TOKEN_CATEGORIES.map(cat => ({
-      ...cat,
-      count: countCategoryTokens(cat.value),
-      active: selectedCategoryValues.includes(cat.value),
-    })).filter(
-      cat =>
-        !statusActive ||
-        cat.count > 0 ||
-        selectedCategoryValues.includes(cat.value)
-    );
+    if (
+      shouldClearSectionSelection({
+        sectionParam,
+        tokens: allLoadedTokens,
+        ctx: inventoryFilterContext,
+        facetSource: globalFacets?.section || tokenFacets?.section || [],
+        categoryCounts,
+        getStatusKey: getInventoryStatusKey,
+      })
+    ) {
+      inventoryUrl.setSection('__all__');
+    }
   }, [
-    TOKEN_CATEGORIES,
     allLoadedTokens,
     categoryCounts,
-    globalFacets,
-    panelQueries,
-    selectedCategoryValues,
-    statusFilter,
-    tokenFacets,
+    getInventoryStatusKey,
+    globalFacets?.section,
+    inventoryFilterContext,
+    inventoryUrl.section,
+    inventoryUrl.setSection,
+    tokenFacets?.section,
   ]);
 
-  const sectionFilterOptions = useMemo(() => {
-    const norm = v =>
-      String(v || '')
-        .trim()
-        .toLowerCase();
-    const splitAndTrim = val =>
-      String(val || '')
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
+  useEffect(() => {
+    if (selectedCategoryValues.length === 0) return;
 
-    // The status chips (Critical/Due/Healthy/Expired) are an expiry bucket the
-    // server facets don't know about, so when one is active we derive section
-    // counts from the loaded tokens that match it and hide non-matching ones.
-    const statusActive = Boolean(statusFilter) && statusFilter !== 'all';
-    const tokenMatchesStatus = token => {
-      if (!statusActive) return true;
-      const status = getDashboardStatusMeta(token.expiresAt).key;
-      return (
-        statusFilter === status ||
-        (statusFilter === 'due' && status === 'due-soon') ||
-        (statusFilter === 'critical' &&
-          (status === 'critical' || status === 'expired')) ||
-        (statusFilter === 'healthy' && status === 'healthy')
-      );
-    };
-
-    const facetSource = globalFacets?.section || tokenFacets?.section || [];
-    const rawMap = {};
-
-    facetSource.forEach(row => {
-      const labels = splitAndTrim(row.section);
-      if (labels.length === 0) {
-        const key = '';
-        if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
-        rawMap[key].count += row.c || 0;
-        return;
-      }
-      labels.forEach(label => {
-        const key = norm(label);
-        if (!rawMap[key]) rawMap[key] = { name: label, count: 0 };
-        rawMap[key].count = Math.max(rawMap[key].count, row.c || 0);
-      });
+    const pruned = pruneSelectedCategories({
+      selectedCategoryValues,
+      tokens: allLoadedTokens,
+      ctx: inventoryFilterContext,
+      globalFacets,
+      tokenFacets,
+      categoryCounts,
+      getStatusKey: getInventoryStatusKey,
     });
 
-    try {
-      allLoadedTokens.forEach(token => {
-        if (
-          selectedCategoryValues.length > 0 &&
-          !selectedCategoryValues.includes(token.category)
-        ) {
-          return;
-        }
-
-        const currentSection = panelQueries?.__section || '__all__';
-        if (currentSection !== '__all__') {
-          const tokenSections = Array.isArray(token.section)
-            ? token.section.map(s => norm(s))
-            : [norm(token.section)];
-
-          if (currentSection === '__none__') {
-            if (
-              token.section &&
-              (!Array.isArray(token.section) || token.section.length > 0)
-            ) {
-              return;
-            }
-          } else {
-            const wanted = currentSection
-              .split(',')
-              .map(s => norm(s))
-              .filter(Boolean);
-            if (!wanted.some(w => tokenSections.includes(w))) return;
-          }
-        }
-
-        const labels = Array.isArray(token.section)
-          ? token.section.flatMap(s => splitAndTrim(s))
-          : splitAndTrim(token.section);
-
-        if (labels.length === 0) {
-          const key = '';
-          if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
-          return;
-        }
-
-        const uniqueInToken = [...new Set(labels.map(s => norm(s)))];
-        uniqueInToken.forEach(key => {
-          const originalLabel = labels.find(s => norm(s) === key);
-          if (!rawMap[key]) {
-            rawMap[key] = { name: originalLabel, count: 0 };
-          }
-        });
-      });
-    } catch (_) {}
-
-    const statusSectionCounts = {};
-    let statusNoneCount = 0;
-    let statusMatchTotal = 0;
-    if (statusActive) {
-      allLoadedTokens.forEach(token => {
-        if (
-          selectedCategoryValues.length > 0 &&
-          !selectedCategoryValues.includes(token.category)
-        ) {
-          return;
-        }
-        if (!tokenMatchesStatus(token)) return;
-        statusMatchTotal += 1;
-        const labels = Array.isArray(token.section)
-          ? token.section.flatMap(s => splitAndTrim(s))
-          : splitAndTrim(token.section);
-        if (labels.length === 0) {
-          statusNoneCount += 1;
-          return;
-        }
-        const uniqueInToken = [...new Set(labels.map(s => norm(s)))];
-        uniqueInToken.forEach(key => {
-          statusSectionCounts[key] = (statusSectionCounts[key] || 0) + 1;
-        });
-      });
+    if (!categoriesEqual(pruned, selectedCategoryValues)) {
+      handleSetSelectedCategories(pruned);
     }
-
-    const allKnownSections = {};
-    facetSource.forEach(row => {
-      const labels = splitAndTrim(row.section);
-      labels.forEach(label => {
-        const key = norm(label);
-        if (!allKnownSections[key]) allKnownSections[key] = { name: label };
-      });
-    });
-
-    const mergedSections = Object.values(allKnownSections).map(section => ({
-      name: section.name,
-      count: statusActive
-        ? statusSectionCounts[norm(section.name)] || 0
-        : rawMap[norm(section.name)]?.count || 0,
-    }));
-
-    const allCount = statusActive
-      ? statusMatchTotal
-      : selectedCategoryValues.length > 0
-        ? selectedCategoryValues.reduce(
-            (sum, cat) => sum + (categoryCounts?.[cat] || 0),
-            0
-          )
-        : Object.values(categoryCounts || {}).reduce(
-            (sum, count) => sum + (count || 0),
-            0
-          );
-
-    const currentSection = panelQueries?.__section || '__all__';
-    const activeNames =
-      currentSection === '__all__' || currentSection === '__none__'
-        ? []
-        : currentSection
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean);
-
-    const toSectionOption = section => ({
-      name: section.name,
-      label: section.name,
-      count: section.count,
-      scheme: _getSectionColorScheme(section.name),
-    });
-
-    const included = new Set();
-    const activeOptions = activeNames.map(name => {
-      const key = norm(name);
-      const merged = mergedSections.find(s => norm(s.name) === key);
-      return toSectionOption(
-        merged || {
-          name,
-          count: statusActive
-            ? statusSectionCounts[key] || 0
-            : rawMap[key]?.count || 0,
-        }
-      );
-    });
-    activeOptions.forEach(option => included.add(norm(option.name)));
-
-    const nonZeroOptions = mergedSections
-      .filter(section => section.count > 0 && !included.has(norm(section.name)))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-      .map(toSectionOption);
-    nonZeroOptions.forEach(option => included.add(norm(option.name)));
-
-    // When a status filter is active, only surface sections that actually
-    // contain matching tokens (plus any explicitly-selected section above).
-    const zeroSections = statusActive
-      ? []
-      : mergedSections
-          .filter(
-            section => section.count === 0 && !included.has(norm(section.name))
-          )
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-    const zeroOptions = zeroSections.slice(0, 5).map(toSectionOption);
-    const moreZeros = zeroSections.length > 5;
-
-    return [
-      {
-        name: '__all__',
-        label: 'All sections',
-        count: allCount,
-        scheme: 'blue',
-      },
-      {
-        name: '__none__',
-        label: 'No section',
-        count: statusActive ? statusNoneCount : rawMap['']?.count || 0,
-        scheme: 'gray',
-      },
-      ...activeOptions,
-      ...nonZeroOptions,
-      ...zeroOptions,
-      ...(moreZeros
-        ? [
-            {
-              name: '__more__',
-              label: 'More sections…',
-              count: zeroSections.length - 5,
-              scheme: 'gray',
-            },
-          ]
-        : []),
-    ];
   }, [
     allLoadedTokens,
     categoryCounts,
+    getInventoryStatusKey,
     globalFacets,
-    panelQueries,
+    handleSetSelectedCategories,
+    inventoryFilterContext,
     selectedCategoryValues,
-    statusFilter,
     tokenFacets,
   ]);
 
@@ -5580,21 +5366,15 @@ function DashboardView({
                 <ModalOverlay {...dashboardModalOverlayProps} />
                 <DashboardModalFrame maxW='1100px'>
                   <ModalHeader {...dashboardModalHeaderProps}>
-                    <Text
-                      fontSize={{ base: 'md', md: 'lg' }}
-                      fontWeight='bold'
-                      color={dashboardModalTokens.text}
-                    >
+                    <DashboardModalTitle color={dashboardModalTokens.text}>
                       Create New Token
-                    </Text>
-                    <Text
-                      fontSize='sm'
+                    </DashboardModalTitle>
+                    <DashboardModalDescription
                       color={dashboardModalTokens.muted}
-                      mt={1.5}
-                      fontWeight='medium'
+                      fontSize='sm'
                     >
                       Add a certificate, key, secret, license, or general asset.
-                    </Text>
+                    </DashboardModalDescription>
                   </ModalHeader>
                   <ModalCloseButton {...dashboardModalCloseButtonProps} />
                   <ModalBody {...createTokenModalBodyProps}>

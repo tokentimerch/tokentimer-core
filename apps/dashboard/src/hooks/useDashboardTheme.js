@@ -16,10 +16,14 @@ export function useDashboardThemeColors() {
       shell: useDashboardToken(dashboardThemeColors.bg.shell),
       panel: useDashboardToken(dashboardThemeColors.bg.panel),
       panelHover: useDashboardToken(dashboardThemeColors.bg.panelHover),
+      nested: useDashboardToken(dashboardThemeColors.bg.nested),
+      field: useDashboardToken(dashboardThemeColors.bg.field),
     },
     border: {
       subtle: useDashboardToken(dashboardThemeColors.border.subtle),
       strong: useDashboardToken(dashboardThemeColors.border.strong),
+      control: useDashboardToken(dashboardThemeColors.border.control),
+      divider: useDashboardToken(dashboardThemeColors.border.divider),
     },
     text: {
       primary: useDashboardToken(dashboardThemeColors.text.primary),
@@ -28,11 +32,47 @@ export function useDashboardThemeColors() {
     },
     accent: {
       primary: useDashboardToken(dashboardThemeColors.accent.primary),
+      interactiveSurface: useDashboardToken(
+        dashboardThemeColors.accent.interactiveSurface
+      ),
+      interactiveBorder: useDashboardToken(
+        dashboardThemeColors.accent.interactiveBorder
+      ),
+      interactiveForeground: useDashboardToken(
+        dashboardThemeColors.accent.interactiveForeground
+      ),
+      navActive: useDashboardToken(dashboardThemeColors.accent.navActive),
     },
     state: {
       danger: useDashboardToken(dashboardThemeColors.state.danger),
       warning: useDashboardToken(dashboardThemeColors.state.warning),
       success: useDashboardToken(dashboardThemeColors.state.success),
+    },
+    purple: {
+      surface: useDashboardToken(dashboardThemeColors.purple.surface),
+      surfaceHover: useDashboardToken(dashboardThemeColors.purple.surfaceHover),
+      border: useDashboardToken(dashboardThemeColors.purple.border),
+      icon: useDashboardToken(dashboardThemeColors.purple.icon),
+    },
+    callout: {
+      warningSurface: useDashboardToken(
+        dashboardThemeColors.callout.warningSurface
+      ),
+      warningBorder: useDashboardToken(
+        dashboardThemeColors.callout.warningBorder
+      ),
+      warningText: useDashboardToken(dashboardThemeColors.callout.warningText),
+      dangerSurface: useDashboardToken(
+        dashboardThemeColors.callout.dangerSurface
+      ),
+      dangerBorder: useDashboardToken(dashboardThemeColors.callout.dangerBorder),
+      dangerButton: useDashboardToken(dashboardThemeColors.callout.dangerButton),
+      dangerButtonHover: useDashboardToken(
+        dashboardThemeColors.callout.dangerButtonHover
+      ),
+    },
+    table: {
+      rowHover: useDashboardToken(dashboardThemeColors.table.rowHover),
     },
   };
 
@@ -43,9 +83,18 @@ export function useDashboardThemeColors() {
     'rgba(30, 41, 59, 0.72)'
   );
   const footerLinkHoverBorder = useColorModeValue(
-    'gray.300',
+    dashboard.border.strong,
     'rgba(148, 163, 184, 0.22)'
   );
+
+  /** Settings pages: secondary body text (secondary in light, muted in dark). */
+  const bodySecondary = useColorModeValue(
+    dashboardThemeColors.text.secondary.light,
+    dashboardThemeColors.text.muted.dark
+  );
+
+  /** Settings pages: section titles (strong contrast in light, inherit in dark). */
+  const sectionTitleColor = useColorModeValue('#000000', 'inherit');
 
   return {
     dashboard,
@@ -54,6 +103,10 @@ export function useDashboardThemeColors() {
     text: dashboard.text.primary,
     muted: dashboard.text.muted,
     border: dashboard.border.subtle,
+    borderStrong: dashboard.border.strong,
+    borderControl: dashboard.border.control,
+    bodySecondary,
+    sectionTitleColor,
     inputBg,
     footerLink,
     footerLinkHoverBg,

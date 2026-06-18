@@ -194,10 +194,15 @@ export default function Login() {
 
   return (
     <Box
+      minH={{ base: 'calc(100dvh - 120px)', md: 'calc(100dvh - 70px)' }}
+      display='flex'
+      flexDirection='column'
+      justifyContent='center'
       maxW='lg'
       mx='auto'
-      mt={12}
-      p={{ base: 4, md: 8 }}
+      w='full'
+      py={{ base: 6, md: 8 }}
+      px={{ base: 4, md: 8 }}
       position='relative'
       overflowX='hidden'
     >

@@ -1,6 +1,7 @@
 import { Box } from '@chakra-ui/react';
 import DashboardShell from './DashboardShell';
 import { useDashboardShellProps } from '../hooks/useDashboardShellProps';
+import { DASHBOARD_PAGE_CONTENT_PADDING } from '../styles/dashboardLayout';
 
 export const DASHBOARD_PAGE_VARIANTS = ['wide', 'standard', 'narrow', 'form'];
 
@@ -18,10 +19,7 @@ export const DASHBOARD_PAGE_MAX_WIDTHS = {
   form: '1120px',
 };
 
-const CONTENT_PADDING = {
-  px: { base: 4, lg: 4, '2xl': 5 },
-  py: { base: 5, lg: 3 },
-};
+const CONTENT_PADDING = DASHBOARD_PAGE_CONTENT_PADDING;
 
 /**
  * Dashboard page chrome: DashboardShell plus a width-constrained content area.

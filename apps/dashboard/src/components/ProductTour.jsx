@@ -20,6 +20,12 @@ const TOPBAR_OFFSET_PX = 54;
 const isMobileLayout = () =>
   typeof window !== 'undefined' && window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
 
+const isMobileDrawerVisible = () => {
+  if (typeof document === 'undefined') return false;
+  const drawer = document.querySelector('[data-tour="mobile-drawer"]');
+  return Boolean(drawer && window.getComputedStyle(drawer).display !== 'none');
+};
+
 const isElementVisible = el => {
   if (!el || !(el instanceof HTMLElement)) return false;
   const style = window.getComputedStyle(el);
@@ -43,6 +49,25 @@ const findVisibleTourTarget = selector => {
   return null;
 };
 
+const ADD_CONTACT_MODAL_TARGET = '[data-tour="preferences-contacts-add"]';
+const ADD_WEBHOOK_TRIGGER_TARGET =
+  '[data-tour="preferences-webhooks-add-trigger"]';
+const ADD_WEBHOOK_MODAL_TARGET = '[data-tour="preferences-webhooks-editor"]';
+const CONTACT_GROUP_MODAL_TARGETS = [
+  '[data-tour="preferences-contact-groups-contacts-channels"]',
+  '[data-tour="preferences-contact-groups-webhooks"]',
+  '[data-tour="preferences-contact-groups-digest"]',
+];
+
+const tourTargetSelector = target => {
+  if (typeof target === 'string') return target;
+  if (target instanceof HTMLElement) {
+    const tourId = target.getAttribute('data-tour');
+    return tourId ? `[data-tour="${tourId}"]` : null;
+  }
+  return null;
+};
+
 const stepTourId = step => {
   if (!step?.target) return null;
   if (typeof step.target === 'string') {
@@ -53,6 +78,32 @@ const stepTourId = step => {
     return step.target.getAttribute('data-tour');
   }
   return null;
+};
+
+const MOBILE_DRAWER_TOUR_IDS = new Set([
+  'mobile-tokens-nav',
+  'mobile-docs-nav',
+  'mobile-help-nav',
+  'mobile-alert-settings-nav',
+  'preferences-nav',
+  'workspace-alert-settings-nav',
+  'usage-nav',
+]);
+
+const isMobileDrawerTourStep = (step, isMobileView = isMobileLayout()) => {
+  if (!isMobileView || !step?.target) return false;
+  const tourId = stepTourId(step);
+  if (tourId && MOBILE_DRAWER_TOUR_IDS.has(tourId)) return true;
+  if (typeof step.target !== 'string') return false;
+  return (
+    step.target.includes('[data-tour="mobile-drawer"]') ||
+    step.target.includes('mobile-tokens-nav') ||
+    step.target.includes('mobile-docs-nav') ||
+    step.target.includes('mobile-alert-settings-nav') ||
+    step.target.includes('preferences-nav') ||
+    step.target.includes('workspace-alert-settings-nav') ||
+    step.target.includes('usage-nav')
+  );
 };
 
 const tourStepMatches = (step, selector) => {
@@ -497,7 +548,9 @@ export default function ProductTour({
       {
         target: '[data-tour="user-menu"]',
         content:
-          'Your account menu lives here. Open it for account settings, personal preferences, and sign out.',
+          'Your account menu lives here. Open it for personal Preferences, workspace alert settings, and sign out.',
+        mobileContent:
+          'Tap the menu button to open the drawer. Personal Preferences and workspace alert settings are listed there.',
         placement: 'bottom',
         disableBeacon: true,
         disableScrolling: true,
@@ -592,9 +645,17 @@ export default function ProductTour({
         isManagerOnly: true,
       },
       {
-        target: '[data-tour="preferences-webhooks-add"]',
+        target: ADD_WEBHOOK_TRIGGER_TARGET,
+        content: 'Click "Add webhook" to open the editor and create a new target.',
+        placement: 'top',
+        mobilePlacement: 'top',
+        disableScrolling: true,
+        isManagerOnly: true,
+      },
+      {
+        target: ADD_WEBHOOK_MODAL_TARGET,
         content:
-          'Click "Add Webhook" to create a new webhook. Configure its name, type, and URL, then test and save it.',
+          'Configure the webhook name, type, and URL, then test and save it.',
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
@@ -603,7 +664,7 @@ export default function ProductTour({
       {
         target: '[data-tour="preferences-contact-groups-selector"]',
         content:
-          'Select an existing contact group to edit, or choose "+ Add New Group" to create a new one.',
+          'Select an existing contact group here, then use Edit group to open the editor (or choose "+ Add New Group" to create one).',
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
@@ -643,6 +704,17 @@ export default function ProductTour({
         placement: 'bottom',
         isDesktopOnly: true,
         isManagerOnly: true,
+      },
+      {
+        target: '[data-tour="usage-nav"]',
+        content:
+          'Open Control center from the menu to monitor alert delivery, token health, and queue status across your workspaces.',
+        placement: 'right',
+        disableBeacon: true,
+        isMobileOnly: true,
+        isManagerOnly: true,
+        mobileTarget: '[data-tour="mobile-drawer"] [data-tour="usage-nav"]',
+        mobilePlacement: 'right',
       },
       {
         target: '[data-tour="control-center-page"]',
@@ -754,7 +826,8 @@ export default function ProductTour({
       '[data-tour="preferences-contacts-list"]',
       '[data-tour="preferences-contacts-add"]',
       '[data-tour="preferences-webhooks-list"]',
-      '[data-tour="preferences-webhooks-add"]',
+      ADD_WEBHOOK_TRIGGER_TARGET,
+      ADD_WEBHOOK_MODAL_TARGET,
       '[data-tour="preferences-contact-groups-selector"]',
       '[data-tour="preferences-contact-groups-contacts-channels"]',
       '[data-tour="preferences-contact-groups-webhooks"]',
@@ -780,6 +853,10 @@ export default function ProductTour({
           ...step,
           target,
           placement,
+          content:
+            isMobileView && step.mobileContent
+              ? step.mobileContent
+              : step.content,
         };
 
         // Only apply floaterProps on mobile for the sensitive steps (contacts, webhooks, contact groups sub-steps).
@@ -847,6 +924,17 @@ export default function ProductTour({
         if (alertNavEl) {
           resolvedTarget = alertNavEl;
           placement = 'right';
+        }
+      }
+
+      if (
+        step.target === '[data-tour="usage-nav"]' ||
+        (typeof step.target === 'string' && step.target.includes('usage-nav'))
+      ) {
+        const usageNavEl = findVisibleTourTarget('[data-tour="usage-nav"]');
+        if (usageNavEl) {
+          resolvedTarget = usageNavEl;
+          placement = isMobileView ? 'right' : 'bottom';
         }
       }
 
@@ -933,7 +1021,11 @@ export default function ProductTour({
           // For mobile menu items in drawer, check if menu button exists
           if (
             target === '[data-tour="mobile-tokens-nav"]' ||
-            target === '[data-tour="mobile-docs-nav"]'
+            target === '[data-tour="mobile-docs-nav"]' ||
+            (typeof target === 'string' &&
+              (target.includes('preferences-nav') ||
+                target.includes('mobile-alert-settings-nav') ||
+                target.includes('usage-nav')))
           ) {
             const menuButton = document.querySelector(
               '[data-tour="mobile-menu-button"]'
@@ -1086,6 +1178,46 @@ export default function ProductTour({
     }
   }, [closeMobileNav, wait]);
 
+  const ensureMobileDrawerOpen = useCallback(
+    async ({ scrollToSelector } = {}) => {
+      if (typeof window === 'undefined') return false;
+      if (window.innerWidth >= LAYOUT_LG_BREAKPOINT_PX) return true;
+
+      if (!isMobileDrawerVisible()) {
+        const menuButton = document.querySelector(
+          '[data-tour="mobile-menu-button"]'
+        );
+        if (!menuButton) return false;
+        menuButton.click();
+        await waitForElement('[data-tour="mobile-drawer"]', {
+          timeout: 4000,
+          interval: 100,
+        });
+        await wait(350);
+      }
+
+      if (scrollToSelector) {
+        const found = await waitForElement(scrollToSelector, {
+          timeout: 5000,
+          interval: 100,
+        });
+        if (found) {
+          const el = resolveTourTargetElement(scrollToSelector);
+          if (el) {
+            try {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch (_) {}
+            await wait(400);
+            window.dispatchEvent(new Event('resize'));
+          }
+        }
+      }
+
+      return isMobileDrawerVisible();
+    },
+    [waitForElement, wait]
+  );
+
   /**
    * Mobile-only helper for the “preferences sub-steps” (contacts / webhooks / contact groups).
    *
@@ -1216,49 +1348,15 @@ export default function ProductTour({
         }, 500);
 
         try {
-          // Open mobile navigation drawer ONLY when we reach mobile navigation items (NOT for mobile-menu-button step itself)
-          // Step 1 should just point to the button without opening it
           const isMobileView =
             typeof window !== 'undefined' &&
             window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
 
-          if (
-            step?.target &&
-            (step.target === '[data-tour="mobile-tokens-nav"]' ||
-              step.target === '[data-tour="mobile-docs-nav"]' ||
-              step.target === '[data-tour="mobile-help-nav"]' ||
-              step.target === '[data-tour="mobile-alert-settings-nav"]' ||
-              (typeof step.target === 'string' &&
-                step.target.includes('mobile-alert-settings-nav')) ||
-              (isMobileView &&
-                (step.target === '[data-tour="preferences-nav"]' ||
-                  step.target ===
-                    '[data-tour="workspace-alert-settings-nav"]' ||
-                  (typeof step.target === 'string' &&
-                    step.target.includes('workspace-alert-settings-nav')))))
-          ) {
-            // Open drawer non-blocking
-            setTimeout(() => {
-              try {
-                const menuButton = document.querySelector(
-                  '[data-tour="mobile-menu-button"]'
-                );
-                if (menuButton) {
-                  // Check if drawer is already open by looking for the drawer element
-                  const drawer = document.querySelector(
-                    '[data-tour="mobile-drawer"]'
-                  );
-                  const drawerVisible =
-                    drawer &&
-                    window.getComputedStyle(drawer).display !== 'none';
-                  if (!drawer || !drawerVisible) {
-                    menuButton.click();
-                  }
-                }
-              } catch (err) {
-                // Ignore errors
-              }
-            }, 100);
+          if (isMobileView && isMobileDrawerTourStep(step)) {
+            await ensureMobileDrawerOpen({
+              scrollToSelector:
+                typeof step.target === 'string' ? step.target : undefined,
+            });
           }
 
           // Workspace step: never auto-open other header menus; keep header in view
@@ -1321,21 +1419,7 @@ export default function ProductTour({
               typeof window !== 'undefined' &&
               window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
 
-            if (isMobileNow) {
-              setTimeout(() => {
-                const drawer = document.querySelector(
-                  '[data-tour="mobile-drawer"]'
-                );
-                const drawerVisible =
-                  drawer && window.getComputedStyle(drawer).display !== 'none';
-                if (!drawer || !drawerVisible) {
-                  const menuButton = document.querySelector(
-                    '[data-tour="mobile-menu-button"]'
-                  );
-                  if (menuButton) menuButton.click();
-                }
-              }, 100);
-            } else {
+            if (!isMobileNow) {
               // Desktop: ensure user menu is open and locked
               window.dispatchEvent(
                 new CustomEvent('tt:tour-menu-state', {
@@ -1350,36 +1434,6 @@ export default function ProductTour({
               ) {
                 menuButton.click();
               }
-            }
-          }
-
-          // Workspace alert settings nav: open mobile drawer when needed
-          if (
-            tourStepMatches(
-              step,
-              '[data-tour="workspace-alert-settings-nav"]'
-            ) &&
-            isDashboardPath() &&
-            action !== ACTIONS.PREV
-          ) {
-            const isMobileNow =
-              typeof window !== 'undefined' &&
-              window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
-
-            if (isMobileNow) {
-              setTimeout(() => {
-                const drawer = document.querySelector(
-                  '[data-tour="mobile-drawer"]'
-                );
-                const drawerVisible =
-                  drawer && window.getComputedStyle(drawer).display !== 'none';
-                if (!drawer || !drawerVisible) {
-                  const menuButton = document.querySelector(
-                    '[data-tour="mobile-menu-button"]'
-                  );
-                  if (menuButton) menuButton.click();
-                }
-              }, 100);
             }
           }
 
@@ -1447,7 +1501,11 @@ export default function ProductTour({
               const prevStep = activeSteps[index - 1];
               let targetPath = WORKSPACE_ALERTS_PATH;
 
-              if (prevStep?.target === '[data-tour="usage-nav"]') {
+              if (
+                prevStep?.target === '[data-tour="usage-nav"]' ||
+                (typeof prevStep?.target === 'string' &&
+                  prevStep.target.includes('usage-nav'))
+              ) {
                 targetPath = '/dashboard';
               } else if (
                 prevStep?.target === '[data-tour="user-preferences-page"]'
@@ -1466,6 +1524,19 @@ export default function ProductTour({
                 });
 
                 if (found) {
+                  const isMobileNow =
+                    typeof window !== 'undefined' &&
+                    window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+                  if (
+                    isMobileNow &&
+                    (prevStep?.target === '[data-tour="usage-nav"]' ||
+                      (typeof prevStep?.target === 'string' &&
+                        prevStep.target.includes('usage-nav')))
+                  ) {
+                    await ensureMobileDrawerOpen({
+                      scrollToSelector: prevStep.target,
+                    });
+                  }
                   await wait(300);
                 }
               } else {
@@ -1515,12 +1586,86 @@ export default function ProductTour({
               typeof window !== 'undefined' &&
               window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
 
+            const targetSelector = tourTargetSelector(step?.target);
+
+            if (
+              targetSelector &&
+              CONTACT_GROUP_MODAL_TARGETS.includes(targetSelector)
+            ) {
+              window.dispatchEvent(
+                new CustomEvent('tt:tour-close-add-webhook')
+              );
+              await wait(100);
+              window.dispatchEvent(
+                new CustomEvent('tt:tour-open-group-editor')
+              );
+              await waitForElement(targetSelector, {
+                timeout: 6000,
+                interval: 120,
+              });
+              await wait(250);
+              window.dispatchEvent(new Event('resize'));
+            }
+
+            if (
+              tourStepMatches(
+                step,
+                '[data-tour="preferences-contact-groups-selector"]'
+              )
+            ) {
+              window.dispatchEvent(
+                new CustomEvent('tt:tour-close-group-editor')
+              );
+              window.dispatchEvent(
+                new CustomEvent('tt:tour-close-add-webhook')
+              );
+              await wait(150);
+            }
+
+            if (tourStepMatches(step, ADD_CONTACT_MODAL_TARGET)) {
+              window.dispatchEvent(new CustomEvent('tt:tour-open-add-contact'));
+              await waitForElement(`${ADD_CONTACT_MODAL_TARGET} input`, {
+                timeout: 6000,
+                interval: 120,
+              });
+              await wait(250);
+              window.dispatchEvent(new Event('resize'));
+            }
+
+            if (tourStepMatches(step, ADD_WEBHOOK_MODAL_TARGET)) {
+              window.dispatchEvent(new CustomEvent('tt:tour-open-add-webhook'));
+              await waitForElement(`${ADD_WEBHOOK_MODAL_TARGET} input`, {
+                timeout: 6000,
+                interval: 120,
+              });
+              await wait(250);
+              window.dispatchEvent(new Event('resize'));
+            }
+
+            if (
+              tourStepMatches(
+                step,
+                '[data-tour="preferences-contacts-list"]'
+              ) ||
+              tourStepMatches(step, '[data-tour="preferences-webhooks-list"]') ||
+              tourStepMatches(step, ADD_WEBHOOK_TRIGGER_TARGET)
+            ) {
+              window.dispatchEvent(
+                new CustomEvent('tt:tour-close-add-contact')
+              );
+              window.dispatchEvent(
+                new CustomEvent('tt:tour-close-add-webhook')
+              );
+              await wait(150);
+            }
+
             // Handle all preferences sub-steps with generic scrolling (steps 12–19 on mobile)
             const preferencesSubSteps = [
               '[data-tour="preferences-contacts-list"]',
               '[data-tour="preferences-contacts-add"]',
               '[data-tour="preferences-webhooks-list"]',
-              '[data-tour="preferences-webhooks-add"]',
+              ADD_WEBHOOK_TRIGGER_TARGET,
+              ADD_WEBHOOK_MODAL_TARGET,
               '[data-tour="preferences-contact-groups-selector"]',
               '[data-tour="preferences-contact-groups-contacts-channels"]',
               '[data-tour="preferences-contact-groups-webhooks"]',
@@ -1802,33 +1947,19 @@ export default function ProductTour({
             window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
 
           if (isMobileNow) {
-            // Try to open mobile drawer if target not found
-            const menuButton = document.querySelector(
-              '[data-tour="mobile-menu-button"]'
-            );
-            if (menuButton) {
-              const drawer = document.querySelector(
-                '[data-tour="mobile-drawer"]'
-              );
-              const drawerVisible =
-                drawer && window.getComputedStyle(drawer).display !== 'none';
-
-              // Only click if drawer is closed
-              if (!drawer || !drawerVisible) {
-                menuButton.click();
-              }
-
-              // Wait a bit for drawer to open/render, then retry
-              setIsRunning(false);
-              const found = await waitForElement(step.target, {
-                timeout: 2000,
-                interval: 100,
-              });
-              if (found) {
-                setStepIndex(index);
-                setIsRunning(true);
-                return;
-              }
+            setIsRunning(false);
+            await ensureMobileDrawerOpen({
+              scrollToSelector:
+                typeof step.target === 'string' ? step.target : undefined,
+            });
+            const found = await waitForElement(step.target, {
+              timeout: 2000,
+              interval: 100,
+            });
+            if (found) {
+              setStepIndex(index);
+              setIsRunning(true);
+              return;
             }
           } else {
             const menuButton = findUserMenuButtonInDom();
@@ -1860,31 +1991,42 @@ export default function ProductTour({
             window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
 
           if (isMobileNow) {
-            const menuButton = document.querySelector(
-              '[data-tour="mobile-menu-button"]'
-            );
-            if (menuButton) {
-              const drawer = document.querySelector(
-                '[data-tour="mobile-drawer"]'
-              );
-              const drawerVisible =
-                drawer && window.getComputedStyle(drawer).display !== 'none';
-
-              if (!drawer || !drawerVisible) {
-                menuButton.click();
-              }
-
-              setIsRunning(false);
-              const found = await waitForElement(step.target, {
-                timeout: 2000,
-                interval: 100,
-              });
-              if (found) {
-                setStepIndex(index);
-                setIsRunning(true);
-                return;
-              }
+            setIsRunning(false);
+            await ensureMobileDrawerOpen({
+              scrollToSelector:
+                typeof step.target === 'string' ? step.target : undefined,
+            });
+            const found = await waitForElement(step.target, {
+              timeout: 2000,
+              interval: 100,
+            });
+            if (found) {
+              setStepIndex(index);
+              setIsRunning(true);
+              return;
             }
+          }
+        }
+
+        // For usage-nav in mobile drawer, open drawer if needed
+        if (
+          tourStepMatches(step, '[data-tour="usage-nav"]') &&
+          typeof window !== 'undefined' &&
+          window.innerWidth < LAYOUT_LG_BREAKPOINT_PX
+        ) {
+          setIsRunning(false);
+          await ensureMobileDrawerOpen({
+            scrollToSelector:
+              typeof step.target === 'string' ? step.target : undefined,
+          });
+          const found = await waitForElement(step.target, {
+            timeout: 2000,
+            interval: 100,
+          });
+          if (found) {
+            setStepIndex(index);
+            setIsRunning(true);
+            return;
           }
         }
 
@@ -2164,147 +2306,6 @@ export default function ProductTour({
           );
         }
 
-        // Special case: after mobile-menu-button step, open drawer for mobile-tokens-nav
-        if (
-          step?.target === '[data-tour="mobile-menu-button"]' &&
-          nextStep?.target === '[data-tour="mobile-tokens-nav"]'
-        ) {
-          // Open the drawer now (it wasn't opened in STEP_BEFORE for step 1)
-          setTimeout(async () => {
-            try {
-              const menuButton = document.querySelector(
-                '[data-tour="mobile-menu-button"]'
-              );
-              if (menuButton) {
-                // Check if drawer is already open
-                const drawer = document.querySelector(
-                  '[data-tour="mobile-drawer"]'
-                );
-                const drawerVisible =
-                  drawer && window.getComputedStyle(drawer).display !== 'none';
-
-                if (!drawer || !drawerVisible) {
-                  // Open the drawer
-                  menuButton.click();
-                  await wait(600);
-                }
-              }
-
-              // Wait for target element to be visible
-              let attempts = 0;
-              while (attempts < 15) {
-                const element = document.querySelector(nextStep.target);
-                if (element) {
-                  const style = window.getComputedStyle(element);
-                  const rect = element.getBoundingClientRect();
-                  if (
-                    style.display !== 'none' &&
-                    style.visibility !== 'hidden' &&
-                    style.opacity !== '0' &&
-                    rect.width > 0 &&
-                    rect.height > 0
-                  ) {
-                    // Element is visible, proceed to next step
-                    if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                      setStepIndex(nextIndex);
-                    }
-                    return;
-                  }
-                }
-                await wait(100);
-                attempts++;
-              }
-
-              // If we couldn't find the element, still proceed to avoid getting stuck
-              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                setStepIndex(nextIndex);
-              }
-            } catch (err) {
-              logger.warn('Error in mobile-tokens-nav transition:', err);
-              // Always proceed to avoid getting stuck
-              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                setStepIndex(nextIndex);
-              }
-            }
-          }, 100);
-          return; // Don't proceed with default behavior
-        }
-
-        // Special case: after mobile-menu-button step, open drawer for mobile alert settings
-        if (
-          step?.target === '[data-tour="mobile-menu-button"]' &&
-          nextStep?.target &&
-          (nextStep.target.includes('mobile-alert-settings-nav') ||
-            nextStep.target.includes('workspace-alert-settings-nav'))
-        ) {
-          setTimeout(async () => {
-            try {
-              const menuButton = document.querySelector(
-                '[data-tour="mobile-menu-button"]'
-              );
-              if (menuButton) {
-                const drawer = document.querySelector(
-                  '[data-tour="mobile-drawer"]'
-                );
-                const drawerVisible =
-                  drawer && window.getComputedStyle(drawer).display !== 'none';
-
-                if (!drawer || !drawerVisible) {
-                  menuButton.click();
-                  await wait(800);
-                }
-              }
-
-              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                setStepIndex(nextIndex);
-              }
-            } catch (err) {
-              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                setStepIndex(nextIndex);
-              }
-            }
-          }, 100);
-          return;
-        }
-
-        // Special case: after mobile-menu-button step, open drawer for preferences-nav
-        if (
-          step?.target === '[data-tour="mobile-menu-button"]' &&
-          nextStep?.target &&
-          nextStep.target.includes('preferences-nav')
-        ) {
-          setTimeout(async () => {
-            try {
-              const menuButton = document.querySelector(
-                '[data-tour="mobile-menu-button"]'
-              );
-              if (menuButton) {
-                const drawer = document.querySelector(
-                  '[data-tour="mobile-drawer"]'
-                );
-                const drawerVisible =
-                  drawer && window.getComputedStyle(drawer).display !== 'none';
-
-                if (!drawer || !drawerVisible) {
-                  menuButton.click();
-                  await wait(800);
-                }
-              }
-
-              // Proceed to next step
-              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                setStepIndex(nextIndex);
-              }
-            } catch (err) {
-              // proceed anyway
-              if (nextIndex >= 0 && nextIndex < activeSteps.length) {
-                setStepIndex(nextIndex);
-              }
-            }
-          }, 100);
-          return;
-        }
-
         // Special case: after mobile-tokens-nav step, close drawer before moving to next step
         if (
           tourStepMatches(step, '[data-tour="mobile-tokens-nav"]') &&
@@ -2495,23 +2496,76 @@ export default function ProductTour({
           return;
         }
 
-        // Special case: If going BACK from preferences-contact-groups-selector (first contact groups step) to preferences-webhooks-add (last webhooks step)
+        // Special case: If going BACK from preferences-contact-groups-selector (first contact groups step) to preferences-webhooks-editor (last webhooks step)
         if (
           step?.target ===
             '[data-tour="preferences-contact-groups-selector"]' &&
-          nextStep?.target === '[data-tour="preferences-webhooks-add"]' &&
+          nextStep?.target === ADD_WEBHOOK_MODAL_TARGET &&
           action === ACTIONS.PREV
         ) {
           setIsRunning(false);
-          setTimeout(() => {
-            const el = document.querySelector(
-              '[data-tour="preferences-webhooks-add"]'
-            );
+          setTimeout(async () => {
+            window.dispatchEvent(new CustomEvent('tt:tour-open-add-webhook'));
+            await waitForElement(`${ADD_WEBHOOK_MODAL_TARGET} input`, {
+              timeout: 6000,
+              interval: 120,
+            });
+            await wait(250);
+
+            const isMobileNow =
+              typeof window !== 'undefined' &&
+              window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+            if (isMobileNow) {
+              scrollTargetWithTooltipSpaceMobile(ADD_WEBHOOK_MODAL_TARGET, {
+                delay: 0,
+              });
+              setTimeout(() => {
+                setStepIndex(nextIndex);
+                setIsRunning(true);
+                window.dispatchEvent(new Event('resize'));
+              }, 800);
+              return;
+            }
+
+            const el = document.querySelector(ADD_WEBHOOK_MODAL_TARGET);
             if (el) {
               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
             setStepIndex(nextIndex);
             setIsRunning(true);
+            window.dispatchEvent(new Event('resize'));
+          }, 100);
+          return;
+        }
+
+        // Back from control-center-page to usage-nav (mobile drawer intro step)
+        if (
+          tourStepMatches(step, '[data-tour="control-center-page"]') &&
+          tourStepMatches(nextStep, '[data-tour="usage-nav"]') &&
+          action === ACTIONS.PREV
+        ) {
+          setIsRunning(false);
+          setTimeout(async () => {
+            if (!isDashboardPath()) {
+              navigate('/dashboard', { replace: true });
+              await wait(400);
+            }
+
+            await ensureMobileDrawerOpen({
+              scrollToSelector:
+                typeof nextStep.target === 'string'
+                  ? nextStep.target
+                  : '[data-tour="mobile-drawer"] [data-tour="usage-nav"]',
+            });
+
+            await waitForElement('[data-tour="usage-nav"]', {
+              timeout: 8000,
+              interval: 150,
+            });
+
+            setStepIndex(nextIndex);
+            setIsRunning(true);
+            window.dispatchEvent(new Event('resize'));
           }, 100);
           return;
         }
@@ -2529,6 +2583,7 @@ export default function ProductTour({
               navigate(WORKSPACE_ALERTS_PATH);
               await wait(500);
             }
+            window.dispatchEvent(new CustomEvent('tt:tour-open-group-editor'));
             // Wait for contact groups digest to appear
             await waitForElement(
               '[data-tour="preferences-contact-groups-digest"]'
@@ -2581,6 +2636,7 @@ export default function ProductTour({
               navigate(WORKSPACE_ALERTS_PATH);
               await wait(500);
             }
+            window.dispatchEvent(new CustomEvent('tt:tour-open-group-editor'));
             // Wait for contact groups digest to appear
             await waitForElement(
               '[data-tour="preferences-contact-groups-digest"]'
@@ -2626,7 +2682,33 @@ export default function ProductTour({
           action !== ACTIONS.PREV &&
           tourStepMatches(nextStep, '[data-tour="preferences-nav"]')
         ) {
-          // Menu should already be open from STEP_BEFORE, but ensure it stays open
+          const isMobileNow =
+            typeof window !== 'undefined' &&
+            window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+
+          if (isMobileNow) {
+            setIsRunning(false);
+            void (async () => {
+              await ensureMobileDrawerOpen({
+                scrollToSelector:
+                  typeof nextStep.target === 'string'
+                    ? nextStep.target
+                    : '[data-tour="mobile-drawer"] [data-tour="preferences-nav"]',
+              });
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            })();
+            trackEvent('product_tour_step', {
+              tour_type: tourType,
+              step_index: nextIndex,
+              step_total: activeSteps.length,
+              action: 'next',
+            });
+            return;
+          }
+
+          // Desktop: menu should already be open from STEP_BEFORE, but ensure it stays open
           setTimeout(() => {
             const menuButton = findUserMenuButtonInDom();
             if (menuButton) {
@@ -2727,21 +2809,12 @@ export default function ProductTour({
                   await wait(400);
                 }
 
-                const menuButton = document.querySelector(
-                  '[data-tour="mobile-menu-button"]'
-                );
-                if (menuButton) {
-                  const drawer = document.querySelector(
-                    '[data-tour="mobile-drawer"]'
-                  );
-                  const drawerVisible =
-                    drawer &&
-                    window.getComputedStyle(drawer).display !== 'none';
-                  if (!drawer || !drawerVisible) {
-                    menuButton.click();
-                    await wait(600);
-                  }
-                }
+                await ensureMobileDrawerOpen({
+                  scrollToSelector:
+                    typeof nextStep.target === 'string'
+                      ? nextStep.target
+                      : '[data-tour="mobile-drawer"] [data-tour="mobile-alert-settings-nav"]',
+                });
 
                 if (
                   tourStepMatches(
@@ -2932,17 +3005,35 @@ export default function ProductTour({
           return;
         }
 
-        // Special case: after preferences-contact-groups-digest, navigate back to dashboard for usage-nav (desktop)
+        // Special case: after preferences-contact-groups-digest, navigate back to dashboard for usage-nav
         if (
-          tourStepMatches(step, '[data-tour="preferences-contact-groups-digest"]') &&
+          tourStepMatches(
+            step,
+            '[data-tour="preferences-contact-groups-digest"]'
+          ) &&
           tourStepMatches(nextStep, '[data-tour="usage-nav"]')
         ) {
           setIsRunning(false);
 
           setTimeout(async () => {
+            window.dispatchEvent(new CustomEvent('tt:tour-close-group-editor'));
+            window.dispatchEvent(new CustomEvent('tt:tour-close-add-webhook'));
+
             if (!isDashboardPath()) {
               navigate('/dashboard', { replace: true });
               await wait(400);
+            }
+
+            const isMobileNow =
+              typeof window !== 'undefined' &&
+              window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+            if (isMobileNow) {
+              await ensureMobileDrawerOpen({
+                scrollToSelector:
+                  typeof nextStep.target === 'string'
+                    ? nextStep.target
+                    : '[data-tour="mobile-drawer"] [data-tour="usage-nav"]',
+              });
             }
 
             const found = await waitForElement('[data-tour="usage-nav"]', {
@@ -2966,46 +3057,6 @@ export default function ProductTour({
             step_index: nextIndex,
             step_total: activeSteps.length,
             action: 'next',
-          });
-          return;
-        }
-
-        // Special case: after preferences-contact-groups-digest (last contact groups step), navigate to control center (on mobile, usage-nav is skipped)
-        if (
-          tourStepMatches(step, '[data-tour="preferences-contact-groups-digest"]') &&
-          tourStepMatches(nextStep, '[data-tour="control-center-page"]')
-        ) {
-          setIsRunning(false); // pause tour during navigation
-
-          setTimeout(async () => {
-            if (window.location.pathname !== '/control-center') {
-              navigate('/control-center');
-            }
-
-            // Wait for the control center page root element to be fully mounted
-            const found = await waitForElement(nextStep.target, {
-              timeout: 8000,
-              interval: 150,
-            });
-
-            if (found) {
-              // Additional wait to ensure React has fully rendered the component
-              await wait(300);
-              setStepIndex(nextIndex);
-              setIsRunning(true); // resume tour at next step
-            } else {
-              // If we still didn't find it, continue anyway
-              await wait(500);
-              setStepIndex(nextIndex);
-              setIsRunning(true);
-            }
-          }, 100);
-
-          trackEvent('product_tour_step', {
-            tour_type: tourType,
-            step_index: nextIndex,
-            step_total: activeSteps.length,
-            action: action === ACTIONS.PREV ? 'back' : 'next',
           });
           return;
         }
@@ -3074,22 +3125,13 @@ export default function ProductTour({
                 await wait(500); // Wait for navigation
               }
 
-              // Open mobile drawer
-              const menuButton = document.querySelector(
-                '[data-tour="mobile-menu-button"]'
-              );
-              if (menuButton) {
-                const drawer = document.querySelector(
-                  '[data-tour="mobile-drawer"]'
-                );
-                const drawerVisible =
-                  drawer && window.getComputedStyle(drawer).display !== 'none';
-
-                if (!drawer || !drawerVisible) {
-                  menuButton.click();
-                  await wait(600); // Wait for drawer animation
-                }
-              }
+              // Open mobile drawer for docs-nav
+              await ensureMobileDrawerOpen({
+                scrollToSelector:
+                  typeof nextStep.target === 'string'
+                    ? nextStep.target
+                    : '[data-tour="mobile-docs-nav"]',
+              });
 
               // Wait for the docs-nav element to be visible
               const targetSelector = nextStep.target.includes('mobile-docs-nav')
@@ -3175,6 +3217,7 @@ export default function ProductTour({
       ensureDashboardForTour,
       resolveUserMenuStepIndex,
       ensureMobileDrawerClosed,
+      ensureMobileDrawerOpen,
       closeMobileNav,
       wait,
       scrollTargetWithTooltipSpaceMobile,

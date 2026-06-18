@@ -706,16 +706,12 @@ export default function Usage({ session, onLogout, onAccountClick }) {
                       : 'Requeue failed or plan-limit blocked alerts for this workspace';
                     return (
                       <HStack>
-                        <Tooltip
-                          label={btnTitle}
-                          hasArrow
-                          placement='top-start'
-                        >
-                          <DashboardActionButton
-                            colorScheme='blue'
-                            variant='solid'
-                            title={btnTitle}
-                            onClick={async () => {
+                        <Tooltip label={btnTitle} hasArrow placement='top'>
+                          <Box as='span' display='inline-block'>
+                            <DashboardActionButton
+                              colorScheme='blue'
+                              variant='solid'
+                              onClick={async () => {
                               try {
                                 await alertAPI.requeueAlerts({
                                   workspaceId: selectedWorkspaceId || null,
@@ -727,6 +723,7 @@ export default function Usage({ session, onLogout, onAccountClick }) {
                           >
                             Requeue blocked/failed
                           </DashboardActionButton>
+                          </Box>
                         </Tooltip>
                       </HStack>
                     );
