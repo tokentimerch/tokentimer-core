@@ -15,6 +15,14 @@ const { Pool } = pg;
 const caPath = process.env.PGSSLROOTCERT;
 const sslMode = process.env.DB_SSL;
 const hasCA = Boolean(caPath);
+const isProduction = process.env.NODE_ENV === "production";
+
+// SSL semantics:
+//   verify (or a CA provided)  -> encrypted + server identity verified
+//   require                    -> encrypted; identity verified in production
+//                                 unless DB_SSL=require-no-verify is set
+//   require-no-verify          -> encrypted, identity NOT verified (explicit
+//                                 opt-in for controlled environments)
 const sslConfig =
   sslMode === "verify" || hasCA
     ? {
@@ -23,8 +31,10 @@ const sslConfig =
         minVersion: "TLSv1.3",
       }
     : sslMode === "require"
-      ? { rejectUnauthorized: false, minVersion: "TLSv1.3" }
-      : false;
+      ? { rejectUnauthorized: isProduction, minVersion: "TLSv1.3" }
+      : sslMode === "require-no-verify"
+        ? { rejectUnauthorized: false, minVersion: "TLSv1.3" }
+        : false;
 
 export const pool = new Pool({
   user: process.env.DB_USER || "tokentimer",

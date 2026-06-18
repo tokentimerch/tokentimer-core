@@ -29,6 +29,58 @@ function resolveClientIp(reqOrIp) {
   return String(raw).split(",")[0].trim() || null;
 }
 
+// Field-level redaction: any meta key matching one of these names (or
+// containing one of these fragments, case/word-separator insensitive) is
+// replaced with "[REDACTED]" before the record is serialized.
+const REDACT_FIELDS = [
+  "password",
+  "token",
+  "secret",
+  "apiKey",
+  "api_key",
+  "accessKey",
+  "access_key",
+  "accessKeyId",
+  "access_key_id",
+  "secretAccessKey",
+  "secret_access_key",
+  "sessionToken",
+  "session_token",
+  "authorization",
+  "cookie",
+  "credentials",
+  "privateKey",
+  "private_key",
+  "client_secret",
+  "clientSecret",
+];
+
+const REDACT_KEY_PATTERN =
+  /password|secret|api[-_]?key|access[-_]?key|authorization|cookie|credential|private[-_]?key|token/i;
+
+function isSensitiveKey(key) {
+  return REDACT_KEY_PATTERN.test(String(key));
+}
+
+function redactSensitiveFields(value, depth = 0) {
+  if (value === null || value === undefined || depth > 8) return value;
+  if (Array.isArray(value)) {
+    return value.map((v) => redactSensitiveFields(v, depth + 1));
+  }
+  if (typeof value === "object" && !(value instanceof Error)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (isSensitiveKey(k)) {
+        out[k] = "[REDACTED]";
+      } else {
+        out[k] = redactSensitiveFields(v, depth + 1);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 function sanitizeLogValue(value) {
   if (value === null || value === undefined) return value;
   const t = typeof value;
@@ -47,7 +99,7 @@ function sanitizeLogValue(value) {
     }
     try {
       JSON.stringify(value);
-      return value;
+      return redactSensitiveFields(value);
     } catch (_e) {
       return "[Circular or Non-Serializable]";
     }
@@ -60,6 +112,10 @@ function sanitizeLogRecord(record) {
   for (const [key, value] of Object.entries(record)) {
     if (key === "ip") {
       out[key] = resolveClientIp(value) ?? sanitizeLogValue(value);
+      continue;
+    }
+    if (isSensitiveKey(key) && key !== "message") {
+      out[key] = "[REDACTED]";
       continue;
     }
     out[key] = sanitizeLogValue(value);
@@ -152,5 +208,7 @@ module.exports = {
   logger,
   resolveClientIp,
   buildOrderedLogRecord,
+  redactSensitiveFields,
+  REDACT_FIELDS,
   LOG_FIELD_ORDER,
 };

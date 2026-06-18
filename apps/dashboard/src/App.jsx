@@ -6383,14 +6383,26 @@ function ImportTokensButton({ label = 'Import' }) {
   }, []);
 
   useEffect(() => {
+    const KNOWN_IMPORT_PROVIDERS = [
+      'file',
+      'vault',
+      'gitlab',
+      'github',
+      'aws',
+      'azure',
+      'azure-ad',
+      'gcp',
+    ];
     const provider = searchParams.get('import');
     if (!provider) return;
-    const autoSyncManage = searchParams.get('autoSyncManage') === '1';
-    setOpenRequest({
-      provider,
-      integrationSubTab: autoSyncManage ? 'manage' : 'scan',
-    });
-    onOpen();
+    if (KNOWN_IMPORT_PROVIDERS.includes(provider)) {
+      const autoSyncManage = searchParams.get('autoSyncManage') === '1';
+      setOpenRequest({
+        provider,
+        integrationSubTab: autoSyncManage ? 'manage' : 'scan',
+      });
+      onOpen();
+    }
     const next = new URLSearchParams(searchParams);
     next.delete('import');
     next.delete('autoSyncManage');
