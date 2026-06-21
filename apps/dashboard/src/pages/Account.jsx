@@ -761,7 +761,7 @@ function Account({
                 <AccountSettingsLinkCard
                   to='/preferences'
                   title='User preferences'
-                  description='Theme, reduced motion, compact density, and timestamp format.'
+                  description='Theme, product tour, and documentation links.'
                   icon={FiUser}
                   border={border}
                   muted={bodySecondary}

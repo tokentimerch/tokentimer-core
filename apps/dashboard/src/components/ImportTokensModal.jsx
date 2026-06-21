@@ -3047,7 +3047,7 @@ export default function ImportTokensModal({
                     colorScheme='red'
                     onClick={handleDisableAutoSync}
                     isLoading={savingAutoSync}
-                    isDisabled={runningAutoSyncNow}
+                    isDisabled={savingAutoSync}
                   >
                     Disable auto-sync
                   </Button>
@@ -3056,7 +3056,8 @@ export default function ImportTokensModal({
                     {...outlineButtonProps}
                     onClick={handleRunAutoSyncNow}
                     isLoading={runningAutoSyncNow}
-                    isDisabled={savingAutoSync}
+                    loadingText='Syncing...'
+                    isDisabled={savingAutoSync || runningAutoSyncNow}
                   >
                     Sync now
                   </Button>
@@ -3065,7 +3066,7 @@ export default function ImportTokensModal({
                     {...primaryButtonProps}
                     onClick={handleSaveAutoSyncChanges}
                     isLoading={savingAutoSync}
-                    isDisabled={runningAutoSyncNow}
+                    isDisabled={savingAutoSync}
                   >
                     Save changes
                   </Button>

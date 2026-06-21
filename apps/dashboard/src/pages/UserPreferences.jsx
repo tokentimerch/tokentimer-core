@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
   Box,
   Circle,
@@ -16,70 +16,23 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import {
+  FiBookOpen,
   FiChevronRight,
   FiMoon,
+  FiPlay,
   FiSettings,
   FiSun,
   FiUser,
 } from 'react-icons/fi';
 import DashboardPageLayout from '../components/DashboardPageLayout';
 import {
+  DashboardActionButton,
   DashboardPanel,
   DashboardPanelHeader,
 } from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
-import { useLocalPreference } from '../hooks/useLocalPreference';
 import { workspaceAPI } from '../utils/apiClient';
-
-function PreferenceToggle({
-  label,
-  description,
-  isChecked,
-  onChange,
-  text,
-  bodySecondary,
-  showDivider = false,
-}) {
-  return (
-    <>
-      <FormControl
-        display='flex'
-        alignItems='center'
-        px={{ base: 3, md: 4 }}
-        py={3}
-      >
-        <HStack justify='space-between' w='full' spacing={4}>
-          <Box minW={0} pr={2}>
-            <Text
-              color={text}
-              fontSize='sm'
-              fontWeight='semibold'
-              lineHeight='short'
-            >
-              {label}
-            </Text>
-            <Text
-              fontSize='sm'
-              color={bodySecondary}
-              lineHeight='1.45'
-              mt={0.5}
-            >
-              {description}
-            </Text>
-          </Box>
-          <Switch
-            isChecked={isChecked}
-            onChange={onChange}
-            aria-label={label}
-            flexShrink={0}
-          />
-        </HStack>
-      </FormControl>
-      {showDivider ? <Divider opacity={0.65} /> : null}
-    </>
-  );
-}
 
 function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
   const shellBg = useColorModeValue('#e2e8f0', '#0f172a');
@@ -142,6 +95,52 @@ function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
         </VStack>
       </HStack>
     </Box>
+  );
+}
+
+function DisplayActionRow({
+  label,
+  description,
+  text,
+  bodySecondary,
+  showDivider = false,
+  children,
+}) {
+  return (
+    <>
+      <Box px={{ base: 3, md: 4 }} py={3}>
+        <HStack
+          justify='space-between'
+          align={{ base: 'flex-start', sm: 'center' }}
+          w='full'
+          spacing={4}
+          flexDirection={{ base: 'column', sm: 'row' }}
+        >
+          <Box minW={0} pr={{ base: 0, sm: 2 }} w={{ base: 'full', sm: 'auto' }}>
+            <Text
+              color={text}
+              fontSize='sm'
+              fontWeight='semibold'
+              lineHeight='short'
+            >
+              {label}
+            </Text>
+            <Text
+              fontSize='sm'
+              color={bodySecondary}
+              lineHeight='1.45'
+              mt={0.5}
+            >
+              {description}
+            </Text>
+          </Box>
+          <Box flexShrink={0} w={{ base: 'full', sm: 'auto' }}>
+            {children}
+          </Box>
+        </HStack>
+      </Box>
+      {showDivider ? <Divider opacity={0.65} /> : null}
+    </>
   );
 }
 
@@ -229,30 +228,21 @@ export default function UserPreferences({
   onNavigateToLanding: _onNavigateToLanding,
   isViewer = false,
 }) {
+  const navigate = useNavigate();
   const { colorMode, toggleColorMode } = useColorMode();
   const { text, bodySecondary, border, dashboard } = useDashboardTheme();
   const appearanceIconBg = dashboard.accent.interactiveSurface;
   const appearanceIconColor = dashboard.accent.interactiveForeground;
   const [viewerOnly, setViewerOnly] = useState(isViewer);
 
-  const [reducedMotion, setReducedMotion] = useLocalPreference(
-    'tt_pref_reduced_motion',
-    false
-  );
-  const [compactDensity, setCompactDensity] = useLocalPreference(
-    'tt_pref_compact_density',
-    false
-  );
-  const [relativeTimes, setRelativeTimes] = useLocalPreference(
-    'tt_pref_relative_time',
-    true
-  );
-
-  useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.reduceMotion = reducedMotion ? 'true' : 'false';
-    root.dataset.density = compactDensity ? 'compact' : 'comfortable';
-  }, [reducedMotion, compactDensity]);
+  const handleRestartTour = () => {
+    try {
+      localStorage.removeItem('tt_tour_dashboard_v1');
+    } catch (_) {
+      /* ignore */
+    }
+    navigate('/dashboard?tour=dashboard');
+  };
 
   useEffect(() => {
     if (isViewer) {
@@ -363,7 +353,7 @@ export default function UserPreferences({
             <DashboardPanel p={{ base: 4, md: 5 }}>
               <PreferencesPanelHeader
                 title='Display'
-                description='These preferences are stored on this device only.'
+                description='Guidance and help for using the dashboard.'
                 bodySecondary={bodySecondary}
               />
               <Box
@@ -372,32 +362,42 @@ export default function UserPreferences({
                 borderRadius='md'
                 overflow='hidden'
               >
-                <PreferenceToggle
-                  label='Reduced motion'
-                  description='Minimize animations and transitions across the app.'
-                  isChecked={reducedMotion}
-                  onChange={() => setReducedMotion(value => !value)}
+                {!viewerOnly ? (
+                  <DisplayActionRow
+                    label='Product tour'
+                    description='Walk through the dashboard features step by step.'
+                    text={text}
+                    bodySecondary={bodySecondary}
+                    showDivider
+                  >
+                    <DashboardActionButton
+                      leftIcon={<Icon as={FiPlay} aria-hidden />}
+                      onClick={handleRestartTour}
+                      variant='outline'
+                      w={{ base: 'full', sm: 'auto' }}
+                    >
+                      Restart tour
+                    </DashboardActionButton>
+                  </DisplayActionRow>
+                ) : null}
+                <DisplayActionRow
+                  label='Documentation'
+                  description='Learn how TokenTimer works and how to configure alerts.'
                   text={text}
                   bodySecondary={bodySecondary}
-                  showDivider
-                />
-                <PreferenceToggle
-                  label='Compact density'
-                  description='Tighten spacing in tables and lists to fit more on screen.'
-                  isChecked={compactDensity}
-                  onChange={() => setCompactDensity(value => !value)}
-                  text={text}
-                  bodySecondary={bodySecondary}
-                  showDivider
-                />
-                <PreferenceToggle
-                  label='Relative timestamps'
-                  description='Show dates as "3 days ago" instead of an absolute date.'
-                  isChecked={relativeTimes}
-                  onChange={() => setRelativeTimes(value => !value)}
-                  text={text}
-                  bodySecondary={bodySecondary}
-                />
+                >
+                  <DashboardActionButton
+                    as='a'
+                    href='https://tokentimer.ch/docs#self-hosted'
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    leftIcon={<Icon as={FiBookOpen} aria-hidden />}
+                    variant='outline'
+                    w={{ base: 'full', sm: 'auto' }}
+                  >
+                    Open docs
+                  </DashboardActionButton>
+                </DisplayActionRow>
               </Box>
             </DashboardPanel>
           </SimpleGrid>
