@@ -11,6 +11,7 @@ import {
   Box,
   VStack,
   HStack,
+  Flex,
   Text,
   Alert,
   AlertIcon,
@@ -88,6 +89,8 @@ function toKey(s) {
     return '';
   }
 }
+
+import { dashboardModalInlineActionButtonProps } from '../styles/theme.js';
 
 // Parse error message and extract commands for copyable display
 function parseErrorMessage(errorMsg) {
@@ -770,6 +773,9 @@ export default function ImportTokensModal({
     footerProps,
     closeButtonProps,
     fieldProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    dangerButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
 
@@ -2007,7 +2013,9 @@ export default function ImportTokensModal({
         isOpen={isOpen}
         onClose={onCloseInternal}
         size='4xl'
+        isCentered
         motionPreset='none'
+        scrollBehavior='inside'
       >
         <ModalOverlay {...overlayProps} />
         <DashboardModalFrame maxW='960px'>
@@ -2015,7 +2023,7 @@ export default function ImportTokensModal({
             <DashboardModalTitle color={modalTokens.text}>
               Import tokens
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Import assets from files or connected infrastructure providers.
             </DashboardModalDescription>
           </ModalHeader>
@@ -3025,10 +3033,18 @@ export default function ImportTokensModal({
               ) : null}
 
               {autoSyncManageMode && !isViewer ? (
-                <HStack justify='flex-end' spacing={3} pt={2}>
+                <Flex
+                  direction={{ base: 'column', md: 'row' }}
+                  gap={3}
+                  pt={2}
+                  justify={{ base: 'stretch', md: 'flex-end' }}
+                  align={{ base: 'stretch', md: 'center' }}
+                  flexWrap='wrap'
+                >
                   <Button
+                    {...dashboardModalInlineActionButtonProps}
+                    {...outlineButtonProps}
                     colorScheme='red'
-                    variant='outline'
                     onClick={handleDisableAutoSync}
                     isLoading={savingAutoSync}
                     isDisabled={runningAutoSyncNow}
@@ -3036,7 +3052,8 @@ export default function ImportTokensModal({
                     Disable auto-sync
                   </Button>
                   <Button
-                    variant='outline'
+                    {...dashboardModalInlineActionButtonProps}
+                    {...outlineButtonProps}
                     onClick={handleRunAutoSyncNow}
                     isLoading={runningAutoSyncNow}
                     isDisabled={savingAutoSync}
@@ -3044,14 +3061,15 @@ export default function ImportTokensModal({
                     Sync now
                   </Button>
                   <Button
-                    colorScheme='blue'
+                    {...dashboardModalInlineActionButtonProps}
+                    {...primaryButtonProps}
                     onClick={handleSaveAutoSyncChanges}
                     isLoading={savingAutoSync}
                     isDisabled={runningAutoSyncNow}
                   >
                     Save changes
                   </Button>
-                </HStack>
+                </Flex>
               ) : null}
 
               {isImporting ? (
@@ -3073,25 +3091,27 @@ export default function ImportTokensModal({
               ) : null}
             </VStack>
           </ModalBody>
-          <ModalFooter
-            {...footerProps}
-            flexDirection='column'
-            alignItems='stretch'
-            gap={3}
-          >
-            <HStack w='full' justify='flex-end' flexWrap='wrap'>
+          <ModalFooter {...footerProps}>
+            <Flex
+              w='full'
+              direction={{ base: 'column', sm: 'row' }}
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              align={{ base: 'stretch', sm: 'center' }}
+              flexWrap='wrap'
+            >
               {!autoSyncManageMode ? (
                 source === 'file' ? (
                   !isImporting ? (
                     <Button
+                      {...primaryButtonProps}
                       onClick={onStartImport}
-                      colorScheme='blue'
                       isDisabled={selectedRowsFile.size === 0}
                     >
                       Import {selectedRowsFile.size} selected
                     </Button>
                   ) : (
-                    <Button onClick={onCancelImport} variant='outline'>
+                    <Button {...outlineButtonProps} onClick={onCancelImport}>
                       Cancel
                     </Button>
                   )
@@ -3101,6 +3121,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       vaultFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3113,6 +3134,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       gitlabFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3125,6 +3147,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       githubFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3137,6 +3160,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       awsFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3149,6 +3173,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       azureFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3158,6 +3183,7 @@ export default function ImportTokensModal({
                 ) : source === 'azure-ad' ? (
                   <Button
                     onClick={importAzureADSelected}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={selectedRowsAzureAD.size === 0 || isImporting}
                     isLoading={isImporting}
@@ -3170,6 +3196,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       gcpFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3178,16 +3205,7 @@ export default function ImportTokensModal({
                   </Button>
                 ) : null
               ) : null}
-              <Button
-                variant='outline'
-                onClick={onCloseInternal}
-                borderColor={modalTokens.outlineBorder}
-                color={modalTokens.subtleText}
-                _hover={{
-                  bg: modalTokens.fieldBg,
-                  borderColor: modalTokens.focusBorder,
-                }}
-              >
+              <Button {...outlineButtonProps} onClick={onCloseInternal}>
                 Close
               </Button>
               {source !== 'file' && !isViewer && !hasAutoSync ? (
@@ -3205,8 +3223,8 @@ export default function ImportTokensModal({
                 >
                   <Box as='span' display='inline-block'>
                     <Button
+                      {...outlineButtonProps}
                       colorScheme='blue'
-                      variant='outline'
                       onClick={handleEnableAutoSync}
                       isLoading={savingAutoSync}
                       isDisabled={
@@ -3224,7 +3242,7 @@ export default function ImportTokensModal({
                   </Box>
                 </Tooltip>
               ) : null}
-            </HStack>
+            </Flex>
           </ModalFooter>
         </DashboardModalFrame>
       </Modal>
@@ -3235,6 +3253,7 @@ export default function ImportTokensModal({
         onClose={onEnableAutoSyncClose}
         isCentered
         size='md'
+        scrollBehavior='inside'
       >
         <ModalOverlay {...overlayProps} />
         <DashboardModalFrame maxW='520px'>
@@ -3242,7 +3261,7 @@ export default function ImportTokensModal({
             <DashboardModalTitle color={modalTokens.text}>
               Enable Auto-Sync
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Save credentials for scheduled infrastructure scans.
             </DashboardModalDescription>
           </ModalHeader>
@@ -3304,19 +3323,13 @@ export default function ImportTokensModal({
           <ModalFooter {...footerProps}>
             <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
               <Button
-                variant='outline'
+                {...outlineButtonProps}
                 onClick={onEnableAutoSyncClose}
-                borderColor={modalTokens.outlineBorder}
-                color={modalTokens.subtleText}
-                _hover={{
-                  bg: modalTokens.fieldBg,
-                  borderColor: modalTokens.focusBorder,
-                }}
               >
                 Cancel
               </Button>
               <Button
-                colorScheme='blue'
+                {...primaryButtonProps}
                 onClick={confirmEnableAutoSync}
                 isLoading={savingAutoSync}
               >
@@ -3333,6 +3346,7 @@ export default function ImportTokensModal({
         onClose={onDisableAutoSyncClose}
         isCentered
         size='sm'
+        scrollBehavior='inside'
       >
         <ModalOverlay {...overlayProps} />
         <DashboardModalFrame maxW='460px'>
@@ -3340,7 +3354,7 @@ export default function ImportTokensModal({
             <DashboardModalTitle color={modalTokens.text}>
               Disable Auto-Sync
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Stop scheduled scans for this provider.
             </DashboardModalDescription>
           </ModalHeader>
@@ -3384,19 +3398,13 @@ export default function ImportTokensModal({
           </ModalBody>
           <ModalFooter {...footerProps}>
             <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
-              <Button
-                variant='outline'
-                onClick={onDisableAutoSyncClose}
-                borderColor={modalTokens.outlineBorder}
-                color={modalTokens.subtleText}
-                _hover={{
-                  bg: modalTokens.fieldBg,
-                  borderColor: modalTokens.focusBorder,
-                }}
-              >
+              <Button {...outlineButtonProps} onClick={onDisableAutoSyncClose}>
                 Cancel
               </Button>
-              <Button colorScheme='red' onClick={confirmDisableAutoSync}>
+              <Button
+                {...dangerButtonProps}
+                onClick={confirmDisableAutoSync}
+              >
                 Disable Auto-Sync
               </Button>
             </HStack>

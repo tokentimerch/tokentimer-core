@@ -241,6 +241,8 @@ function Account({
     footerProps,
     closeButtonProps,
     outlineButtonProps,
+    primaryButtonProps,
+    dangerButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
   const [canSeeManagerNav, setCanSeeManagerNav] = useState(false);
@@ -822,6 +824,7 @@ function Account({
           onClose={closeTwoFaWizard}
           isCentered
           size='md'
+          scrollBehavior='inside'
         >
           <ModalOverlay {...overlayProps} />
           <DashboardModalFrame maxW='520px'>
@@ -829,10 +832,7 @@ function Account({
               <DashboardModalTitle>
                 Set up two-factor authentication
               </DashboardModalTitle>
-              <DashboardModalDescription
-                color={modalTokens.muted}
-                fontSize='sm'
-              >
+              <DashboardModalDescription>
                 Scan the QR code, then enter the 6-digit code from your app.
               </DashboardModalDescription>
             </ModalHeader>
@@ -891,11 +891,10 @@ function Account({
               </VStack>
             </ModalBody>
             <ModalFooter {...footerProps}>
-              <Button variant='outline' mr={3} onClick={closeTwoFaWizard}>
+              <Button onClick={closeTwoFaWizard} mr={3} {...outlineButtonProps}>
                 Cancel
               </Button>
-              <DashboardActionButton
-                colorScheme='blue'
+              <Button
                 isDisabled={!twoFaCode.trim()}
                 onClick={async () => {
                   setTwoFaError('');
@@ -916,21 +915,27 @@ function Account({
                     setTwoFaError(msg);
                   }
                 }}
+                {...primaryButtonProps}
               >
                 Confirm & Enable
-              </DashboardActionButton>
+              </Button>
             </ModalFooter>
           </DashboardModalFrame>
         </Modal>
 
-        <Modal isOpen={isOpen} onClose={onClose} isCentered>
+        <Modal
+          isOpen={isOpen}
+          onClose={onClose}
+          isCentered
+          scrollBehavior='inside'
+        >
           <ModalOverlay {...overlayProps} />
           <DashboardModalFrame maxW='560px'>
             <ModalHeader {...headerProps}>
               <DashboardModalTitle color={dashboard.state.danger}>
                 Delete account
               </DashboardModalTitle>
-              <DashboardModalDescription color={modalTokens.muted}>
+              <DashboardModalDescription>
                 Confirm this permanent account action.
               </DashboardModalDescription>
             </ModalHeader>
@@ -971,7 +976,6 @@ function Account({
                 direction={{ base: 'column-reverse', sm: 'row' }}
               >
                 <Button
-                  variant='outline'
                   onClick={onClose}
                   minW={{ base: '100%', sm: '104px' }}
                   {...outlineButtonProps}
@@ -979,13 +983,11 @@ function Account({
                   Cancel
                 </Button>
                 <Button
-                  bg={dashboard.callout.dangerButton}
-                  color='white'
                   onClick={handleDeleteAccount}
                   isLoading={isDeleting}
                   loadingText='Deleting...'
                   minW={{ base: '100%', sm: '180px' }}
-                  _hover={{ bg: dashboard.callout.dangerButtonHover }}
+                  {...dangerButtonProps}
                 >
                   Yes, delete my account
                 </Button>

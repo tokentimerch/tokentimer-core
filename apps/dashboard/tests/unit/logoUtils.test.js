@@ -25,4 +25,25 @@ describe('logoUtils', () => {
     const mod = await import('../../src/utils/logoUtils.js');
     expect(mod.getLogoPath()).toBe('/Branding/logo.svg');
   });
+
+  it('returns PNG favicon path for Firefox user agent', async () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'Firefox/123.0' },
+      configurable: true,
+    });
+    const mod = await import('../../src/utils/logoUtils.js');
+    expect(mod.getFaviconPath()).toBe('/Branding/favicon.png');
+  });
+
+  it('returns SVG favicon path for Safari user agent', async () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+      },
+      configurable: true,
+    });
+    const mod = await import('../../src/utils/logoUtils.js');
+    expect(mod.getFaviconPath()).toBe('/Branding/favicon.svg');
+  });
 });

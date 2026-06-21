@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalFooter,
   ModalBody,
@@ -25,7 +24,11 @@ import {
 } from '@chakra-ui/react';
 import { getColorFromString } from '../styles/colors.js';
 import { formatDate, tokenAPI } from '../utils/apiClient';
-import { DASHBOARD_MODAL_HEADING_FONT } from './DashboardModalFrame.jsx';
+import {
+  DASHBOARD_MODAL_HEADING_FONT,
+  DashboardModalFrame,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
 
 function createTokenEditData(token) {
   return {
@@ -71,31 +74,27 @@ function TokenDetailModal({
   contactGroups,
   workspaceContacts = [],
 }) {
-  const surfaceBg = useColorModeValue('#ffffff', '#0d131a');
-  const fieldBg = useColorModeValue('#f8fafc', '#0d131a');
-  const headerBg = useColorModeValue('#f8fafc', '#0d131a');
-  const footerBg = useColorModeValue('#f8fafc', '#0d131a');
-  const borderColor = useColorModeValue(
-    'rgba(148, 163, 184, 0.34)',
-    'rgba(148, 163, 184, 0.18)'
-  );
-  const textColor = useColorModeValue('#0f172a', '#f8fafc');
-  const labelColor = useColorModeValue('#64748b', '#94a3b8');
-  const subtleTextColor = useColorModeValue('#475569', '#cbd5e1');
-  const inputBg = useColorModeValue('#ffffff', '#090d15');
-  const inputBorder = useColorModeValue(
-    'rgba(100, 116, 139, 0.5)',
-    'rgba(148, 163, 184, 0.28)'
-  );
-  const focusBorderColor = useColorModeValue('#2563eb', '#3b82f6');
-  const sectionAccent = useColorModeValue('#2563eb', '#60a5fa');
+  const {
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
+  const fieldBg = modalTokens.fieldBg;
+  const borderColor = modalTokens.border;
+  const textColor = modalTokens.text;
+  const labelColor = modalTokens.muted;
+  const subtleTextColor = modalTokens.subtleText;
+  const inputBg = modalTokens.inputBg;
+  const inputBorder = modalTokens.inputBorder;
+  const focusBorderColor = modalTokens.focusBorder;
+  const sectionAccent = modalTokens.sectionAccent;
   const dangerBg = useColorModeValue('#fef2f2', 'rgba(127, 29, 29, 0.28)');
   const dangerBorder = useColorModeValue('#fecaca', 'rgba(248, 113, 113, 0.3)');
   const dangerText = useColorModeValue('#b91c1c', '#fecaca');
-  const buttonBorder = useColorModeValue(
-    'rgba(100, 116, 139, 0.48)',
-    'rgba(148, 163, 184, 0.34)'
-  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -485,25 +484,9 @@ function TokenDetailModal({
       isCentered
       motionPreset='none'
     >
-      <ModalOverlay bg='rgba(2, 6, 23, 0.72)' />
-      <ModalContent
-        bg={surfaceBg}
-        border='1px solid'
-        borderColor={borderColor}
-        borderRadius={{ base: '14px', md: '18px' }}
-        boxShadow='0 24px 70px rgba(0, 0, 0, 0.42)'
-        maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
-        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
-        overflow='hidden'
-      >
-        <ModalHeader
-          bg={headerBg}
-          borderBottom='1px solid'
-          borderColor={borderColor}
-          px={{ base: 4, md: 6 }}
-          py={{ base: 4, md: 5 }}
-          pr={{ base: 12, md: 14 }}
-        >
+      <ModalOverlay />
+      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}>
+        <ModalHeader {...headerProps}>
           <Flex
             align={{ base: 'flex-start', md: 'center' }}
             justify='space-between'
@@ -512,7 +495,7 @@ function TokenDetailModal({
           >
             <Box minW={0}>
               <Heading
-                size={{ base: 'sm', md: 'md' }}
+                size={{ base: 'md', md: 'lg' }}
                 color={textColor}
                 fontFamily={DASHBOARD_MODAL_HEADING_FONT}
                 noOfLines={2}
@@ -520,9 +503,9 @@ function TokenDetailModal({
                 {token.name}
               </Heading>
               <Text
-                fontSize={{ base: 'xs', md: 'sm' }}
+                fontSize={{ base: 'sm', md: 'md' }}
                 color={subtleTextColor}
-                mt={1.5}
+                mt={2}
                 noOfLines={2}
               >
                 {categoryLabel} - {typeLabel}
@@ -541,15 +524,9 @@ function TokenDetailModal({
             </Badge>
           </Flex>
         </ModalHeader>
-        <ModalCloseButton
-          color={labelColor}
-          top={{ base: 3, md: 4 }}
-          right={{ base: 3, md: 4 }}
-          borderRadius='10px'
-          _hover={{ bg: fieldBg, color: textColor }}
-        />
+        <ModalCloseButton {...closeButtonProps} />
 
-        <ModalBody px={{ base: 4, md: 6 }} py={{ base: 5, md: 6 }}>
+        <ModalBody {...bodyProps}>
           <Grid
             templateColumns={{ base: 'minmax(0, 1fr)', md: 'repeat(2, 1fr)' }}
             gap={{ base: 3, md: 4 }}
@@ -1136,13 +1113,7 @@ function TokenDetailModal({
           </datalist>
         </ModalBody>
 
-        <ModalFooter
-          bg={footerBg}
-          borderTop='1px solid'
-          borderColor={borderColor}
-          px={{ base: 4, md: 6 }}
-          py={{ base: 4, md: 5 }}
-        >
+        <ModalFooter {...footerProps}>
           <Flex
             w='100%'
             align={{ base: 'stretch', md: 'center' }}
@@ -1183,25 +1154,23 @@ function TokenDetailModal({
             >
               {!isViewer && (
                 <Button
-                  variant='outline'
                   onClick={() => setIsEditing(e => !e)}
-                  borderColor={buttonBorder}
-                  color={subtleTextColor}
                   minW={{ base: '100%', sm: '104px' }}
-                  _hover={{ bg: fieldBg, borderColor: focusBorderColor }}
+                  {...outlineButtonProps}
                 >
                   {isEditing ? 'Cancel edit' : 'Edit'}
                 </Button>
               )}
               <Button
                 onClick={onClose}
-                colorScheme='blue'
                 minW={{ base: '100%', sm: '104px' }}
+                {...primaryButtonProps}
               >
                 Close
               </Button>
               {!isViewer && isEditing && (
                 <Button
+                  {...primaryButtonProps}
                   colorScheme='green'
                   onClick={handleSave}
                   isLoading={saving}
@@ -1213,7 +1182,7 @@ function TokenDetailModal({
             </Flex>
           </Flex>
         </ModalFooter>
-      </ModalContent>
+      </DashboardModalFrame>
     </Modal>
   );
 }

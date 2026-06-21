@@ -1,7 +1,6 @@
 import {
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalBody,
   ModalFooter,
@@ -11,10 +10,14 @@ import {
   Link,
   Box,
   Icon,
-  useColorModeValue,
   HStack,
+  useColorModeValue,
 } from '@chakra-ui/react';
-import { DashboardModalTitle } from './DashboardModalFrame.jsx';
+import {
+  DashboardModalFrame,
+  DashboardModalTitle,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
 import { FaRocket, FaCheckCircle } from 'react-icons/fa';
 import { FiPlay } from 'react-icons/fi';
 
@@ -26,9 +29,13 @@ function WelcomeModal({
   emailSent = true,
   onStartTour,
 }) {
-  const bgColor = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.600');
-  const headerColor = useColorModeValue('blue.600', 'blue.400');
+  const {
+    headerProps,
+    bodyProps,
+    footerProps,
+    outlineButtonProps,
+    primaryButtonProps,
+  } = useDashboardModalProps();
   const textColor = useColorModeValue('gray.700', 'gray.300');
   const subTextColor = useColorModeValue('gray.700', 'gray.400');
   const nextTextColor = useColorModeValue('gray.500', 'gray.500');
@@ -38,22 +45,23 @@ function WelcomeModal({
       isOpen={isOpen}
       onClose={onClose}
       isCentered
+      scrollBehavior='inside'
       size='md'
       closeOnOverlayClick={false}
       closeOnEsc={false}
     >
-      <ModalOverlay bg='blackAlpha.300' />
-      <ModalContent bg={bgColor} border='1px solid' borderColor={borderColor}>
-        <ModalHeader textAlign='center' color={headerColor}>
+      <ModalOverlay />
+      <DashboardModalFrame maxW='md'>
+        <ModalHeader {...headerProps} textAlign='center'>
           <VStack spacing={3}>
             <Icon as={FaRocket} w={8} h={8} color='blue.500' />
-            <DashboardModalTitle fontSize='lg' textAlign='center'>
+            <DashboardModalTitle textAlign='center'>
               Welcome on board! 🎉
             </DashboardModalTitle>
           </VStack>
         </ModalHeader>
 
-        <ModalBody>
+        <ModalBody {...bodyProps}>
           <VStack spacing={4} textAlign='center'>
             <Box>
               <Text
@@ -140,35 +148,23 @@ function WelcomeModal({
           </VStack>
         </ModalBody>
 
-        <ModalFooter justifyContent='center'>
+        <ModalFooter {...footerProps} justifyContent='center'>
           <HStack spacing={3}>
             {onStartTour && (
               <Button
                 leftIcon={<Icon as={FiPlay} />}
-                variant='outline'
-                colorScheme='blue'
                 onClick={onStartTour}
-                size='lg'
-                px={6}
-                _hover={{ transform: 'translateY(-1px)', boxShadow: 'lg' }}
-                transition='all 0.2s'
+                {...outlineButtonProps}
               >
                 Take Tour
               </Button>
             )}
-            <Button
-              colorScheme='blue'
-              onClick={onClose}
-              size='lg'
-              px={8}
-              _hover={{ transform: 'translateY(-1px)', boxShadow: 'lg' }}
-              transition='all 0.2s'
-            >
+            <Button onClick={onClose} {...primaryButtonProps}>
               {emailSent ? 'Go to Dashboard' : 'Get Started'}
             </Button>
           </HStack>
         </ModalFooter>
-      </ModalContent>
+      </DashboardModalFrame>
     </Modal>
   );
 }

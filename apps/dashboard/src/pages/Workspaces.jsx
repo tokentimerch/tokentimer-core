@@ -142,6 +142,8 @@ function WorkspaceActionConfirmModal({
     bodyProps,
     footerProps,
     closeButtonProps,
+    outlineButtonProps,
+    dangerButtonProps,
     tokens,
   } = useDashboardModalProps();
   const { dashboard } = useDashboardTheme();
@@ -164,19 +166,10 @@ function WorkspaceActionConfirmModal({
       <AlertDialogContent
         maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
         maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
-        {...{
-          bg: tokens.surfaceBg,
-          color: tokens.text,
-          border: '1px solid',
-          borderColor: tokens.border,
-          borderRadius: { base: '14px', md: '18px' },
-          boxShadow: tokens.shadow,
-          overflow: 'hidden',
-        }}
       >
         <AlertDialogHeader {...headerProps}>
           <DashboardModalTitle>{copy.title}</DashboardModalTitle>
-          <DashboardModalDescription color={tokens.subtleText}>
+          <DashboardModalDescription>
             {copy.description}
           </DashboardModalDescription>
         </AlertDialogHeader>
@@ -246,26 +239,18 @@ function WorkspaceActionConfirmModal({
           >
             <Button
               ref={cancelButtonRef}
-              variant='outline'
               onClick={onClose}
-              borderColor={tokens.buttonBorder}
-              color={tokens.subtleText}
               minW={{ base: '100%', sm: '104px' }}
               isDisabled={isLoading}
-              _hover={{
-                bg: tokens.fieldBg,
-                borderColor: tokens.focusBorder,
-              }}
+              {...outlineButtonProps}
             >
               Cancel
             </Button>
             <Button
-              bg={dashboard.callout.dangerButton}
-              color='white'
               onClick={onConfirm}
               minW={{ base: '100%', sm: '128px' }}
               isLoading={isLoading}
-              _hover={{ bg: dashboard.callout.dangerButtonHover }}
+              {...dangerButtonProps}
             >
               {copy.confirmLabel}
             </Button>
@@ -289,6 +274,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
     fieldProps,
     tokens: modalTokens,
     outlineButtonProps,
+    primaryButtonProps,
+    dangerButtonProps,
   } = useDashboardModalProps();
   const { selectWorkspace, workspaceId } = useWorkspace();
   const [workspaces, setWorkspaces] = React.useState([]);
@@ -1346,6 +1333,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
         isOpen={transferOpen}
         leastDestructiveRef={cancelRef}
         onClose={() => setTransferOpen(false)}
+        isCentered
+        scrollBehavior='inside'
         size='6xl'
       >
         <AlertDialogOverlay {...overlayProps} />
@@ -1360,7 +1349,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
             <DashboardModalTitle color={modalTokens.text}>
               Transfer Tokens
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Move selected assets from one workspace to another.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -1669,7 +1658,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                 Close
               </Button>
               <Button
-                colorScheme='blue'
+                {...primaryButtonProps}
                 isDisabled={
                   !transferState.fromId ||
                   !transferState.toId ||
@@ -1731,6 +1720,8 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
           setConfirmOpen(false);
           setDeleteConfirmName('');
         }}
+        isCentered
+        scrollBehavior='inside'
       >
         <AlertDialogOverlay {...overlayProps} />
         <AlertDialogContent
@@ -1741,7 +1732,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
             <DashboardModalTitle color={modalTokens.text}>
               Delete this workspace?
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Confirm the workspace name before deleting it permanently.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -1783,7 +1774,7 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                 Cancel
               </Button>
               <Button
-                colorScheme='red'
+                {...dangerButtonProps}
                 isLoading={deleting}
                 onClick={async () => {
                   if (!currentWorkspace) return;
