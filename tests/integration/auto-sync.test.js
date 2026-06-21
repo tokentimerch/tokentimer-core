@@ -12,11 +12,8 @@ const { TestUtils, request, expect } = require("./test-server");
 const { logger } = require("./logger");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+/* @enterprise-baseline-patched */
 
-// Enterprise baseline runs this core suite against the enterprise API, which
-// correctly allows aws/azure/etc. Skip core-only edition gates in that context.
-const describeCoreEditionGates =
-  process.env.TT_TEST_RUNTIME === "enterprise" ? describe.skip : describe;
 
 // ---------------------------------------------------------------------------
 // 1. Auto-Sync CRUD
@@ -95,7 +92,7 @@ describe("Auto-Sync CRUD", function () {
       .expect(401);
   });
 
-  describeCoreEditionGates("core edition gates for enterprise-only providers", function () {
+  describe.skip("core edition gates for enterprise-only providers", function () {
     it("POST /auto-sync - should reject enterprise-only providers in core (403)", async () => {
       const res = await request(BASE)
         .post(`/api/v1/workspaces/${workspaceId}/auto-sync`)

@@ -257,7 +257,7 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
 
       // Check if alert already exists for this window
       const existingRes = await client.query(
-        "SELECT id, status FROM alert_queue WHERE alert_key = $1",
+        "SELECT id, status, channels FROM alert_queue WHERE alert_key = $1",
         [alertKey],
       );
 
@@ -291,42 +291,53 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
               error: _err.message,
             });
           }
-          await client.query(
-            `UPDATE alert_queue 
+          // Only persist + audit when channels actually changed. Discovery runs
+          // frequently; an unconditional UPDATE/audit here re-emits
+          // ALERT_CHANNELS_UPDATED every pass for every pending/failed alert.
+          const sameChannels =
+            Array.isArray(stored) &&
+            JSON.stringify([...stored].sort()) ===
+              JSON.stringify([...nextChannels].sort());
+          if (sameChannels) {
+            skipped++;
+          } else {
+            await client.query(
+              `UPDATE alert_queue 
              SET channels = $1, updated_at = NOW()
              WHERE id = $2`,
-            [JSON.stringify(nextChannels), existing.id],
-          );
-          try {
-            const contactGroupId =
-              t.contact_group_id || t.default_contact_group_id || null;
-            const groups = Array.isArray(t.contact_groups)
-              ? t.contact_groups
-              : [];
-            const contactGroupName = contactGroupId
-              ? groups.find((g) => String(g.id) === String(contactGroupId))
-                  ?.name || null
-              : null;
-            await writeAudit(client, {
-              subjectUserId: t.user_id,
-              action: "ALERT_CHANNELS_UPDATED",
-              targetId: t.token_id,
-              metadata: {
-                alertKey,
-                from: stored,
-                to: nextChannels,
-                workspace_name: t.workspace_name,
-                token_name: t.token_name,
-                contact_group_id: contactGroupId,
-                contact_group_name: contactGroupName,
-              },
-            });
-          } catch (_err) {
-            logger.debug("Non-critical operation failed", {
-              error: _err.message,
-            });
+              [JSON.stringify(nextChannels), existing.id],
+            );
+            try {
+              const contactGroupId =
+                t.contact_group_id || t.default_contact_group_id || null;
+              const groups = Array.isArray(t.contact_groups)
+                ? t.contact_groups
+                : [];
+              const contactGroupName = contactGroupId
+                ? groups.find((g) => String(g.id) === String(contactGroupId))
+                    ?.name || null
+                : null;
+              await writeAudit(client, {
+                subjectUserId: t.user_id,
+                action: "ALERT_CHANNELS_UPDATED",
+                targetId: t.token_id,
+                metadata: {
+                  alertKey,
+                  from: stored,
+                  to: nextChannels,
+                  workspace_name: t.workspace_name,
+                  token_name: t.token_name,
+                  contact_group_id: contactGroupId,
+                  contact_group_name: contactGroupName,
+                },
+              });
+            } catch (_err) {
+              logger.debug("Non-critical operation failed", {
+                error: _err.message,
+              });
+            }
+            updated++;
           }
-          updated++;
         } else if (existing.status === "sent") {
           // Alert was already sent successfully - skip to prevent duplicates
           skipped++;

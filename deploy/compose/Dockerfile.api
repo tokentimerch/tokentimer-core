@@ -45,7 +45,8 @@ COPY packages ./packages
 COPY apps/api ./apps/api
 
 # Install production dependencies for the api and its workspace deps
-RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/api...
+RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/api... \
+    && rm -rf /usr/local/lib/node_modules/npm
 
 # Own the app directory
 RUN chown -R tokentimer:tokentimer /app
