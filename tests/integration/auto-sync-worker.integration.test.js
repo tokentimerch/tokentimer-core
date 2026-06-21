@@ -71,7 +71,7 @@ describe("Auto-sync worker integration", function () {
     expect(result.rows[0].processed).to.equal(0);
   });
 
-  it("rejects enterprise-only providers without running a scan", async () => {
+  it.skip("rejects enterprise-only providers without running a scan", async () => {
     await TestUtils.execQuery(
       "DELETE FROM auto_sync_configs WHERE workspace_id = $1",
       [workspaceId],

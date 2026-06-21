@@ -32,6 +32,7 @@ const REQUIRED_PINS = {
   postcss: { "*": "8.5.12" },
   qs: { "*": "6.15.2" },
   "ip-address": { "*": "10.2.0" },
+  "form-data": { "*": "4.0.6" },
 };
 
 function fail(message) {
