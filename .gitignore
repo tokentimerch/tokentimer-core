@@ -69,7 +69,6 @@ package-lock.json
 .cache/
 .parcel-cache/
 .grepai/
-graphify-out/
 
 # Reports
 reports/

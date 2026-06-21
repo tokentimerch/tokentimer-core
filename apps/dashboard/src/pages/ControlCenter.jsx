@@ -610,7 +610,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
             data-tour='control-center-page'
           >
             <VStack spacing={6} align='stretch'>
-              <Box data-tour='control-center-metrics'>
+              <Box>
                 <SectionState
                   status={
                     assetSectionStatus === 'ready'
@@ -622,6 +622,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                   emptyDetail='Add assets to your workspace to see health metrics here.'
                   unauthorizedDetail='Select a workspace where you have manager or admin access.'
                 >
+                  <Box data-tour='control-center-metrics'>
                   <SimpleGrid
                     columns={{ base: 1, sm: 2, xl: 5 }}
                     spacing={3}
@@ -812,6 +813,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                       )}
                     </ControlCenterPanel>
                   </SimpleGrid>
+                  </Box>
                 </SectionState>
               </Box>
 

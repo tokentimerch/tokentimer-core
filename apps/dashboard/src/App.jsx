@@ -311,6 +311,42 @@ function buildAccountPathFromDashboardSearch(search) {
 const _getSectionColorScheme = getColorFromString;
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const PRODUCT_TOUR_MOBILE_BREAKPOINT_PX = 992;
+const INTRODUCTION_VIDEO_URL =
+  'https://tokentimer.ch/blog/video-introduction';
+
+function isProductTourMobileViewport() {
+  return (
+    typeof window !== 'undefined' &&
+    window.innerWidth < PRODUCT_TOUR_MOBILE_BREAKPOINT_PX
+  );
+}
+
+function useProductTourMobileViewport() {
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    isProductTourMobileViewport
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia(
+      `(max-width: ${PRODUCT_TOUR_MOBILE_BREAKPOINT_PX - 1}px)`
+    );
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches);
+
+    syncViewport();
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', syncViewport);
+      return () => mediaQuery.removeEventListener('change', syncViewport);
+    }
+
+    mediaQuery.addListener(syncViewport);
+    return () => mediaQuery.removeListener(syncViewport);
+  }, []);
+
+  return isMobileViewport;
+}
 
 function getDaysUntilExpiration(expiry) {
   if (!expiry || isNeverExpires(expiry)) return Number.POSITIVE_INFINITY;
@@ -873,6 +909,13 @@ function App() {
   const [tourType, setTourType] = useState('dashboard');
   const [forceRunTour, setForceRunTour] = useState(false);
   const [dashboardRouteKey, setDashboardRouteKey] = useState(0);
+  const isProductTourMobile = useProductTourMobileViewport();
+
+  useEffect(() => {
+    if (!isProductTourMobile || !showProductTour) return;
+    setShowProductTour(false);
+    setForceRunTour(false);
+  }, [isProductTourMobile, showProductTour]);
 
   // Token detail modal state
   const [selectedToken, setSelectedToken] = useState(null);
@@ -2935,6 +2978,7 @@ function App() {
                                   setTourType={setTourType}
                                   forceRunTour={forceRunTour}
                                   setForceRunTour={setForceRunTour}
+                                  isProductTourMobile={isProductTourMobile}
                                   setServerSort={setServerSort}
                                   selectedCategories={selectedCategories}
                                   setSelectedCategories={setSelectedCategories}
@@ -3100,7 +3144,7 @@ function App() {
             />
           </ErrorBoundary>
 
-          {!isViewer && (
+          {!isViewer && !isProductTourMobile && (
             <ProductTour
               run={showProductTour}
               tourType={tourType}
@@ -3169,6 +3213,7 @@ function DashboardWrapper({
   setTourType,
   forceRunTour: _forceRunTour,
   setForceRunTour,
+  isProductTourMobile = false,
   // Location entries props
   locationEntries,
   addLocationEntry,
@@ -3181,7 +3226,14 @@ function DashboardWrapper({
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
-    if (typeof window === 'undefined' || isViewer || !session) return;
+    if (
+      typeof window === 'undefined' ||
+      isViewer ||
+      isProductTourMobile ||
+      !session
+    ) {
+      return;
+    }
     try {
       if (window.location.pathname !== '/dashboard') return;
       const raw = sessionStorage.getItem('tt_tour_resume_pending');
@@ -3191,11 +3243,18 @@ function DashboardWrapper({
       setForceRunTour(true);
       setShowProductTour(true);
     } catch (_) {}
-  }, [session, isViewer]);
+  }, [
+    session,
+    isViewer,
+    isProductTourMobile,
+    setForceRunTour,
+    setShowProductTour,
+    setTourType,
+  ]);
 
   // Listen for manual tour trigger events (for testing) - skip for viewers
   useEffect(() => {
-    if (isViewer) return;
+    if (isViewer || isProductTourMobile) return;
     const handleTourStart = event => {
       const tourType = event.detail?.type || 'dashboard';
       setTourType(tourType);
@@ -3206,7 +3265,7 @@ function DashboardWrapper({
     return () => {
       window.removeEventListener('tt:start-tour', handleTourStart);
     };
-  }, [isViewer, setShowProductTour, setTourType]);
+  }, [isViewer, isProductTourMobile, setShowProductTour, setTourType]);
 
   // Check for ?tour=dashboard query parameter to force-run tour - skip for viewers
   useEffect(() => {
@@ -3216,6 +3275,17 @@ function DashboardWrapper({
     const tourParam = urlParams.get('tour');
 
     if (tourParam && window.location.pathname === '/dashboard') {
+      if (isProductTourMobile) {
+        urlParams.delete('tour');
+        const newUrl =
+          window.location.pathname +
+          (urlParams.toString() ? `?${urlParams.toString()}` : '');
+        window.history.replaceState({}, '', newUrl);
+        setForceRunTour(false);
+        setShowProductTour(false);
+        return;
+      }
+
       setForceRunTour(true);
 
       urlParams.delete('tour');
@@ -3230,7 +3300,13 @@ function DashboardWrapper({
         setShowProductTour(true);
       }, 500);
     }
-  }, [isViewer, setShowProductTour, setTourType, setForceRunTour]);
+  }, [
+    isViewer,
+    isProductTourMobile,
+    setShowProductTour,
+    setTourType,
+    setForceRunTour,
+  ]);
 
   return (
     <div
@@ -3339,7 +3415,7 @@ function DashboardWrapper({
           } catch (_) {}
         }}
         onStartTour={
-          isViewer
+          isViewer || isProductTourMobile
             ? undefined
             : () => {
                 setShowWelcomeModal(false);
@@ -3366,6 +3442,9 @@ function DashboardWrapper({
                   }, 500);
                 }
               }
+        }
+        introductionVideoUrl={
+          isProductTourMobile ? INTRODUCTION_VIDEO_URL : undefined
         }
         data={welcomeData}
       />

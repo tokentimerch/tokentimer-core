@@ -16,6 +16,8 @@ import { logger } from '../utils/logger';
 const LAYOUT_LG_BREAKPOINT_PX = 992;
 /** Dashboard topbar min height (not legacy Navigation 78px bar) */
 const TOPBAR_OFFSET_PX = 54;
+const JOYRIDE_SPOTLIGHT_PADDING_PX = 6;
+const TOUR_TOOLTIP_VIEWPORT_MARGIN_PX = 16;
 
 const isMobileLayout = () =>
   typeof window !== 'undefined' && window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
@@ -66,6 +68,15 @@ const tourTargetSelector = target => {
     return tourId ? `[data-tour="${tourId}"]` : null;
   }
   return null;
+};
+
+const isModalBackedTourTarget = target => {
+  const selector = tourTargetSelector(target);
+  return (
+    selector === ADD_CONTACT_MODAL_TARGET ||
+    selector === ADD_WEBHOOK_MODAL_TARGET ||
+    CONTACT_GROUP_MODAL_TARGETS.includes(selector)
+  );
 };
 
 const stepTourId = step => {
@@ -181,6 +192,27 @@ const scrollTourTargetIntoView = target => {
   if (!el) return;
   try {
     el.scrollIntoView({ block: 'center', behavior: 'auto' });
+  } catch (_) {}
+};
+
+const resetTourScrollPosition = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  try {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    document.scrollingElement?.scrollTo?.({
+      top: 0,
+      left: 0,
+      behavior: 'auto',
+    });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
+    document.querySelectorAll('body *').forEach(node => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.scrollTop > 0) node.scrollTop = 0;
+      if (node.scrollLeft > 0) node.scrollLeft = 0;
+    });
   } catch (_) {}
 };
 
@@ -335,6 +367,7 @@ const CustomTooltip = ({
   return (
     <Box
       {...tooltipProps}
+      data-tour-tooltip='active'
       bg={tooltipBg}
       border={`1px solid ${tooltipBorder}`}
       borderRadius={8}
@@ -442,6 +475,7 @@ export default function ProductTour({
   const [stepIndex, setStepIndex] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [joyrideSessionKey, setJoyrideSessionKey] = useState(0);
+  const preparedModalTourTargetRef = useRef(null);
 
   // Resolve exact color tokens (hex) for libraries that expect computed values
   const [brand500, brand400, gray700, gray200, gray800, gray600, white] =
@@ -729,6 +763,7 @@ export default function ProductTour({
           'Review delivery metrics by channel, token counts, expiry buckets, and monthly alert usage for the selected workspace or organization.',
         placement: 'top',
         mobilePlacement: 'bottom',
+        spotlightPadding: 0,
         isManagerOnly: true,
       },
       {
@@ -886,7 +921,10 @@ export default function ProductTour({
           : step.placement || 'bottom';
       let resolvedTarget = selector;
 
-      if (typeof selector === 'string') {
+      if (
+        typeof selector === 'string' &&
+        !isModalBackedTourTarget(selector)
+      ) {
         const visible = findVisibleTourTarget(selector);
         if (visible) resolvedTarget = visible;
       }
@@ -949,6 +987,102 @@ export default function ProductTour({
     });
     return () => cancelAnimationFrame(id);
   }, [isRunning, stepIndex]);
+
+  useEffect(() => {
+    if (!isRunning) return undefined;
+
+    const target = activeSteps[stepIndex]?.target;
+    const selector = tourTargetSelector(target);
+    if (!selector || !isModalBackedTourTarget(selector)) return undefined;
+
+    let cancelled = false;
+    const timeouts = [];
+
+    const alignSpotlight = () => {
+      if (cancelled) return;
+
+      const targetElement = document.querySelector(selector);
+      const spotlight = document.querySelector('.react-joyride__spotlight');
+      if (
+        !(targetElement instanceof HTMLElement) ||
+        !(spotlight instanceof HTMLElement)
+      ) {
+        return;
+      }
+
+      const rect = targetElement.getBoundingClientRect();
+      const padding = JOYRIDE_SPOTLIGHT_PADDING_PX;
+      spotlight.style.setProperty(
+        'top',
+        `${Math.max(0, rect.top - padding)}px`
+      );
+      spotlight.style.setProperty(
+        'left',
+        `${Math.max(0, rect.left - padding)}px`
+      );
+      spotlight.style.setProperty('width', `${rect.width + padding * 2}px`);
+      spotlight.style.setProperty('height', `${rect.height + padding * 2}px`);
+    };
+
+    const clampTooltipToViewport = () => {
+      if (cancelled) return;
+
+      const tooltip = document.querySelector('[data-tour-tooltip="active"]');
+      const floater = tooltip?.closest('.__floater');
+      if (!(floater instanceof HTMLElement)) return;
+
+      if (
+        floater.dataset.tourViewportClampTransform &&
+        floater.style.transform !== floater.dataset.tourViewportClampTransform
+      ) {
+        delete floater.dataset.tourViewportClampTransform;
+      }
+
+      const rect = floater.getBoundingClientRect();
+      const margin = TOUR_TOOLTIP_VIEWPORT_MARGIN_PX;
+      let shiftX = 0;
+      let shiftY = 0;
+
+      if (rect.left < margin) {
+        shiftX = margin - rect.left;
+      } else if (rect.right > window.innerWidth - margin) {
+        shiftX = window.innerWidth - margin - rect.right;
+      }
+
+      if (rect.top < margin) {
+        shiftY = margin - rect.top;
+      } else if (rect.bottom > window.innerHeight - margin) {
+        shiftY = window.innerHeight - margin - rect.bottom;
+      }
+
+      if (!shiftX && !shiftY) {
+        return;
+      }
+
+      const baseTransform = floater.style.transform || '';
+      const correctedTransform =
+        `${baseTransform} translate(${shiftX}px, ${shiftY}px)`.trim();
+      if (floater.style.transform === correctedTransform) return;
+
+      floater.dataset.tourViewportClampTransform = correctedTransform;
+      floater.style.transform = correctedTransform;
+    };
+
+    const syncModalTourLayer = () => {
+      alignSpotlight();
+      clampTooltipToViewport();
+    };
+
+    const frameId = window.requestAnimationFrame(syncModalTourLayer);
+    const timeoutId = window.setTimeout(syncModalTourLayer, 120);
+    timeouts.push(timeoutId);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+      timeouts.forEach(timeoutId => window.clearTimeout(timeoutId));
+    };
+  }, [activeSteps, isRunning, stepIndex]);
 
   useEffect(() => {
     if (!run) return;
@@ -1287,7 +1421,13 @@ export default function ProductTour({
 
     await wait(350);
 
-    await waitForElement('[data-tour="user-menu"]', {
+    const shellTarget =
+      typeof window !== 'undefined' &&
+      window.innerWidth < LAYOUT_LG_BREAKPOINT_PX
+        ? '[data-tour="mobile-menu-button"]'
+        : '[data-tour="user-menu"]';
+
+    await waitForElement(shellTarget, {
       timeout: 10000,
       interval: 150,
     });
@@ -1297,6 +1437,239 @@ export default function ProductTour({
     });
     await wait(350);
   }, [navigate, waitForElement, wait]);
+
+  const prepareDashboardBackTarget = useCallback(
+    async targetStep => {
+      restoreTourDocumentStyles();
+      closeDashboardShellMenus();
+
+      await ensureDashboardForTour();
+
+      const targetSelector = tourTargetSelector(targetStep?.target);
+      const isMobileNow =
+        typeof window !== 'undefined' &&
+        window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
+
+      if (isMobileNow && isMobileDrawerTourStep(targetStep, true)) {
+        await ensureMobileDrawerOpen({
+          scrollToSelector: targetSelector || undefined,
+        });
+
+        if (targetSelector) {
+          await waitForElement(targetSelector, {
+            timeout: 8000,
+            interval: 150,
+          });
+        }
+
+        await wait(200);
+        window.dispatchEvent(new Event('resize'));
+        return;
+      }
+
+      await ensureMobileDrawerClosed();
+
+      if (tourStepMatches(targetStep, '[data-tour="preferences-nav"]')) {
+        resetTourScrollPosition();
+        window.dispatchEvent(
+          new CustomEvent('tt:tour-menu-state', {
+            detail: { isActive: true, keepMenuOpen: true },
+          })
+        );
+
+        await wait(80);
+
+        const menuButton = findUserMenuButtonInDom();
+        if (
+          menuButton &&
+          menuButton.getAttribute('aria-expanded') !== 'true'
+        ) {
+          menuButton.click();
+        }
+
+        await waitForElement('[data-tour="preferences-nav"]', {
+          timeout: 8000,
+          interval: 150,
+        });
+        await wait(200);
+        window.dispatchEvent(new Event('resize'));
+        return;
+      }
+
+      releaseTourMenuLock();
+      closeDashboardShellMenus();
+
+      if (tourStepMatches(targetStep, '[data-tour="user-menu"]')) {
+        resetTourScrollPosition();
+      } else if (targetSelector) {
+        scrollTourTargetIntoView(targetSelector);
+      }
+
+      await wait(150);
+      window.dispatchEvent(new Event('resize'));
+    },
+    [
+      ensureDashboardForTour,
+      ensureMobileDrawerClosed,
+      ensureMobileDrawerOpen,
+      waitForElement,
+      wait,
+    ]
+  );
+
+  const waitForStableTourTargetRect = useCallback(
+    async selector => {
+      const startedAt = Date.now();
+      let previousRect = null;
+      let stableFrames = 0;
+
+      while (Date.now() - startedAt < 900) {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLElement)) {
+          await wait(60);
+          continue;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const currentRect = {
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        };
+
+        const isStable =
+          previousRect &&
+          Math.abs(previousRect.top - currentRect.top) < 1 &&
+          Math.abs(previousRect.left - currentRect.left) < 1 &&
+          Math.abs(previousRect.width - currentRect.width) < 1 &&
+          Math.abs(previousRect.height - currentRect.height) < 1;
+
+        stableFrames = isStable ? stableFrames + 1 : 0;
+        if (stableFrames >= 2) return true;
+
+        previousRect = currentRect;
+        await wait(80);
+      }
+
+      return Boolean(document.querySelector(selector));
+    },
+    [wait]
+  );
+
+  const scrollModalBackedTourTargetIntoView = useCallback(
+    async target => {
+      const selector = tourTargetSelector(target);
+      if (!selector || !isModalBackedTourTarget(selector)) return false;
+
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) return false;
+
+      const scrollContainer = element.closest('.chakra-modal__body');
+      if (!(scrollContainer instanceof HTMLElement)) {
+        element.scrollIntoView({ block: 'center', behavior: 'auto' });
+        await wait(80);
+        window.dispatchEvent(new Event('resize'));
+        return true;
+      }
+
+      const elementRect = element.getBoundingClientRect();
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const elementTopInContainer =
+        scrollContainer.scrollTop + elementRect.top - containerRect.top;
+      const centeredTop =
+        elementTopInContainer -
+        Math.max(0, (scrollContainer.clientHeight - elementRect.height) / 2);
+      const maxScrollTop =
+        scrollContainer.scrollHeight - scrollContainer.clientHeight;
+
+      scrollContainer.scrollTo({
+        top: Math.max(0, Math.min(centeredTop, maxScrollTop)),
+        behavior: 'auto',
+      });
+
+      await wait(100);
+      window.dispatchEvent(new Event('resize'));
+      return true;
+    },
+    [wait]
+  );
+
+  const prepareModalBackedTourTarget = useCallback(
+    async target => {
+      const selector = tourTargetSelector(target);
+      if (!selector || !isModalBackedTourTarget(selector)) return false;
+
+      if (resolveTourTargetElement(selector)) {
+        await waitForStableTourTargetRect(selector);
+        await scrollModalBackedTourTargetIntoView(selector);
+        preparedModalTourTargetRef.current = selector;
+        return true;
+      }
+
+      if (!isWorkspaceAlertsPath()) {
+        navigate(WORKSPACE_ALERTS_PATH);
+        const pageFound = await waitForElement('[data-tour="preferences-page"]', {
+          timeout: 8000,
+          interval: 150,
+        });
+        await wait(pageFound ? 250 : 500);
+      }
+
+      if (selector === ADD_CONTACT_MODAL_TARGET) {
+        window.dispatchEvent(new CustomEvent('tt:tour-close-add-webhook'));
+        window.dispatchEvent(new CustomEvent('tt:tour-close-group-editor'));
+        window.dispatchEvent(new CustomEvent('tt:tour-open-add-contact'));
+        const found = await waitForElement(`${ADD_CONTACT_MODAL_TARGET} input`, {
+          timeout: 6000,
+          interval: 120,
+        });
+        if (found) {
+          await waitForStableTourTargetRect(selector);
+          await scrollModalBackedTourTargetIntoView(selector);
+          preparedModalTourTargetRef.current = selector;
+        }
+        return found;
+      }
+
+      if (selector === ADD_WEBHOOK_MODAL_TARGET) {
+        window.dispatchEvent(new CustomEvent('tt:tour-close-add-contact'));
+        window.dispatchEvent(new CustomEvent('tt:tour-close-group-editor'));
+        window.dispatchEvent(new CustomEvent('tt:tour-open-add-webhook'));
+        const found = await waitForElement(`${ADD_WEBHOOK_MODAL_TARGET} input`, {
+          timeout: 6000,
+          interval: 120,
+        });
+        if (found) {
+          await waitForStableTourTargetRect(selector);
+          await scrollModalBackedTourTargetIntoView(selector);
+          preparedModalTourTargetRef.current = selector;
+        }
+        return found;
+      }
+
+      window.dispatchEvent(new CustomEvent('tt:tour-close-add-contact'));
+      window.dispatchEvent(new CustomEvent('tt:tour-close-add-webhook'));
+      window.dispatchEvent(new CustomEvent('tt:tour-open-group-editor'));
+      const found = await waitForElement(selector, {
+        timeout: 6000,
+        interval: 120,
+      });
+      if (found) {
+        await waitForStableTourTargetRect(selector);
+        await scrollModalBackedTourTargetIntoView(selector);
+        preparedModalTourTargetRef.current = selector;
+      }
+      return found;
+    },
+    [
+      navigate,
+      scrollModalBackedTourTargetIntoView,
+      wait,
+      waitForElement,
+      waitForStableTourTargetRect,
+    ]
+  );
 
   const handleJoyrideCallback = useCallback(
     async data => {
@@ -1364,7 +1737,7 @@ export default function ProductTour({
             releaseTourMenuLock();
             closeDashboardShellMenus();
             setTimeout(() => {
-              window.scrollTo({ top: 0, behavior: 'smooth' });
+              resetTourScrollPosition();
               window.dispatchEvent(new Event('resize'));
             }, 100);
           }
@@ -1394,7 +1767,7 @@ export default function ProductTour({
               document.body.style.position = '';
               document.documentElement.style.overflow = '';
               document.documentElement.style.position = '';
-              window.scrollTo({ top: 0, behavior: 'smooth' });
+              resetTourScrollPosition();
             } catch (err) {
               // Ignore
             }
@@ -1579,6 +1952,28 @@ export default function ProductTour({
             }
           }
 
+          const stepTargetSelector = tourTargetSelector(step?.target);
+          if (
+            stepTargetSelector &&
+            isModalBackedTourTarget(stepTargetSelector)
+          ) {
+            if (
+              preparedModalTourTargetRef.current === stepTargetSelector &&
+              resolveTourTargetElement(stepTargetSelector)
+            ) {
+              await wait(80);
+              window.dispatchEvent(new Event('resize'));
+              return;
+            }
+
+            const found = await prepareModalBackedTourTarget(step.target);
+            if (found) {
+              await wait(80);
+              window.dispatchEvent(new Event('resize'));
+              return;
+            }
+          }
+
           // Manual scroll for specific steps
           if (step?.target) {
             const { target } = step;
@@ -1603,6 +1998,7 @@ export default function ProductTour({
                 timeout: 6000,
                 interval: 120,
               });
+              await scrollModalBackedTourTargetIntoView(targetSelector);
               await wait(250);
               window.dispatchEvent(new Event('resize'));
             }
@@ -1628,6 +2024,9 @@ export default function ProductTour({
                 timeout: 6000,
                 interval: 120,
               });
+              await scrollModalBackedTourTargetIntoView(
+                ADD_CONTACT_MODAL_TARGET
+              );
               await wait(250);
               window.dispatchEvent(new Event('resize'));
             }
@@ -1638,6 +2037,9 @@ export default function ProductTour({
                 timeout: 6000,
                 interval: 120,
               });
+              await scrollModalBackedTourTargetIntoView(
+                ADD_WEBHOOK_MODAL_TARGET
+              );
               await wait(250);
               window.dispatchEvent(new Event('resize'));
             }
@@ -1676,6 +2078,10 @@ export default function ProductTour({
               if (isMobileNow) {
                 // Use our helper to keep the element slightly below center
                 scrollTargetWithTooltipSpaceMobile(target, { delay: 100 });
+              } else if (isModalBackedTourTarget(target)) {
+                setTimeout(() => {
+                  window.dispatchEvent(new Event('resize'));
+                }, 100);
               } else {
                 // Desktop: center the element (unchanged)
                 setTimeout(() => {
@@ -2030,6 +2436,22 @@ export default function ProductTour({
           }
         }
 
+        // Modal-backed tour steps do not exist until their modal is opened.
+        // Joyride can emit TARGET_NOT_FOUND before STEP_BEFORE in that case,
+        // so open the modal here before retrying the same step.
+        if (isModalBackedTourTarget(step?.target)) {
+          setIsRunning(false);
+          const found = await prepareModalBackedTourTarget(step.target);
+
+          if (found) {
+            await wait(250);
+            setStepIndex(index);
+            setIsRunning(true);
+            window.dispatchEvent(new Event('resize'));
+            return;
+          }
+        }
+
         // For user-preferences-page and workspace alert sub-steps, wait for them to load
         const tourId = stepTourId(step);
         if (tourId === 'user-preferences-page') {
@@ -2145,17 +2567,145 @@ export default function ProductTour({
         const nextIndex = action === ACTIONS.PREV ? index - 1 : index + 1;
         const nextStep = activeSteps[nextIndex];
 
+        if (
+          action === ACTIONS.PREV &&
+          tourStepMatches(step, '[data-tour="user-preferences-page"]') &&
+          tourStepMatches(nextStep, '[data-tour="preferences-nav"]')
+        ) {
+          setIsRunning(false);
+          releaseTourMenuLock();
+          restoreTourDocumentStyles();
+
+          const backToPreferencesMenuItem = async () => {
+            try {
+              await prepareDashboardBackTarget(nextStep);
+            } catch (err) {
+              logger.warn(
+                'Product tour: back to preferences menu item failed',
+                err
+              );
+              await wait(400);
+            } finally {
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            }
+          };
+
+          void backToPreferencesMenuItem();
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'back',
+          });
+          return;
+        }
+
+        if (
+          action === ACTIONS.PREV &&
+          (tourStepMatches(
+            step,
+            '[data-tour="workspace-alert-settings-nav"]'
+          ) ||
+            tourStepMatches(
+              step,
+              '[data-tour="mobile-alert-settings-nav"]'
+            )) &&
+          tourStepMatches(nextStep, '[data-tour="user-preferences-page"]')
+        ) {
+          setIsRunning(false);
+          releaseTourMenuLock();
+          closeDashboardShellMenus();
+          restoreTourDocumentStyles();
+
+          const backToUserPreferences = async () => {
+            try {
+              if (!isUserPreferencesPath()) {
+                navigate(USER_PREFERENCES_PATH);
+              }
+
+              await waitForElement('[data-tour="user-preferences-page"]', {
+                timeout: 8000,
+                interval: 150,
+              });
+              await wait(300);
+            } catch (err) {
+              logger.warn(
+                'Product tour: back to user preferences failed',
+                err
+              );
+              await wait(400);
+            } finally {
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            }
+          };
+
+          void backToUserPreferences();
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'back',
+          });
+          return;
+        }
+
+        if (
+          action === ACTIONS.PREV &&
+          tourStepMatches(step, '[data-tour="preferences-page"]') &&
+          (tourStepMatches(
+            nextStep,
+            '[data-tour="workspace-alert-settings-nav"]'
+          ) ||
+            tourStepMatches(
+              nextStep,
+              '[data-tour="mobile-alert-settings-nav"]'
+            ))
+        ) {
+          setIsRunning(false);
+          releaseTourMenuLock();
+          restoreTourDocumentStyles();
+
+          const backToWorkspaceAlertsNav = async () => {
+            try {
+              await prepareDashboardBackTarget(nextStep);
+            } catch (err) {
+              logger.warn(
+                'Product tour: back to workspace alerts nav failed',
+                err
+              );
+              await wait(400);
+            } finally {
+              setStepIndex(nextIndex);
+              setIsRunning(true);
+              window.dispatchEvent(new Event('resize'));
+            }
+          };
+
+          void backToWorkspaceAlertsNav();
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'back',
+          });
+          return;
+        }
+
         // Back from preferences flow
         if (action === ACTIONS.PREV) {
           const leavingTourId = stepTourId(step);
-          const onPrefsRoute =
-            typeof window !== 'undefined' &&
-            (isUserPreferencesPath() || isWorkspaceAlertsPath());
           const userMenuIndex = resolveUserMenuStepIndex();
           const resumeIndex =
-            userMenuIndex >= 0 ? userMenuIndex : Math.max(0, nextIndex);
+            nextIndex >= 0
+              ? nextIndex
+              : userMenuIndex >= 0
+                ? userMenuIndex
+                : 0;
           const needsHardDashboardReload =
-            onPrefsRoute ||
             leavingTourId === 'user-preferences-page' ||
             leavingTourId === 'preferences-page';
 
@@ -2326,7 +2876,7 @@ export default function ProductTour({
           action === ACTIONS.PREV
         ) {
           setTimeout(() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            resetTourScrollPosition();
             scrollTourTargetIntoView('[data-tour="workspace-selector"]');
           }, 100);
         }
@@ -2368,12 +2918,26 @@ export default function ProductTour({
             nextIndex >= 0 &&
             nextIndex < activeSteps.length
           ) {
-            // Force transition using setTimeout to break out of current event loop
-            setTimeout(() => {
-              setIsRunning(true);
+            const goToNextAfterTokenList = async () => {
+              if (tourStepMatches(nextStep, '[data-tour="user-menu"]')) {
+                setIsRunning(false);
+                restoreTourDocumentStyles();
+                releaseTourMenuLock();
+                closeDashboardShellMenus();
+                await ensureMobileDrawerClosed();
+                resetTourScrollPosition();
+                await wait(120);
+              }
+
               setStepIndex(nextIndex);
               window.dispatchEvent(new Event('resize'));
-            }, 80);
+              setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+              }, 150);
+              setIsRunning(true);
+            };
+
+            void goToNextAfterTokenList();
 
             // Track the event
             trackEvent('product_tour_step', {
@@ -2579,46 +3143,10 @@ export default function ProductTour({
         ) {
           setIsRunning(false);
           setTimeout(async () => {
-            if (!isWorkspaceAlertsPath()) {
-              navigate(WORKSPACE_ALERTS_PATH);
-              await wait(500);
-            }
-            window.dispatchEvent(new CustomEvent('tt:tour-open-group-editor'));
-            // Wait for contact groups digest to appear
-            await waitForElement(
-              '[data-tour="preferences-contact-groups-digest"]'
-            );
-
-            const selector = '[data-tour="preferences-contact-groups-digest"]';
-            const isMobileNow =
-              typeof window !== 'undefined' &&
-              window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
-            if (isMobileNow) {
-              // Use the same helper as STEP_BEFORE for consistent placement on mobile
-              scrollTargetWithTooltipSpaceMobile(selector, { delay: 0 });
-              setTimeout(() => {
-                setStepIndex(nextIndex);
-                setIsRunning(true);
-              }, 800);
-              return;
-            }
-            const el = document.querySelector(selector);
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              setTimeout(() => {
-                window.dispatchEvent(new Event('resize'));
-                setTimeout(
-                  () => window.dispatchEvent(new Event('resize')),
-                  200
-                );
-                setStepIndex(nextIndex);
-                setIsRunning(true);
-              }, 500);
-              return;
-            }
-
+            await prepareModalBackedTourTarget(nextStep.target);
             setStepIndex(nextIndex);
             setIsRunning(true);
+            window.dispatchEvent(new Event('resize'));
           }, 100);
           return;
         }
@@ -2632,46 +3160,10 @@ export default function ProductTour({
         ) {
           setIsRunning(false);
           setTimeout(async () => {
-            if (!isWorkspaceAlertsPath()) {
-              navigate(WORKSPACE_ALERTS_PATH);
-              await wait(500);
-            }
-            window.dispatchEvent(new CustomEvent('tt:tour-open-group-editor'));
-            // Wait for contact groups digest to appear
-            await waitForElement(
-              '[data-tour="preferences-contact-groups-digest"]'
-            );
-
-            const selector = '[data-tour="preferences-contact-groups-digest"]';
-            const isMobileNow =
-              typeof window !== 'undefined' &&
-              window.innerWidth < LAYOUT_LG_BREAKPOINT_PX;
-            if (isMobileNow) {
-              // Use the same helper as STEP_BEFORE for consistent placement on mobile
-              scrollTargetWithTooltipSpaceMobile(selector, { delay: 0 });
-              setTimeout(() => {
-                setStepIndex(nextIndex);
-                setIsRunning(true);
-              }, 800);
-              return;
-            }
-            const el = document.querySelector(selector);
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              setTimeout(() => {
-                window.dispatchEvent(new Event('resize'));
-                setTimeout(
-                  () => window.dispatchEvent(new Event('resize')),
-                  200
-                );
-                setStepIndex(nextIndex);
-                setIsRunning(true);
-              }, 500);
-              return;
-            }
-
+            await prepareModalBackedTourTarget(nextStep.target);
             setStepIndex(nextIndex);
             setIsRunning(true);
+            window.dispatchEvent(new Event('resize'));
           }, 100);
           return;
         }
@@ -3005,6 +3497,32 @@ export default function ProductTour({
           return;
         }
 
+        if (
+          action !== ACTIONS.PREV &&
+          nextStep &&
+          isModalBackedTourTarget(nextStep.target)
+        ) {
+          setIsRunning(false);
+
+          const goToModalBackedStep = async () => {
+            const found = await prepareModalBackedTourTarget(nextStep.target);
+            await wait(found ? 250 : 500);
+            setStepIndex(nextIndex);
+            setIsRunning(true);
+            window.dispatchEvent(new Event('resize'));
+          };
+
+          void goToModalBackedStep();
+
+          trackEvent('product_tour_step', {
+            tour_type: tourType,
+            step_index: nextIndex,
+            step_total: activeSteps.length,
+            action: 'next',
+          });
+          return;
+        }
+
         // Special case: after preferences-contact-groups-digest, navigate back to dashboard for usage-nav
         if (
           tourStepMatches(
@@ -3215,6 +3733,9 @@ export default function ProductTour({
       navigate,
       waitForElement,
       ensureDashboardForTour,
+      prepareDashboardBackTarget,
+      prepareModalBackedTourTarget,
+      scrollModalBackedTourTargetIntoView,
       resolveUserMenuStepIndex,
       ensureMobileDrawerClosed,
       ensureMobileDrawerOpen,
@@ -3294,6 +3815,10 @@ export default function ProductTour({
 
   if (activeSteps.length === 0) return null;
 
+  const currentStepIsModalBacked = isModalBackedTourTarget(
+    activeSteps[stepIndex]?.target
+  );
+
   return (
     <Joyride
       key={joyrideSessionKey}
@@ -3311,11 +3836,22 @@ export default function ProductTour({
       disableOverlayClose
       disableCloseOnEsc
       floaterProps={{
-        disableAnimation: !!prefersReducedMotion,
+        disableAnimation: !!prefersReducedMotion || currentStepIsModalBacked,
+        options: {
+          flip: {
+            boundariesElement: 'viewport',
+            padding: TOUR_TOOLTIP_VIEWPORT_MARGIN_PX,
+          },
+          preventOverflow: {
+            boundariesElement: 'viewport',
+            padding: TOUR_TOOLTIP_VIEWPORT_MARGIN_PX,
+          },
+        },
         // Better positioning on mobile
         styles: {
           floater: {
             filter: 'none',
+            transition: currentStepIsModalBacked ? 'none' : undefined,
             zIndex: 10700,
           },
         },
@@ -3331,7 +3867,7 @@ export default function ProductTour({
         next: 'Next',
         skip: 'Skip tour',
       }}
-      spotlightPadding={6}
+      spotlightPadding={JOYRIDE_SPOTLIGHT_PADDING_PX}
       tooltipComponent={props => (
         <CustomTooltip
           {...props}
