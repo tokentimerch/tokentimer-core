@@ -592,19 +592,15 @@ function createEmptyWebhookDraft() {
 function WebhookValueField({ label, value, monospace = false }) {
   const trimmed = String(value ?? '').trim();
   const display = trimmed || '-';
-  const bg = useColorModeValue('gray.100', 'gray.900');
-  const borderColor = useColorModeValue('gray.300', 'gray.700');
-  const textColor = useColorModeValue('gray.800', 'gray.100');
-  const labelColor = useColorModeValue('gray.600', 'gray.400');
-  const emptyColor = useColorModeValue('gray.500', 'gray.500');
-  const accentColor = useColorModeValue('blue.200', 'blue.500');
+  const { panelBorder, nestedFieldBg } = useSettingsNestedTheme();
+  const { text, bodySecondary, muted, dashboard } = useDashboardTheme();
 
   return (
     <Box w='100%'>
       <Text
         fontSize='xs'
         fontWeight='semibold'
-        color={labelColor}
+        color={bodySecondary}
         textTransform='uppercase'
         letterSpacing='0.04em'
         mb={1}
@@ -614,18 +610,18 @@ function WebhookValueField({ label, value, monospace = false }) {
       <Box
         as={monospace ? 'pre' : 'div'}
         p={{ base: 3, md: 4 }}
-        bg={bg}
+        bg={nestedFieldBg}
         borderRadius='md'
         overflowX='hidden'
         whiteSpace='pre-wrap'
         border='1px solid'
-        borderColor={borderColor}
-        borderLeftWidth='4px'
-        borderLeftColor={accentColor}
+        borderColor={panelBorder}
+        borderLeftWidth='3px'
+        borderLeftColor={dashboard.accent.interactiveBorder}
         fontFamily={monospace ? 'mono' : 'body'}
         fontSize='sm'
         lineHeight='1.5'
-        color={trimmed ? textColor : emptyColor}
+        color={trimmed ? text : muted}
         w='100%'
         maxW='100%'
         sx={{
