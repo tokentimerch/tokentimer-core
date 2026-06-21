@@ -56,6 +56,30 @@ export const dashboardThemeColors = {
     border: { light: '#e9d5ff', dark: 'rgba(216, 180, 254, 0.28)' },
     icon: { light: '#7e22ce', dark: '#d8b4fe' },
   },
+  /** Modal / AlertDialog shell and in-modal form controls. */
+  modal: {
+    overlay: { light: 'rgba(15, 23, 42, 0.46)', dark: 'rgba(2, 6, 23, 0.72)' },
+    surface: { light: '#ffffff', dark: '#0d131a' },
+    headerBg: { light: '#f8fafc', dark: '#0d131a' },
+    footerBg: { light: '#f8fafc', dark: '#0d131a' },
+    border: { light: 'rgba(148, 163, 184, 0.34)', dark: 'rgba(148, 163, 184, 0.18)' },
+    text: { light: '#0f172a', dark: '#f8fafc' },
+    muted: { light: '#64748b', dark: '#94a3b8' },
+    subtleText: { light: '#475569', dark: '#cbd5e1' },
+    fieldBg: { light: '#f8fafc', dark: '#0d131a' },
+    inputBg: { light: '#ffffff', dark: '#090d15' },
+    inputBorder: { light: 'rgba(100, 116, 139, 0.5)', dark: 'rgba(148, 163, 184, 0.28)' },
+    focusBorder: { light: '#2563eb', dark: '#3b82f6' },
+    sectionAccent: { light: '#2563eb', dark: '#60a5fa' },
+    buttonBorder: { light: 'rgba(100, 116, 139, 0.48)', dark: 'rgba(148, 163, 184, 0.34)' },
+    optionBg: { light: '#ffffff', dark: '#0f172a' },
+    optionText: { light: '#0f172a', dark: '#f8fafc' },
+    shadow: {
+      light: '0 24px 70px rgba(0, 0, 0, 0.42)',
+      dark: '0 24px 70px rgba(0, 0, 0, 0.42)',
+    },
+    danger: { light: '#dc2626', dark: '#f87171' },
+  },
   /** Warning/danger alert panels and destructive actions in modals and danger zones. */
   callout: {
     warningSurface: { light: '#fff7ed', dark: 'rgba(146, 64, 14, 0.22)' },
@@ -80,65 +104,314 @@ const dashboardSemanticTokens = Object.fromEntries(
   )
 );
 
+export const DASHBOARD_MODAL_HEADING_FONT = 'Archivo, system-ui, sans-serif';
+
+function buildDashboardModalTokenMode(mode) {
+  const modal = dashboardThemeColors.modal;
+  return {
+    overlayBg: modal.overlay[mode],
+    surfaceBg: modal.surface[mode],
+    fieldBg: modal.fieldBg[mode],
+    headerBg: modal.headerBg[mode],
+    footerBg: modal.footerBg[mode],
+    border: modal.border[mode],
+    text: modal.text[mode],
+    muted: modal.muted[mode],
+    subtleText: modal.subtleText[mode],
+    inputBg: modal.inputBg[mode],
+    inputBorder: modal.inputBorder[mode],
+    focusBorder: modal.focusBorder[mode],
+    sectionAccent: modal.sectionAccent[mode],
+    buttonBorder: modal.buttonBorder[mode],
+    danger: modal.danger[mode],
+    optionBg: modal.optionBg[mode],
+    optionText: modal.optionText[mode],
+    shadow: modal.shadow[mode],
+  };
+}
+
+/** Runtime token maps for modal JS (confirm cards, inline Text colors, etc.). */
+export const dashboardModalTokenModes = Object.freeze({
+  light: Object.freeze(buildDashboardModalTokenMode('light')),
+  dark: Object.freeze(buildDashboardModalTokenMode('dark')),
+});
+
 /**
  * Shared base style for Modal and AlertDialog so every dialog matches the
  * dashboard panel language: opaque surface, subtle border, divided header and
  * footer, and an elevation shadow (no backdrop blur, to avoid jank).
  */
+export const dashboardDialogFooterButtonSx = {
+  '.chakra-button': {
+    h: '36px',
+    minH: '36px',
+    px: 4,
+    fontSize: 'sm',
+    fontWeight: 'semibold',
+    borderRadius: 'md',
+  },
+};
+
+export const dashboardDialogFooterLayoutSx = {
+  flex: '0 0 auto !important',
+  flexGrow: '0 !important',
+  flexShrink: '0 !important',
+  flexBasis: 'auto !important',
+  height: 'auto !important',
+  minHeight: '0 !important',
+  maxHeight: 'none !important',
+  alignItems: 'flex-start !important',
+  justifyContent: 'flex-start !important',
+  '& > *': {
+    flex: '0 0 auto !important',
+    minHeight: '0 !important',
+    width: '100%',
+  },
+};
+
+export const dashboardDialogContentLayoutSx = {
+  height: 'auto !important',
+  minHeight: '0 !important',
+};
+
+export const dashboardDialogBodyControlSx = {
+  '.chakra-form__label': {
+    color: 'dashboard.modal.muted',
+    fontWeight: 600,
+    fontSize: { base: 'sm', md: 'md' },
+    lineHeight: '1.375rem',
+    mb: 1.5,
+  },
+  '.chakra-input, .chakra-select, .chakra-textarea': {
+    bg: 'dashboard.modal.inputBg',
+    borderColor: 'dashboard.modal.inputBorder',
+    color: 'dashboard.modal.text',
+    borderRadius: '10px',
+    fontSize: '0.875rem',
+  },
+  '.chakra-input, .chakra-select': {
+    h: '32px',
+    minH: '32px',
+    lineHeight: '1.25rem',
+    px: 3,
+  },
+  '.chakra-textarea': {
+    minH: '72px',
+    py: 2,
+    px: 3,
+  },
+  '.chakra-input::placeholder, .chakra-textarea::placeholder': {
+    color: 'dashboard.modal.muted',
+    opacity: 1,
+  },
+  '.chakra-input:hover, .chakra-select:hover, .chakra-textarea:hover': {
+    borderColor: 'dashboard.modal.focusBorder',
+  },
+  '.chakra-input:focus-visible, .chakra-select:focus-visible, .chakra-textarea:focus-visible':
+    {
+      borderColor: 'dashboard.modal.focusBorder',
+    },
+  '.chakra-input[aria-invalid=true], .chakra-select[aria-invalid=true], .chakra-textarea[aria-invalid=true]':
+    {
+      borderColor: 'dashboard.modal.danger',
+    },
+  '.chakra-form__error-message': {
+    color: 'dashboard.modal.danger',
+    fontSize: 'xs',
+  },
+  '.chakra-table th': {
+    color: 'dashboard.modal.muted',
+    borderColor: 'dashboard.modal.border',
+  },
+  '.chakra-table td': {
+    borderColor: 'dashboard.modal.border',
+  },
+  '.chakra-divider': {
+    borderColor: 'dashboard.modal.border',
+  },
+  option: {
+    bg: 'dashboard.modal.optionBg',
+    color: 'dashboard.modal.optionText',
+  },
+};
+
+export function createDashboardModalOutlineButtonProps(tokens) {
+  return {
+    variant: 'outline',
+    borderColor: tokens.border,
+    color: tokens.subtleText,
+    _hover: {
+      bg: tokens.fieldBg,
+      borderColor: tokens.focusBorder,
+    },
+  };
+}
+
+export function createDashboardModalPrimaryButtonProps() {
+  return {
+    colorScheme: 'blue',
+  };
+}
+
+export function createDashboardModalDangerButtonProps() {
+  return {
+    bg: 'dashboard.callout.dangerButton',
+    color: 'white',
+    _hover: { bg: 'dashboard.callout.dangerButtonHover' },
+  };
+}
+
+export const dashboardModalTitleProps = {
+  fontSize: { base: 'lg', md: 'xl' },
+  fontWeight: 'bold',
+  fontFamily: DASHBOARD_MODAL_HEADING_FONT,
+  lineHeight: 'short',
+};
+
+export const dashboardModalDescriptionProps = {
+  fontSize: { base: 'sm', md: 'md' },
+  mt: 2,
+  fontWeight: 'medium',
+  lineHeight: '1.5',
+};
+
+/** Responsive action buttons inside modal body (not footer). */
+export const dashboardModalInlineActionButtonProps = {
+  w: { base: '100%', md: 'auto' },
+  minH: { base: '44px', md: '40px' },
+  h: { base: 'auto', md: undefined },
+  whiteSpace: 'normal',
+  flexShrink: 0,
+};
+
+export function createDashboardModalFieldProps(tokens) {
+  return {
+    bg: tokens.fieldBg,
+    border: '1px solid',
+    borderColor: tokens.border,
+    borderRadius: '12px',
+  };
+}
+
+export function createDashboardModalLabelProps(tokens) {
+  return {
+    color: tokens.muted,
+    fontWeight: 'semibold',
+    fontSize: { base: 'sm', md: 'md' },
+  };
+}
+
 const dashboardDialogBaseStyle = {
   overlay: {
-    _light: { bg: 'rgba(15, 23, 42, 0.55)' },
-    _dark: { bg: 'rgba(2, 6, 23, 0.74)' },
+    _light: { bg: 'dashboard.modal.overlay' },
+    _dark: { bg: 'dashboard.modal.overlay' },
   },
   dialogContainer: {
     bg: 'transparent',
     backgroundColor: 'transparent',
-    _light: { bg: 'transparent', backgroundColor: 'transparent' },
-    _dark: { bg: 'transparent', backgroundColor: 'transparent' },
+    py: { base: 4, md: 8 },
   },
   dialog: {
-    borderRadius: 'xl',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    borderRadius: { base: '14px', md: '18px' },
     border: '1px solid',
-    mx: { base: 4, md: 0 },
+    mx: { base: 3, md: 0 },
+    maxH: { base: 'calc(100dvh - 32px)', md: 'calc(100vh - 64px)' },
+    minH: 0,
+    height: 'auto',
     _light: {
-      bg: '#ffffff',
-      borderColor: 'dashboard.border.subtle',
-      boxShadow: '0 24px 60px -15px rgba(15, 23, 42, 0.4)',
+      bg: 'dashboard.modal.surface',
+      borderColor: 'dashboard.modal.border',
+      boxShadow: dashboardThemeColors.modal.shadow.light,
+      color: 'dashboard.modal.text',
     },
     _dark: {
-      bg: '#0e141b',
-      borderColor: 'rgba(148, 163, 184, 0.16)',
-      boxShadow: 'none',
+      bg: 'dashboard.modal.surface',
+      borderColor: 'dashboard.modal.border',
+      boxShadow: dashboardThemeColors.modal.shadow.dark,
+      color: 'dashboard.modal.text',
     },
+    sx: dashboardDialogContentLayoutSx,
   },
   header: {
-    fontFamily: 'Archivo, system-ui, sans-serif',
+    fontFamily: DASHBOARD_MODAL_HEADING_FONT,
     fontWeight: 'bold',
-    fontSize: 'lg',
-    letterSpacing: '-0.01em',
-    px: 6,
-    pt: 5,
-    pb: 4,
+    flexShrink: 0,
+    px: { base: 5, md: 6 },
+    py: { base: 5, md: 6 },
+    pr: { base: 12, md: 14 },
     borderBottom: '1px solid',
-    _light: { borderColor: 'dashboard.border.subtle' },
-    _dark: { borderColor: 'rgba(148, 163, 184, 0.14)' },
+    _light: {
+      bg: 'dashboard.modal.headerBg',
+      borderColor: 'dashboard.modal.border',
+      color: 'dashboard.modal.text',
+    },
+    _dark: {
+      bg: 'dashboard.modal.headerBg',
+      borderColor: 'dashboard.modal.border',
+      color: 'dashboard.modal.text',
+    },
   },
   closeButton: {
-    top: 4,
-    insetEnd: 5,
-    borderRadius: 'md',
+    top: { base: 3, md: 4 },
+    right: { base: 3, md: 4 },
+    borderRadius: '10px',
+    color: 'dashboard.modal.muted',
+    _hover: {
+      bg: 'dashboard.modal.fieldBg',
+      color: 'dashboard.modal.text',
+    },
   },
   body: {
-    px: 6,
-    py: 5,
+    flex: '1 1 auto',
+    flexGrow: 1,
+    minH: 0,
+    overflowY: 'auto',
+    px: { base: 5, md: 6 },
+    py: { base: 5, md: 6 },
+    maxH: { base: 'calc(100dvh - 11rem)', md: 'calc(100vh - 12rem)' },
+    _light: {
+      bg: 'dashboard.modal.surface',
+      color: 'dashboard.modal.text',
+    },
+    _dark: {
+      bg: 'dashboard.modal.surface',
+      color: 'dashboard.modal.text',
+    },
+    sx: {
+      ...dashboardDialogBodyControlSx,
+      flex: '1 1 auto !important',
+      flexGrow: '1 !important',
+      minHeight: '0 !important',
+      overflowY: 'auto !important',
+    },
   },
   footer: {
-    px: 6,
-    py: 4,
+    px: { base: 4, md: 6 },
+    pt: { base: 3, md: 5 },
+    pb: { base: 3, md: 5 },
     gap: 3,
     borderTop: '1px solid',
-    _light: { borderColor: 'dashboard.border.subtle' },
-    _dark: { borderColor: 'rgba(148, 163, 184, 0.14)' },
+    flex: '0 0 auto',
+    flexShrink: 0,
+    flexGrow: 0,
+    mt: 'auto',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    _light: {
+      bg: 'dashboard.modal.footerBg',
+      borderColor: 'dashboard.modal.border',
+    },
+    _dark: {
+      bg: 'dashboard.modal.footerBg',
+      borderColor: 'dashboard.modal.border',
+    },
+    sx: {
+      ...dashboardDialogFooterButtonSx,
+      ...dashboardDialogFooterLayoutSx,
+    },
   },
 };
 
@@ -953,6 +1226,16 @@ export const theme = extendTheme({
         backgroundPosition: 'center center',
         // Slightly increase contrast of background in light mode
         opacity: 1,
+      },
+      '.chakra-modal__footer, .chakra-alert-dialog__footer': {
+        flex: '0 0 auto !important',
+        flexGrow: '0 !important',
+        minHeight: '0 !important',
+        height: 'auto !important',
+      },
+      '.chakra-modal__footer > *, .chakra-alert-dialog__footer > *': {
+        flex: '0 0 auto !important',
+        minHeight: '0 !important',
       },
     }),
   },

@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { useDashboardMenuStyles } from '../hooks/useDashboardMenuStyles.js';
 import { DASHBOARD_PAGE_GUTTER_X } from '../styles/dashboardLayout';
+import { getFaviconPath } from '../utils/logoUtils.js';
 
 const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
 const DASHBOARD_SIDEBAR_WIDTH_CSS_VAR = '--tt-dashboard-sidebar-width';
@@ -586,7 +587,7 @@ export default function DashboardShell({
                 src={
                   isDashboardSidebarExpanded
                     ? '/Branding/app-icon.svg'
-                    : '/Branding/favicon.svg'
+                    : getFaviconPath()
                 }
                 alt='TokenTimer'
                 h={isDashboardSidebarExpanded ? '42px' : '32px'}

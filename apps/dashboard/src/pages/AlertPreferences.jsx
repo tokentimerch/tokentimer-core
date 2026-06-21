@@ -47,6 +47,7 @@ import {
   Th,
   Td,
   Divider,
+  Heading,
   Tooltip,
   Image,
   Icon,
@@ -94,24 +95,23 @@ import {
   FiX,
 } from 'react-icons/fi';
 import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
+import ThresholdDaysEditor from '../components/ThresholdDaysEditor.jsx';
+import {
+  DEFAULT_ALERT_THRESHOLDS,
+  getGroupThresholdInheritHint,
+  groupHasThresholdOverride,
+  groupThresholdsCsvForEditor,
+  groupThresholdsOverrideForSave,
+  normalizeThresholds,
+  thresholdsToCsv,
+  validateAlertThresholds,
+} from '../utils/alertThresholds.js';
 import { SiDiscord, SiPagerduty } from 'react-icons/si';
 import {
   TOUR_MOCK_WEBHOOKS,
   TOUR_MOCK_CONTACT_GROUPS,
   TOUR_MOCK_WORKSPACE_CONTACTS,
 } from '../constants/tourMockData.js';
-
-function normalizeThresholds(csv) {
-  if (!csv || typeof csv !== 'string') return [];
-  return csv
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-    .map(Number)
-    .filter(n => Number.isFinite(n))
-    .filter(n => n >= -365 && n <= 730)
-    .sort((a, b) => b - a);
-}
 
 function isValidEmail(email) {
   if (!email || typeof email !== 'string') return false;
@@ -366,6 +366,137 @@ function PreferencesPanelHeader({ title, description, muted, action }) {
   );
 }
 
+function GroupEditorSectionLabel({ children, mb = 2, ...props }) {
+  const { sectionTitleColor } = useDashboardTheme();
+
+  return (
+    <Heading
+      as='h3'
+      size='sm'
+      m={0}
+      mb={mb}
+      color={sectionTitleColor}
+      fontFamily='Archivo, system-ui, sans-serif'
+      fontWeight='bold'
+      lineHeight='short'
+      {...props}
+    >
+      {children}
+    </Heading>
+  );
+}
+
+function GroupEditorSectionDivider() {
+  const { border } = useDashboardTheme();
+
+  return <Divider borderColor={border} my={2} />;
+}
+
+function GroupContactChannelRow({
+  contact,
+  whatsappAvailable,
+  emailSelected,
+  whatsappSelected,
+  emailDisabled,
+  whatsappDisabled,
+  onEmailChange,
+  onWhatsappChange,
+}) {
+  const { bodySecondary } = useDashboardTheme();
+  const { panelBorder, nestedFieldBg } = useSettingsNestedTheme();
+  const email = String(contact?.details?.email || '').trim();
+  const phone = String(contact?.phone_e164 || '').trim();
+  const channelCount = whatsappAvailable ? 2 : 1;
+  const channelCheckboxProps = {
+    size: 'sm',
+    w: '100%',
+    minH: { base: '44px', md: 'auto' },
+    py: { base: 2, md: 0 },
+    px: { base: 2, md: 0 },
+    borderRadius: 'md',
+    borderWidth: { base: '1px', md: 0 },
+    borderStyle: 'solid',
+    borderColor: { base: panelBorder, md: 'transparent' },
+    bg: { base: nestedFieldBg, md: 'transparent' },
+  };
+
+  return (
+    <SettingsNestedSurface p={{ base: 3, md: 4 }}>
+      <Stack
+        direction={{ base: 'column', md: 'row' }}
+        align={{ base: 'stretch', md: 'center' }}
+        justify='space-between'
+        spacing={{ base: 3, md: 2 }}
+      >
+        <Box minW={0} flex='1'>
+          <Text fontSize='sm' fontWeight='semibold' wordBreak='break-word'>
+            {getContactDisplayName(contact)}
+          </Text>
+          <Text
+            fontSize='xs'
+            color={bodySecondary}
+            mt={0.5}
+            wordBreak='break-all'
+          >
+            {emailDisabled
+              ? 'No valid email on file'
+              : email || 'No email on file'}
+          </Text>
+          {whatsappAvailable ? (
+            <Text
+              fontSize='xs'
+              color={bodySecondary}
+              mt={0.5}
+              wordBreak='break-word'
+            >
+              {phone || 'No phone number on file'}
+            </Text>
+          ) : null}
+        </Box>
+        <SimpleGrid
+          columns={{ base: 1, sm: channelCount }}
+          spacing={2}
+          w={{ base: '100%', md: 'auto' }}
+          minW={{ md: channelCount === 2 ? '220px' : '120px' }}
+          flexShrink={0}
+        >
+          <Checkbox
+            {...channelCheckboxProps}
+            isChecked={emailSelected}
+            isDisabled={emailDisabled}
+            onChange={onEmailChange}
+          >
+            Email
+          </Checkbox>
+          {whatsappAvailable ? (
+            <Checkbox
+              {...channelCheckboxProps}
+              isChecked={whatsappSelected}
+              isDisabled={whatsappDisabled}
+              onChange={onWhatsappChange}
+            >
+              WhatsApp
+            </Checkbox>
+          ) : null}
+        </SimpleGrid>
+      </Stack>
+    </SettingsNestedSurface>
+  );
+}
+
+function ThresholdCrossedInfoAlert() {
+  return (
+    <Alert status='info' size='sm' borderRadius='md' mt={3}>
+      <AlertIcon />
+      <AlertDescription fontSize='sm' lineHeight='1.45'>
+        <Text as='span' fontWeight='semibold'>
+          One alert is sent each time a threshold is crossed.
+        </Text>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function PreferenceConfirmFieldCard({ label, children, tokens }) {
   return (
     <Box
@@ -592,19 +723,15 @@ function createEmptyWebhookDraft() {
 function WebhookValueField({ label, value, monospace = false }) {
   const trimmed = String(value ?? '').trim();
   const display = trimmed || '-';
-  const bg = useColorModeValue('gray.100', 'gray.900');
-  const borderColor = useColorModeValue('gray.300', 'gray.700');
-  const textColor = useColorModeValue('gray.800', 'gray.100');
-  const labelColor = useColorModeValue('gray.600', 'gray.400');
-  const emptyColor = useColorModeValue('gray.500', 'gray.500');
-  const accentColor = useColorModeValue('blue.200', 'blue.500');
+  const { panelBorder, nestedFieldBg } = useSettingsNestedTheme();
+  const { text, bodySecondary, muted, dashboard, border } = useDashboardTheme();
 
   return (
     <Box w='100%'>
       <Text
         fontSize='xs'
         fontWeight='semibold'
-        color={labelColor}
+        color={bodySecondary}
         textTransform='uppercase'
         letterSpacing='0.04em'
         mb={1}
@@ -614,18 +741,18 @@ function WebhookValueField({ label, value, monospace = false }) {
       <Box
         as={monospace ? 'pre' : 'div'}
         p={{ base: 3, md: 4 }}
-        bg={bg}
+        bg={nestedFieldBg}
         borderRadius='md'
         overflowX='hidden'
         whiteSpace='pre-wrap'
         border='1px solid'
-        borderColor={borderColor}
-        borderLeftWidth='4px'
-        borderLeftColor={accentColor}
+        borderColor={panelBorder}
+        borderLeftWidth='3px'
+        borderLeftColor={dashboard.accent.interactiveBorder}
         fontFamily={monospace ? 'mono' : 'body'}
         fontSize='sm'
         lineHeight='1.5'
-        color={trimmed ? textColor : emptyColor}
+        color={trimmed ? text : muted}
         w='100%'
         maxW='100%'
         sx={{
@@ -762,7 +889,9 @@ export default function AlertPreferences({
   const [saving, setSaving] = useState(false);
 
   const [whatsappAvailable, setWhatsappAvailable] = useState(false);
-  const [thresholdsCsv, setThresholdsCsv] = useState('30,14,7,1,0');
+  const [thresholdsCsv, setThresholdsCsv] = useState(
+    thresholdsToCsv(DEFAULT_ALERT_THRESHOLDS)
+  );
   const [thresholdError, setThresholdError] = useState('');
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [webhookUrls, setWebhookUrls] = useState([]);
@@ -787,6 +916,7 @@ export default function AlertPreferences({
   const [defaultReassignedOpen, setDefaultReassignedOpen] = useState(false);
   const [defaultReassignedName, setDefaultReassignedName] = useState('');
   const groupNameInputRef = useRef(null);
+  const groupThresholdsTouchedRef = useRef(false);
   const [groupSaveAttempted, setGroupSaveAttempted] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const previousWorkspaceId = useRef(null);
@@ -794,6 +924,7 @@ export default function AlertPreferences({
   const [deletingGroup, setDeletingGroup] = useState(false);
   // Group thresholds override (CSV string). Empty means inherit workspace defaults
   const [groupThresholdsCsv, setGroupThresholdsCsv] = useState('');
+  const [groupThresholdError, setGroupThresholdError] = useState('');
   const [groupWeeklyDigestEmail, setGroupWeeklyDigestEmail] = useState(false);
   const [groupWeeklyDigestWhatsapp, setGroupWeeklyDigestWhatsapp] =
     useState(false);
@@ -1083,6 +1214,8 @@ export default function AlertPreferences({
     closeButtonProps,
     tokens: modalTokens,
     outlineButtonProps,
+    primaryButtonProps,
+    dangerButtonProps,
   } = useDashboardModalProps();
   const isMobile = useBreakpointValue({ base: true, md: false });
   const discordColor = '#5865F2';
@@ -1152,7 +1285,7 @@ export default function AlertPreferences({
     async function load() {
       // Use mock data for product tour to ensure consistent experience
       if (showProductTour) {
-        setThresholdsCsv('30,14,7,1,0');
+        setThresholdsCsv(thresholdsToCsv(DEFAULT_ALERT_THRESHOLDS));
         setDwStart('00:00');
         setDwEnd('23:59');
         setDwTz('UTC');
@@ -1181,8 +1314,8 @@ export default function AlertPreferences({
         const data = res?.data || {};
         const ts = Array.isArray(data.alert_thresholds)
           ? data.alert_thresholds
-          : [30, 14, 7, 1, 0];
-        setThresholdsCsv(ts.join(','));
+          : DEFAULT_ALERT_THRESHOLDS;
+        setThresholdsCsv(thresholdsToCsv(ts));
         setWhatsappAvailable(data.whatsapp_available === true);
         // Defaults to UTC business hours when not configured
         setDwStart(data.delivery_window_start || '00:00');
@@ -1334,14 +1467,12 @@ export default function AlertPreferences({
 
   function validate() {
     setThresholdError('');
-    const list = normalizeThresholds(thresholdsCsv);
-    if (list.length === 0) {
-      setThresholdError(
-        'Please provide at least one valid threshold between -365 and 730'
-      );
+    const result = validateAlertThresholds(thresholdsCsv);
+    if (!result.ok) {
+      setThresholdError(result.error);
       return null;
     }
-    return list;
+    return result.list;
   }
 
   async function handleSave() {
@@ -1356,6 +1487,7 @@ export default function AlertPreferences({
     try {
       setSaving(true);
       await workspaceAPI.updateAlertSettings(wsId, { alert_thresholds: list });
+      setThresholdsCsv(thresholdsToCsv(list));
       showSuccess('Alert thresholds saved');
       try {
         trackEvent('alert_pref_updated', { field: 'thresholds' });
@@ -1421,6 +1553,7 @@ export default function AlertPreferences({
   // --- Contact Groups helpers ---
   const startEditGroup = useCallback(
     g => {
+      groupThresholdsTouchedRef.current = false;
       setEditingGroupId(g?.id || '');
       setGroupName(g?.name || '');
       const emailIds = Array.isArray(g?.email_contact_ids)
@@ -1444,15 +1577,10 @@ export default function AlertPreferences({
           ? [g.webhook_name]
           : [];
       setGroupWebhookNames(names);
-      try {
-        if (Array.isArray(g?.thresholds) && g.thresholds.length > 0) {
-          setGroupThresholdsCsv(g.thresholds.join(','));
-        } else {
-          setGroupThresholdsCsv(thresholdsCsv);
-        }
-      } catch (_) {
-        setGroupThresholdsCsv(thresholdsCsv);
-      }
+      setGroupThresholdsCsv(
+        groupThresholdsCsvForEditor(g?.thresholds, thresholdsCsv)
+      );
+      setGroupThresholdError('');
       setGroupWeeklyDigestEmail(g?.weekly_digest_email === true);
       setGroupWeeklyDigestWhatsapp(g?.weekly_digest_whatsapp === true);
       setGroupWeeklyDigestWebhooks(g?.weekly_digest_webhooks === true);
@@ -1474,6 +1602,35 @@ export default function AlertPreferences({
     }
   }, [loading, selectedGroupId, contactGroups, editingGroupId, startEditGroup]);
 
+  useEffect(() => {
+    if (!isGroupEditorOpen || loading) return;
+
+    const groupId = editingGroupId || selectedGroupId;
+    if (!groupId) {
+      if (!groupThresholdsTouchedRef.current) {
+        setGroupThresholdsCsv(thresholdsToCsv(thresholdsCsv));
+      }
+      return;
+    }
+
+    const g = (contactGroups || []).find(
+      x => String(x.id) === String(groupId)
+    );
+    if (!g || groupHasThresholdOverride(g.thresholds, thresholdsCsv)) return;
+    if (groupThresholdsTouchedRef.current) return;
+
+    setGroupThresholdsCsv(
+      groupThresholdsCsvForEditor(g.thresholds, thresholdsCsv)
+    );
+  }, [
+    isGroupEditorOpen,
+    loading,
+    editingGroupId,
+    selectedGroupId,
+    thresholdsCsv,
+    contactGroups,
+  ]);
+
   // When switching workspace, immediately clear editor and selection to avoid stale state
   useEffect(() => {
     setSelectedGroupId('');
@@ -1481,14 +1638,22 @@ export default function AlertPreferences({
     resetGroupEditor();
   }, [workspaceId]);
 
+  function closeGroupEditor() {
+    groupThresholdsTouchedRef.current = false;
+    setGroupThresholdError('');
+    onGroupEditorClose();
+  }
+
   function resetGroupEditor() {
+    groupThresholdsTouchedRef.current = false;
     setEditingGroupId('');
     setGroupName('');
     setGroupEmailsText('');
     setGroupWebhookNames([]);
     setGroupEmailContactIds([]);
     setGroupWhatsappContactIds([]);
-    setGroupThresholdsCsv('');
+    setGroupThresholdsCsv(thresholdsToCsv(thresholdsCsv));
+    setGroupThresholdError('');
     setGroupWeeklyDigestEmail(false);
     setGroupWeeklyDigestWhatsapp(false);
     setGroupWeeklyDigestWebhooks(false);
@@ -1507,7 +1672,7 @@ export default function AlertPreferences({
     };
 
     window.addEventListener('tt:tour-open-group-editor', openGroupEditor);
-    window.addEventListener('tt:tour-close-group-editor', onGroupEditorClose);
+    window.addEventListener('tt:tour-close-group-editor', closeGroupEditor);
     window.addEventListener('tt:tour-open-add-contact', onAddContactOpen);
     window.addEventListener('tt:tour-close-add-contact', handleCloseAddContact);
     window.addEventListener('tt:tour-open-add-webhook', openAddWebhookEditor);
@@ -1520,7 +1685,7 @@ export default function AlertPreferences({
       window.removeEventListener('tt:tour-open-group-editor', openGroupEditor);
       window.removeEventListener(
         'tt:tour-close-group-editor',
-        onGroupEditorClose
+        closeGroupEditor
       );
       window.removeEventListener('tt:tour-open-add-contact', onAddContactOpen);
       window.removeEventListener(
@@ -1543,7 +1708,7 @@ export default function AlertPreferences({
     defaultContactGroupId,
     startEditGroup,
     onGroupEditorOpen,
-    onGroupEditorClose,
+    closeGroupEditor,
     onAddContactOpen,
     handleCloseAddContact,
     openAddWebhookEditor,
@@ -1576,6 +1741,21 @@ export default function AlertPreferences({
     const hasWebhook =
       Array.isArray(groupWebhookNames) && groupWebhookNames.length > 0;
     if (!hasEmails && !hasContacts && !hasWebhook) return;
+
+    setGroupThresholdError('');
+    if (
+      String(groupThresholdsCsv || '').trim() &&
+      normalizeThresholds(groupThresholdsCsv).length === 0
+    ) {
+      setGroupThresholdError(validateAlertThresholds('').error);
+      return;
+    }
+
+    const thresholdOverride = groupThresholdsOverrideForSave(
+      groupThresholdsCsv,
+      thresholdsCsv
+    );
+
     let next = [...contactGroups];
     const wasCreate = !editingGroupId;
     let targetId = editingGroupId;
@@ -1583,37 +1763,28 @@ export default function AlertPreferences({
     const _byId = new Map((contacts || []).map(c => [c.id, c]));
 
     if (editingGroupId) {
-      next = next.map(g =>
-        g.id === editingGroupId
-          ? {
-              ...g,
-              name,
-              email_contact_ids: hasEmails ? trimmedEmailIds : [],
-              whatsapp_contact_ids: hasContacts ? trimmedWaIds : [],
-              webhook_names: (groupWebhookNames || []).filter(Boolean),
-              weekly_digest_email: groupWeeklyDigestEmail,
-              weekly_digest_whatsapp: groupWeeklyDigestWhatsapp,
-              weekly_digest_webhooks: groupWeeklyDigestWebhooks,
-              // thresholds override saved only if different from workspace defaults
-              ...(function () {
-                try {
-                  const cur = normalizeThresholds(groupThresholdsCsv);
-                  const def = normalizeThresholds(thresholdsCsv);
-                  if (
-                    cur.length > 0 &&
-                    (cur.length !== def.length ||
-                      cur.some((n, i) => n !== def[i]))
-                  ) {
-                    return { thresholds: cur };
-                  }
-                } catch (_) {}
-                // Remove thresholds key if equal/empty to inherit
-                const { thresholds: _thresholds, ...rest } = g || {};
-                return rest && false ? rest : {};
-              })(),
-            }
-          : g
-      );
+      next = next.map(g => {
+        if (g.id !== editingGroupId) return g;
+
+        const updated = {
+          ...g,
+          name,
+          email_contact_ids: hasEmails ? trimmedEmailIds : [],
+          whatsapp_contact_ids: hasContacts ? trimmedWaIds : [],
+          webhook_names: (groupWebhookNames || []).filter(Boolean),
+          weekly_digest_email: groupWeeklyDigestEmail,
+          weekly_digest_whatsapp: groupWeeklyDigestWhatsapp,
+          weekly_digest_webhooks: groupWeeklyDigestWebhooks,
+        };
+
+        if (thresholdOverride) {
+          updated.thresholds = thresholdOverride;
+        } else {
+          delete updated.thresholds;
+        }
+
+        return updated;
+      });
     } else {
       // Workspace-level cap on number of groups
       if (next.length >= groupCap) return;
@@ -1629,16 +1800,9 @@ export default function AlertPreferences({
         weekly_digest_whatsapp: groupWeeklyDigestWhatsapp,
         weekly_digest_webhooks: groupWeeklyDigestWebhooks,
       };
-      try {
-        const cur = normalizeThresholds(groupThresholdsCsv || thresholdsCsv);
-        const def = normalizeThresholds(thresholdsCsv);
-        if (
-          cur.length > 0 &&
-          (cur.length !== def.length || cur.some((n, i) => n !== def[i]))
-        ) {
-          newGroup.thresholds = cur;
-        }
-      } catch (_) {}
+      if (thresholdOverride) {
+        newGroup.thresholds = thresholdOverride;
+      }
       next = [...next, newGroup];
       targetId = id;
       if (!defaultContactGroupId) setDefaultContactGroupId(id);
@@ -1666,6 +1830,10 @@ export default function AlertPreferences({
         setGroupWebhookNames(
           Array.isArray(saved.webhook_names) ? saved.webhook_names : []
         );
+        setGroupThresholdsCsv(
+          groupThresholdsCsvForEditor(saved.thresholds, thresholdsCsv)
+        );
+        setGroupThresholdError('');
       }
     } catch (_) {}
     setGroupSaveAttempted(false);
@@ -1677,7 +1845,7 @@ export default function AlertPreferences({
         default_contact_group_id: defaultContactGroupId || next[0]?.id || null,
       });
       showSuccess(wasCreate ? 'Contact group created' : 'Contact group saved');
-      onGroupEditorClose();
+      closeGroupEditor();
     } catch (e) {
       showError('Failed to save contact groups');
     }
@@ -2450,13 +2618,18 @@ export default function AlertPreferences({
   }
 
   function handleResetDefaults() {
-    setThresholdsCsv('30,14,7,1,0');
+    setThresholdsCsv(thresholdsToCsv(DEFAULT_ALERT_THRESHOLDS));
     setThresholdError('');
   }
 
   const contactDeleteDetails = contactDeleteTarget
     ? getContactDetailDisplay(contactDeleteTarget, whatsappAvailable)
     : [];
+
+  const groupThresholdInheritHint = getGroupThresholdInheritHint(
+    groupThresholdsCsv,
+    thresholdsCsv
+  );
 
   return (
     <>
@@ -2499,40 +2672,30 @@ export default function AlertPreferences({
               spacing={SETTINGS_SECTION_GAP}
               w='full'
             >
-              <DashboardPanel data-tour='preferences-thresholds' h='full'>
+              <DashboardPanel
+                data-tour='preferences-thresholds'
+                display='flex'
+                flexDirection='column'
+                h='full'
+              >
                 <PreferencesPanelHeader
                   title='Default workspace thresholds'
                   description='Control when alert notifications are created for assets in this workspace.'
                   muted={bodySecondary}
                 />
                 {/* Plan gating removed: thresholds editable for all plans */}
-                <FormControl
-                  isInvalid={!!thresholdError}
+                <ThresholdDaysEditor
+                  value={thresholdsCsv}
+                  onChange={list => {
+                    setThresholdsCsv(thresholdsToCsv(list));
+                    setThresholdError('');
+                  }}
                   isDisabled={loading || isViewer || !roleKnown}
-                >
-                  <FormLabel>
-                    Alert thresholds (days, comma-separated)
-                  </FormLabel>
-                  <Input
-                    value={thresholdsCsv}
-                    onChange={e => setThresholdsCsv(e.target.value)}
-                    placeholder='30,14,7,1,0'
-                  />
-                  <FormErrorMessage>{thresholdError}</FormErrorMessage>
-                  <Text fontSize='sm' color={bodySecondary} mt={2}>
-                    Allowed range: -365 (after expiry) to 730 (2 years). Values
-                    are sorted automatically.
-                  </Text>
-                  <Alert status='info' size='sm' borderRadius='md' mt={3}>
-                    <AlertIcon />
-                    <AlertDescription fontSize='sm' lineHeight='1.45'>
-                      <Text as='span' fontWeight='semibold'>
-                        1 alert per threshold crossed.
-                      </Text>
-                    </AlertDescription>
-                  </Alert>
-                </FormControl>
-                <HStack mt={4} spacing={3}>
+                  isInvalid={!!thresholdError}
+                  errorMessage={thresholdError}
+                />
+                <ThresholdCrossedInfoAlert />
+                <HStack mt='auto' pt={5} spacing={3}>
                   <DashboardActionButton
                     onClick={handleResetDefaults}
                     variant='outline'
@@ -3150,7 +3313,8 @@ export default function AlertPreferences({
                           const val = e.target.value;
                           if (val === '__new__') {
                             resetGroupEditor();
-                            setGroupThresholdsCsv(thresholdsCsv);
+                            setGroupThresholdsCsv(thresholdsToCsv(thresholdsCsv));
+                            setGroupThresholdError('');
                             setSelectedGroupId('');
                             onGroupEditorOpen();
                             return;
@@ -3276,7 +3440,7 @@ export default function AlertPreferences({
 
       <Modal
         isOpen={isGroupEditorOpen}
-        onClose={onGroupEditorClose}
+        onClose={closeGroupEditor}
         isCentered
         scrollBehavior='inside'
       >
@@ -3290,14 +3454,14 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               {editingGroupId ? 'Edit contact group' : 'New contact group'}
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.subtleText}>
+            <DashboardModalDescription>
               Choose contacts, channels, webhooks, and optional threshold
               overrides for this group.
             </DashboardModalDescription>
           </ModalHeader>
           <ModalCloseButton {...closeButtonProps} />
           <ModalBody {...bodyProps}>
-            <VStack align='stretch' spacing={2}>
+            <VStack align='stretch' spacing={3}>
               <Text fontSize='xs' color={bodySecondary}>
                 Groups used: {(contactGroups || []).length}/
                 {groupCap === Infinity ? 'unlimited' : groupCap}
@@ -3317,9 +3481,12 @@ export default function AlertPreferences({
                   <FormErrorMessage>Group name is required.</FormErrorMessage>
                 )}
               </FormControl>
+              <GroupEditorSectionDivider />
               <FormControl data-tour='preferences-contact-groups-contacts-channels'>
-                <FormLabel>Contacts and channels</FormLabel>
-                <Text fontSize='xs' color={bodySecondary} mb={1}>
+                <GroupEditorSectionLabel>
+                  Contacts and channels
+                </GroupEditorSectionLabel>
+                <Text fontSize='xs' color={bodySecondary} mb={2} lineHeight='1.5'>
                   Select per-contact which channels to use.
                   {whatsappAvailable
                     ? ' Each person can have both email and WhatsApp.'
@@ -3328,178 +3495,179 @@ export default function AlertPreferences({
                     ` (Limit: ${memberCap} people total)`}{' '}
                   Webhooks are unlimited.
                 </Text>
-                <VStack align='stretch' spacing={2}>
-                  {contacts.length === 0 ? (
-                    <Text fontSize='sm' color={bodySecondary}>
-                      No contacts defined. Add contacts in the Contacts section
-                      above.
-                    </Text>
-                  ) : (
-                    contacts.map(c => {
-                      const email = (c.details && c.details.email) || '';
-                      const emailDisabled = !isValidEmail(String(email || ''));
-                      return (
-                        <Stack
-                          key={c.id}
-                          direction={{ base: 'column', md: 'row' }}
-                          align='center'
-                          spacing={2}
-                          w='100%'
-                        >
-                          <Box flex='1' minW={0}>
-                            <Text fontSize='sm' fontWeight='medium'>
-                              {c.first_name} {c.last_name}
-                            </Text>
-                          </Box>
-                          <HStack flexShrink={0} spacing={3} align='center'>
-                            <Checkbox
-                              isChecked={groupEmailContactIds.includes(c.id)}
-                              isDisabled={
-                                emailDisabled ||
-                                (!groupEmailContactIds.includes(c.id) &&
-                                  !groupWhatsappContactIds.includes(c.id) &&
-                                  totalSelectedPeople >= memberCap)
-                              }
-                              onChange={e => {
-                                if (e.target.checked) {
-                                  setGroupEmailContactIds(
-                                    Array.from(
-                                      new Set([...groupEmailContactIds, c.id])
-                                    )
-                                  );
-                                } else {
-                                  setGroupEmailContactIds(
-                                    groupEmailContactIds.filter(
-                                      id => id !== c.id
-                                    )
-                                  );
-                                }
-                                setGroupSaveAttempted(false);
-                              }}
-                              size='sm'
-                            >
-                              Email
-                            </Checkbox>
-                            {whatsappAvailable && (
-                              <Checkbox
-                                isChecked={groupWhatsappContactIds.includes(
-                                  c.id
-                                )}
-                                isDisabled={
-                                  !c.phone_e164 ||
-                                  (!groupWhatsappContactIds.includes(c.id) &&
-                                    !groupEmailContactIds.includes(c.id) &&
-                                    totalSelectedPeople >= memberCap)
-                                }
-                                onChange={e => {
-                                  if (e.target.checked) {
-                                    setGroupWhatsappContactIds(
-                                      Array.from(
-                                        new Set([
-                                          ...groupWhatsappContactIds,
-                                          c.id,
-                                        ])
-                                      )
-                                    );
-                                  } else {
-                                    setGroupWhatsappContactIds(
-                                      groupWhatsappContactIds.filter(
-                                        id => id !== c.id
-                                      )
-                                    );
-                                  }
-                                  setGroupSaveAttempted(false);
-                                }}
-                                size='sm'
-                              >
-                                WhatsApp
-                              </Checkbox>
-                            )}
-                          </HStack>
-                        </Stack>
-                      );
-                    })
-                  )}
-                </VStack>
-              </FormControl>
-              <VStack align='stretch' spacing={2}>
-                <HStack justify='space-between' align='center'>
-                  <Text fontSize='xs' color='gray.600' fontWeight='medium'>
-                    {memberCap === Infinity
-                      ? `Selected people: ${totalSelectedPeople}`
-                      : `Selected people: ${totalSelectedPeople} out of ${memberCap}`}
+                {contacts.length === 0 ? (
+                  <Text fontSize='sm' color={bodySecondary}>
+                    No contacts defined. Add contacts in the Contacts section
+                    above.
                   </Text>
-                  {memberCap !== Infinity && (
-                    <Text
-                      fontSize='xs'
-                      color={
-                        totalSelectedPeople === 0
-                          ? 'gray.400'
-                          : totalSelectedPeople < memberCap
-                            ? 'green.500'
-                            : totalSelectedPeople === memberCap
-                              ? 'orange.500'
-                              : 'red.500'
-                      }
-                      fontWeight='semibold'
-                    >
-                      {totalSelectedPeople === 0
-                        ? 'Empty'
-                        : totalSelectedPeople < memberCap
-                          ? 'Available'
-                          : totalSelectedPeople === memberCap
-                            ? 'Full'
-                            : 'Over limit'}
-                    </Text>
-                  )}
-                </HStack>
-                {memberCap !== Infinity && (
-                  <Box>
-                    <Box
-                      w='100%'
-                      h='6px'
-                      bg='gray.200'
-                      borderRadius='full'
-                      overflow='hidden'
-                    >
-                      <Box
-                        h='100%'
-                        w={`${Math.min((totalSelectedPeople / memberCap) * 100, 100)}%`}
-                        bg={
-                          totalSelectedPeople === 0
-                            ? 'gray.300'
-                            : totalSelectedPeople < memberCap
-                              ? 'green.400'
-                              : totalSelectedPeople === memberCap
-                                ? 'orange.400'
-                                : 'red.400'
-                        }
-                        transition='all 0.2s'
-                      />
-                    </Box>
+                ) : (
+                  <Box
+                    maxH={{ base: 'min(42vh, 360px)', md: '280px' }}
+                    overflowY='auto'
+                    pr={{ base: 0, md: 1 }}
+                    mr={{ base: 0, md: -1 }}
+                    sx={{ WebkitOverflowScrolling: 'touch' }}
+                  >
+                    <VStack align='stretch' spacing={2}>
+                      {contacts.map(c => {
+                        const email = (c.details && c.details.email) || '';
+                        const emailDisabled = !isValidEmail(String(email || ''));
+                        const atMemberCap =
+                          !groupEmailContactIds.includes(c.id) &&
+                          !groupWhatsappContactIds.includes(c.id) &&
+                          totalSelectedPeople >= memberCap;
+
+                        return (
+                          <GroupContactChannelRow
+                            key={c.id}
+                            contact={c}
+                            whatsappAvailable={whatsappAvailable}
+                            emailSelected={groupEmailContactIds.includes(c.id)}
+                            whatsappSelected={groupWhatsappContactIds.includes(
+                              c.id
+                            )}
+                            emailDisabled={emailDisabled || atMemberCap}
+                            whatsappDisabled={
+                              !c.phone_e164 ||
+                              (!groupWhatsappContactIds.includes(c.id) &&
+                                !groupEmailContactIds.includes(c.id) &&
+                                totalSelectedPeople >= memberCap)
+                            }
+                            onEmailChange={e => {
+                              if (e.target.checked) {
+                                setGroupEmailContactIds(
+                                  Array.from(
+                                    new Set([...groupEmailContactIds, c.id])
+                                  )
+                                );
+                              } else {
+                                setGroupEmailContactIds(
+                                  groupEmailContactIds.filter(id => id !== c.id)
+                                );
+                              }
+                              setGroupSaveAttempted(false);
+                            }}
+                            onWhatsappChange={e => {
+                              if (e.target.checked) {
+                                setGroupWhatsappContactIds(
+                                  Array.from(
+                                    new Set([...groupWhatsappContactIds, c.id])
+                                  )
+                                );
+                              } else {
+                                setGroupWhatsappContactIds(
+                                  groupWhatsappContactIds.filter(
+                                    id => id !== c.id
+                                  )
+                                );
+                              }
+                              setGroupSaveAttempted(false);
+                            }}
+                          />
+                        );
+                      })}
+                    </VStack>
                   </Box>
                 )}
-                {isOverMemberLimit && (
-                  <Alert status='warning' size='sm' borderRadius='md'>
-                    <AlertIcon />
-                    <AlertDescription fontSize='xs'>
-                      <strong>Member limit exceeded:</strong> You{"'"}
-                      ve selected {totalSelectedPeople} people, but your plan
-                      allows only {memberCap} people per group. Only the first{' '}
-                      {memberCap} people will be saved.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </VStack>
+                <Stack
+                  align='stretch'
+                  spacing={2}
+                  mt={contacts.length > 0 ? 3 : 0}
+                  pt={contacts.length > 0 ? 3 : 0}
+                  borderTopWidth={contacts.length > 0 ? '1px' : 0}
+                  borderTopColor={border}
+                >
+                  <Stack
+                    direction={{ base: 'column', sm: 'row' }}
+                    justify='space-between'
+                    align={{ base: 'flex-start', sm: 'center' }}
+                    spacing={1}
+                  >
+                    <Text
+                      fontSize='xs'
+                      color={bodySecondary}
+                      fontWeight='medium'
+                    >
+                      {memberCap === Infinity
+                        ? `Selected people: ${totalSelectedPeople}`
+                        : `Selected people: ${totalSelectedPeople} out of ${memberCap}`}
+                    </Text>
+                    {memberCap !== Infinity ? (
+                      <Text
+                        fontSize='xs'
+                        color={
+                          totalSelectedPeople === 0
+                            ? 'gray.400'
+                            : totalSelectedPeople < memberCap
+                              ? 'green.500'
+                              : totalSelectedPeople === memberCap
+                                ? 'orange.500'
+                                : 'red.500'
+                        }
+                        fontWeight='semibold'
+                      >
+                        {totalSelectedPeople === 0
+                          ? 'Empty'
+                          : totalSelectedPeople < memberCap
+                            ? 'Available'
+                            : totalSelectedPeople === memberCap
+                              ? 'Full'
+                              : 'Over limit'}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                  {memberCap !== Infinity ? (
+                    <Box>
+                      <Box
+                        w='100%'
+                        h='6px'
+                        bg='gray.200'
+                        borderRadius='full'
+                        overflow='hidden'
+                      >
+                        <Box
+                          h='100%'
+                          w={`${Math.min((totalSelectedPeople / memberCap) * 100, 100)}%`}
+                          bg={
+                            totalSelectedPeople === 0
+                              ? 'gray.300'
+                              : totalSelectedPeople < memberCap
+                                ? 'green.400'
+                                : totalSelectedPeople === memberCap
+                                  ? 'orange.400'
+                                  : 'red.400'
+                          }
+                          transition='all 0.2s'
+                        />
+                      </Box>
+                    </Box>
+                  ) : null}
+                  {isOverMemberLimit ? (
+                    <Alert status='warning' size='sm' borderRadius='md'>
+                      <AlertIcon />
+                      <AlertDescription fontSize='xs'>
+                        <strong>Member limit exceeded:</strong> You{"'"}
+                        ve selected {totalSelectedPeople} people, but your plan
+                        allows only {memberCap} people per group. Only the first{' '}
+                        {memberCap} people will be saved.
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </Stack>
+              </FormControl>
+              <GroupEditorSectionDivider />
               {/* Emails textarea removed in favor of per-contact channel toggles */}
-              <FormLabel>Webhook channels (unlimited)</FormLabel>
+              <GroupEditorSectionLabel>
+                Webhook channels (unlimited)
+              </GroupEditorSectionLabel>
               <Box data-tour='preferences-contact-groups-webhooks'>
                 <SettingsNestedSurface>
                   <VStack
                     align='stretch'
                     spacing={2}
-                    maxH='160px'
+                    maxH={{ base: 'min(32vh, 240px)', md: '160px' }}
                     overflowY='auto'
+                    sx={{ WebkitOverflowScrolling: 'touch' }}
                   >
                     {(() => {
                       const options = (webhookUrls || []).filter(
@@ -3522,12 +3690,15 @@ export default function AlertPreferences({
                           }}
                           isDisabled={isViewer}
                         >
-                          <VStack align='stretch' spacing={1}>
+                          <VStack align='stretch' spacing={2}>
                             {options.map((w, i) => (
                               <Checkbox
                                 key={`${w.name}-${i}`}
                                 value={w.name}
                                 size='sm'
+                                w='100%'
+                                minH={{ base: '44px', md: 'auto' }}
+                                py={{ base: 1, md: 0 }}
                               >
                                 {w.name}
                               </Checkbox>
@@ -3539,26 +3710,23 @@ export default function AlertPreferences({
                   </VStack>
                 </SettingsNestedSurface>
               </Box>
-              {/* Thresholds override */}
-              <FormLabel m={0} fontSize='sm' mt={3}>
-                Thresholds override (days, comma-separated)
-              </FormLabel>
-              <FormControl>
-                <Input
-                  placeholder={thresholdsCsv}
-                  value={groupThresholdsCsv}
-                  onChange={e => setGroupThresholdsCsv(e.target.value)}
-                  size='sm'
-                />
-                <Text fontSize='xs' color={bodySecondary} mt={1}>
-                  Leave equal to defaults to inherit workspace thresholds.
-                  Allowed range: -365 to 730.
-                </Text>
-              </FormControl>
-              <Divider my={3} />
-              <FormLabel m={0} fontSize='sm'>
-                Weekly Digest
-              </FormLabel>
+              <GroupEditorSectionDivider />
+              <GroupEditorSectionLabel>Threshold override</GroupEditorSectionLabel>
+              <ThresholdDaysEditor
+                inheritHint={groupThresholdInheritHint}
+                value={groupThresholdsCsv}
+                onChange={list => {
+                  groupThresholdsTouchedRef.current = true;
+                  setGroupThresholdsCsv(thresholdsToCsv(list));
+                  setGroupThresholdError('');
+                }}
+                isDisabled={isViewer}
+                isInvalid={!!groupThresholdError}
+                errorMessage={groupThresholdError}
+              />
+              <ThresholdCrossedInfoAlert />
+              <GroupEditorSectionDivider />
+              <GroupEditorSectionLabel mb={2}>Weekly Digest</GroupEditorSectionLabel>
               <Text fontSize='xs' color={bodySecondary} mb={2}>
                 Send a weekly summary of tokens expiring soon (within the
                 highest threshold).
@@ -3570,6 +3738,9 @@ export default function AlertPreferences({
               >
                 <Checkbox
                   size='sm'
+                  w='100%'
+                  minH={{ base: '44px', md: 'auto' }}
+                  py={{ base: 1, md: 0 }}
                   isChecked={groupWeeklyDigestEmail}
                   onChange={e => setGroupWeeklyDigestEmail(e.target.checked)}
                   isDisabled={!hasEmailInGroup}
@@ -3579,6 +3750,9 @@ export default function AlertPreferences({
                 {whatsappAvailable && (
                   <Checkbox
                     size='sm'
+                    w='100%'
+                    minH={{ base: '44px', md: 'auto' }}
+                    py={{ base: 1, md: 0 }}
                     isChecked={groupWeeklyDigestWhatsapp}
                     onChange={e =>
                       setGroupWeeklyDigestWhatsapp(e.target.checked)
@@ -3590,6 +3764,9 @@ export default function AlertPreferences({
                 )}
                 <Checkbox
                   size='sm'
+                  w='100%'
+                  minH={{ base: '44px', md: 'auto' }}
+                  py={{ base: 1, md: 0 }}
                   isChecked={groupWeeklyDigestWebhooks}
                   onChange={e => setGroupWeeklyDigestWebhooks(e.target.checked)}
                   isDisabled={!hasWebhookInGroup}
@@ -3618,7 +3795,7 @@ export default function AlertPreferences({
             >
               <Button
                 variant='outline'
-                onClick={onGroupEditorClose}
+                onClick={closeGroupEditor}
                 minW={{ base: '100%', sm: 'auto' }}
                 {...outlineButtonProps}
               >
@@ -3632,8 +3809,7 @@ export default function AlertPreferences({
               >
                 Reset
               </Button>
-              <DashboardActionButton
-                colorScheme='blue'
+              <Button
                 onClick={saveGroup}
                 minW={{ base: '100%', sm: 'auto' }}
                 isDisabled={
@@ -3645,9 +3821,10 @@ export default function AlertPreferences({
                     ? false
                     : (contactGroups || []).length >= groupCap)
                 }
+                {...primaryButtonProps}
               >
                 Save group
-              </DashboardActionButton>
+              </Button>
             </Flex>
           </ModalFooter>
         </DashboardModalFrame>
@@ -3669,7 +3846,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               {editingWebhookIndex >= 0 ? 'Edit webhook' : 'Add webhook'}
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.subtleText}>
+            <DashboardModalDescription>
               Configure the webhook name, type, and URL, then test and save it.
             </DashboardModalDescription>
           </ModalHeader>
@@ -3733,15 +3910,15 @@ export default function AlertPreferences({
               >
                 Test
               </Button>
-              <DashboardActionButton
-                colorScheme='blue'
+              <Button
                 onClick={handleSaveWebhookEditor}
                 isLoading={savingToggles}
                 isDisabled={isViewer || !workspaceId || !canSaveWebhookDraft()}
                 minW={{ base: '100%', sm: 'auto' }}
+                {...primaryButtonProps}
               >
                 Save webhook
-              </DashboardActionButton>
+              </Button>
             </Flex>
           </ModalFooter>
         </DashboardModalFrame>
@@ -3763,7 +3940,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Add contact
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.subtleText}>
+            <DashboardModalDescription>
               Add someone who can receive workspace alert notifications.
             </DashboardModalDescription>
           </ModalHeader>
@@ -3918,14 +4095,14 @@ export default function AlertPreferences({
                 openDelay={150}
               >
                 <Box as='span' display='block' w={{ base: '100%', sm: 'auto' }}>
-                  <DashboardActionButton
-                    colorScheme='blue'
+                  <Button
                     onClick={handleAddContactSubmit}
                     disabled={isNewContactInvalid || isViewer}
                     w={{ base: '100%', sm: 'auto' }}
+                    {...primaryButtonProps}
                   >
                     Add contact
-                  </DashboardActionButton>
+                  </Button>
                 </Box>
               </Tooltip>
             </Flex>
@@ -3949,7 +4126,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Edit contact
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.subtleText}>
+            <DashboardModalDescription>
               Update this contact&apos;s details for workspace alert
               notifications.
             </DashboardModalDescription>
@@ -4109,14 +4286,14 @@ export default function AlertPreferences({
                 openDelay={150}
               >
                 <Box as='span' display='block' w={{ base: '100%', sm: 'auto' }}>
-                  <DashboardActionButton
-                    colorScheme='blue'
+                  <Button
                     onClick={handleSaveEditedContact}
                     disabled={isEditedContactInvalid || isViewer}
                     w={{ base: '100%', sm: 'auto' }}
+                    {...primaryButtonProps}
                   >
                     Save changes
-                  </DashboardActionButton>
+                  </Button>
                 </Box>
               </Tooltip>
             </Flex>
@@ -4141,7 +4318,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Delete Webhook
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.subtleText}>
+            <DashboardModalDescription>
               Review this webhook before removing it from workspace alerts.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -4226,11 +4403,9 @@ export default function AlertPreferences({
                 Cancel
               </Button>
               <Button
-                bg={dashboard.callout.dangerButton}
-                color='white'
                 minW={{ base: '100%', sm: '128px' }}
                 onClick={confirmWebhookDelete}
-                _hover={{ bg: dashboard.callout.dangerButtonHover }}
+                {...dangerButtonProps}
               >
                 Delete Webhook
               </Button>
@@ -4256,7 +4431,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Remove Contact
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.subtleText}>
+            <DashboardModalDescription>
               Review this contact before removing them from workspace alerts.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -4355,11 +4530,9 @@ export default function AlertPreferences({
                 Cancel
               </Button>
               <Button
-                bg={dashboard.callout.dangerButton}
-                color='white'
                 minW={{ base: '100%', sm: '128px' }}
                 onClick={confirmContactDelete}
-                _hover={{ bg: dashboard.callout.dangerButtonHover }}
+                {...dangerButtonProps}
               >
                 Remove Contact
               </Button>
@@ -4372,6 +4545,8 @@ export default function AlertPreferences({
         isOpen={deleteDialogOpen}
         leastDestructiveRef={cancelRef}
         onClose={() => setDeleteDialogOpen(false)}
+        isCentered
+        scrollBehavior='inside'
       >
         <AlertDialogOverlay {...overlayProps} />
         <AlertDialogContent
@@ -4382,7 +4557,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Delete this contact group?
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Reassign tokens and remove this group permanently.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -4411,7 +4586,7 @@ export default function AlertPreferences({
                 Cancel
               </Button>
               <Button
-                colorScheme='red'
+                {...dangerButtonProps}
                 isLoading={deletingGroup}
                 minW={{ base: '100%', sm: 'auto' }}
                 onClick={async () => {
@@ -4437,6 +4612,8 @@ export default function AlertPreferences({
         isOpen={disableAllDialogOpen}
         leastDestructiveRef={cancelRef}
         onClose={() => setDisableAllDialogOpen(false)}
+        isCentered
+        scrollBehavior='inside'
       >
         <AlertDialogOverlay {...overlayProps} />
         <AlertDialogContent
@@ -4447,7 +4624,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Disable all alerts?
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Confirm this alert channel change.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -4468,7 +4645,7 @@ export default function AlertPreferences({
               Cancel
             </Button>
             <Button
-              colorScheme='red'
+              {...dangerButtonProps}
               ml={3}
               onClick={() => {
                 if (disableAllTarget === 'email') {
@@ -4493,6 +4670,8 @@ export default function AlertPreferences({
         isOpen={defaultReassignedOpen}
         leastDestructiveRef={cancelRef}
         onClose={() => setDefaultReassignedOpen(false)}
+        isCentered
+        scrollBehavior='inside'
       >
         <AlertDialogOverlay {...overlayProps} />
         <AlertDialogContent
@@ -4503,7 +4682,7 @@ export default function AlertPreferences({
             <DashboardModalTitle color={modalTokens.text}>
               Default group updated
             </DashboardModalTitle>
-            <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+            <DashboardModalDescription>
               Workspace contact group defaults changed.
             </DashboardModalDescription>
           </AlertDialogHeader>
@@ -4517,7 +4696,7 @@ export default function AlertPreferences({
           <AlertDialogFooter {...footerProps}>
             <Button
               onClick={() => setDefaultReassignedOpen(false)}
-              colorScheme='blue'
+              {...primaryButtonProps}
             >
               OK
             </Button>

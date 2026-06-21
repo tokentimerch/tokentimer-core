@@ -117,8 +117,8 @@ importers:
         specifier: 9.0.3
         version: 9.0.3
       nodemailer:
-        specifier: 8.0.11
-        version: 8.0.11
+        specifier: 9.0.1
+        version: 9.0.1
       otplib:
         specifier: 13.3.0
         version: 13.3.0
@@ -296,8 +296,8 @@ importers:
         specifier: 1.16.0
         version: 1.16.0
       nodemailer:
-        specifier: 8.0.11
-        version: 8.0.11
+        specifier: 9.0.1
+        version: 9.0.1
       pg:
         specifier: 8.18.0
         version: 8.18.0
@@ -3280,8 +3280,8 @@ packages:
   node-releases@2.0.27:
     resolution: {integrity: sha512-nmh3lCkYZ3grZvqcCH+fjmQ7X+H0OeZgP40OierEaAptX4XofMh5kwNbWh7lBduUzCcV/8kZ+NDLCwm2iorIlA==}
 
-  nodemailer@8.0.11:
-    resolution: {integrity: sha512-nrO/pDAUKl+wXX+lx16tDLbnm0fW6sK/x8mgohaCpg+CdCEl482bD4tCuAZk2DyliruiNTIZxRCoWkDqJEnAiA==}
+  nodemailer@9.0.1:
+    resolution: {integrity: sha512-Gwv8SQewT616ZM/URn0H54b8PWo/Wum7md3EW2aWy1lO27+WZCX+Xyak3J+NlmHUjDh5ME+uesJUDRbR3Ye8Bw==}
     engines: {node: '>=6.0.0'}
 
   nodemon@3.1.11:
@@ -8130,7 +8130,7 @@ snapshots:
 
   node-releases@2.0.27: {}
 
-  nodemailer@8.0.11: {}
+  nodemailer@9.0.1: {}
 
   nodemon@3.1.11:
     dependencies:

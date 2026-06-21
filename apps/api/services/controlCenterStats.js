@@ -8,6 +8,8 @@ const {
   sqlExpiryBucketCase,
   emptyBuckets,
   formatSourceEntry,
+  buildPrivilegeHighlight,
+  formatAutoSyncStatusRow,
 } = require("../src/shared/controlCenterStatsHelpers");
 
 /**
@@ -33,6 +35,9 @@ async function loadWorkspaceTimeZone(workspaceId) {
  *   buckets: Record<string, number>,
  *   sources: Array<{ key: string, name: string, count: number }>,
  *   needsAttention: Array<object>,
+ *   neverExpires: Array<object>,
+ *   privilegeHighlights: Array<object>,
+ *   autoSync: Array<object>,
  *   generatedAt: string,
  *   isComplete: boolean,
  * }>}
@@ -41,7 +46,15 @@ async function fetchControlCenterStats(workspaceId) {
   const timezone = await loadWorkspaceTimeZone(workspaceId);
   const bucketCase = sqlExpiryBucketCase(2);
 
-  const [totalRes, bucketRes, sourcesRes, attentionRes] = await Promise.all([
+  const [
+    totalRes,
+    bucketRes,
+    sourcesRes,
+    attentionRes,
+    neverExpiresRes,
+    privilegeRes,
+    autoSyncRes,
+  ] = await Promise.all([
     pool.query(
       `SELECT COUNT(*)::int AS total
          FROM tokens
@@ -86,6 +99,54 @@ async function fetchControlCenterStats(workspaceId) {
         LIMIT 10`,
       [workspaceId, timezone],
     ),
+    pool.query(
+      `SELECT t.id,
+              t.name,
+              t.type,
+              t.category,
+              t.section
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          AND (
+            t.expiration >= DATE '9999-01-01'
+            OR t.expiration::text LIKE '2099%'
+            OR t.expiration::text LIKE '9999%'
+          )
+        ORDER BY LOWER(t.name) ASC
+        LIMIT 12`,
+      [workspaceId],
+    ),
+    pool.query(
+      `SELECT t.id,
+              t.name,
+              t.type,
+              t.category,
+              t.privileges
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          AND t.privileges IS NOT NULL
+          AND LENGTH(TRIM(t.privileges)) > 0
+        ORDER BY LENGTH(t.privileges) DESC, LOWER(t.name) ASC
+        LIMIT 40`,
+      [workspaceId],
+    ),
+    pool.query(
+      `SELECT id,
+              provider,
+              frequency,
+              schedule_time,
+              schedule_tz,
+              enabled,
+              last_sync_at,
+              last_sync_status,
+              last_sync_error,
+              last_sync_items_count,
+              next_sync_at
+         FROM auto_sync_configs
+        WHERE workspace_id = $1
+        ORDER BY provider ASC`,
+      [workspaceId],
+    ),
   ]);
 
   const buckets = emptyBuckets();
@@ -120,11 +181,37 @@ async function fetchControlCenterStats(workspaceId) {
     };
   });
 
+  const neverExpires = neverExpiresRes.rows.map((row) => {
+    const { key, name } = formatSourceEntry(row.category);
+    const section = Array.isArray(row.section)
+      ? row.section.filter(Boolean).join(", ")
+      : row.section || null;
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      category: key,
+      categoryLabel: name,
+      section,
+    };
+  });
+
+  const privilegeHighlights = privilegeRes.rows
+    .map((row) => buildPrivilegeHighlight(row, row.privileges))
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .slice(0, 12);
+
+  const autoSync = autoSyncRes.rows.map(formatAutoSyncStatusRow);
+
   return {
     totalAssets: Number(totalRes.rows[0]?.total) || 0,
     buckets,
     sources,
     needsAttention,
+    neverExpires,
+    privilegeHighlights,
+    autoSync,
     generatedAt: new Date().toISOString(),
     isComplete: true,
   };

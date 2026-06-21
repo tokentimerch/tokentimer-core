@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   Modal,
   ModalOverlay,
@@ -12,7 +13,6 @@ import {
   Icon,
   HStack,
 } from '@chakra-ui/react';
-import { useRef } from 'react';
 import {
   DashboardModalFrame,
   DashboardModalDescription,
@@ -39,6 +39,7 @@ function WelcomeModal({
     footerProps,
     fieldProps,
     outlineButtonProps,
+    primaryButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
   const showTourAction = Boolean(onStartTour);
@@ -49,6 +50,7 @@ function WelcomeModal({
       isOpen={isOpen}
       onClose={onClose}
       isCentered
+      scrollBehavior='inside'
       size='md'
       closeOnOverlayClick
       closeOnEsc
@@ -174,15 +176,12 @@ function WelcomeModal({
         </ModalBody>
 
         <ModalFooter {...footerProps} justifyContent='center'>
-          <HStack spacing={3} flexWrap='wrap' justify='center'>
+          <HStack spacing={3} flexWrap='wrap' justify='center' w='full'>
             {showTourAction && (
               <Button
                 leftIcon={<Icon as={FiPlay} />}
-                {...outlineButtonProps}
                 onClick={onStartTour}
-                size='lg'
-                px={6}
-                transition='all 0.2s'
+                {...outlineButtonProps}
               >
                 Take Tour
               </Button>
@@ -194,23 +193,13 @@ function WelcomeModal({
                 target='_blank'
                 rel='noopener noreferrer'
                 leftIcon={<Icon as={FiPlay} />}
-                {...outlineButtonProps}
                 onClick={onClose}
-                size='lg'
-                px={6}
-                transition='all 0.2s'
+                {...outlineButtonProps}
               >
                 Watch Video
               </Button>
             )}
-            <Button
-              ref={primaryActionRef}
-              colorScheme='blue'
-              onClick={onClose}
-              size='lg'
-              px={8}
-              transition='all 0.2s'
-            >
+            <Button ref={primaryActionRef} onClick={onClose} {...primaryButtonProps}>
               {emailSent ? 'Go to Dashboard' : 'Get Started'}
             </Button>
           </HStack>

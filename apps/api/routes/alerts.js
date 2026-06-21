@@ -21,6 +21,10 @@ const {
   lockSystemAdminMutation,
 } = require("../services/systemAdmin");
 
+const {
+  normalizeAlertThresholdsList,
+} = require("../src/shared/alertThresholds");
+
 const router = require("express").Router();
 
 function intEnv(name, fallback) {
@@ -585,7 +589,7 @@ router.put(
       let p = 1;
       let updatedGroupIds = null; // Track new group IDs for stale token cleanup
       if (Array.isArray(alert_thresholds)) {
-        const norm = alert_thresholds.filter((n) => Number.isFinite(n));
+        const norm = normalizeAlertThresholdsList(alert_thresholds);
         fields.push(`alert_thresholds = $${p++}`);
         params.push(JSON.stringify(norm));
       }
@@ -821,12 +825,7 @@ router.put(
           let thresholdsOverride = [];
           try {
             if (Array.isArray(g.thresholds)) {
-              thresholdsOverride = g.thresholds
-                .map((n) => Number(n))
-                .filter((n) => Number.isFinite(n) && n >= -365 && n <= 730)
-                .sort((a, b) => b - a);
-              // Dedupe
-              thresholdsOverride = Array.from(new Set(thresholdsOverride));
+              thresholdsOverride = normalizeAlertThresholdsList(g.thresholds);
             }
           } catch (_err) {
             logger.debug("Non-critical operation failed", {
@@ -1364,9 +1363,7 @@ router.put(
         let list = [];
         try {
           if (Array.isArray(alert_thresholds)) {
-            list = alert_thresholds
-              .filter((n) => Number.isFinite(n) && n >= -365 && n <= 730)
-              .sort((a, b) => b - a);
+            list = normalizeAlertThresholdsList(alert_thresholds);
           }
         } catch (_err) {
           logger.debug("Non-critical operation failed", {

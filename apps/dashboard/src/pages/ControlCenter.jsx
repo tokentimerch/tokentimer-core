@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link as RouterLink, useLocation } from 'react-router-dom';
 import {
   Alert,
   AlertDescription,
@@ -9,6 +9,7 @@ import {
   Circle,
   Flex,
   HStack,
+  Link,
   SimpleGrid,
   Spinner,
   Table,
@@ -26,8 +27,12 @@ import {
   AlertTriangle,
   CalendarClock,
   Clock3,
+  ArrowDownUp,
+  Infinity,
+  KeyRound,
   Layers,
   PlugZap,
+  RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
 import DashboardShell from '../components/DashboardShell';
@@ -46,6 +51,28 @@ import { formatDate } from '../utils/apiClient';
 
 const EMPTY_BUCKETS = Object.freeze({});
 const EMPTY_LIST = Object.freeze([]);
+
+const PRIVILEGE_LEVEL_TOOLTIP =
+  'Heuristic ranking for review priority, not provider-native scope analysis. ' +
+  'Score starts at 2 points per scope, then adds weight for keywords like admin (+50), ' +
+  'owner (+40), delete (+25), write/manage (+20), full (+15), and wildcards or "all" (+30). ' +
+  'High: score 40+, medium: 15-39, low: below 15.';
+
+function buildImportAutoSyncManagePath(provider, workspaceId) {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace', workspaceId);
+  if (provider) params.set('import', provider);
+  params.set('autoSyncManage', '1');
+  return `/dashboard?${params.toString()}`;
+}
+
+function buildDashboardTokenPath(tokenId, workspaceId) {
+  if (tokenId == null || tokenId === '') return null;
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace', workspaceId);
+  params.set('token-id', String(tokenId));
+  return `/dashboard?${params.toString()}`;
+}
 
 function formatPercent(count, total) {
   if (!total) return '0.0%';
@@ -110,6 +137,88 @@ function friendlyErrorMessage(errorMsg) {
   return msg;
 }
 
+function formatProviderLabel(provider) {
+  if (!provider) return 'Unknown';
+  return String(provider)
+    .split(/[-_]/g, ' ')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getPrivilegeLevelBadge(level) {
+  const map = {
+    high: { label: 'High', colorScheme: 'red' },
+    medium: { label: 'Medium', colorScheme: 'orange' },
+    low: { label: 'Low', colorScheme: 'gray' },
+  };
+  const meta = map[level] || map.low;
+  return (
+    <Tooltip label={PRIVILEGE_LEVEL_TOOLTIP} fontSize='xs' maxW='320px'>
+      <Badge
+        colorScheme={meta.colorScheme}
+        textTransform='capitalize'
+        px={2}
+        py={0.5}
+        borderRadius='md'
+        cursor='help'
+      >
+        {meta.label}
+      </Badge>
+    </Tooltip>
+  );
+}
+
+function getPrivilegeAccent(level) {
+  const map = {
+    high: '#ef4444',
+    medium: '#f97316',
+    low: '#64748b',
+  };
+  return map[level] || '#64748b';
+}
+
+function getAutoSyncHealthBadge(health) {
+  const map = {
+    healthy: { label: 'Healthy', colorScheme: 'green' },
+    failed: { label: 'Failed', colorScheme: 'red' },
+    paused: { label: 'Paused', colorScheme: 'gray' },
+    scheduled: { label: 'Scheduled', colorScheme: 'yellow' },
+    overdue: { label: 'Overdue', colorScheme: 'orange' },
+  };
+  const meta = map[health] || map.scheduled;
+  return (
+    <Badge
+      colorScheme={meta.colorScheme}
+      textTransform='capitalize'
+      px={2}
+      py={0.5}
+      borderRadius='md'
+    >
+      {meta.label}
+    </Badge>
+  );
+}
+
+function getAutoSyncAccent(health) {
+  const map = {
+    healthy: '#22c55e',
+    failed: '#ef4444',
+    paused: '#64748b',
+    scheduled: '#eab308',
+    overdue: '#f97316',
+  };
+  return map[health] || '#64748b';
+}
+
+function CompactEmptyState({ children }) {
+  const { muted } = useDashboardTheme();
+  return (
+    <Text color={muted} fontSize='sm'>
+      {children}
+    </Text>
+  );
+}
+
 function formatRelativeTime(dateStr) {
   const date = new Date(dateStr);
   const now = new Date();
@@ -150,7 +259,7 @@ function ControlCenterPanel({
   const { border } = useDashboardTheme();
 
   return (
-    <SharedDashboardPanel p={0} {...props}>
+    <SharedDashboardPanel p={0} h='100%' display='flex' flexDirection='column' {...props}>
       {(title || description || action) && (
         <Box
           px={{ base: 4, md: 5 }}
@@ -166,10 +275,176 @@ function ControlCenterPanel({
           />
         </Box>
       )}
-      <Box p={{ base: 4, md: 5 }} {...bodyProps}>
+      <Box
+        p={{ base: 4, md: 5 }}
+        flex='1'
+        display='flex'
+        flexDirection='column'
+        minH={0}
+        {...bodyProps}
+      >
         {children}
       </Box>
     </SharedDashboardPanel>
+  );
+}
+
+function InsightPanelSummary({ icon: Icon, accent, label, value, detail }) {
+  const { text, muted, border } = useDashboardTheme();
+  const summaryBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.58)');
+
+  return (
+    <Flex
+      align='center'
+      gap={3}
+      px={3}
+      py={2.5}
+      mb={3}
+      borderRadius='md'
+      border='1px solid'
+      borderColor={border}
+      bg={summaryBg}
+    >
+      <Circle size='34px' bg={`${accent}22`} color={accent} flex='0 0 auto'>
+        <Icon size={16} strokeWidth={2} />
+      </Circle>
+      <Box minW={0} flex='1'>
+        <Text color={muted} fontSize='xs' textTransform='uppercase' letterSpacing='0.04em'>
+          {label}
+        </Text>
+        <Text color={text} fontSize='xl' fontWeight='bold' lineHeight='1.1'>
+          {value}
+        </Text>
+        {detail ? (
+          <Text color={muted} fontSize='xs' mt={0.5}>
+            {detail}
+          </Text>
+        ) : null}
+      </Box>
+    </Flex>
+  );
+}
+
+function InsightListShell({ children, emptyMessage }) {
+  const { border } = useDashboardTheme();
+  const listBg = useColorModeValue(
+    'rgba(248, 250, 252, 0.72)',
+    'rgba(8, 13, 22, 0.42)'
+  );
+
+  if (!children) {
+    return <CompactEmptyState>{emptyMessage}</CompactEmptyState>;
+  }
+
+  return (
+    <Box
+      border='1px solid'
+      borderColor={border}
+      borderRadius='md'
+      bg={listBg}
+      overflow='hidden'
+      maxH='320px'
+      overflowY='auto'
+    >
+      <VStack align='stretch' spacing={0} divider={<Box h='1px' bg={border} />}>
+        {children}
+      </VStack>
+    </Box>
+  );
+}
+
+function InsightListRow({
+  accent,
+  icon: Icon,
+  title,
+  titleTo,
+  subtitle,
+  meta,
+  trailing,
+  children,
+}) {
+  const { text, muted } = useDashboardTheme();
+  const hoverBg = useColorModeValue(
+    'rgba(255, 255, 255, 0.92)',
+    'rgba(30, 41, 59, 0.38)'
+  );
+  const titleNode = titleTo ? (
+    <Link
+      as={RouterLink}
+      to={titleTo}
+      color={text}
+      fontSize='sm'
+      fontWeight='semibold'
+      noOfLines={1}
+      _hover={{ color: accent, textDecoration: 'underline' }}
+    >
+      {title}
+    </Link>
+  ) : (
+    <Text color={text} fontSize='sm' fontWeight='semibold' noOfLines={1}>
+      {title}
+    </Text>
+  );
+
+  return (
+    <Flex
+      align='start'
+      gap={3}
+      px={3}
+      py={3}
+      borderLeft='3px solid'
+      borderLeftColor={accent}
+      _hover={{ bg: hoverBg }}
+      transition='background 0.15s ease'
+    >
+      {Icon ? (
+        <Circle size='32px' bg={`${accent}18`} color={accent} flex='0 0 auto' mt={0.5}>
+          <Icon size={15} strokeWidth={2} />
+        </Circle>
+      ) : null}
+      <Box minW={0} flex='1'>
+        <Flex justify='space-between' align='start' gap={2}>
+          <Box minW={0} flex='1'>
+            {titleNode}
+            {subtitle ? (
+              <Text color={muted} fontSize='xs' mt={0.5} noOfLines={1}>
+                {subtitle}
+              </Text>
+            ) : null}
+          </Box>
+          {trailing ? <Box flexShrink={0}>{trailing}</Box> : null}
+        </Flex>
+        {meta ? (
+          <Text color={muted} fontSize='xs' mt={1.5} noOfLines={1}>
+            {meta}
+          </Text>
+        ) : null}
+        {children}
+      </Box>
+    </Flex>
+  );
+}
+
+function getCategoryChipProps(category) {
+  const map = {
+    cert: { label: 'Certificate', colorScheme: 'blue' },
+    key_secret: { label: 'Key/Secret', colorScheme: 'purple' },
+    license: { label: 'License', colorScheme: 'green' },
+    general: { label: 'General', colorScheme: 'gray' },
+  };
+  return map[category] || { label: category || 'Asset', colorScheme: 'gray' };
+}
+
+function PrivilegeScopePreview({ text }) {
+  const previewBg = useColorModeValue(
+    'rgba(139, 92, 246, 0.08)',
+    'rgba(139, 92, 246, 0.14)'
+  );
+
+  return (
+    <Box mt={2} px={2.5} py={1.5} borderRadius='md' bg={previewBg}>
+      <TruncatedText text={text} maxLines={2} maxWidth='100%' />
+    </Box>
   );
 }
 
@@ -502,6 +777,32 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const totalAssets = statsData?.totalAssets || 0;
   const sources = statsData?.sources || EMPTY_LIST;
   const needsAttention = statsData?.needsAttention || EMPTY_LIST;
+  const neverExpires = statsData?.neverExpires || EMPTY_LIST;
+  const privilegeHighlights = statsData?.privilegeHighlights || EMPTY_LIST;
+  const autoSyncRows = statsData?.autoSync || EMPTY_LIST;
+  const [privilegeSortDesc, setPrivilegeSortDesc] = useState(true);
+
+  const sortedPrivilegeHighlights = useMemo(() => {
+    const list = [...privilegeHighlights];
+    list.sort((a, b) => {
+      const diff = (a.score || 0) - (b.score || 0);
+      if (diff !== 0) {
+        return privilegeSortDesc ? -diff : diff;
+      }
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    return list;
+  }, [privilegeHighlights, privilegeSortDesc]);
+
+  const autoSyncHealthSummary = useMemo(() => {
+    const healthy = autoSyncRows.filter(row => row.health === 'healthy').length;
+    const failed = autoSyncRows.filter(row => row.health === 'failed').length;
+    const paused = autoSyncRows.filter(row => row.health === 'paused').length;
+    return { healthy, failed, paused };
+  }, [autoSyncRows]);
+
+  const neverExpiresCount =
+    neverExpires.length || buckets.neverExpires || 0;
 
   const healthSegments = useMemo(() => {
     const total = Math.max(totalAssets, 1);
@@ -814,6 +1115,217 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                     </ControlCenterPanel>
                   </SimpleGrid>
                   </Box>
+
+                  <SimpleGrid
+                    columns={{ base: 1, xl: 3 }}
+                    spacing={3}
+                    mt={3}
+                    data-tour='control-center-insights'
+                  >
+                    <ControlCenterPanel
+                      title='Never expires'
+                      description='Perpetual assets with no expiry date'
+                    >
+                      <InsightPanelSummary
+                        icon={Infinity}
+                        accent='#3b82f6'
+                        label='Perpetual assets'
+                        value={neverExpiresCount}
+                        detail={
+                          totalAssets
+                            ? `${formatPercent(neverExpiresCount, totalAssets)} of workspace inventory`
+                            : 'Across this workspace'
+                        }
+                      />
+                      <InsightListShell
+                        emptyMessage='No perpetual assets in this workspace.'
+                      >
+                        {neverExpires.length > 0
+                          ? neverExpires.map(item => {
+                              const chip = getCategoryChipProps(item.category);
+                              return (
+                                <InsightListRow
+                                  key={item.id}
+                                  accent='#3b82f6'
+                                  icon={Infinity}
+                                  title={item.name}
+                                  titleTo={buildDashboardTokenPath(
+                                    item.id,
+                                    alertData.selectedWorkspaceId
+                                  )}
+                                  subtitle={item.type || 'Asset'}
+                                  trailing={
+                                    <Badge
+                                      colorScheme={chip.colorScheme}
+                                      variant='subtle'
+                                      fontSize='xs'
+                                    >
+                                      {item.categoryLabel || chip.label}
+                                    </Badge>
+                                  }
+                                  meta={
+                                    item.section
+                                      ? `Section: ${item.section}`
+                                      : 'No section assigned'
+                                  }
+                                />
+                              );
+                            })
+                          : null}
+                      </InsightListShell>
+                    </ControlCenterPanel>
+
+                    <ControlCenterPanel
+                      title='Scopes & privileges'
+                      description={
+                        <Tooltip
+                          label={PRIVILEGE_LEVEL_TOOLTIP}
+                          fontSize='xs'
+                          maxW='320px'
+                        >
+                          <Text as='span' cursor='help'>
+                            Credentials ranked by scope count and privilege keywords
+                          </Text>
+                        </Tooltip>
+                      }
+                      action={
+                        <DashboardActionButton
+                          size='sm'
+                          variant='outline'
+                          borderColor={border}
+                          leftIcon={<ArrowDownUp size={14} />}
+                          onClick={() => setPrivilegeSortDesc(prev => !prev)}
+                          isDisabled={privilegeHighlights.length === 0}
+                        >
+                          {privilegeSortDesc ? 'Highest first' : 'Lowest first'}
+                        </DashboardActionButton>
+                      }
+                    >
+                      <InsightPanelSummary
+                        icon={KeyRound}
+                        accent='#8b5cf6'
+                        label='Scoped credentials'
+                        value={privilegeHighlights.length}
+                        detail={
+                          privilegeHighlights.filter(item => item.level === 'high')
+                            .length
+                            ? `${
+                                privilegeHighlights.filter(
+                                  item => item.level === 'high'
+                                ).length
+                              } high-privilege asset(s) need review`
+                            : 'Review API keys with the broadest scopes'
+                        }
+                      />
+                      <InsightListShell
+                        emptyMessage='No scopes or privileges recorded on assets yet.'
+                      >
+                        {sortedPrivilegeHighlights.length > 0
+                          ? sortedPrivilegeHighlights.map(item => (
+                              <InsightListRow
+                                key={item.id}
+                                accent={getPrivilegeAccent(item.level)}
+                                icon={KeyRound}
+                                title={item.name}
+                                titleTo={buildDashboardTokenPath(
+                                  item.id,
+                                  alertData.selectedWorkspaceId
+                                )}
+                                subtitle={item.type || 'Credential'}
+                                trailing={getPrivilegeLevelBadge(item.level)}
+                              >
+                                <PrivilegeScopePreview
+                                  text={item.preview || item.privileges}
+                                />
+                                <HStack spacing={2} mt={2}>
+                                  <Badge variant='outline' fontSize='xs'>
+                                    {item.scopeCount || 0} scope(s)
+                                  </Badge>
+                                  <Badge variant='subtle' colorScheme='purple' fontSize='xs'>
+                                    Score {item.score || 0}
+                                  </Badge>
+                                </HStack>
+                              </InsightListRow>
+                            ))
+                          : null}
+                      </InsightListShell>
+                    </ControlCenterPanel>
+
+                    <ControlCenterPanel
+                      title='Auto-sync'
+                      description='Integration schedules and last run health'
+                    >
+                      <InsightPanelSummary
+                        icon={RefreshCw}
+                        accent='#22c55e'
+                        label='Active jobs'
+                        value={autoSyncRows.length}
+                        detail={
+                          autoSyncRows.length
+                            ? `${autoSyncHealthSummary.healthy} healthy · ${autoSyncHealthSummary.failed} failed · ${autoSyncHealthSummary.paused} paused`
+                            : 'Connect imports to keep inventory fresh'
+                        }
+                      />
+                      <InsightListShell
+                        emptyMessage='No auto-sync jobs configured for this workspace.'
+                      >
+                        {autoSyncRows.length > 0
+                          ? autoSyncRows.map(row => (
+                              <InsightListRow
+                                key={row.id || row.provider}
+                                accent={getAutoSyncAccent(row.health)}
+                                icon={RefreshCw}
+                                title={formatProviderLabel(row.provider)}
+                                subtitle={row.scheduleLabel}
+                                trailing={getAutoSyncHealthBadge(row.health)}
+                                meta={
+                                  row.lastSyncAt
+                                    ? `Last sync ${formatRelativeTime(row.lastSyncAt)}${
+                                        row.lastSyncItemsCount != null
+                                          ? ` · ${row.lastSyncItemsCount} item(s)`
+                                          : ''
+                                      }`
+                                    : 'No successful sync yet'
+                                }
+                              >
+                                {row.nextSyncAt ? (
+                                  <Text color={muted} fontSize='xs' mt={2}>
+                                    Next run {formatDate(row.nextSyncAt)}
+                                  </Text>
+                                ) : null}
+                                {row.lastSyncError && row.health === 'failed' ? (
+                                  <Text
+                                    color={blockedValueColor}
+                                    fontSize='xs'
+                                    mt={1}
+                                    noOfLines={2}
+                                  >
+                                    {row.lastSyncError}
+                                  </Text>
+                                ) : null}
+                                {row.provider ? (
+                                  <Link
+                                    as={RouterLink}
+                                    to={buildImportAutoSyncManagePath(
+                                      row.provider,
+                                      alertData.selectedWorkspaceId
+                                    )}
+                                    fontSize='xs'
+                                    fontWeight='semibold'
+                                    color='#22c55e'
+                                    mt={2}
+                                    display='inline-block'
+                                    _hover={{ textDecoration: 'underline' }}
+                                  >
+                                    Manage auto-sync in Import tokens
+                                  </Link>
+                                ) : null}
+                              </InsightListRow>
+                            ))
+                          : null}
+                      </InsightListShell>
+                    </ControlCenterPanel>
+                  </SimpleGrid>
                 </SectionState>
               </Box>
 

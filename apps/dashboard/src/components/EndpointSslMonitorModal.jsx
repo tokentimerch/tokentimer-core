@@ -174,7 +174,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
     bodyProps,
     footerProps,
     closeButtonProps,
-    fieldProps,
+    outlineButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
   const { muted, border, dashboard } = useDashboardTheme();
@@ -867,6 +867,8 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
       isOpen={isOpen}
       onClose={handleDomainModalClose}
       size='xl'
+      isCentered
+      scrollBehavior='inside'
       motionPreset='none'
     >
       <ModalOverlay {...overlayProps} />
@@ -875,7 +877,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
           <DashboardModalTitle color={modalTokens.text}>
             Endpoint & SSL monitoring
           </DashboardModalTitle>
-          <DashboardModalDescription color={modalTokens.muted} fontSize='sm'>
+          <DashboardModalDescription>
             Monitor SSL certificates and endpoint health for your URLs.
           </DashboardModalDescription>
         </ModalHeader>
@@ -1718,15 +1720,9 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
         </ModalBody>
         <ModalFooter {...footerProps}>
           <Button
-            variant='outline'
             onClick={handleDomainModalClose}
-            borderColor='rgba(148, 163, 184, 0.34)'
-            color={modalTokens.subtleText}
             minW={{ base: '100%', sm: '104px' }}
-            _hover={{
-              bg: modalTokens.fieldBg,
-              borderColor: modalTokens.focusBorder,
-            }}
+            {...outlineButtonProps}
           >
             Close
           </Button>

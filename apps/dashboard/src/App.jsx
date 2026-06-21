@@ -33,7 +33,6 @@ import {
   IconButton,
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalFooter,
   ModalBody,
@@ -570,6 +569,7 @@ function TokenDeletionModal({ isOpen, onClose, tokenToDelete, onConfirm }) {
     footerProps,
     closeButtonProps,
     outlineButtonProps,
+    dangerButtonProps,
     tokens,
   } = useDashboardModalProps();
   const { dashboard } = useDashboardTheme();
@@ -584,7 +584,7 @@ function TokenDeletionModal({ isOpen, onClose, tokenToDelete, onConfirm }) {
       >
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Delete Token</DashboardModalTitle>
-          <DashboardModalDescription color={tokens.subtleText}>
+          <DashboardModalDescription>
             Review this asset before permanently deleting it.
           </DashboardModalDescription>
         </ModalHeader>
@@ -673,11 +673,9 @@ function TokenDeletionModal({ isOpen, onClose, tokenToDelete, onConfirm }) {
               Cancel
             </Button>
             <Button
-              bg={dashboard.callout.dangerButton}
-              color='white'
               onClick={onConfirm}
               minW={{ base: '100%', sm: '128px' }}
-              _hover={{ bg: dashboard.callout.dangerButtonHover }}
+              {...dangerButtonProps}
             >
               Delete Token
             </Button>
@@ -704,6 +702,8 @@ function TokenRenewModal({
     bodyProps,
     footerProps,
     closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
     tokens,
   } = useDashboardModalProps();
   const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToRenew);
@@ -717,7 +717,7 @@ function TokenRenewModal({
       >
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Renew Token</DashboardModalTitle>
-          <DashboardModalDescription color={tokens.subtleText}>
+          <DashboardModalDescription>
             Choose the next expiration date for this asset.
           </DashboardModalDescription>
         </ModalHeader>
@@ -816,25 +816,149 @@ function TokenRenewModal({
             direction={{ base: 'column-reverse', sm: 'row' }}
           >
             <Button
-              variant='outline'
               onClick={onClose}
-              borderColor={tokens.buttonBorder}
-              color={tokens.subtleText}
               minW={{ base: '100%', sm: '104px' }}
-              _hover={{
-                bg: tokens.fieldBg,
-                borderColor: tokens.focusBorder,
-              }}
+              {...outlineButtonProps}
             >
               Cancel
             </Button>
             <Button
+              {...primaryButtonProps}
               colorScheme='green'
               onClick={onConfirm}
               isLoading={isRenewSubmitting}
               minW={{ base: '100%', sm: '128px' }}
             >
               Confirm
+            </Button>
+          </Flex>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+function DuplicateTokenModal({
+  isOpen,
+  onClose,
+  duplicateTokenInfo,
+  onConfirm,
+  isSubmitting,
+}) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+  } = useDashboardModalProps();
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      isCentered
+      scrollBehavior='inside'
+    >
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame
+        maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+      >
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Token Already Exists</DashboardModalTitle>
+          <DashboardModalDescription>
+            A token with the same name and location already exists in this
+            workspace.
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <VStack spacing={4} align='stretch'>
+            <Alert status='info' borderRadius='md'>
+              <AlertIcon />
+              <AlertDescription>
+                {duplicateTokenInfo?.message ||
+                  'A token with the same name and location already exists in this workspace.'}
+              </AlertDescription>
+            </Alert>
+            {duplicateTokenInfo?.existing_token && (
+              <Box
+                p={4}
+                bg='gray.100'
+                _dark={{
+                  bg: 'orange.900',
+                  borderColor: 'orange.500',
+                  color: 'orange.100',
+                }}
+                borderRadius='md'
+                border='1px solid'
+                borderColor='gray.200'
+                color='gray.700'
+              >
+                <Text
+                  fontWeight='bold'
+                  mb={2}
+                  color='gray.800'
+                  _dark={{ color: 'orange.200' }}
+                >
+                  Existing token:
+                </Text>
+                <Text>
+                  <Text as='span' fontWeight='semibold'>
+                    Name:
+                  </Text>{' '}
+                  {duplicateTokenInfo.existing_token.name}
+                </Text>
+                {duplicateTokenInfo.existing_token.location && (
+                  <Box>
+                    <Text as='span' fontWeight='semibold'>
+                      Locations:
+                    </Text>
+                    <Text whiteSpace='pre-wrap' wordBreak='break-all'>
+                      {duplicateTokenInfo.existing_token.location}
+                    </Text>
+                  </Box>
+                )}
+                {duplicateTokenInfo.existing_token.expiration && (
+                  <Text>
+                    <Text as='span' fontWeight='semibold'>
+                      Expires:
+                    </Text>{' '}
+                    {formatDate(duplicateTokenInfo.existing_token.expiration)}
+                  </Text>
+                )}
+              </Box>
+            )}
+            <Text fontSize='sm' color='gray.600' _dark={{ color: 'gray.200' }}>
+              Creating this token will update the existing one with the new
+              information you provided.
+            </Text>
+          </VStack>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              onClick={onClose}
+              minW={{ base: '100%', sm: '104px' }}
+              {...outlineButtonProps}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onConfirm}
+              isLoading={isSubmitting}
+              minW={{ base: '100%', sm: '128px' }}
+              {...primaryButtonProps}
+            >
+              Update Existing Token
             </Button>
           </Flex>
         </ModalFooter>
@@ -1101,7 +1225,6 @@ function App() {
     onOpen: onDuplicateModalOpen,
     onClose: onDuplicateModalClose,
   } = useDisclosure();
-  const { headerProps: dashboardModalHeaderProps } = useDashboardModalProps();
 
   /**
    * Check user session with retry mechanism
@@ -2281,14 +2404,9 @@ function App() {
     }
 
     if (tokenIdParam && !hasOpenedFromUrl.current) {
-      const tokenId = parseInt(tokenIdParam, 10);
-      if (isNaN(tokenId)) {
-        logger.error(
-          '[Deep Link] ❌ Invalid token ID:',
-          tokenIdParam,
-          '- must be a numeric ID (e.g., 1, 123)'
-        );
-        hasOpenedFromUrl.current = true; // Prevent retrying
+      const tokenId = String(tokenIdParam).trim();
+      if (!tokenId) {
+        hasOpenedFromUrl.current = true;
         return;
       }
 
@@ -2301,7 +2419,7 @@ function App() {
       );
 
       // Try to find token in existing state
-      const existingToken = tokens.find(t => t.id === tokenId);
+      const existingToken = tokens.find(t => String(t.id) === tokenId);
       if (existingToken) {
         logger.info(
           '[Deep Link] ✅ Found token, opening modal:',
@@ -3030,107 +3148,13 @@ function App() {
               onConfirm={confirmDeleteToken}
             />
 
-            {/* Duplicate Token Confirmation Modal */}
-            <Modal
+            <DuplicateTokenModal
               isOpen={isDuplicateModalOpen}
               onClose={onDuplicateModalClose}
-              isCentered
-            >
-              <ModalOverlay />
-              <ModalContent>
-                <ModalHeader {...dashboardModalHeaderProps}>
-                  <DashboardModalTitle>
-                    Token Already Exists
-                  </DashboardModalTitle>
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  <VStack spacing={4} align='stretch'>
-                    <Alert status='info' borderRadius='md'>
-                      <AlertIcon />
-                      <AlertDescription>
-                        {duplicateTokenInfo?.message ||
-                          'A token with the same name and location already exists in this workspace.'}
-                      </AlertDescription>
-                    </Alert>
-                    {duplicateTokenInfo?.existing_token && (
-                      <Box
-                        p={4}
-                        bg='gray.100'
-                        _dark={{
-                          bg: 'orange.900',
-                          borderColor: 'orange.500',
-                          color: 'orange.100',
-                        }}
-                        borderRadius='md'
-                        border='1px solid'
-                        borderColor='gray.200'
-                        color='gray.700'
-                      >
-                        <Text
-                          fontWeight='bold'
-                          mb={2}
-                          color='gray.800'
-                          _dark={{ color: 'orange.200' }}
-                        >
-                          Existing token:
-                        </Text>
-                        <Text>
-                          <Text as='span' fontWeight='semibold'>
-                            Name:
-                          </Text>{' '}
-                          {duplicateTokenInfo.existing_token.name}
-                        </Text>
-                        {duplicateTokenInfo.existing_token.location && (
-                          <Box>
-                            <Text as='span' fontWeight='semibold'>
-                              Locations:
-                            </Text>
-                            <Text whiteSpace='pre-wrap' wordBreak='break-all'>
-                              {duplicateTokenInfo.existing_token.location}
-                            </Text>
-                          </Box>
-                        )}
-                        {duplicateTokenInfo.existing_token.expiration && (
-                          <Text>
-                            <Text as='span' fontWeight='semibold'>
-                              Expires:
-                            </Text>{' '}
-                            {formatDate(
-                              duplicateTokenInfo.existing_token.expiration
-                            )}
-                          </Text>
-                        )}
-                      </Box>
-                    )}
-                    <Text
-                      fontSize='sm'
-                      color='gray.600'
-                      _dark={{ color: 'gray.200' }}
-                    >
-                      Creating this token will update the existing one with the
-                      new information you provided.
-                    </Text>
-                  </VStack>
-                </ModalBody>
-                <ModalFooter>
-                  <Button
-                    variant='ghost'
-                    mr={3}
-                    onClick={onDuplicateModalClose}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    colorScheme='blue'
-                    onClick={handleConfirmDuplicate}
-                    isLoading={isSubmitting}
-                  >
-                    Update Existing Token
-                  </Button>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
+              duplicateTokenInfo={duplicateTokenInfo}
+              onConfirm={handleConfirmDuplicate}
+              isSubmitting={isSubmitting}
+            />
 
             <TokenRenewModal
               isOpen={isRenewModalOpen}
@@ -3660,61 +3684,10 @@ function DashboardView({
     bodyProps: dashboardModalBodyProps,
     footerProps: dashboardModalFooterProps,
     closeButtonProps: dashboardModalCloseButtonProps,
+    outlineButtonProps: dashboardModalOutlineButtonProps,
+    primaryButtonProps: dashboardModalPrimaryButtonProps,
     tokens: dashboardModalTokens,
   } = useDashboardModalProps();
-  const createTokenModalBodyProps = {
-    ...dashboardModalBodyProps,
-    sx: {
-      ...dashboardModalBodyProps.sx,
-      '.chakra-form__label': {
-        ...dashboardModalBodyProps.sx?.['.chakra-form__label'],
-        fontSize: '0.875rem',
-        lineHeight: '1.25rem',
-        mb: 1.5,
-      },
-      '.chakra-input, .chakra-select, .chakra-textarea': {
-        ...dashboardModalBodyProps.sx?.[
-          '.chakra-input, .chakra-select, .chakra-textarea'
-        ],
-        background: `${dashboardModalTokens.inputBg} !important`,
-        borderColor: `${dashboardModalTokens.inputBorder} !important`,
-        color: `${dashboardModalTokens.text} !important`,
-        fontSize: '0.875rem !important',
-        borderRadius: '10px !important',
-      },
-      '.chakra-input, .chakra-select': {
-        height: '32px !important',
-        minHeight: '32px !important',
-        lineHeight: '1.25rem !important',
-        paddingInlineStart: '0.75rem !important',
-        paddingInlineEnd: '0.75rem !important',
-      },
-      '.chakra-textarea': {
-        minHeight: '72px',
-        padding: '0.5rem 0.75rem !important',
-      },
-      '.chakra-input::placeholder, .chakra-textarea::placeholder': {
-        color: `${dashboardModalTokens.muted} !important`,
-        opacity: 1,
-      },
-      '.chakra-input:hover, .chakra-select:hover, .chakra-textarea:hover': {
-        borderColor: `${dashboardModalTokens.focusBorder} !important`,
-      },
-      '.chakra-input:focus-visible, .chakra-select:focus-visible, .chakra-textarea:focus-visible':
-        {
-          borderColor: `${dashboardModalTokens.focusBorder} !important`,
-          boxShadow: `0 0 0 1px ${dashboardModalTokens.focusBorder} !important`,
-        },
-      '.chakra-input[aria-invalid=true], .chakra-select[aria-invalid=true], .chakra-textarea[aria-invalid=true]':
-        {
-          borderColor: `${dashboardModalTokens.danger} !important`,
-        },
-      '.chakra-form__error-message': {
-        fontSize: '0.75rem',
-        color: dashboardModalTokens.danger,
-      },
-    },
-  };
   const createTokenFormId = 'create-token-form';
   const canSubmitCreateToken =
     (typeof canCreateToken === 'boolean' ? canCreateToken : true) &&
@@ -5440,6 +5413,8 @@ function DashboardView({
                 isOpen={isCreateTokenModalOpen}
                 onClose={() => setCreateTokenModalOpen(false)}
                 size='6xl'
+                isCentered
+                scrollBehavior='inside'
                 motionPreset='none'
               >
                 <ModalOverlay {...dashboardModalOverlayProps} />
@@ -5448,15 +5423,12 @@ function DashboardView({
                     <DashboardModalTitle color={dashboardModalTokens.text}>
                       Create New Token
                     </DashboardModalTitle>
-                    <DashboardModalDescription
-                      color={dashboardModalTokens.muted}
-                      fontSize='sm'
-                    >
+                    <DashboardModalDescription>
                       Add a certificate, key, secret, license, or general asset.
                     </DashboardModalDescription>
                   </ModalHeader>
                   <ModalCloseButton {...dashboardModalCloseButtonProps} />
-                  <ModalBody {...createTokenModalBodyProps}>
+                  <ModalBody {...dashboardModalBodyProps}>
                     <Box pt={0}>
                       <form id={createTokenFormId} onSubmit={onTokenAdd}>
                         <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
@@ -6182,15 +6154,9 @@ function DashboardView({
                       direction={{ base: 'column-reverse', sm: 'row' }}
                     >
                       <Button
-                        variant='outline'
                         onClick={() => setCreateTokenModalOpen(false)}
-                        borderColor='rgba(148, 163, 184, 0.34)'
-                        color={dashboardModalTokens.subtleText}
                         minW={{ base: '100%', sm: '104px' }}
-                        _hover={{
-                          bg: dashboardModalTokens.fieldBg,
-                          borderColor: dashboardModalTokens.focusBorder,
-                        }}
+                        {...dashboardModalOutlineButtonProps}
                       >
                         Cancel
                       </Button>
@@ -6199,10 +6165,10 @@ function DashboardView({
                           type='submit'
                           form={createTokenFormId}
                           disabled={isSubmitting}
-                          colorScheme='blue'
                           minW={{ base: '100%', sm: '128px' }}
                           isLoading={isSubmitting}
                           loadingText='Creating...'
+                          {...dashboardModalPrimaryButtonProps}
                         >
                           Create Token
                         </Button>
