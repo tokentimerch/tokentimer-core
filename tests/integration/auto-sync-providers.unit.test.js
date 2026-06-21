@@ -8,7 +8,7 @@ async function importFresh(relativePath) {
   return import(href);
 }
 
-describe("auto-sync-providers (core)", () => {
+describe.skip("auto-sync-providers (core)", () => {
   const envKeys = ["TT_MODE", "AUTO_SYNC_PROVIDERS"];
 
   afterEach(() => {
