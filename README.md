@@ -47,30 +47,23 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 
 # Get Started
 
-<a href="https://tokentimer.ch">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
-  <img alt="TokenTimer Cloud - fully managed SaaS, always up to date." src="docs/assets/readme/tokentimer-cloud-cta.svg">
-</picture>
-</a>
-&nbsp; &nbsp;
-<a href="https://tokentimer.ch/pricing">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
-  <img alt="TokenTimer Enterprise - premium self-hosted edition with priority support." src="docs/assets/readme/tokentimer-enterprise-cta.svg">
-</picture>
-</a>
-&nbsp; &nbsp;
-<a href="QUICKSTART.md">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
-    <img alt="TokenTimer Core - full-featured self-hosted edition." src="docs/assets/readme/tokentimer-core-cta.svg">
-</picture>
-</a>
-<br>
+<p align="center">
+  <a href="https://tokentimer.ch"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
+    <img alt="TokenTimer Cloud" src="docs/assets/readme/tokentimer-cloud-cta.svg">
+  </picture></a><!--
+  --><a href="https://tokentimer.ch/pricing" style="margin-left: 12px;"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
+    <img alt="TokenTimer Enterprise" src="docs/assets/readme/tokentimer-enterprise-cta.svg">
+  </picture></a><!--
+  --><a href="QUICKSTART.md" style="margin-left: 12px;"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
+    <img alt="TokenTimer Core" src="docs/assets/readme/tokentimer-core-cta.svg">
+  </picture></a>
+</p>
 
 ### Run it on your own server
 
