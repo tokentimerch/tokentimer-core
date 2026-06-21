@@ -2361,14 +2361,9 @@ function App() {
     }
 
     if (tokenIdParam && !hasOpenedFromUrl.current) {
-      const tokenId = parseInt(tokenIdParam, 10);
-      if (isNaN(tokenId)) {
-        logger.error(
-          '[Deep Link] ❌ Invalid token ID:',
-          tokenIdParam,
-          '- must be a numeric ID (e.g., 1, 123)'
-        );
-        hasOpenedFromUrl.current = true; // Prevent retrying
+      const tokenId = String(tokenIdParam).trim();
+      if (!tokenId) {
+        hasOpenedFromUrl.current = true;
         return;
       }
 
@@ -2381,7 +2376,7 @@ function App() {
       );
 
       // Try to find token in existing state
-      const existingToken = tokens.find(t => t.id === tokenId);
+      const existingToken = tokens.find(t => String(t.id) === tokenId);
       if (existingToken) {
         logger.info(
           '[Deep Link] ✅ Found token, opening modal:',

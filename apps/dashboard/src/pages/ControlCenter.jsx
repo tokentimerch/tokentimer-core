@@ -66,6 +66,14 @@ function buildImportAutoSyncManagePath(provider, workspaceId) {
   return `/dashboard?${params.toString()}`;
 }
 
+function buildDashboardTokenPath(tokenId, workspaceId) {
+  if (tokenId == null || tokenId === '') return null;
+  const params = new URLSearchParams();
+  if (workspaceId) params.set('workspace', workspaceId);
+  params.set('token-id', String(tokenId));
+  return `/dashboard?${params.toString()}`;
+}
+
 function formatPercent(count, total) {
   if (!total) return '0.0%';
   return `${((count / total) * 100).toFixed(1)}%`;
@@ -345,11 +353,37 @@ function InsightListShell({ children, emptyMessage }) {
   );
 }
 
-function InsightListRow({ accent, icon: Icon, title, subtitle, meta, trailing, children }) {
+function InsightListRow({
+  accent,
+  icon: Icon,
+  title,
+  titleTo,
+  subtitle,
+  meta,
+  trailing,
+  children,
+}) {
   const { text, muted } = useDashboardTheme();
   const hoverBg = useColorModeValue(
     'rgba(255, 255, 255, 0.92)',
     'rgba(30, 41, 59, 0.38)'
+  );
+  const titleNode = titleTo ? (
+    <Link
+      as={RouterLink}
+      to={titleTo}
+      color={text}
+      fontSize='sm'
+      fontWeight='semibold'
+      noOfLines={1}
+      _hover={{ color: accent, textDecoration: 'underline' }}
+    >
+      {title}
+    </Link>
+  ) : (
+    <Text color={text} fontSize='sm' fontWeight='semibold' noOfLines={1}>
+      {title}
+    </Text>
   );
 
   return (
@@ -371,9 +405,7 @@ function InsightListRow({ accent, icon: Icon, title, subtitle, meta, trailing, c
       <Box minW={0} flex='1'>
         <Flex justify='space-between' align='start' gap={2}>
           <Box minW={0} flex='1'>
-            <Text color={text} fontSize='sm' fontWeight='semibold' noOfLines={1}>
-              {title}
-            </Text>
+            {titleNode}
             {subtitle ? (
               <Text color={muted} fontSize='xs' mt={0.5} noOfLines={1}>
                 {subtitle}
@@ -1115,6 +1147,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                   accent='#3b82f6'
                                   icon={Infinity}
                                   title={item.name}
+                                  titleTo={buildDashboardTokenPath(
+                                    item.id,
+                                    alertData.selectedWorkspaceId
+                                  )}
                                   subtitle={item.type || 'Asset'}
                                   trailing={
                                     <Badge
@@ -1189,6 +1225,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                 accent={getPrivilegeAccent(item.level)}
                                 icon={KeyRound}
                                 title={item.name}
+                                titleTo={buildDashboardTokenPath(
+                                  item.id,
+                                  alertData.selectedWorkspaceId
+                                )}
                                 subtitle={item.type || 'Credential'}
                                 trailing={getPrivilegeLevelBadge(item.level)}
                               >
