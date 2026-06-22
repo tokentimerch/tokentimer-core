@@ -174,6 +174,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
     bodyProps,
     footerProps,
     closeButtonProps,
+    fieldProps,
     outlineButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
