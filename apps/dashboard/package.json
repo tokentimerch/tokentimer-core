@@ -37,7 +37,7 @@
     "react-joyride": "2.9.3",
     "react-query": "3.39.3",
     "react-router-dom": "6.30.4",
-    "xlsx": "0.18.5"
+    "xlsx": "npm:@e965/xlsx@0.20.3"
   },
   "devDependencies": {
     "@babel/preset-react": "7.28.5",

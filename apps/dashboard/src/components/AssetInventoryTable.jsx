@@ -765,10 +765,7 @@ function AssetInventoryMobileCard({
     'gray.600',
     'rgba(203, 213, 225, 0.9)'
   );
-  const actionHoverBg = useColorModeValue(
-    'gray.100',
-    'rgba(30, 41, 59, 0.72)'
-  );
+  const actionHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
   const actionFocusShadow = useColorModeValue(
     '0 0 0 2px rgba(37, 99, 235, 0.28)',
     '0 0 0 2px rgba(96, 165, 250, 0.34)'

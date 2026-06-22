@@ -712,17 +712,17 @@ export default function Usage({ session, onLogout, onAccountClick }) {
                               colorScheme='blue'
                               variant='solid'
                               onClick={async () => {
-                              try {
-                                await alertAPI.requeueAlerts({
-                                  workspaceId: selectedWorkspaceId || null,
-                                });
-                                await loadData(true);
-                              } catch (_) {}
-                            }}
-                            isDisabled={!selectedWorkspaceId || atLimit}
-                          >
-                            Requeue blocked/failed
-                          </DashboardActionButton>
+                                try {
+                                  await alertAPI.requeueAlerts({
+                                    workspaceId: selectedWorkspaceId || null,
+                                  });
+                                  await loadData(true);
+                                } catch (_) {}
+                              }}
+                              isDisabled={!selectedWorkspaceId || atLimit}
+                            >
+                              Requeue blocked/failed
+                            </DashboardActionButton>
                           </Box>
                         </Tooltip>
                       </HStack>

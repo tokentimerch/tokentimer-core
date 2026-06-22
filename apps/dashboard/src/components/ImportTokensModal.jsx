@@ -3323,10 +3323,7 @@ export default function ImportTokensModal({
           </ModalBody>
           <ModalFooter {...footerProps}>
             <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
-              <Button
-                {...outlineButtonProps}
-                onClick={onEnableAutoSyncClose}
-              >
+              <Button {...outlineButtonProps} onClick={onEnableAutoSyncClose}>
                 Cancel
               </Button>
               <Button
@@ -3402,10 +3399,7 @@ export default function ImportTokensModal({
               <Button {...outlineButtonProps} onClick={onDisableAutoSyncClose}>
                 Cancel
               </Button>
-              <Button
-                {...dangerButtonProps}
-                onClick={confirmDisableAutoSync}
-              >
+              <Button {...dangerButtonProps} onClick={confirmDisableAutoSync}>
                 Disable Auto-Sync
               </Button>
             </HStack>

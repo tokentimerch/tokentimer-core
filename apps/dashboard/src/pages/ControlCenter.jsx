@@ -259,7 +259,13 @@ function ControlCenterPanel({
   const { border } = useDashboardTheme();
 
   return (
-    <SharedDashboardPanel p={0} h='100%' display='flex' flexDirection='column' {...props}>
+    <SharedDashboardPanel
+      p={0}
+      h='100%'
+      display='flex'
+      flexDirection='column'
+      {...props}
+    >
       {(title || description || action) && (
         <Box
           px={{ base: 4, md: 5 }}
@@ -309,7 +315,12 @@ function InsightPanelSummary({ icon: Icon, accent, label, value, detail }) {
         <Icon size={16} strokeWidth={2} />
       </Circle>
       <Box minW={0} flex='1'>
-        <Text color={muted} fontSize='xs' textTransform='uppercase' letterSpacing='0.04em'>
+        <Text
+          color={muted}
+          fontSize='xs'
+          textTransform='uppercase'
+          letterSpacing='0.04em'
+        >
           {label}
         </Text>
         <Text color={text} fontSize='xl' fontWeight='bold' lineHeight='1.1'>
@@ -398,7 +409,13 @@ function InsightListRow({
       transition='background 0.15s ease'
     >
       {Icon ? (
-        <Circle size='32px' bg={`${accent}18`} color={accent} flex='0 0 auto' mt={0.5}>
+        <Circle
+          size='32px'
+          bg={`${accent}18`}
+          color={accent}
+          flex='0 0 auto'
+          mt={0.5}
+        >
           <Icon size={15} strokeWidth={2} />
         </Circle>
       ) : null}
@@ -801,8 +818,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     return { healthy, failed, paused };
   }, [autoSyncRows]);
 
-  const neverExpiresCount =
-    neverExpires.length || buckets.neverExpires || 0;
+  const neverExpiresCount = neverExpires.length || buckets.neverExpires || 0;
 
   const healthSegments = useMemo(() => {
     const total = Math.max(totalAssets, 1);
@@ -924,196 +940,207 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                   unauthorizedDetail='Select a workspace where you have manager or admin access.'
                 >
                   <Box data-tour='control-center-metrics'>
-                  <SimpleGrid
-                    columns={{ base: 1, sm: 2, xl: 5 }}
-                    spacing={3}
-                    mb={3}
-                  >
-                    <MetricCard
-                      icon={Layers}
-                      label='Total assets'
-                      value={totalAssets}
-                      detail='Across all sections'
-                      accent='#3b82f6'
-                    />
-                    <MetricCard
-                      icon={Clock3}
-                      label='Expiring in 7 days'
-                      value={buckets.expiring7 || 0}
-                      detail={`${formatPercent(buckets.expiring7 || 0, totalAssets)} of total`}
-                      accent='#f59e0b'
-                    />
-                    <MetricCard
-                      icon={CalendarClock}
-                      label='Expiring in 8–30 days'
-                      value={buckets.expiring8To30 || 0}
-                      detail={`${formatPercent(buckets.expiring8To30 || 0, totalAssets)} of total`}
-                      accent='#f97316'
-                    />
-                    <MetricCard
-                      icon={ShieldAlert}
-                      label='Critical / expired'
-                      value={buckets.critical || 0}
-                      detail={`${formatPercent(buckets.critical || 0, totalAssets)} of total`}
-                      accent='#ef4444'
-                    />
-                    <MetricCard
-                      icon={PlugZap}
-                      label='Asset categories'
-                      value={sources.length}
-                      detail={
-                        sources.length > 0
-                          ? 'Categories reporting assets'
-                          : 'No categorized assets yet'
-                      }
-                      accent='#22c55e'
-                    />
-                  </SimpleGrid>
+                    <SimpleGrid
+                      columns={{ base: 1, sm: 2, xl: 5 }}
+                      spacing={3}
+                      mb={3}
+                    >
+                      <MetricCard
+                        icon={Layers}
+                        label='Total assets'
+                        value={totalAssets}
+                        detail='Across all sections'
+                        accent='#3b82f6'
+                      />
+                      <MetricCard
+                        icon={Clock3}
+                        label='Expiring in 7 days'
+                        value={buckets.expiring7 || 0}
+                        detail={`${formatPercent(buckets.expiring7 || 0, totalAssets)} of total`}
+                        accent='#f59e0b'
+                      />
+                      <MetricCard
+                        icon={CalendarClock}
+                        label='Expiring in 8–30 days'
+                        value={buckets.expiring8To30 || 0}
+                        detail={`${formatPercent(buckets.expiring8To30 || 0, totalAssets)} of total`}
+                        accent='#f97316'
+                      />
+                      <MetricCard
+                        icon={ShieldAlert}
+                        label='Critical / expired'
+                        value={buckets.critical || 0}
+                        detail={`${formatPercent(buckets.critical || 0, totalAssets)} of total`}
+                        accent='#ef4444'
+                      />
+                      <MetricCard
+                        icon={PlugZap}
+                        label='Asset categories'
+                        value={sources.length}
+                        detail={
+                          sources.length > 0
+                            ? 'Categories reporting assets'
+                            : 'No categorized assets yet'
+                        }
+                        accent='#22c55e'
+                      />
+                    </SimpleGrid>
 
-                  <SimpleGrid
-                    columns={{ base: 1, xl: 3 }}
-                    spacing={3}
-                    alignItems='stretch'
-                  >
-                    <ControlCenterPanel title='Needs attention'>
-                      {needsAttention.length === 0 ? (
-                        <Text color={muted} fontSize='sm'>
-                          All clear. No assets are due soon.
-                        </Text>
-                      ) : (
-                        <VStack align='stretch' spacing={3}>
-                          {needsAttention.map(item => {
-                            const meta = getAttentionMeta(
-                              item.bucket,
-                              item.daysLeft
-                            );
-                            const AttentionIcon = meta.Icon;
-                            return (
-                              <HStack key={item.id} spacing={3} align='start'>
+                    <SimpleGrid
+                      columns={{ base: 1, xl: 3 }}
+                      spacing={3}
+                      alignItems='stretch'
+                    >
+                      <ControlCenterPanel title='Needs attention'>
+                        {needsAttention.length === 0 ? (
+                          <Text color={muted} fontSize='sm'>
+                            All clear. No assets are due soon.
+                          </Text>
+                        ) : (
+                          <VStack align='stretch' spacing={3}>
+                            {needsAttention.map(item => {
+                              const meta = getAttentionMeta(
+                                item.bucket,
+                                item.daysLeft
+                              );
+                              const AttentionIcon = meta.Icon;
+                              return (
+                                <HStack key={item.id} spacing={3} align='start'>
+                                  <Circle
+                                    size='38px'
+                                    bg={meta.bg}
+                                    color={meta.color}
+                                    flex='0 0 auto'
+                                  >
+                                    <AttentionIcon size={18} />
+                                  </Circle>
+                                  <Box minW={0} flex='1'>
+                                    <Text
+                                      color={text}
+                                      fontSize='sm'
+                                      fontWeight='medium'
+                                      noOfLines={1}
+                                    >
+                                      {item.name}
+                                    </Text>
+                                    <Text
+                                      color={muted}
+                                      fontSize='xs'
+                                      noOfLines={1}
+                                    >
+                                      {[item.type, item.category]
+                                        .filter(Boolean)
+                                        .join(' · ') || 'Asset'}
+                                    </Text>
+                                  </Box>
+                                  <Text
+                                    color={meta.color}
+                                    fontSize='xs'
+                                    fontWeight='semibold'
+                                    textAlign='right'
+                                  >
+                                    {formatAttentionDays(item.daysLeft)}
+                                  </Text>
+                                </HStack>
+                              );
+                            })}
+                          </VStack>
+                        )}
+                      </ControlCenterPanel>
+
+                      <ControlCenterPanel title='Asset health overview'>
+                        <HStack
+                          spacing={5}
+                          align='center'
+                          direction={{ base: 'column', sm: 'row' }}
+                        >
+                          <Circle
+                            size='112px'
+                            bg={healthSegments.gradient}
+                            boxShadow='0 0 0 1px rgba(148, 163, 184, 0.12) inset'
+                            flex='0 0 auto'
+                          >
+                            <Circle size='64px' bg={healthChartInnerBg}>
+                              <Text color={text} fontWeight='bold'>
+                                {totalAssets}
+                              </Text>
+                            </Circle>
+                          </Circle>
+                          <VStack align='stretch' spacing={2} flex='1'>
+                            {[
+                              ['Healthy', buckets.healthy || 0, '#22c55e'],
+                              [
+                                'Due soon',
+                                buckets.expiring8To30 || 0,
+                                '#f97316',
+                              ],
+                              [
+                                'Critical',
+                                Math.max(
+                                  (buckets.critical || 0) -
+                                    (buckets.expired || 0),
+                                  0
+                                ),
+                                '#ef4444',
+                              ],
+                              ['Expired', buckets.expired || 0, '#64748b'],
+                            ].map(([label, count, color]) => (
+                              <Flex
+                                key={label}
+                                justify='space-between'
+                                gap={3}
+                                fontSize='sm'
+                              >
+                                <HStack spacing={2} minW={0}>
+                                  <Circle size='8px' bg={color} />
+                                  <Text color={muted}>{label}</Text>
+                                </HStack>
+                                <Text color={text} fontWeight='medium'>
+                                  {count} ({formatPercent(count, totalAssets)})
+                                </Text>
+                              </Flex>
+                            ))}
+                          </VStack>
+                        </HStack>
+                      </ControlCenterPanel>
+
+                      <ControlCenterPanel title='Asset sources'>
+                        {sources.length === 0 ? (
+                          <Text color={muted} fontSize='sm'>
+                            No asset sources yet.
+                          </Text>
+                        ) : (
+                          <VStack align='stretch' spacing={3}>
+                            {sources.slice(0, 5).map(source => (
+                              <HStack
+                                key={source.key || source.name}
+                                spacing={3}
+                              >
                                 <Circle
-                                  size='38px'
-                                  bg={meta.bg}
-                                  color={meta.color}
-                                  flex='0 0 auto'
+                                  size='30px'
+                                  bg='rgba(59, 130, 246, 0.14)'
+                                  color='#60a5fa'
                                 >
-                                  <AttentionIcon size={18} />
+                                  <PlugZap size={15} />
                                 </Circle>
-                                <Box minW={0} flex='1'>
+                                <Box flex='1' minW={0}>
                                   <Text
                                     color={text}
                                     fontSize='sm'
-                                    fontWeight='medium'
                                     noOfLines={1}
                                   >
-                                    {item.name}
+                                    {source.name}
                                   </Text>
-                                  <Text
-                                    color={muted}
-                                    fontSize='xs'
-                                    noOfLines={1}
-                                  >
-                                    {[item.type, item.category]
-                                      .filter(Boolean)
-                                      .join(' · ') || 'Asset'}
+                                  <Text color={muted} fontSize='xs'>
+                                    {source.count} asset(s)
                                   </Text>
                                 </Box>
-                                <Text
-                                  color={meta.color}
-                                  fontSize='xs'
-                                  fontWeight='semibold'
-                                  textAlign='right'
-                                >
-                                  {formatAttentionDays(item.daysLeft)}
-                                </Text>
                               </HStack>
-                            );
-                          })}
-                        </VStack>
-                      )}
-                    </ControlCenterPanel>
-
-                    <ControlCenterPanel title='Asset health overview'>
-                      <HStack
-                        spacing={5}
-                        align='center'
-                        direction={{ base: 'column', sm: 'row' }}
-                      >
-                        <Circle
-                          size='112px'
-                          bg={healthSegments.gradient}
-                          boxShadow='0 0 0 1px rgba(148, 163, 184, 0.12) inset'
-                          flex='0 0 auto'
-                        >
-                          <Circle size='64px' bg={healthChartInnerBg}>
-                            <Text color={text} fontWeight='bold'>
-                              {totalAssets}
-                            </Text>
-                          </Circle>
-                        </Circle>
-                        <VStack align='stretch' spacing={2} flex='1'>
-                          {[
-                            ['Healthy', buckets.healthy || 0, '#22c55e'],
-                            ['Due soon', buckets.expiring8To30 || 0, '#f97316'],
-                            [
-                              'Critical',
-                              Math.max(
-                                (buckets.critical || 0) -
-                                  (buckets.expired || 0),
-                                0
-                              ),
-                              '#ef4444',
-                            ],
-                            ['Expired', buckets.expired || 0, '#64748b'],
-                          ].map(([label, count, color]) => (
-                            <Flex
-                              key={label}
-                              justify='space-between'
-                              gap={3}
-                              fontSize='sm'
-                            >
-                              <HStack spacing={2} minW={0}>
-                                <Circle size='8px' bg={color} />
-                                <Text color={muted}>{label}</Text>
-                              </HStack>
-                              <Text color={text} fontWeight='medium'>
-                                {count} ({formatPercent(count, totalAssets)})
-                              </Text>
-                            </Flex>
-                          ))}
-                        </VStack>
-                      </HStack>
-                    </ControlCenterPanel>
-
-                    <ControlCenterPanel title='Asset sources'>
-                      {sources.length === 0 ? (
-                        <Text color={muted} fontSize='sm'>
-                          No asset sources yet.
-                        </Text>
-                      ) : (
-                        <VStack align='stretch' spacing={3}>
-                          {sources.slice(0, 5).map(source => (
-                            <HStack key={source.key || source.name} spacing={3}>
-                              <Circle
-                                size='30px'
-                                bg='rgba(59, 130, 246, 0.14)'
-                                color='#60a5fa'
-                              >
-                                <PlugZap size={15} />
-                              </Circle>
-                              <Box flex='1' minW={0}>
-                                <Text color={text} fontSize='sm' noOfLines={1}>
-                                  {source.name}
-                                </Text>
-                                <Text color={muted} fontSize='xs'>
-                                  {source.count} asset(s)
-                                </Text>
-                              </Box>
-                            </HStack>
-                          ))}
-                        </VStack>
-                      )}
-                    </ControlCenterPanel>
-                  </SimpleGrid>
+                            ))}
+                          </VStack>
+                        )}
+                      </ControlCenterPanel>
+                    </SimpleGrid>
                   </Box>
 
                   <SimpleGrid
@@ -1137,9 +1164,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             : 'Across this workspace'
                         }
                       />
-                      <InsightListShell
-                        emptyMessage='No perpetual assets in this workspace.'
-                      >
+                      <InsightListShell emptyMessage='No perpetual assets in this workspace.'>
                         {neverExpires.length > 0
                           ? neverExpires.map(item => {
                               const chip = getCategoryChipProps(item.category);
@@ -1184,7 +1209,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                           maxW='320px'
                         >
                           <Text as='span' cursor='help'>
-                            Credentials ranked by scope count and privilege keywords
+                            Credentials ranked by scope count and privilege
+                            keywords
                           </Text>
                         </Tooltip>
                       }
@@ -1207,8 +1233,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                         label='Scoped credentials'
                         value={privilegeHighlights.length}
                         detail={
-                          privilegeHighlights.filter(item => item.level === 'high')
-                            .length
+                          privilegeHighlights.filter(
+                            item => item.level === 'high'
+                          ).length
                             ? `${
                                 privilegeHighlights.filter(
                                   item => item.level === 'high'
@@ -1217,9 +1244,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             : 'Review API keys with the broadest scopes'
                         }
                       />
-                      <InsightListShell
-                        emptyMessage='No scopes or privileges recorded on assets yet.'
-                      >
+                      <InsightListShell emptyMessage='No scopes or privileges recorded on assets yet.'>
                         {sortedPrivilegeHighlights.length > 0
                           ? sortedPrivilegeHighlights.map(item => (
                               <InsightListRow
@@ -1241,7 +1266,11 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                   <Badge variant='outline' fontSize='xs'>
                                     {item.scopeCount || 0} scope(s)
                                   </Badge>
-                                  <Badge variant='subtle' colorScheme='purple' fontSize='xs'>
+                                  <Badge
+                                    variant='subtle'
+                                    colorScheme='purple'
+                                    fontSize='xs'
+                                  >
                                     Score {item.score || 0}
                                   </Badge>
                                 </HStack>
@@ -1266,9 +1295,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             : 'Connect imports to keep inventory fresh'
                         }
                       />
-                      <InsightListShell
-                        emptyMessage='No auto-sync jobs configured for this workspace.'
-                      >
+                      <InsightListShell emptyMessage='No auto-sync jobs configured for this workspace.'>
                         {autoSyncRows.length > 0
                           ? autoSyncRows.map(row => (
                               <InsightListRow
@@ -1293,7 +1320,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                     Next run {formatDate(row.nextSyncAt)}
                                   </Text>
                                 ) : null}
-                                {row.lastSyncError && row.health === 'failed' ? (
+                                {row.lastSyncError &&
+                                row.health === 'failed' ? (
                                   <Text
                                     color={blockedValueColor}
                                     fontSize='xs'

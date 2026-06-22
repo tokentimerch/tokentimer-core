@@ -311,8 +311,7 @@ const _getSectionColorScheme = getColorFromString;
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const PRODUCT_TOUR_MOBILE_BREAKPOINT_PX = 992;
-const INTRODUCTION_VIDEO_URL =
-  'https://tokentimer.ch/blog/video-introduction';
+const INTRODUCTION_VIDEO_URL = 'https://tokentimer.ch/blog/video-introduction';
 
 function isProductTourMobileViewport() {
   return (
@@ -856,12 +855,7 @@ function DuplicateTokenModal({
   } = useDashboardModalProps();
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      isCentered
-      scrollBehavior='inside'
-    >
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame
         maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}

@@ -360,7 +360,12 @@ function TokenDetailModal({
     </GridItem>
   );
 
-  const renderField = (label, value, isMultiline = false, tooltipLabel = null) => {
+  const renderField = (
+    label,
+    value,
+    isMultiline = false,
+    tooltipLabel = null
+  ) => {
     if (!value) return null;
 
     return renderFieldShell(

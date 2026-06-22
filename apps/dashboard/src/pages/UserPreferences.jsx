@@ -116,7 +116,11 @@ function DisplayActionRow({
           spacing={4}
           flexDirection={{ base: 'column', sm: 'row' }}
         >
-          <Box minW={0} pr={{ base: 0, sm: 2 }} w={{ base: 'full', sm: 'auto' }}>
+          <Box
+            minW={0}
+            pr={{ base: 0, sm: 2 }}
+            w={{ base: 'full', sm: 'auto' }}
+          >
             <Text
               color={text}
               fontSize='sm'

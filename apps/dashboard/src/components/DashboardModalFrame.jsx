@@ -95,11 +95,7 @@ export function DashboardModalFrame({
     DASHBOARD_MODAL_MAX_WIDTHS[type] ?? DASHBOARD_MODAL_MAX_WIDTHS.standard;
 
   return (
-    <ModalContent
-      maxW={maxW}
-      containerProps={containerProps}
-      {...rest}
-    >
+    <ModalContent maxW={maxW} containerProps={containerProps} {...rest}>
       {children}
     </ModalContent>
   );

@@ -1167,14 +1167,8 @@ export default function AlertPreferences({
   const [roleKnown, setRoleKnown] = useState(false);
   const [_workspaceRole, setWorkspaceRole] = useState('');
 
-  const {
-    border,
-    muted,
-    dashboard,
-    text,
-    surface,
-    bodySecondary,
-  } = useDashboardTheme();
+  const { border, muted, dashboard, text, surface, bodySecondary } =
+    useDashboardTheme();
   const webhookDeleteIconColor = dashboard.state.danger;
   const sortedContacts = useMemo(() => {
     const { key, direction } = contactSortConfig;
@@ -1613,9 +1607,7 @@ export default function AlertPreferences({
       return;
     }
 
-    const g = (contactGroups || []).find(
-      x => String(x.id) === String(groupId)
-    );
+    const g = (contactGroups || []).find(x => String(x.id) === String(groupId));
     if (!g || groupHasThresholdOverride(g.thresholds, thresholdsCsv)) return;
     if (groupThresholdsTouchedRef.current) return;
 
@@ -3313,7 +3305,9 @@ export default function AlertPreferences({
                           const val = e.target.value;
                           if (val === '__new__') {
                             resetGroupEditor();
-                            setGroupThresholdsCsv(thresholdsToCsv(thresholdsCsv));
+                            setGroupThresholdsCsv(
+                              thresholdsToCsv(thresholdsCsv)
+                            );
                             setGroupThresholdError('');
                             setSelectedGroupId('');
                             onGroupEditorOpen();
@@ -3486,7 +3480,12 @@ export default function AlertPreferences({
                 <GroupEditorSectionLabel>
                   Contacts and channels
                 </GroupEditorSectionLabel>
-                <Text fontSize='xs' color={bodySecondary} mb={2} lineHeight='1.5'>
+                <Text
+                  fontSize='xs'
+                  color={bodySecondary}
+                  mb={2}
+                  lineHeight='1.5'
+                >
                   Select per-contact which channels to use.
                   {whatsappAvailable
                     ? ' Each person can have both email and WhatsApp.'
@@ -3511,7 +3510,9 @@ export default function AlertPreferences({
                     <VStack align='stretch' spacing={2}>
                       {contacts.map(c => {
                         const email = (c.details && c.details.email) || '';
-                        const emailDisabled = !isValidEmail(String(email || ''));
+                        const emailDisabled = !isValidEmail(
+                          String(email || '')
+                        );
                         const atMemberCap =
                           !groupEmailContactIds.includes(c.id) &&
                           !groupWhatsappContactIds.includes(c.id) &&
@@ -3711,7 +3712,9 @@ export default function AlertPreferences({
                 </SettingsNestedSurface>
               </Box>
               <GroupEditorSectionDivider />
-              <GroupEditorSectionLabel>Threshold override</GroupEditorSectionLabel>
+              <GroupEditorSectionLabel>
+                Threshold override
+              </GroupEditorSectionLabel>
               <ThresholdDaysEditor
                 inheritHint={groupThresholdInheritHint}
                 value={groupThresholdsCsv}
@@ -3726,7 +3729,9 @@ export default function AlertPreferences({
               />
               <ThresholdCrossedInfoAlert />
               <GroupEditorSectionDivider />
-              <GroupEditorSectionLabel mb={2}>Weekly Digest</GroupEditorSectionLabel>
+              <GroupEditorSectionLabel mb={2}>
+                Weekly Digest
+              </GroupEditorSectionLabel>
               <Text fontSize='xs' color={bodySecondary} mb={2}>
                 Send a weekly summary of tokens expiring soon (within the
                 highest threshold).
@@ -4590,19 +4595,19 @@ export default function AlertPreferences({
                 isLoading={deletingGroup}
                 minW={{ base: '100%', sm: 'auto' }}
                 onClick={async () => {
-                if (!deleteTargetId) return;
-                try {
-                  setDeletingGroup(true);
-                  await deleteGroup(deleteTargetId);
-                } finally {
-                  setDeletingGroup(false);
-                  setDeleteDialogOpen(false);
-                  setDeleteTargetId('');
-                }
-              }}
-            >
-              Delete
-            </Button>
+                  if (!deleteTargetId) return;
+                  try {
+                    setDeletingGroup(true);
+                    await deleteGroup(deleteTargetId);
+                  } finally {
+                    setDeletingGroup(false);
+                    setDeleteDialogOpen(false);
+                    setDeleteTargetId('');
+                  }
+                }}
+              >
+                Delete
+              </Button>
             </Flex>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -199,7 +199,11 @@ function WelcomeModal({
                 Watch Video
               </Button>
             )}
-            <Button ref={primaryActionRef} onClick={onClose} {...primaryButtonProps}>
+            <Button
+              ref={primaryActionRef}
+              onClick={onClose}
+              {...primaryButtonProps}
+            >
               {emailSent ? 'Go to Dashboard' : 'Get Started'}
             </Button>
           </HStack>

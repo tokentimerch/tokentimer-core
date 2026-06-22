@@ -177,8 +177,7 @@ export default function DashboardShell({
   const pageBg = dashboardColors?.pageBg ?? 'transparent';
   const mutedTextColor = dashboardColors?.muted ?? 'rgba(148, 163, 184, 0.92)';
   const borderColor = dashboardColors?.border ?? 'rgba(148, 163, 184, 0.13)';
-  const borderStrongColor =
-    dashboardColors?.borderStrong ?? borderColor;
+  const borderStrongColor = dashboardColors?.borderStrong ?? borderColor;
 
   const {
     menuBg,
@@ -213,9 +212,7 @@ export default function DashboardShell({
     'blue.50',
     'rgba(37, 99, 235, 0.18)'
   );
-  const dividerColor = isDarkMode
-    ? 'rgba(148, 163, 184, 0.14)'
-    : borderColor;
+  const dividerColor = isDarkMode ? 'rgba(148, 163, 184, 0.14)' : borderColor;
   const workspaceButtonBg = isDarkMode
     ? 'rgba(8, 13, 22, 0.92)'
     : (dashboardColors?.inputBg ?? 'white');

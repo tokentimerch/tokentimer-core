@@ -30,36 +30,36 @@ export default function TestWhatsappButton({
     <Tooltip label={tooltip} hasArrow openDelay={300} placement='top'>
       <Box as='span' display='inline-block'>
         <Button
-        size='sm'
-        h='30px'
-        minH='30px'
-        px={4}
-        fontSize='sm'
-        lineHeight='1.2'
-        fontWeight='semibold'
-        leftIcon={<FaWhatsapp size={14} />}
-        bg={bg}
-        color={color}
-        borderRadius='md'
-        borderWidth='1px'
-        borderColor={borderColor}
-        isLoading={isLoading}
-        isDisabled={isDisabled || onCooldown}
-        onClick={onClick}
-        alignSelf='flex-start'
-        whiteSpace='nowrap'
-        _hover={{ bg: hoverBg }}
-        _active={{ bg: activeBg }}
-        _disabled={{
-          bg: disabledBg,
-          color: disabledColor,
-          cursor: 'not-allowed',
-          _hover: { bg: disabledBg },
-        }}
-        {...buttonProps}
-      >
-        {onCooldown ? `${cooldownSecs}s` : label}
-      </Button>
+          size='sm'
+          h='30px'
+          minH='30px'
+          px={4}
+          fontSize='sm'
+          lineHeight='1.2'
+          fontWeight='semibold'
+          leftIcon={<FaWhatsapp size={14} />}
+          bg={bg}
+          color={color}
+          borderRadius='md'
+          borderWidth='1px'
+          borderColor={borderColor}
+          isLoading={isLoading}
+          isDisabled={isDisabled || onCooldown}
+          onClick={onClick}
+          alignSelf='flex-start'
+          whiteSpace='nowrap'
+          _hover={{ bg: hoverBg }}
+          _active={{ bg: activeBg }}
+          _disabled={{
+            bg: disabledBg,
+            color: disabledColor,
+            cursor: 'not-allowed',
+            _hover: { bg: disabledBg },
+          }}
+          {...buttonProps}
+        >
+          {onCooldown ? `${cooldownSecs}s` : label}
+        </Button>
       </Box>
     </Tooltip>
   );

@@ -91,7 +91,10 @@ export default function ThresholdDaysEditor({
   const showFieldError = Boolean(activeError);
 
   return (
-    <FormControl isInvalid={isInvalid || showFieldError} isDisabled={isDisabled}>
+    <FormControl
+      isInvalid={isInvalid || showFieldError}
+      isDisabled={isDisabled}
+    >
       <Box
         border='1px solid'
         borderColor={showFieldError ? 'red.400' : border}

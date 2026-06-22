@@ -680,7 +680,8 @@ export default function ProductTour({
       },
       {
         target: ADD_WEBHOOK_TRIGGER_TARGET,
-        content: 'Click "Add webhook" to open the editor and create a new target.',
+        content:
+          'Click "Add webhook" to open the editor and create a new target.',
         placement: 'top',
         mobilePlacement: 'top',
         disableScrolling: true,
@@ -921,10 +922,7 @@ export default function ProductTour({
           : step.placement || 'bottom';
       let resolvedTarget = selector;
 
-      if (
-        typeof selector === 'string' &&
-        !isModalBackedTourTarget(selector)
-      ) {
+      if (typeof selector === 'string' && !isModalBackedTourTarget(selector)) {
         const visible = findVisibleTourTarget(selector);
         if (visible) resolvedTarget = visible;
       }
@@ -1480,10 +1478,7 @@ export default function ProductTour({
         await wait(80);
 
         const menuButton = findUserMenuButtonInDom();
-        if (
-          menuButton &&
-          menuButton.getAttribute('aria-expanded') !== 'true'
-        ) {
+        if (menuButton && menuButton.getAttribute('aria-expanded') !== 'true') {
           menuButton.click();
         }
 
@@ -1609,10 +1604,13 @@ export default function ProductTour({
 
       if (!isWorkspaceAlertsPath()) {
         navigate(WORKSPACE_ALERTS_PATH);
-        const pageFound = await waitForElement('[data-tour="preferences-page"]', {
-          timeout: 8000,
-          interval: 150,
-        });
+        const pageFound = await waitForElement(
+          '[data-tour="preferences-page"]',
+          {
+            timeout: 8000,
+            interval: 150,
+          }
+        );
         await wait(pageFound ? 250 : 500);
       }
 
@@ -1620,10 +1618,13 @@ export default function ProductTour({
         window.dispatchEvent(new CustomEvent('tt:tour-close-add-webhook'));
         window.dispatchEvent(new CustomEvent('tt:tour-close-group-editor'));
         window.dispatchEvent(new CustomEvent('tt:tour-open-add-contact'));
-        const found = await waitForElement(`${ADD_CONTACT_MODAL_TARGET} input`, {
-          timeout: 6000,
-          interval: 120,
-        });
+        const found = await waitForElement(
+          `${ADD_CONTACT_MODAL_TARGET} input`,
+          {
+            timeout: 6000,
+            interval: 120,
+          }
+        );
         if (found) {
           await waitForStableTourTargetRect(selector);
           await scrollModalBackedTourTargetIntoView(selector);
@@ -1636,10 +1637,13 @@ export default function ProductTour({
         window.dispatchEvent(new CustomEvent('tt:tour-close-add-contact'));
         window.dispatchEvent(new CustomEvent('tt:tour-close-group-editor'));
         window.dispatchEvent(new CustomEvent('tt:tour-open-add-webhook'));
-        const found = await waitForElement(`${ADD_WEBHOOK_MODAL_TARGET} input`, {
-          timeout: 6000,
-          interval: 120,
-        });
+        const found = await waitForElement(
+          `${ADD_WEBHOOK_MODAL_TARGET} input`,
+          {
+            timeout: 6000,
+            interval: 120,
+          }
+        );
         if (found) {
           await waitForStableTourTargetRect(selector);
           await scrollModalBackedTourTargetIntoView(selector);
@@ -2049,7 +2053,10 @@ export default function ProductTour({
                 step,
                 '[data-tour="preferences-contacts-list"]'
               ) ||
-              tourStepMatches(step, '[data-tour="preferences-webhooks-list"]') ||
+              tourStepMatches(
+                step,
+                '[data-tour="preferences-webhooks-list"]'
+              ) ||
               tourStepMatches(step, ADD_WEBHOOK_TRIGGER_TARGET)
             ) {
               window.dispatchEvent(
@@ -2608,10 +2615,7 @@ export default function ProductTour({
             step,
             '[data-tour="workspace-alert-settings-nav"]'
           ) ||
-            tourStepMatches(
-              step,
-              '[data-tour="mobile-alert-settings-nav"]'
-            )) &&
+            tourStepMatches(step, '[data-tour="mobile-alert-settings-nav"]')) &&
           tourStepMatches(nextStep, '[data-tour="user-preferences-page"]')
         ) {
           setIsRunning(false);
@@ -2631,10 +2635,7 @@ export default function ProductTour({
               });
               await wait(300);
             } catch (err) {
-              logger.warn(
-                'Product tour: back to user preferences failed',
-                err
-              );
+              logger.warn('Product tour: back to user preferences failed', err);
               await wait(400);
             } finally {
               setStepIndex(nextIndex);
@@ -2700,11 +2701,7 @@ export default function ProductTour({
           const leavingTourId = stepTourId(step);
           const userMenuIndex = resolveUserMenuStepIndex();
           const resumeIndex =
-            nextIndex >= 0
-              ? nextIndex
-              : userMenuIndex >= 0
-                ? userMenuIndex
-                : 0;
+            nextIndex >= 0 ? nextIndex : userMenuIndex >= 0 ? userMenuIndex : 0;
           const needsHardDashboardReload =
             leavingTourId === 'user-preferences-page' ||
             leavingTourId === 'preferences-page';

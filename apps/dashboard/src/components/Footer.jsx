@@ -152,12 +152,7 @@ const Footer = () => {
           w='100%'
           minW={0}
         >
-          <Text
-            color={muted}
-            fontSize='xs'
-            lineHeight='1.4'
-            textAlign='center'
-          >
+          <Text color={muted} fontSize='xs' lineHeight='1.4' textAlign='center'>
             © {currentYear} TokenTimer - Privacy by Design
           </Text>
 
