@@ -20,7 +20,7 @@ import {
   Tooltip,
   Switch,
 } from '@chakra-ui/react';
-import { FiEye, FiEyeOff, FiCheck, FiX, FiMail } from 'react-icons/fi';
+import { FiEye, FiEyeOff, FiMail } from 'react-icons/fi';
 import { FaWhatsapp } from 'react-icons/fa';
 import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
 import apiClient from '../utils/apiClient';
@@ -29,7 +29,6 @@ import DashboardPageLayout from '../components/DashboardPageLayout';
 import {
   DashboardActionButton,
   DashboardPanel,
-  DashboardPanelHeader,
   DashboardState,
 } from '../components/DashboardPrimitives';
 import { SettingsIntegrationCard } from '../components/SettingsIntegrationHub.jsx';

@@ -5,7 +5,9 @@ export const DEFAULT_ALERT_THRESHOLDS = [30, 14, 7, 1, 0];
 function parseThresholdValues(input) {
   if (Array.isArray(input)) {
     return input
-      .map(value => (typeof value === 'number' ? value : String(value ?? '').trim()))
+      .map(value =>
+        typeof value === 'number' ? value : String(value ?? '').trim()
+      )
       .filter(value => value !== '' && value !== null && value !== undefined);
   }
 
@@ -58,13 +60,19 @@ export function groupEffectiveThresholds(groupThresholds, workspaceThresholds) {
   return group;
 }
 
-export function groupHasThresholdOverride(groupThresholds, workspaceThresholds) {
+export function groupHasThresholdOverride(
+  groupThresholds,
+  workspaceThresholds
+) {
   const group = normalizeThresholds(groupThresholds);
   if (group.length === 0) return false;
   return !thresholdsEqual(group, workspaceThresholds);
 }
 
-export function groupThresholdsCsvForEditor(groupThresholds, workspaceThresholds) {
+export function groupThresholdsCsvForEditor(
+  groupThresholds,
+  workspaceThresholds
+) {
   return thresholdsToCsv(
     groupEffectiveThresholds(groupThresholds, workspaceThresholds)
   );

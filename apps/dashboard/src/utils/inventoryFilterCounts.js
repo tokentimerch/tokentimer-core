@@ -1,7 +1,4 @@
-import {
-  classifyExpiryBucket,
-  computeDaysLeftUtc,
-} from './expiryBuckets';
+import { classifyExpiryBucket, computeDaysLeftUtc } from './expiryBuckets';
 
 export function normInventoryValue(value) {
   return String(value || '')
@@ -106,10 +103,7 @@ export function tokenMatchesInventoryFilters(
   exclude = null,
   getStatusKey
 ) {
-  if (
-    exclude !== 'search' &&
-    !tokenMatchesInventorySearch(token, ctx.search)
-  ) {
+  if (exclude !== 'search' && !tokenMatchesInventorySearch(token, ctx.search)) {
     return false;
   }
   if (
@@ -206,10 +200,7 @@ export function buildCategoryFilterOptions({
   getStatusKey,
 }) {
   const deriveFromTokens = isAnyInventoryFilterActive(ctx);
-  const facetSources = [
-    globalFacets?.category,
-    tokenFacets?.category,
-  ];
+  const facetSources = [globalFacets?.category, tokenFacets?.category];
 
   return tokenCategories
     .map(category => ({
@@ -435,7 +426,9 @@ export function buildSectionFilterOptions({
       }
     );
   });
-  activeOptions.forEach(option => included.add(normInventoryValue(option.name)));
+  activeOptions.forEach(option =>
+    included.add(normInventoryValue(option.name))
+  );
 
   const nonZeroOptions = mergedSections
     .filter(
@@ -447,7 +440,9 @@ export function buildSectionFilterOptions({
         right.count - left.count || left.name.localeCompare(right.name)
     )
     .map(toSectionOption);
-  nonZeroOptions.forEach(option => included.add(normInventoryValue(option.name)));
+  nonZeroOptions.forEach(option =>
+    included.add(normInventoryValue(option.name))
+  );
 
   const zeroSections = deriveFromTokens
     ? []

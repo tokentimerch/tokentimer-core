@@ -34,7 +34,7 @@ const CRON_FIELDS = [
 export const DEFAULT_WORKER_CRONS = {
   discovery: "*/5 * * * *",
   delivery: "1/5 * * * *",
-  "auto-sync": "0 * * * *",
+  "auto-sync": "*/1 * * * *",
   "endpoint-check": "*/1 * * * *",
   "weekly-digest": "0 9 * * 1",
 };

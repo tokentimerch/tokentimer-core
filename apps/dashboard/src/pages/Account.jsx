@@ -45,7 +45,7 @@ import {
 import { SettingsFormWidth } from '../components/SettingsPageShell.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import apiClient, { workspaceAPI } from '../utils/apiClient';
-import { showSuccess, showError } from '../utils/toast.js';
+import { showSuccess } from '../utils/toast.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { Link as RouterLink } from 'react-router-dom';
 import { trackEvent } from '../utils/analytics.js';

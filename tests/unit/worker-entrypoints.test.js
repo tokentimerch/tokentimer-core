@@ -73,7 +73,7 @@ describe("worker entrypoints", () => {
       WORKER_DISCOVERY_CRON: "*/5 * * * *",
       WORKER_DELIVERY_CRON: "1/5 * * * *",
       WORKER_WEEKLY_DIGEST_CRON: "0 9 * * 1",
-      WORKER_AUTO_SYNC_CRON: "0 * * * *",
+      WORKER_AUTO_SYNC_CRON: "*/1 * * * *",
       WORKER_ENDPOINT_CHECK_CRON: "*/1 * * * *",
     };
 

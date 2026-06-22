@@ -14,8 +14,6 @@ import {
   formatThresholdChipLabel,
   formatThresholdLabel,
   getThresholdDraftError,
-  MAX_ALERT_THRESHOLD_DAYS,
-  MIN_ALERT_THRESHOLD_DAYS,
   normalizeThresholds,
   parseThresholdDraft,
 } from '../utils/alertThresholds.js';

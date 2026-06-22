@@ -29,8 +29,14 @@ export const dashboardThemeColors = {
   border: {
     subtle: { light: '#b8c5d2', dark: 'rgba(100, 116, 139, 0.32)' },
     strong: { light: '#9caab8', dark: 'rgba(148, 163, 184, 0.42)' },
-    control: { light: 'rgba(148, 163, 184, 0.34)', dark: 'rgba(148, 163, 184, 0.18)' },
-    divider: { light: 'rgba(148, 163, 184, 0.13)', dark: 'rgba(148, 163, 184, 0.13)' },
+    control: {
+      light: 'rgba(148, 163, 184, 0.34)',
+      dark: 'rgba(148, 163, 184, 0.18)',
+    },
+    divider: {
+      light: 'rgba(148, 163, 184, 0.13)',
+      dark: 'rgba(148, 163, 184, 0.13)',
+    },
   },
   text: {
     primary: { light: '#0f172a', dark: '#ffffff' },
@@ -62,16 +68,25 @@ export const dashboardThemeColors = {
     surface: { light: '#ffffff', dark: '#0d131a' },
     headerBg: { light: '#f8fafc', dark: '#0d131a' },
     footerBg: { light: '#f8fafc', dark: '#0d131a' },
-    border: { light: 'rgba(148, 163, 184, 0.34)', dark: 'rgba(148, 163, 184, 0.18)' },
+    border: {
+      light: 'rgba(148, 163, 184, 0.34)',
+      dark: 'rgba(148, 163, 184, 0.18)',
+    },
     text: { light: '#0f172a', dark: '#f8fafc' },
     muted: { light: '#64748b', dark: '#94a3b8' },
     subtleText: { light: '#475569', dark: '#cbd5e1' },
     fieldBg: { light: '#f8fafc', dark: '#0d131a' },
     inputBg: { light: '#ffffff', dark: '#090d15' },
-    inputBorder: { light: 'rgba(100, 116, 139, 0.5)', dark: 'rgba(148, 163, 184, 0.28)' },
+    inputBorder: {
+      light: 'rgba(100, 116, 139, 0.5)',
+      dark: 'rgba(148, 163, 184, 0.28)',
+    },
     focusBorder: { light: '#2563eb', dark: '#3b82f6' },
     sectionAccent: { light: '#2563eb', dark: '#60a5fa' },
-    buttonBorder: { light: 'rgba(100, 116, 139, 0.48)', dark: 'rgba(148, 163, 184, 0.34)' },
+    buttonBorder: {
+      light: 'rgba(100, 116, 139, 0.48)',
+      dark: 'rgba(148, 163, 184, 0.34)',
+    },
     optionBg: { light: '#ffffff', dark: '#0f172a' },
     optionText: { light: '#0f172a', dark: '#f8fafc' },
     shadow: {
@@ -91,7 +106,10 @@ export const dashboardThemeColors = {
     dangerButtonHover: { light: '#b91c1c', dark: '#dc2626' },
   },
   table: {
-    rowHover: { light: 'rgba(0, 0, 0, 0.04)', dark: 'rgba(255, 255, 255, 0.1)' },
+    rowHover: {
+      light: 'rgba(0, 0, 0, 0.04)',
+      dark: 'rgba(255, 255, 255, 0.1)',
+    },
   },
 };
 

@@ -65,8 +65,12 @@ export function useDashboardThemeColors() {
       dangerSurface: useDashboardToken(
         dashboardThemeColors.callout.dangerSurface
       ),
-      dangerBorder: useDashboardToken(dashboardThemeColors.callout.dangerBorder),
-      dangerButton: useDashboardToken(dashboardThemeColors.callout.dangerButton),
+      dangerBorder: useDashboardToken(
+        dashboardThemeColors.callout.dangerBorder
+      ),
+      dangerButton: useDashboardToken(
+        dashboardThemeColors.callout.dangerButton
+      ),
       dangerButtonHover: useDashboardToken(
         dashboardThemeColors.callout.dangerButtonHover
       ),
