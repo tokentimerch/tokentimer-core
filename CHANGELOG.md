@@ -9,6 +9,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-22
+
+### Added
+
+- **Control Center** — new `/control-center` route (replaces `/usage`) with expiry health buckets, needs-attention list, asset-source panels, perpetual-asset and privilege-highlight insight panels, and auto-sync health rows with deep links into token detail and Import manage.
+- **`GET /api/v1/workspaces/:id/control-center/stats`** — workspace admin / manager RBAC; returns aggregated stats via `controlCenterStats.js` and shared `expiryBuckets` / `controlCenterStatsHelpers`.
+- **Dashboard shell** — shared collapsible sidebar/topbar (`DashboardShell`), page layout primitives (`DashboardPageLayout`, `SettingsPageShell`), and inventory URL state sync (`useInventoryUrlState`).
+- **Category-aware asset inventory** — `AssetFilters` + `AssetInventoryTable` with per-category columns, contact-group column, editable key/secret privileges, and multi-section OR filter semantics (API uses PostgreSQL `&&` overlap).
+- **ThresholdDaysEditor** — chip-based alert threshold editing for workspace defaults and contact-group overrides; shared `alertThresholds.js` parse/validate helpers.
+- **User preferences route** — `/preferences` for theme and display options.
+- **Integration tests** — `control-center-stats`, `control-center-stats-rbac`, extended `audit-filtering`; suites registered in `core.txt` and `cloud-compatible.txt`.
+- **Docs assets** — updated dashboard GIFs and new Control Center, workspace preferences, and system settings screenshots.
+
+### Changed
+
+- **Dashboard IA** — slimmed `/dashboard` to filters + inventory table; audit page full-width redesign; Help page removed; product tour and navigation updated for new routes.
+- **Modal and toast UX** — centralized modal styling in `theme.js` via `useDashboardModalProps`; toasts moved bottom-right; Import modal light-theme parity and full-card source clicks.
+- **Auto-sync worker schedule** — default cron aligned to `*/1 * * * *` across Compose, Helm, and worker runner (was hourly).
+- **Dashboard XLSX dependency** — `xlsx` aliased to patched `@e965/xlsx@0.20.3` for import/export flows.
+- **Docker images** — dashboard nginx Alpine pin updated to `1.28.3-r4` (CVE-2026-9256 / CVE-2026-49975; Alpine 3.23 patched revision).
+- **Version metadata bumped to 0.8.0** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Settings UX** — sticky auth footers, disabled-button tooltips, workspace delete confirmation, duplicate webhook test toast removed, 2FA success toast with session refresh, contact groups mobile formatting.
+- **Control Center deep links** — token modal via `?token-id=` supports string IDs; auto-sync rows open Import manage tab via `?import=&autoSyncManage=1`.
+- **Inventory reload** — 100 ms debounced token reload on filter changes; prior rows kept visible until new data arrives.
+
+### Security
+
+- **SheetJS / xlsx** — dashboard import/export uses `@e965/xlsx@0.20.3` via pnpm alias (addresses GHSA-4r6h-8v6p-xvw6 and GHSA-5pgg-2g8v-p4x9 in legacy `xlsx@0.18.5`).
+
 ## [0.7.2] - 2026-06-15
 
 ### Added

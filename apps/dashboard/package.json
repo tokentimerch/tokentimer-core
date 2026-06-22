@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/dashboard",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "private": true,
   "license": "BUSL-1.1",
   "packageManager": "pnpm@10.33.4",
