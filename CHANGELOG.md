@@ -28,7 +28,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Modal and toast UX** — centralized modal styling in `theme.js` via `useDashboardModalProps`; toasts moved bottom-right; Import modal light-theme parity and full-card source clicks.
 - **Auto-sync worker schedule** — default cron aligned to `*/1 * * * *` across Compose, Helm, and worker runner (was hourly).
 - **Dashboard XLSX dependency** — `xlsx` aliased to patched `@e965/xlsx@0.20.3` for import/export flows.
-- **Docker images** — dashboard nginx Alpine pin updated to `1.28.3-r1` (Alpine 3.23 repo revision; fixes CI image build after `r3` removal).
+- **Docker images** — dashboard nginx Alpine pin updated to `1.28.3-r4` (CVE-2026-9256 / CVE-2026-49975; Alpine 3.23 patched revision).
 - **Version metadata bumped to 0.8.0** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
 
 ### Fixed
