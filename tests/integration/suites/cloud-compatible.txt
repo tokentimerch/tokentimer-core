@@ -12,6 +12,7 @@ tests/integration/contact-groups-settings.test.js
 tests/integration/workspaces-lifecycle.integration.test.js
 tests/integration/workspace-invitations-list.integration.test.js
 tests/integration/workspace-invitations-cancel.integration.test.js
+tests/integration/control-center-stats-rbac.integration.test.js
 
 # Alerts and queue behavior
 tests/integration/alert-stats-whatsapp-channel.test.js

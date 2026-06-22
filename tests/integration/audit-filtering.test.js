@@ -48,6 +48,14 @@ describe("Audit Filtering and Search", function () {
        ($1, 'TEST_ACTION_A', '{"key": "value_c"}', $2, NOW() - INTERVAL '2 minutes')`,
       [user.id, workspaceId],
     );
+    await TestUtils.execQuery(
+      `INSERT INTO audit_events (subject_user_id, action, metadata, workspace_id, occurred_at)
+       VALUES
+       ($1, 'TEST_DATE_FILTER', '{"marker": "previous-day"}', $2, '2026-06-03 23:22:23'),
+       ($1, 'TEST_DATE_FILTER', '{"marker": "target-day"}', $2, '2026-06-04 12:00:00'),
+       ($1, 'TEST_DATE_FILTER', '{"marker": "next-day"}', $2, '2026-06-05 00:00:00')`,
+      [user.id, workspaceId],
+    );
   });
 
   after(async () => {
@@ -92,6 +100,34 @@ describe("Audit Filtering and Search", function () {
     expect(res.body[0].metadata.key).to.equal("value_c");
   });
 
+  it("GET /api/audit-events treats date-only filters as calendar-day bounds", async () => {
+    const res = await request(BASE)
+      .get(
+        "/api/audit-events?action=TEST_DATE_FILTER&since=2026-06-04&until=2026-06-04",
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+
+    expect(res.body).to.be.an("array");
+    expect(res.body.map((event) => event.metadata.marker)).to.deep.equal([
+      "target-day",
+    ]);
+  });
+
+  it("GET /api/audit-events treats datetime-local filters as exact local timestamps", async () => {
+    const res = await request(BASE)
+      .get(
+        "/api/audit-events?action=TEST_DATE_FILTER&since=2026-06-04T12:00&until=2026-06-04T12:00",
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+
+    expect(res.body).to.be.an("array");
+    expect(res.body.map((event) => event.metadata.marker)).to.deep.equal([
+      "target-day",
+    ]);
+  });
+
   it("GET /api/account/export-audit respects action and query filters", async () => {
     const res = await request(BASE)
       .get(
@@ -104,5 +140,20 @@ describe("Audit Filtering and Search", function () {
     expect(res.body.events).to.be.an("array");
     expect(res.body.events.length).to.equal(1);
     expect(res.body.events[0].action).to.equal("TEST_ACTION_A");
+  });
+
+  it("GET /api/account/export-audit applies the same date-only bounds", async () => {
+    const res = await request(BASE)
+      .get(
+        "/api/account/export-audit?format=json&action=TEST_DATE_FILTER&since=2026-06-04&until=2026-06-04",
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+
+    expect(res.body).to.have.property("events");
+    expect(res.body.events).to.be.an("array");
+    expect(res.body.events.map((event) => event.metadata.marker)).to.deep.equal([
+      "target-day",
+    ]);
   });
 });

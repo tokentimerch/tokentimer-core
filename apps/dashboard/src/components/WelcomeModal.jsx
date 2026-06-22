@@ -1,7 +1,7 @@
+import { useRef } from 'react';
 import {
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalBody,
   ModalFooter,
@@ -11,9 +11,14 @@ import {
   Link,
   Box,
   Icon,
-  useColorModeValue,
   HStack,
 } from '@chakra-ui/react';
+import {
+  DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
 import { FaRocket, FaCheckCircle } from 'react-icons/fa';
 import { FiPlay } from 'react-icons/fi';
 
@@ -24,148 +29,186 @@ function WelcomeModal({
   displayName,
   emailSent = true,
   onStartTour,
+  introductionVideoUrl,
 }) {
-  const bgColor = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.600');
-  const headerColor = useColorModeValue('blue.600', 'blue.400');
-  const textColor = useColorModeValue('gray.700', 'gray.300');
-  const subTextColor = useColorModeValue('gray.700', 'gray.400');
-  const nextTextColor = useColorModeValue('gray.500', 'gray.500');
+  const primaryActionRef = useRef(null);
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    fieldProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
+  const showTourAction = Boolean(onStartTour);
+  const showIntroVideoAction = Boolean(introductionVideoUrl) && !showTourAction;
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       isCentered
+      scrollBehavior='inside'
       size='md'
-      closeOnOverlayClick={false}
-      closeOnEsc={false}
+      closeOnOverlayClick
+      closeOnEsc
+      initialFocusRef={primaryActionRef}
     >
-      <ModalOverlay bg='blackAlpha.300' backdropFilter='blur(10px)' />
-      <ModalContent bg={bgColor} border='1px solid' borderColor={borderColor}>
-        <ModalHeader textAlign='center' color={headerColor}>
-          <VStack spacing={3}>
-            <Icon as={FaRocket} w={8} h={8} color='blue.500' />
-            <Text>Welcome on board! 🎉</Text>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame maxW='560px'>
+        <ModalHeader
+          {...headerProps}
+          pr={headerProps.px}
+          textAlign='center'
+          display='flex'
+          justifyContent='center'
+        >
+          <VStack spacing={3} align='center' w='full' maxW='420px' mx='auto'>
+            <Icon as={FaRocket} w={8} h={8} color={modalTokens.focusBorder} />
+            <DashboardModalTitle color={modalTokens.text} textAlign='center'>
+              Welcome on board!
+            </DashboardModalTitle>
+            <DashboardModalDescription
+              color={modalTokens.muted}
+              textAlign='center'
+              maxW='420px'
+            >
+              Your TokenTimer account is ready.
+            </DashboardModalDescription>
           </VStack>
         </ModalHeader>
 
-        <ModalBody>
+        <ModalBody {...bodyProps}>
           <VStack spacing={4} textAlign='center'>
             <Box>
               <Text
-                fontSize='lg'
+                fontSize={{ base: 'md', md: 'lg' }}
                 fontWeight='semibold'
-                color={textColor}
+                color={modalTokens.text}
                 mb={2}
               >
-                Hi {data?.userName || displayName || 'there'}! 👋
+                Hi {data?.userName || displayName || 'there'}!
               </Text>
-              <Text color={subTextColor} fontSize='md'>
+              <Text color={modalTokens.subtleText} fontSize='sm'>
                 Your TokenTimer account has been created successfully.
               </Text>
             </Box>
 
-            {emailSent ? (
-              <Box bg='green.50' p={4} borderRadius='md' w='full'>
-                <VStack spacing={3}>
-                  <Icon as={FaCheckCircle} w={6} h={6} color='green.500' />
-                  <Text fontSize='sm' color='green.700' fontWeight='medium'>
-                    Account Ready!
-                  </Text>
-                  <Text fontSize='sm' color='green.600'>
-                    Your account has been created and is ready to use.
-                  </Text>
-                  <Text fontSize='xs' color='green.500'>
-                    You can start managing your tokens right away.
-                  </Text>
-                </VStack>
-              </Box>
-            ) : (
-              <Box bg='green.50' p={4} borderRadius='md' w='full'>
-                <VStack spacing={3}>
-                  <Icon as={FaCheckCircle} w={6} h={6} color='green.500' />
-                  <Text fontSize='sm' color='green.700' fontWeight='medium'>
-                    Email Verified!
-                  </Text>
-                  <Text fontSize='sm' color='green.600'>
-                    Your email has been verified and your account is now active.
-                  </Text>
-                  <Text fontSize='xs' color='green.500'>
-                    You can start managing your tokens right away.
-                  </Text>
-                </VStack>
-              </Box>
-            )}
+            <Box {...fieldProps} p={4} w='full'>
+              <VStack spacing={3}>
+                <Icon
+                  as={FaCheckCircle}
+                  w={6}
+                  h={6}
+                  color={modalTokens.focusBorder}
+                />
+                <Text
+                  fontSize='sm'
+                  color={modalTokens.text}
+                  fontWeight='semibold'
+                >
+                  {emailSent ? 'Account Ready!' : 'Email Verified!'}
+                </Text>
+                <Text fontSize='sm' color={modalTokens.subtleText}>
+                  {emailSent
+                    ? 'Your account has been created and is ready to use.'
+                    : 'Your email has been verified and your account is now active.'}
+                </Text>
+                <Text fontSize='xs' color={modalTokens.muted}>
+                  You can start managing your tokens right away.
+                </Text>
+              </VStack>
+            </Box>
 
-            <Box bg='gray.50' p={4} borderRadius='md' w='full'>
-              <Text fontSize='sm' color={subTextColor}>
+            <Box {...fieldProps} p={4} w='full'>
+              <Text fontSize='sm' color={modalTokens.text}>
                 <strong>What{"'"}s next?</strong>
               </Text>
               <VStack spacing={2} mt={2} align='start'>
-                {onStartTour && (
-                  <Text fontSize='xs' color={nextTextColor}>
+                {showTourAction && (
+                  <Text fontSize='xs' color={modalTokens.muted}>
                     <Link
                       as='button'
                       onClick={onStartTour}
-                      color='blue.500'
+                      color={modalTokens.focusBorder}
                       textDecoration='underline'
                       _hover={{ textDecoration: 'underline' }}
                     >
-                      ✓ Try our product tour to discover the possibilities
+                      Try our product tour to discover the possibilities
                     </Link>
                   </Text>
                 )}
-                <Text fontSize='xs' color={nextTextColor}>
+                {showIntroVideoAction && (
+                  <Text fontSize='xs' color={modalTokens.muted}>
+                    <Link
+                      href={introductionVideoUrl}
+                      isExternal
+                      onClick={onClose}
+                      color={modalTokens.focusBorder}
+                      textDecoration='underline'
+                      _hover={{ textDecoration: 'underline' }}
+                    >
+                      Watch the introduction video
+                    </Link>
+                  </Text>
+                )}
+                <Text fontSize='xs' color={modalTokens.muted}>
                   <Link
                     href='https://tokentimer.ch/docs#self-hosted'
                     isExternal
-                    color='blue.500'
+                    color={modalTokens.focusBorder}
                     textDecoration='underline'
                   >
-                    ✓ Check the documentation to see how it works ↗
+                    Check the documentation to see how it works
                   </Link>
                 </Text>
-                <Text fontSize='xs' color={nextTextColor}>
-                  ✓ Add your first token or secret
+                <Text fontSize='xs' color={modalTokens.muted}>
+                  Add your first token or secret
                 </Text>
-                <Text fontSize='xs' color={nextTextColor}>
-                  ✓ Setup your contact groups and thresholds
+                <Text fontSize='xs' color={modalTokens.muted}>
+                  Set up your contact groups and thresholds
                 </Text>
               </VStack>
             </Box>
           </VStack>
         </ModalBody>
 
-        <ModalFooter justifyContent='center'>
-          <HStack spacing={3}>
-            {onStartTour && (
+        <ModalFooter {...footerProps} justifyContent='center'>
+          <HStack spacing={3} flexWrap='wrap' justify='center' w='full'>
+            {showTourAction && (
               <Button
                 leftIcon={<Icon as={FiPlay} />}
-                variant='outline'
-                colorScheme='blue'
                 onClick={onStartTour}
-                size='lg'
-                px={6}
-                _hover={{ transform: 'translateY(-1px)', boxShadow: 'lg' }}
-                transition='all 0.2s'
+                {...outlineButtonProps}
               >
                 Take Tour
               </Button>
             )}
+            {showIntroVideoAction && (
+              <Button
+                as='a'
+                href={introductionVideoUrl}
+                target='_blank'
+                rel='noopener noreferrer'
+                leftIcon={<Icon as={FiPlay} />}
+                onClick={onClose}
+                {...outlineButtonProps}
+              >
+                Watch Video
+              </Button>
+            )}
             <Button
-              colorScheme='blue'
+              ref={primaryActionRef}
               onClick={onClose}
-              size='lg'
-              px={8}
-              _hover={{ transform: 'translateY(-1px)', boxShadow: 'lg' }}
-              transition='all 0.2s'
+              {...primaryButtonProps}
             >
               {emailSent ? 'Go to Dashboard' : 'Get Started'}
             </Button>
           </HStack>
         </ModalFooter>
-      </ModalContent>
+      </DashboardModalFrame>
     </Modal>
   );
 }

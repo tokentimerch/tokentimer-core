@@ -1,5 +1,5 @@
-﻿import { logger } from './utils/logger.js';
-import { getExpiryStatus, getColorFromString } from './styles/colors.js';
+import { logger } from './utils/logger.js';
+import { getColorFromString, getExpiryStatus } from './styles/colors.js';
 
 import {
   useEffect,
@@ -11,13 +11,13 @@ import {
   lazy,
   useMemo,
   memo,
+  startTransition,
 } from 'react';
 import { flushSync } from 'react-dom';
 import {
   ChakraProvider,
   ColorModeScript,
   Box,
-  Heading,
   SimpleGrid,
   FormControl,
   FormLabel,
@@ -28,22 +28,11 @@ import {
   Button,
   Flex,
   Text,
-  Link,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  Badge,
   VStack,
-  useColorMode,
   useColorModeValue,
-  Tooltip,
   IconButton,
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalFooter,
   ModalBody,
@@ -53,12 +42,10 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
-  Collapse,
   Menu,
   MenuButton,
   MenuList,
   MenuItem,
-  Checkbox,
   Portal,
 } from '@chakra-ui/react';
 import {
@@ -72,31 +59,57 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
+import { FiTrash2, FiPlus, FiX, FiChevronRight } from 'react-icons/fi';
 import {
-  FiDownload,
-  FiTrash2,
-  FiPlus,
-  FiX,
-  FiChevronRight,
-  FiGlobe,
-  FiExternalLink,
-  FiActivity,
-} from 'react-icons/fi';
+  Activity as ActivityIcon,
+  BadgeCheck,
+  Database,
+  Download,
+  KeyRound,
+  LockKeyhole,
+} from 'lucide-react';
 
 import { theme } from './styles/theme';
-import Navigation from './components/Navigation';
 import SEO from './components/SEO.jsx';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
 import WelcomeModal from './components/WelcomeModal';
 import ProductTour from './components/ProductTour';
 import { AccessibleSpinner } from './components/Accessibility';
-import TruncatedText from './components/TruncatedText';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
-import { SortableTh } from './components/DashboardHelpers.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
-import { domainValueToUrl } from './utils/domains.jsx';
+import {
+  DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
+  useDashboardModalProps,
+} from './components/DashboardModalFrame.jsx';
+import DashboardShell from './components/DashboardShell.jsx';
+import AssetFilters from './components/AssetFilters.jsx';
+import AssetInventoryTable, {
+  resolveContactGroupLabel,
+} from './components/AssetInventoryTable.jsx';
+import {
+  DashboardThemeProvider,
+  useDashboardTheme,
+} from './hooks/useDashboardTheme.js';
+import { useDashboardMenuStyles } from './hooks/useDashboardMenuStyles.js';
+import { useLoadedAssetMetrics } from './hooks/useLoadedAssetMetrics.js';
+import {
+  categoriesEqual,
+  useInventoryUrlState,
+} from './hooks/useInventoryUrlState.js';
+import {
+  buildCategoryFilterOptions,
+  buildInventoryFilterContext,
+  buildSectionFilterOptions,
+  computeInventoryStatusMetrics,
+  filterTokensForInventoryCounts,
+  isAnyInventoryFilterActive,
+  pruneSelectedCategories,
+  shouldClearSectionSelection,
+} from './utils/inventoryFilterCounts.js';
 
 import apiClient, {
   authAPI,
@@ -106,12 +119,7 @@ import apiClient, {
   showSuccessMessage,
 } from './utils/apiClient';
 
-import {
-  formatExpirationDate,
-  isNeverExpires,
-  NEVER_EXPIRES_DATE_VALUE,
-} from './utils/dateUtils';
-import { useDashboardColors } from './hooks/useColors.js';
+import { isNeverExpires, NEVER_EXPIRES_DATE_VALUE } from './utils/dateUtils';
 import {
   TOUR_MOCK_TOKENS,
   TOUR_MOCK_CONTACT_GROUPS,
@@ -125,12 +133,12 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Account = lazy(() => import('./pages/Account'));
 const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
-const Help = lazy(() => import('./pages/Help'));
-const Usage = lazy(() => import('./pages/Usage'));
+const UserPreferences = lazy(() => import('./pages/UserPreferences'));
+const ControlCenter = lazy(() => import('./pages/ControlCenter'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
-import { WorkspaceProvider } from './utils/WorkspaceContext.jsx';
+import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
 
 // VerifyEmailWrapper component to handle session-based redirects
 function VerifyEmailWrapper({ session }) {
@@ -289,62 +297,181 @@ const TOKEN_CATEGORIES = [
   },
 ];
 
+function buildAccountPathFromDashboardSearch(search) {
+  const params = new URLSearchParams(search);
+  const workspace = params.get('workspace');
+  return workspace
+    ? `/account?workspace=${encodeURIComponent(workspace)}`
+    : '/account';
+}
+
 // Deterministic color mapping for section chips
 // Now uses centralized color system from styles/colors.js
 const _getSectionColorScheme = getColorFromString;
 
-/**
- * Return HEX color according to expiry date and status.
- * Matches logic and colors per STYLEGUIDE.md.
- * Now uses centralized color system from styles/colors.js
- */
-// Moved to styles/colors.js for reusability across components
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+const PRODUCT_TOUR_MOBILE_BREAKPOINT_PX = 992;
+const INTRODUCTION_VIDEO_URL = 'https://tokentimer.ch/blog/video-introduction';
 
-/**
- * Expiry color-status pill. Always uses both color and label, never color alone.
- */
-const ExpiryPill = memo(function ExpiryPill({ expiry }) {
-  const status = getExpiryStatus(expiry);
-  const shadowColor = useColorModeValue(
-    'rgba(0, 0, 0, 0.1)',
-    'rgba(0, 0, 0, 0.3)'
+function isProductTourMobileViewport() {
+  return (
+    typeof window !== 'undefined' &&
+    window.innerWidth < PRODUCT_TOUR_MOBILE_BREAKPOINT_PX
   );
+}
+
+function useProductTourMobileViewport() {
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    isProductTourMobileViewport
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia(
+      `(max-width: ${PRODUCT_TOUR_MOBILE_BREAKPOINT_PX - 1}px)`
+    );
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches);
+
+    syncViewport();
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', syncViewport);
+      return () => mediaQuery.removeEventListener('change', syncViewport);
+    }
+
+    mediaQuery.addListener(syncViewport);
+    return () => mediaQuery.removeListener(syncViewport);
+  }, []);
+
+  return isMobileViewport;
+}
+
+function getDaysUntilExpiration(expiry) {
+  if (!expiry || isNeverExpires(expiry)) return Number.POSITIVE_INFINITY;
+  const expirationDate = new Date(expiry);
+  if (Number.isNaN(expirationDate.getTime())) return Number.POSITIVE_INFINITY;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  expirationDate.setHours(0, 0, 0, 0);
+  return Math.ceil((expirationDate.getTime() - today.getTime()) / MS_PER_DAY);
+}
+
+function getDashboardStatusMeta(expiry) {
+  const days = getDaysUntilExpiration(expiry);
+  const { label } = getExpiryStatus(expiry);
+
+  if (days === Number.POSITIVE_INFINITY) {
+    return {
+      key: 'never-expires',
+      label,
+      color: '#06b6d4',
+      bg: 'rgba(6, 182, 212, 0.14)',
+    };
+  }
+  if (days < 0) {
+    return {
+      key: 'expired',
+      label,
+      color: '#f43f5e',
+      bg: 'rgba(244, 63, 94, 0.14)',
+    };
+  }
+  if (days <= 7) {
+    return {
+      key: 'critical',
+      label,
+      color: '#ef4444',
+      bg: 'rgba(239, 68, 68, 0.14)',
+    };
+  }
+  if (days <= 30) {
+    return {
+      key: 'due-soon',
+      label,
+      color: '#f97316',
+      bg: 'rgba(249, 115, 22, 0.14)',
+    };
+  }
+  return {
+    key: 'healthy',
+    label,
+    color: '#22c55e',
+    bg: 'rgba(34, 197, 94, 0.12)',
+  };
+}
+
+function getTokenLocation(token) {
+  if (Array.isArray(token?.domains) && token.domains.length > 0) {
+    return token.domains[0];
+  }
+  return (
+    token?.location ||
+    token?.vendor ||
+    token?.used_by ||
+    token?.issuer ||
+    token?.section ||
+    '-'
+  );
+}
+
+function getTokenOwner(token) {
+  return token?.used_by || token?.contacts || token?.vendor || '-';
+}
+
+const ASSET_PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
+
+function DashboardPanel({
+  title,
+  action,
+  children,
+  surface,
+  border,
+  ...props
+}) {
+  const titleColor = useColorModeValue('gray.900', 'white');
 
   return (
     <Box
-      as='span'
-      bg={status.color}
-      color={status.textColor}
+      bg={surface}
+      border='1px solid'
+      borderColor={border}
       borderRadius='md'
-      px={{ base: 2, md: 4 }}
-      py={1}
-      fontWeight={600}
-      fontFamily="'Roboto Mono', Menlo, monospace"
-      fontSize={{ base: 'xs', md: 'sm' }}
-      boxShadow={`0 1px 2px ${shadowColor}`}
-      aria-label={`Expiry status: ${status.label}`}
-      whiteSpace='nowrap'
+      boxShadow='0 16px 48px rgba(0, 0, 0, 0.2)'
+      overflow='hidden'
+      {...props}
     >
-      {status.label}
+      {(title || action) && (
+        <Flex
+          align='center'
+          justify='space-between'
+          px={{ base: 4, md: 5 }}
+          py={3}
+          borderBottom='1px solid'
+          borderColor='rgba(148, 163, 184, 0.13)'
+        >
+          <Text color={titleColor} fontWeight='semibold' fontSize='sm'>
+            {title}
+          </Text>
+          {action}
+        </Flex>
+      )}
+      <Box p={{ base: 4, md: 5 }}>{children}</Box>
     </Box>
   );
-});
+}
 
 // Helper component for displaying text with tooltip
 // Using shared TruncatedText component from ./components/TruncatedText
 
 // TokenDetailModal has been extracted to ./components/TokenDetailModal.jsx
 
-/**
- * Light mode background overlay component
- * Renders only in light mode, returns null in dark mode
- */
-function LightModeOverlay() {
-  const { colorMode } = useColorMode();
-
-  if (colorMode !== 'light') {
-    return null;
-  }
+/** Full-page tint so the branding background stays visible (75% in both themes). */
+function ThemeBackgroundOverlay() {
+  const overlayBg = useColorModeValue(
+    'rgba(255, 255, 255, 0.75)',
+    'rgba(9, 13, 21, 0.75)'
+  );
 
   return (
     <Box
@@ -353,10 +480,484 @@ function LightModeOverlay() {
       left={0}
       right={0}
       bottom={0}
-      bg='rgba(255, 255, 255, 0.75)'
+      bg={overlayBg}
       pointerEvents='none'
       zIndex={0}
     />
+  );
+}
+
+function DashboardModalSectionTitle({ children, tokens, withDivider = false }) {
+  return (
+    <Box
+      gridColumn={{ base: '1', sm: '1 / -1' }}
+      borderTop={withDivider ? '1px solid' : '0'}
+      borderColor={tokens.border}
+      pt={withDivider ? { base: 4, md: 5 } : 0}
+      mt={withDivider ? { base: 1, md: 2 } : 0}
+    >
+      <HStack spacing={3}>
+        <Box
+          w='3px'
+          h='18px'
+          borderRadius='full'
+          bg={tokens.sectionAccent}
+          flexShrink={0}
+        />
+        <Text
+          fontSize={{ base: 'md', md: 'lg' }}
+          fontWeight='bold'
+          fontFamily='Archivo, system-ui, sans-serif'
+          color={tokens.text}
+        >
+          {children}
+        </Text>
+      </HStack>
+    </Box>
+  );
+}
+
+function DashboardModalFieldCard({ label, children, tokens, gridColumn }) {
+  return (
+    <Box
+      bg={tokens.fieldBg}
+      border='1px solid'
+      borderColor={tokens.border}
+      borderRadius='12px'
+      p={{ base: 3.5, md: 4 }}
+      minH='88px'
+      gridColumn={gridColumn}
+    >
+      <Text fontSize='sm' fontWeight='semibold' color={tokens.muted} mb={2}>
+        {label}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+function DashboardModalValue({ children, tokens }) {
+  return (
+    <Text
+      fontSize={{ base: 'sm', md: 'md' }}
+      fontWeight='semibold'
+      color={tokens.text}
+      lineHeight='1.45'
+      wordBreak='break-word'
+    >
+      {children || '-'}
+    </Text>
+  );
+}
+
+function getTokenDisplayMeta(token) {
+  const category = TOKEN_CATEGORIES.find(cat => cat.value === token?.category);
+  const type = category?.types?.find(t => t.value === token?.type);
+
+  return {
+    categoryLabel: category?.label || token?.category || 'Asset',
+    typeLabel: type?.label || token?.type || 'Unknown type',
+  };
+}
+
+function TokenDeletionModal({ isOpen, onClose, tokenToDelete, onConfirm }) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    dangerButtonProps,
+    tokens,
+  } = useDashboardModalProps();
+  const { dashboard } = useDashboardTheme();
+  const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToDelete);
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame
+        maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+      >
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Delete Token</DashboardModalTitle>
+          <DashboardModalDescription>
+            Review this asset before permanently deleting it.
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <VStack spacing={4} align='stretch'>
+            <Alert
+              status='warning'
+              bg={dashboard.callout.warningSurface}
+              border='1px solid'
+              borderColor={dashboard.callout.warningBorder}
+              color={dashboard.callout.warningText}
+              borderRadius='12px'
+            >
+              <AlertIcon />
+              <AlertDescription>
+                This action cannot be undone. The token will be permanently
+                deleted.
+              </AlertDescription>
+            </Alert>
+
+            {tokenToDelete?.monitor_url && (
+              <Alert
+                status='error'
+                bg={dashboard.callout.dangerSurface}
+                border='1px solid'
+                borderColor={dashboard.callout.dangerBorder}
+                color={dashboard.state.danger}
+                borderRadius='12px'
+              >
+                <AlertIcon />
+                <AlertDescription>
+                  This token has a linked endpoint monitor (
+                  {tokenToDelete.monitor_url}). Deleting this token will also
+                  remove the monitor and stop health checks.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {tokenToDelete && (
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                <DashboardModalSectionTitle tokens={tokens}>
+                  Basic Information
+                </DashboardModalSectionTitle>
+                <DashboardModalFieldCard label='Name' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToDelete.name}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Type' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {typeLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Category' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {categoryLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard
+                  label='Expiration Date'
+                  tokens={tokens}
+                >
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToDelete.expiresAt
+                      ? formatDate(tokenToDelete.expiresAt)
+                      : '-'}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+              </SimpleGrid>
+            )}
+          </VStack>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              onClick={onClose}
+              minW={{ base: '100%', sm: '104px' }}
+              {...outlineButtonProps}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onConfirm}
+              minW={{ base: '100%', sm: '128px' }}
+              {...dangerButtonProps}
+            >
+              Delete Token
+            </Button>
+          </Flex>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+function TokenRenewModal({
+  isOpen,
+  onClose,
+  tokenToRenew,
+  renewDate,
+  renewErrors,
+  isRenewSubmitting,
+  onRenewDateChange,
+  onConfirm,
+}) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    tokens,
+  } = useDashboardModalProps();
+  const { categoryLabel, typeLabel } = getTokenDisplayMeta(tokenToRenew);
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame
+        maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+      >
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Renew Token</DashboardModalTitle>
+          <DashboardModalDescription>
+            Choose the next expiration date for this asset.
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+            {tokenToRenew && (
+              <>
+                <DashboardModalSectionTitle tokens={tokens}>
+                  Basic Information
+                </DashboardModalSectionTitle>
+                <DashboardModalFieldCard label='Name' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToRenew.name}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Type' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {typeLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard label='Category' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {categoryLabel}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                <DashboardModalFieldCard
+                  label='Current Expiration Date'
+                  tokens={tokens}
+                >
+                  <DashboardModalValue tokens={tokens}>
+                    {tokenToRenew.expiresAt
+                      ? formatDate(tokenToRenew.expiresAt)
+                      : '-'}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+              </>
+            )}
+
+            <DashboardModalSectionTitle tokens={tokens} withDivider>
+              Renewal
+            </DashboardModalSectionTitle>
+            <FormControl
+              isInvalid={!!renewErrors.renewDate}
+              bg={tokens.fieldBg}
+              border='1px solid'
+              borderColor={tokens.border}
+              borderRadius='12px'
+              p={{ base: 3.5, md: 4 }}
+              minH='88px'
+              gridColumn={{ base: '1', sm: '1 / -1' }}
+            >
+              <FormLabel
+                htmlFor='renewDate'
+                color={tokens.muted}
+                fontWeight='semibold'
+                fontSize='sm'
+              >
+                New Expiration Date
+              </FormLabel>
+              <Input
+                id='renewDate'
+                type='date'
+                value={renewDate}
+                onChange={e => onRenewDateChange(e.target.value)}
+                bg={tokens.inputBg}
+                borderColor={
+                  renewErrors.renewDate ? tokens.danger : tokens.inputBorder
+                }
+                borderRadius='10px'
+                color={tokens.text}
+                minH='40px'
+                _hover={{ borderColor: tokens.focusBorder }}
+                _focusVisible={{
+                  borderColor: tokens.focusBorder,
+                  boxShadow: `0 0 0 1px ${tokens.focusBorder}`,
+                }}
+              />
+              {renewErrors.renewDate && (
+                <FormErrorMessage color={tokens.danger}>
+                  {renewErrors.renewDate}
+                </FormErrorMessage>
+              )}
+              <Text fontSize='sm' color={tokens.muted} lineHeight='1.5' mt={3}>
+                Default set based on token category/type. You can pick any
+                future date.
+              </Text>
+            </FormControl>
+          </SimpleGrid>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              onClick={onClose}
+              minW={{ base: '100%', sm: '104px' }}
+              {...outlineButtonProps}
+            >
+              Cancel
+            </Button>
+            <Button
+              {...primaryButtonProps}
+              colorScheme='green'
+              onClick={onConfirm}
+              isLoading={isRenewSubmitting}
+              minW={{ base: '100%', sm: '128px' }}
+            >
+              Confirm
+            </Button>
+          </Flex>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+function DuplicateTokenModal({
+  isOpen,
+  onClose,
+  duplicateTokenInfo,
+  onConfirm,
+  isSubmitting,
+}) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+  } = useDashboardModalProps();
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame
+        maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}
+        maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 64px)' }}
+      >
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Token Already Exists</DashboardModalTitle>
+          <DashboardModalDescription>
+            A token with the same name and location already exists in this
+            workspace.
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <VStack spacing={4} align='stretch'>
+            <Alert status='info' borderRadius='md'>
+              <AlertIcon />
+              <AlertDescription>
+                {duplicateTokenInfo?.message ||
+                  'A token with the same name and location already exists in this workspace.'}
+              </AlertDescription>
+            </Alert>
+            {duplicateTokenInfo?.existing_token && (
+              <Box
+                p={4}
+                bg='gray.100'
+                _dark={{
+                  bg: 'orange.900',
+                  borderColor: 'orange.500',
+                  color: 'orange.100',
+                }}
+                borderRadius='md'
+                border='1px solid'
+                borderColor='gray.200'
+                color='gray.700'
+              >
+                <Text
+                  fontWeight='bold'
+                  mb={2}
+                  color='gray.800'
+                  _dark={{ color: 'orange.200' }}
+                >
+                  Existing token:
+                </Text>
+                <Text>
+                  <Text as='span' fontWeight='semibold'>
+                    Name:
+                  </Text>{' '}
+                  {duplicateTokenInfo.existing_token.name}
+                </Text>
+                {duplicateTokenInfo.existing_token.location && (
+                  <Box>
+                    <Text as='span' fontWeight='semibold'>
+                      Locations:
+                    </Text>
+                    <Text whiteSpace='pre-wrap' wordBreak='break-all'>
+                      {duplicateTokenInfo.existing_token.location}
+                    </Text>
+                  </Box>
+                )}
+                {duplicateTokenInfo.existing_token.expiration && (
+                  <Text>
+                    <Text as='span' fontWeight='semibold'>
+                      Expires:
+                    </Text>{' '}
+                    {formatDate(duplicateTokenInfo.existing_token.expiration)}
+                  </Text>
+                )}
+              </Box>
+            )}
+            <Text fontSize='sm' color='gray.600' _dark={{ color: 'gray.200' }}>
+              Creating this token will update the existing one with the new
+              information you provided.
+            </Text>
+          </VStack>
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            gap={3}
+            justify={{ base: 'stretch', sm: 'flex-end' }}
+            direction={{ base: 'column-reverse', sm: 'row' }}
+          >
+            <Button
+              onClick={onClose}
+              minW={{ base: '100%', sm: '104px' }}
+              {...outlineButtonProps}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onConfirm}
+              isLoading={isSubmitting}
+              minW={{ base: '100%', sm: '128px' }}
+              {...primaryButtonProps}
+            >
+              Update Existing Token
+            </Button>
+          </Flex>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
   );
 }
 
@@ -425,13 +1026,19 @@ function App() {
   const [showProductTour, setShowProductTour] = useState(false);
   const [tourType, setTourType] = useState('dashboard');
   const [forceRunTour, setForceRunTour] = useState(false);
+  const [dashboardRouteKey, setDashboardRouteKey] = useState(0);
+  const isProductTourMobile = useProductTourMobileViewport();
+
+  useEffect(() => {
+    if (!isProductTourMobile || !showProductTour) return;
+    setShowProductTour(false);
+    setForceRunTour(false);
+  }, [isProductTourMobile, showProductTour]);
 
   // Token detail modal state
   const [selectedToken, setSelectedToken] = useState(null);
+  const pendingTokenUrlFrameRef = useRef(null);
 
-  // Token filtering and sorting state
-  // Deprecated global filters (replaced by per-panel search)
-  const [filters, setFilters] = useState({});
   // Per-category sort configurations (default to expiration ascending)
   const [sortConfigs, setSortConfigs] = useState(() =>
     TOKEN_CATEGORIES.reduce((acc, category) => {
@@ -547,6 +1154,7 @@ function App() {
     contacts: '',
     description: '',
     notes: '',
+    privileges: '',
   });
 
   // Location entries array for dynamic location fields
@@ -603,7 +1211,6 @@ function App() {
   // Form validation state
   const [formErrors, setFormErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [alertDefaultEmail] = useState(null);
 
   // Duplicate token confirmation state
   const [duplicateTokenInfo, setDuplicateTokenInfo] = useState(null);
@@ -866,10 +1473,9 @@ function App() {
           String(opts.workspaceId).trim() !== ''
             ? String(opts.workspaceId).trim()
             : urlParams.get('workspace') || null;
-        // Use opts.section if provided (immediate update), otherwise fallback to URL
-        const selectedSection =
-          (opts && opts.section) || urlParams.get('section') || '__all__';
-
+        // Global facets must list every section regardless of the active
+        // section filter, so the section chips stay visible and multi-select
+        // works. We intentionally do not pass `section` here.
         const params = {
           limit: 1,
           offset: 0,
@@ -877,9 +1483,6 @@ function App() {
           ...(debouncedQuery ? { q: debouncedQuery } : {}),
           ...(Array.isArray(selectedCategories) && selectedCategories.length > 0
             ? { category: selectedCategories }
-            : {}),
-          ...(selectedSection && selectedSection !== '__all__'
-            ? { section: selectedSection }
             : {}),
           t: Date.now(),
         };
@@ -993,7 +1596,6 @@ function App() {
         '/register',
         '/reset-password',
         '/verify-email',
-        '/help',
       ].some(p => path === p || (p !== '/' && path.startsWith(p)));
       if (isPublic) setLoading(false);
     } catch (_) {}
@@ -1092,7 +1694,15 @@ function App() {
   const reloadTimeoutRef = useRef(null);
 
   useEffect(() => {
+    const handler = () => setDashboardRouteKey(key => key + 1);
+    window.addEventListener('tt:tour-dashboard-remount', handler);
+    return () =>
+      window.removeEventListener('tt:tour-dashboard-remount', handler);
+  }, []);
+
+  useEffect(() => {
     if (!session) return;
+    if (showProductTour) return;
     // Only run dashboard reloads on the dashboard route
     try {
       if ((window.location.pathname || '') !== '/dashboard') return;
@@ -1166,6 +1776,7 @@ function App() {
     location.search,
     location.pathname,
     tokensReloadTick,
+    showProductTour,
   ]);
 
   // Listen for token updates from other views (e.g., transfers) and trigger a throttled reload while on dashboard
@@ -1225,7 +1836,7 @@ function App() {
   };
 
   const handleHelpAccountClick = () => {
-    navigate('/dashboard?view=account');
+    navigate('/account');
   };
 
   const handleHelpNavigateToDashboard = () => {
@@ -1355,6 +1966,13 @@ function App() {
       ) {
         errors.algorithm =
           'Algorithm is only valid for encryption keys, SSH keys, and certificates';
+      }
+
+      if (
+        selectedCategory.value === 'key_secret' &&
+        formData.privileges.trim().length > 5000
+      ) {
+        errors.privileges = 'Privileges must be 5000 characters or less';
       }
     }
 
@@ -1493,6 +2111,7 @@ function App() {
         contacts: formData.contacts.trim() || null,
         description: formData.description.trim() || null,
         notes: formData.notes.trim() || null,
+        privileges: formData.privileges.trim() || null,
       });
 
       // Add to local state
@@ -1538,6 +2157,7 @@ function App() {
         contacts: '',
         description: '',
         notes: '',
+        privileges: '',
       });
       setLocationEntries(['']);
 
@@ -1649,6 +2269,7 @@ function App() {
           contacts: formData.contacts.trim() || null,
           description: formData.description.trim() || null,
           notes: formData.notes.trim() || null,
+          privileges: formData.privileges.trim() || null,
           confirm_duplicate: true,
         },
         true
@@ -1693,6 +2314,7 @@ function App() {
         contacts: '',
         description: '',
         notes: '',
+        privileges: '',
       });
       setLocationEntries(['']);
       setFormErrors({});
@@ -1776,14 +2398,9 @@ function App() {
     }
 
     if (tokenIdParam && !hasOpenedFromUrl.current) {
-      const tokenId = parseInt(tokenIdParam, 10);
-      if (isNaN(tokenId)) {
-        logger.error(
-          '[Deep Link] ❌ Invalid token ID:',
-          tokenIdParam,
-          '- must be a numeric ID (e.g., 1, 123)'
-        );
-        hasOpenedFromUrl.current = true; // Prevent retrying
+      const tokenId = String(tokenIdParam).trim();
+      if (!tokenId) {
+        hasOpenedFromUrl.current = true;
         return;
       }
 
@@ -1796,7 +2413,7 @@ function App() {
       );
 
       // Try to find token in existing state
-      const existingToken = tokens.find(t => t.id === tokenId);
+      const existingToken = tokens.find(t => String(t.id) === tokenId);
       if (existingToken) {
         logger.info(
           '[Deep Link] ✅ Found token, opening modal:',
@@ -1959,31 +2576,6 @@ function App() {
   };
 
   /**
-   * Handle filter changes
-   */
-  const handleFilterChange = (field, value) => {
-    setFilters(prev => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  /**
-   * Handle sort changes
-   */
-  const handleSort = (key, categoryValue) => {
-    setSortConfigs(prev => {
-      const current = prev[categoryValue] || { key: null, direction: 'asc' };
-      const next = {
-        key,
-        direction:
-          current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
-      };
-      return { ...prev, [categoryValue]: next };
-    });
-  };
-
-  /**
    * Filter and sort tokens
    * Memoized with useCallback to prevent unnecessary re-renders
    */
@@ -2019,8 +2611,8 @@ function App() {
               ? t.section.map(s => norm(s))
               : [norm(t.section)];
 
-            // Match if ALL of the selected sections are present in the token (AND logic)
-            return wantedList.every(w => tokenSections.includes(w));
+            // Match if ANY of the selected sections is present (OR logic)
+            return wantedList.some(w => tokenSections.includes(w));
           });
         }
       }
@@ -2096,22 +2688,6 @@ function App() {
   );
 
   /**
-   * Clear all filters
-   */
-  const clearFilters = () => {
-    setFilters({
-      name: '',
-      type: '',
-      vendor: '',
-      issuer: '',
-      location: '',
-      used_by: '',
-      description: '',
-    });
-    // Do not alter per-category sort when clearing filters
-  };
-
-  /**
    * Handle account deletion
    */
   const handleAccountDeleted = () => {
@@ -2122,155 +2698,267 @@ function App() {
   /**
    * Handle opening token detail modal
    */
+  const cancelPendingTokenUrlUpdate = useCallback(() => {
+    if (
+      pendingTokenUrlFrameRef.current != null &&
+      typeof window !== 'undefined'
+    ) {
+      window.cancelAnimationFrame(pendingTokenUrlFrameRef.current);
+      pendingTokenUrlFrameRef.current = null;
+    }
+  }, []);
+
+  const updateTokenIdInUrl = useCallback(
+    tokenId => {
+      const search = new URLSearchParams(window.location.search);
+      if (tokenId == null) {
+        search.delete('token-id');
+      } else {
+        search.set('token-id', tokenId);
+      }
+      const query = search.toString();
+      startTransition(() => {
+        navigate(`${window.location.pathname}${query ? `?${query}` : ''}`, {
+          replace: true,
+        });
+      });
+    },
+    [navigate]
+  );
+
+  const scheduleTokenIdUrlUpdate = useCallback(
+    tokenId => {
+      if (typeof window === 'undefined') return;
+      cancelPendingTokenUrlUpdate();
+      pendingTokenUrlFrameRef.current = window.requestAnimationFrame(() => {
+        pendingTokenUrlFrameRef.current = window.requestAnimationFrame(() => {
+          pendingTokenUrlFrameRef.current = null;
+          updateTokenIdInUrl(tokenId);
+        });
+      });
+    },
+    [cancelPendingTokenUrlUpdate, updateTokenIdInUrl]
+  );
+
+  useEffect(() => cancelPendingTokenUrlUpdate, [cancelPendingTokenUrlUpdate]);
+
   const handleOpenTokenModal = token => {
     setSelectedToken(token);
-    // Add token ID to URL for shareable links
-    const search = new URLSearchParams(window.location.search);
-    search.set('token-id', token.id);
-    navigate(`?${search.toString()}`, { replace: true });
+    hasOpenedFromUrl.current = true;
+    hasTriggeredLoad.current = false;
+    // Defer the shareable URL update so the modal can paint before route work.
+    scheduleTokenIdUrlUpdate(token.id);
   };
 
   /**
    * Handle closing token detail modal
    */
   const handleCloseTokenModal = () => {
+    cancelPendingTokenUrlUpdate();
     setSelectedToken(null);
-    // Remove token ID from URL
-    const search = new URLSearchParams(window.location.search);
-    search.delete('token-id');
-    navigate(`?${search.toString()}`, { replace: true });
+    updateTokenIdInUrl(null);
   };
-
-  // Move useColorModeValue calls outside of conditional rendering
-  const deleteBoxBg = useColorModeValue('gray.100', 'gray.700');
-  const deleteTextColor = useColorModeValue('gray.700', 'gray.200');
-  const deleteLabelColor = useColorModeValue('gray.800', 'gray.100');
-  const renewBoxBg = useColorModeValue('gray.100', 'gray.700');
-  const renewTextColor = useColorModeValue('gray.700', 'gray.200');
-  const renewLabelColor = useColorModeValue('gray.800', 'gray.100');
-  const _renewHelperTextColor = useColorModeValue('gray.600', 'gray.100');
 
   return (
     <ChakraProvider theme={theme}>
       <ColorModeScript initialColorMode={theme.config.initialColorMode} />
-      <HelmetProvider>
-        <ErrorBoundary>
-          {/* Global background overlay - light mode only */}
-          <LightModeOverlay />
+      <DashboardThemeProvider>
+        <HelmetProvider>
+          <ErrorBoundary>
+            <ThemeBackgroundOverlay />
 
-          <Box
-            minH='100vh'
-            display='flex'
-            flexDirection='column'
-            position='relative'
-            zIndex={1}
-            w='100%'
-            maxW='100%'
-            overflowX='hidden'
-          >
-            <Box flex='1'>
-              {loading &&
-              ![
-                '/login',
-                '/register',
-                '/reset-password',
-                '/verify-email',
-              ].includes(location.pathname) ? (
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    height: '100%',
-                  }}
-                >
-                  <AccessibleSpinner
-                    size='lg'
-                    aria-label='Loading application'
-                  />
-                </div>
-              ) : (
-                <WorkspaceProvider>
-                  <Suspense
-                    fallback={
-                      <Flex align='center' justify='center' minH='60vh'>
-                        <AccessibleSpinner label='Loading content…' />
-                      </Flex>
-                    }
+            <Box
+              minH='100vh'
+              display='flex'
+              flexDirection='column'
+              position='relative'
+              zIndex={1}
+              w='100%'
+              maxW='100%'
+              overflowX='hidden'
+            >
+              <Box flex='1'>
+                {loading &&
+                ![
+                  '/login',
+                  '/register',
+                  '/reset-password',
+                  '/verify-email',
+                ].includes(location.pathname) ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      height: '100%',
+                    }}
                   >
-                    <Routes>
-                      <Route
-                        path='/'
-                        element={<Navigate to='/login' replace />}
-                      />
-                      <Route
-                        path='/login'
-                        element={
-                          session ? (
-                            session.needsVerification ? (
-                              <Navigate
-                                to={`/verify-email?email=${encodeURIComponent(
-                                  session.email || ''
-                                )}`}
-                                replace
-                              />
+                    <AccessibleSpinner
+                      size='lg'
+                      aria-label='Loading application'
+                    />
+                  </div>
+                ) : (
+                  <WorkspaceProvider>
+                    <Suspense
+                      fallback={
+                        <Flex align='center' justify='center' minH='60vh'>
+                          <AccessibleSpinner label='Loading content…' />
+                        </Flex>
+                      }
+                    >
+                      <Routes>
+                        <Route
+                          path='/'
+                          element={<Navigate to='/login' replace />}
+                        />
+                        <Route
+                          path='/login'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <Navigate to='/dashboard' replace />
+                              )
                             ) : (
-                              <Navigate to='/dashboard' replace />
+                              <Login />
                             )
-                          ) : (
-                            <Login />
-                          )
-                        }
-                      />
+                          }
+                        />
 
-                      <Route
-                        path='/register'
-                        element={
-                          session ? (
-                            session.needsVerification ? (
-                              <Navigate
-                                to={`/verify-email?email=${encodeURIComponent(
-                                  session.email || ''
-                                )}`}
-                                replace
-                              />
+                        <Route
+                          path='/register'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <Navigate to='/dashboard' replace />
+                              )
                             ) : (
-                              <Navigate to='/dashboard' replace />
+                              <Register />
                             )
-                          ) : (
-                            <Register />
-                          )
-                        }
-                      />
-                      <Route
-                        path='/verify-email'
-                        element={<VerifyEmailWrapper session={session} />}
-                      />
-                      <Route
-                        path='/reset-password'
-                        element={
-                          session ? (
-                            <Navigate to='/dashboard' replace />
-                          ) : (
-                            <ResetPassword />
-                          )
-                        }
-                      />
-                      <Route
-                        path='/preferences'
-                        element={
-                          <RequireManagerRoute session={session}>
-                            {session?.needsVerification ? (
-                              <Navigate
-                                to={`/verify-email?email=${encodeURIComponent(
-                                  session?.email || ''
-                                )}`}
-                                replace
-                              />
+                          }
+                        />
+                        <Route
+                          path='/verify-email'
+                          element={<VerifyEmailWrapper session={session} />}
+                        />
+                        <Route
+                          path='/reset-password'
+                          element={
+                            session ? (
+                              <Navigate to='/dashboard' replace />
                             ) : (
-                              <AlertPreferences
+                              <ResetPassword />
+                            )
+                          }
+                        />
+                        <Route
+                          path='/account'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <Account
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                  onAccountDeleted={handleAccountDeleted}
+                                  onSessionUpdate={updates =>
+                                    setSession(prev =>
+                                      prev ? { ...prev, ...updates } : prev
+                                    )
+                                  }
+                                />
+                              )
+                            ) : (
+                              <Navigate to='/login' replace />
+                            )
+                          }
+                        />
+                        <Route
+                          path='/preferences'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session?.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <UserPreferences
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                  onNavigateToDashboard={
+                                    handleHelpNavigateToDashboard
+                                  }
+                                  onNavigateToLanding={handleNavigateToLanding}
+                                />
+                              )
+                            ) : (
+                              <Navigate to='/login' replace />
+                            )
+                          }
+                        />
+                        <Route
+                          path='/workspace-preferences'
+                          element={
+                            <RequireManagerRoute session={session}>
+                              {session?.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session?.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : (
+                                <AlertPreferences
+                                  session={session}
+                                  showProductTour={showProductTour}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                  onNavigateToDashboard={
+                                    handleHelpNavigateToDashboard
+                                  }
+                                  onNavigateToLanding={handleNavigateToLanding}
+                                />
+                              )}
+                            </RequireManagerRoute>
+                          }
+                        />
+                        <Route
+                          path='/alert-preferences'
+                          element={
+                            <Navigate to='/workspace-preferences' replace />
+                          }
+                        />
+                        <Route
+                          path='/control-center'
+                          element={
+                            <RequireManagerRoute session={session}>
+                              <ControlCenter
                                 session={session}
-                                showProductTour={showProductTour}
                                 onLogout={handleLogout}
                                 onAccountClick={handleHelpAccountClick}
                                 onNavigateToDashboard={
@@ -2278,473 +2966,218 @@ function App() {
                                 }
                                 onNavigateToLanding={handleNavigateToLanding}
                               />
-                            )}
-                          </RequireManagerRoute>
-                        }
-                      />
-                      <Route
-                        path='/usage'
-                        element={
-                          <RequireManagerRoute session={session}>
-                            <Usage
-                              session={session}
-                              onLogout={handleLogout}
-                              onAccountClick={handleHelpAccountClick}
-                              onNavigateToDashboard={
-                                handleHelpNavigateToDashboard
-                              }
-                              onNavigateToLanding={handleNavigateToLanding}
-                            />
-                          </RequireManagerRoute>
-                        }
-                      />
-                      <Route
-                        path='/workspaces'
-                        element={
-                          <RequireManagerRoute session={session}>
-                            <Workspaces
-                              session={session}
-                              onLogout={handleLogout}
-                              onAccountClick={handleHelpAccountClick}
-                              onNavigateToDashboard={
-                                handleHelpNavigateToDashboard
-                              }
-                              onNavigateToLanding={handleNavigateToLanding}
-                            />
-                          </RequireManagerRoute>
-                        }
-                      />
-                      <Route
-                        path='/audit'
-                        element={
-                          <RequireManagerRoute session={session}>
-                            <Audit
-                              session={session}
-                              onLogout={handleLogout}
-                              onAccountClick={handleHelpAccountClick}
-                              onNavigateToDashboard={
-                                handleHelpNavigateToDashboard
-                              }
-                              onNavigateToLanding={handleNavigateToLanding}
-                            />
-                          </RequireManagerRoute>
-                        }
-                      />
-                      <Route
-                        path='/system-settings'
-                        element={
-                          <AdminOnlyRoute session={session}>
-                            <SystemSettings
-                              session={session}
-                              onLogout={handleLogout}
-                              onAccountClick={handleHelpAccountClick}
-                              onNavigateToDashboard={
-                                handleHelpNavigateToDashboard
-                              }
-                              onNavigateToLanding={handleNavigateToLanding}
-                            />
-                          </AdminOnlyRoute>
-                        }
-                      />
-                      <Route
-                        path='/help'
-                        element={
-                          session ? (
-                            <Help
-                              session={session}
-                              onLogout={handleLogout}
-                              onAccountClick={handleHelpAccountClick}
-                              onNavigateToDashboard={
-                                handleHelpNavigateToDashboard
-                              }
-                              onNavigateToLanding={handleNavigateToLanding}
-                            />
-                          ) : (
-                            <Navigate to='/login' replace />
-                          )
-                        }
-                      />
-                      <Route
-                        path='/dashboard'
-                        element={
-                          session ? (
-                            session.needsVerification ? (
-                              <Navigate
-                                to={`/verify-email?email=${encodeURIComponent(
-                                  session.email || ''
-                                )}`}
-                                replace
-                              />
-                            ) : (
-                              <DashboardWrapper
+                            </RequireManagerRoute>
+                          }
+                        />
+                        <Route
+                          path='/usage'
+                          element={<Navigate to='/control-center' replace />}
+                        />
+                        <Route
+                          path='/workspaces'
+                          element={
+                            <RequireManagerRoute session={session}>
+                              <Workspaces
                                 session={session}
-                                tokens={
-                                  showProductTour ? TOUR_MOCK_TOKENS : tokens
-                                }
-                                tokensLoading={tokensLoading}
-                                contactGroups={
-                                  showProductTour
-                                    ? TOUR_MOCK_CONTACT_GROUPS
-                                    : tokenContactGroups
-                                }
-                                workspaceContacts={
-                                  showProductTour
-                                    ? TOUR_MOCK_WORKSPACE_CONTACTS
-                                    : workspaceContacts
-                                }
-                                formData={formData}
-                                formErrors={formErrors}
-                                isSubmitting={isSubmitting}
-                                onInputChange={handleInputChange}
-                                onTokenAdd={handleTokenAdd}
-                                onDeleteToken={
-                                  isViewer ? undefined : handleDeleteToken
-                                }
-                                onOpenRenew={
-                                  isViewer ? undefined : handleOpenRenew
-                                }
-                                TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-                                ExpiryPill={ExpiryPill}
-                                onOpenTokenModal={handleOpenTokenModal}
                                 onLogout={handleLogout}
                                 onAccountClick={handleHelpAccountClick}
+                                onNavigateToDashboard={
+                                  handleHelpNavigateToDashboard
+                                }
                                 onNavigateToLanding={handleNavigateToLanding}
-                                onAccountDeleted={handleAccountDeleted}
-                                filters={filters}
-                                sortConfigs={sortConfigs}
-                                onFilterChange={handleFilterChange}
-                                onSort={handleSort}
-                                onClearFilters={clearFilters}
-                                getFilteredAndSortedTokens={
-                                  getFilteredAndSortedTokens
-                                }
-                                showWelcomeModal={showWelcomeModal}
-                                setShowWelcomeModal={setShowWelcomeModal}
-                                welcomeData={welcomeData}
-                                selectedToken={selectedToken}
-                                handleCloseTokenModal={handleCloseTokenModal}
-                                alertDefaultEmail={alertDefaultEmail}
-                                // Thread global filtering/search/sort state into wrapper
-                                searchQuery={searchQuery}
-                                setSearchQuery={setSearchQuery}
-                                serverSort={serverSort}
-                                showProductTour={showProductTour}
-                                setShowProductTour={setShowProductTour}
-                                tourType={tourType}
-                                setTourType={setTourType}
-                                forceRunTour={forceRunTour}
-                                setForceRunTour={setForceRunTour}
-                                setServerSort={setServerSort}
-                                selectedCategories={selectedCategories}
-                                setSelectedCategories={setSelectedCategories}
-                                tokenFacets={tokenFacets}
-                                globalFacets={globalFacets}
-                                fetchGlobalFacets={fetchGlobalFacets}
-                                fetchTokensForCategoryReset={
-                                  fetchTokensForCategoryReset
-                                }
-                                setOffset={setOffset}
-                                setTokens={setTokens}
-                                isRefreshing={isRefreshing}
-                                categoryOffsets={categoryOffsets}
-                                categoryHasMore={categoryHasMore}
-                                categoryLoading={categoryLoading}
-                                categoryCounts={categoryCounts}
-                                fetchTokensForCategory={fetchTokensForCategory}
-                                isViewer={isViewer}
-                                locationEntries={locationEntries}
-                                addLocationEntry={addLocationEntry}
-                                removeLocationEntry={removeLocationEntry}
-                                updateLocationEntry={updateLocationEntry}
-                                defaultContactGroupId={defaultContactGroupId}
-                                createTokenNotesFlushRef={
-                                  createTokenNotesFlushRef
-                                }
                               />
+                            </RequireManagerRoute>
+                          }
+                        />
+                        <Route
+                          path='/audit'
+                          element={
+                            <RequireManagerRoute session={session}>
+                              <Audit
+                                session={session}
+                                onLogout={handleLogout}
+                                onAccountClick={handleHelpAccountClick}
+                                onNavigateToDashboard={
+                                  handleHelpNavigateToDashboard
+                                }
+                                onNavigateToLanding={handleNavigateToLanding}
+                              />
+                            </RequireManagerRoute>
+                          }
+                        />
+                        <Route
+                          path='/system-settings'
+                          element={
+                            <AdminOnlyRoute session={session}>
+                              <SystemSettings
+                                session={session}
+                                onLogout={handleLogout}
+                                onAccountClick={handleHelpAccountClick}
+                                onNavigateToDashboard={
+                                  handleHelpNavigateToDashboard
+                                }
+                                onNavigateToLanding={handleNavigateToLanding}
+                              />
+                            </AdminOnlyRoute>
+                          }
+                        />
+                        <Route
+                          path='/dashboard'
+                          element={
+                            session ? (
+                              session.needsVerification ? (
+                                <Navigate
+                                  to={`/verify-email?email=${encodeURIComponent(
+                                    session.email || ''
+                                  )}`}
+                                  replace
+                                />
+                              ) : new URLSearchParams(location.search).get(
+                                  'view'
+                                ) === 'account' ? (
+                                <Navigate
+                                  to={buildAccountPathFromDashboardSearch(
+                                    location.search
+                                  )}
+                                  replace
+                                />
+                              ) : (
+                                <DashboardWrapper
+                                  key={dashboardRouteKey}
+                                  session={session}
+                                  tokens={
+                                    showProductTour ? TOUR_MOCK_TOKENS : tokens
+                                  }
+                                  tokensLoading={tokensLoading}
+                                  contactGroups={
+                                    showProductTour
+                                      ? TOUR_MOCK_CONTACT_GROUPS
+                                      : tokenContactGroups
+                                  }
+                                  workspaceContacts={
+                                    showProductTour
+                                      ? TOUR_MOCK_WORKSPACE_CONTACTS
+                                      : workspaceContacts
+                                  }
+                                  formData={formData}
+                                  formErrors={formErrors}
+                                  isSubmitting={isSubmitting}
+                                  onInputChange={handleInputChange}
+                                  onTokenAdd={handleTokenAdd}
+                                  onDeleteToken={
+                                    isViewer ? undefined : handleDeleteToken
+                                  }
+                                  onOpenRenew={
+                                    isViewer ? undefined : handleOpenRenew
+                                  }
+                                  TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+                                  onOpenTokenModal={handleOpenTokenModal}
+                                  onLogout={handleLogout}
+                                  getFilteredAndSortedTokens={
+                                    getFilteredAndSortedTokens
+                                  }
+                                  showWelcomeModal={showWelcomeModal}
+                                  setShowWelcomeModal={setShowWelcomeModal}
+                                  welcomeData={welcomeData}
+                                  selectedToken={selectedToken}
+                                  setSelectedToken={setSelectedToken}
+                                  handleCloseTokenModal={handleCloseTokenModal}
+                                  // Thread global filtering/search/sort state into wrapper
+                                  setSearchQuery={setSearchQuery}
+                                  showProductTour={showProductTour}
+                                  setShowProductTour={setShowProductTour}
+                                  tourType={tourType}
+                                  setTourType={setTourType}
+                                  forceRunTour={forceRunTour}
+                                  setForceRunTour={setForceRunTour}
+                                  isProductTourMobile={isProductTourMobile}
+                                  setServerSort={setServerSort}
+                                  selectedCategories={selectedCategories}
+                                  setSelectedCategories={setSelectedCategories}
+                                  tokenFacets={tokenFacets}
+                                  globalFacets={globalFacets}
+                                  fetchGlobalFacets={fetchGlobalFacets}
+                                  fetchTokensForCategoryReset={
+                                    fetchTokensForCategoryReset
+                                  }
+                                  setTokens={setTokens}
+                                  isRefreshing={isRefreshing}
+                                  categoryHasMore={categoryHasMore}
+                                  categoryLoading={categoryLoading}
+                                  categoryCounts={categoryCounts}
+                                  fetchTokensForCategory={
+                                    fetchTokensForCategory
+                                  }
+                                  isViewer={isViewer}
+                                  locationEntries={locationEntries}
+                                  addLocationEntry={addLocationEntry}
+                                  removeLocationEntry={removeLocationEntry}
+                                  updateLocationEntry={updateLocationEntry}
+                                  defaultContactGroupId={defaultContactGroupId}
+                                  createTokenNotesFlushRef={
+                                    createTokenNotesFlushRef
+                                  }
+                                />
+                              )
+                            ) : (
+                              <Navigate to='/login' replace />
                             )
-                          ) : (
-                            <Navigate to='/login' replace />
-                          )
-                        }
-                      />
-                      <Route path='*' element={<NotFound />} />
-                    </Routes>
-                  </Suspense>
-                </WorkspaceProvider>
-              )}
+                          }
+                        />
+                        <Route path='*' element={<NotFound />} />
+                      </Routes>
+                    </Suspense>
+                  </WorkspaceProvider>
+                )}
+              </Box>
+              <Footer />
             </Box>
-            <Footer />
-          </Box>
 
-          <Toaster />
+            <Toaster />
 
-          {/* Token Deletion Confirmation Modal */}
-          <Modal
-            isOpen={isDeleteModalOpen}
-            onClose={cancelDeleteToken}
-            isCentered
-          >
-            <ModalOverlay />
-            <ModalContent>
-              <ModalHeader>Confirm Token Deletion</ModalHeader>
-              <ModalCloseButton />
-              <ModalBody>
-                <VStack spacing={4} align='stretch'>
-                  <Alert status='warning' borderRadius='md'>
-                    <AlertIcon />
-                    <AlertDescription>
-                      This action cannot be undone. The token will be
-                      permanently deleted.
-                    </AlertDescription>
-                  </Alert>
-                  {tokenToDelete?.monitor_url && (
-                    <Alert status='error' borderRadius='md'>
-                      <AlertIcon />
-                      <AlertDescription>
-                        This token has a linked endpoint monitor (
-                        {tokenToDelete.monitor_url}). Deleting this token will
-                        also remove the monitor and stop health checks.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  {tokenToDelete && (
-                    <Box p={4} bg={deleteBoxBg} borderRadius='md'>
-                      <Text fontWeight='bold' mb={2} color={deleteLabelColor}>
-                        Token to delete:
-                      </Text>
-                      <Text color={deleteTextColor}>
-                        <Text
-                          as='span'
-                          fontWeight='semibold'
-                          color={deleteLabelColor}
-                        >
-                          Name:
-                        </Text>{' '}
-                        {tokenToDelete.name}
-                      </Text>
-                      <Text color={deleteTextColor}>
-                        <Text
-                          as='span'
-                          fontWeight='semibold'
-                          color={deleteLabelColor}
-                        >
-                          Type:
-                        </Text>{' '}
-                        {tokenToDelete.type}
-                      </Text>
-                      <Text color={deleteTextColor}>
-                        <Text
-                          as='span'
-                          fontWeight='semibold'
-                          color={deleteLabelColor}
-                        >
-                          Category:
-                        </Text>{' '}
-                        {tokenToDelete.category}
-                      </Text>
-                      {tokenToDelete.expiresAt && (
-                        <Text color={deleteTextColor}>
-                          <Text
-                            as='span'
-                            fontWeight='semibold'
-                            color={deleteLabelColor}
-                          >
-                            Expires:
-                          </Text>{' '}
-                          {formatDate(tokenToDelete.expiresAt)}
-                        </Text>
-                      )}
-                    </Box>
-                  )}
-                </VStack>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant='ghost' mr={3} onClick={cancelDeleteToken}>
-                  Cancel
-                </Button>
-                <Button colorScheme='red' onClick={confirmDeleteToken}>
-                  Delete Token
-                </Button>
-              </ModalFooter>
-            </ModalContent>
-          </Modal>
+            <TokenDeletionModal
+              isOpen={isDeleteModalOpen}
+              onClose={cancelDeleteToken}
+              tokenToDelete={tokenToDelete}
+              onConfirm={confirmDeleteToken}
+            />
 
-          {/* Duplicate Token Confirmation Modal */}
-          <Modal
-            isOpen={isDuplicateModalOpen}
-            onClose={onDuplicateModalClose}
-            isCentered
-          >
-            <ModalOverlay />
-            <ModalContent>
-              <ModalHeader>Token Already Exists</ModalHeader>
-              <ModalCloseButton />
-              <ModalBody>
-                <VStack spacing={4} align='stretch'>
-                  <Alert status='info' borderRadius='md'>
-                    <AlertIcon />
-                    <AlertDescription>
-                      {duplicateTokenInfo?.message ||
-                        'A token with the same name and location already exists in this workspace.'}
-                    </AlertDescription>
-                  </Alert>
-                  {duplicateTokenInfo?.existing_token && (
-                    <Box
-                      p={4}
-                      bg='gray.100'
-                      _dark={{
-                        bg: 'orange.900',
-                        borderColor: 'orange.500',
-                        color: 'orange.100',
-                      }}
-                      borderRadius='md'
-                      border='1px solid'
-                      borderColor='gray.200'
-                      color='gray.700'
-                    >
-                      <Text
-                        fontWeight='bold'
-                        mb={2}
-                        color='gray.800'
-                        _dark={{ color: 'orange.200' }}
-                      >
-                        Existing token:
-                      </Text>
-                      <Text>
-                        <Text as='span' fontWeight='semibold'>
-                          Name:
-                        </Text>{' '}
-                        {duplicateTokenInfo.existing_token.name}
-                      </Text>
-                      {duplicateTokenInfo.existing_token.location && (
-                        <Box>
-                          <Text as='span' fontWeight='semibold'>
-                            Locations:
-                          </Text>
-                          <Text whiteSpace='pre-wrap' wordBreak='break-all'>
-                            {duplicateTokenInfo.existing_token.location}
-                          </Text>
-                        </Box>
-                      )}
-                      {duplicateTokenInfo.existing_token.expiration && (
-                        <Text>
-                          <Text as='span' fontWeight='semibold'>
-                            Expires:
-                          </Text>{' '}
-                          {formatDate(
-                            duplicateTokenInfo.existing_token.expiration
-                          )}
-                        </Text>
-                      )}
-                    </Box>
-                  )}
-                  <Text
-                    fontSize='sm'
-                    color='gray.600'
-                    _dark={{ color: 'gray.200' }}
-                  >
-                    Creating this token will update the existing one with the
-                    new information you provided.
-                  </Text>
-                </VStack>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant='ghost' mr={3} onClick={onDuplicateModalClose}>
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme='blue'
-                  onClick={handleConfirmDuplicate}
-                  isLoading={isSubmitting}
-                >
-                  Update Existing Token
-                </Button>
-              </ModalFooter>
-            </ModalContent>
-          </Modal>
+            <DuplicateTokenModal
+              isOpen={isDuplicateModalOpen}
+              onClose={onDuplicateModalClose}
+              duplicateTokenInfo={duplicateTokenInfo}
+              onConfirm={handleConfirmDuplicate}
+              isSubmitting={isSubmitting}
+            />
 
-          {/* Token Renew Modal */}
-          <Modal
-            isOpen={isRenewModalOpen}
-            onClose={handleCloseRenew}
-            isCentered
-          >
-            <ModalOverlay />
-            <ModalContent>
-              <ModalHeader>Renew Token</ModalHeader>
-              <ModalCloseButton />
-              <ModalBody>
-                <VStack spacing={4} align='stretch'>
-                  {tokenToRenew && (
-                    <Box p={4} bg={renewBoxBg} borderRadius='md'>
-                      <Text fontWeight='bold' mb={2} color={renewLabelColor}>
-                        {tokenToRenew.name}
-                      </Text>
-                      <Text color={renewTextColor}>
-                        Current expiration:{' '}
-                        {tokenToRenew.expiresAt
-                          ? formatDate(tokenToRenew.expiresAt)
-                          : '-'}
-                      </Text>
-                    </Box>
-                  )}
-                  <FormControl isInvalid={!!renewErrors.renewDate}>
-                    <FormLabel htmlFor='renewDate'>
-                      New Expiration Date
-                    </FormLabel>
-                    <Input
-                      id='renewDate'
-                      type='date'
-                      value={renewDate}
-                      onChange={e => setRenewDate(e.target.value)}
-                    />
-                    {renewErrors.renewDate && (
-                      <FormErrorMessage>
-                        {renewErrors.renewDate}
-                      </FormErrorMessage>
-                    )}
-                  </FormControl>
-                  <Text
-                    fontSize='sm'
-                    _light={{ color: 'gray.600' }}
-                    _dark={{ color: 'whiteAlpha.800' }}
-                  >
-                    Default set based on token category/type. You can pick any
-                    future date.
-                  </Text>
-                </VStack>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant='ghost' mr={3} onClick={handleCloseRenew}>
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme='teal'
-                  onClick={handleConfirmRenew}
-                  isLoading={isRenewSubmitting}
-                >
-                  Confirm
-                </Button>
-              </ModalFooter>
-            </ModalContent>
-          </Modal>
-        </ErrorBoundary>
+            <TokenRenewModal
+              isOpen={isRenewModalOpen}
+              onClose={handleCloseRenew}
+              tokenToRenew={tokenToRenew}
+              renewDate={renewDate}
+              renewErrors={renewErrors}
+              isRenewSubmitting={isRenewSubmitting}
+              onRenewDateChange={setRenewDate}
+              onConfirm={handleConfirmRenew}
+            />
+          </ErrorBoundary>
 
-        {!isViewer && (
-          <ProductTour
-            run={showProductTour}
-            tourType={tourType}
-            forceRun={forceRunTour}
-            onTourComplete={completed => {
-              setShowProductTour(false);
-              setForceRunTour(false);
-              if (completed) {
-                trackEvent('product_tour_finished', { tour_type: tourType });
-              }
-            }}
-          />
-        )}
-      </HelmetProvider>
+          {!isViewer && !isProductTourMobile && (
+            <ProductTour
+              run={showProductTour}
+              tourType={tourType}
+              forceRun={forceRunTour}
+              onTourComplete={completed => {
+                setShowProductTour(false);
+                setForceRunTour(false);
+                if (completed) {
+                  trackEvent('product_tour_finished', { tour_type: tourType });
+                }
+              }}
+            />
+          )}
+        </HelmetProvider>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }
@@ -2766,27 +3199,17 @@ function DashboardWrapper({
   onDeleteToken,
   onOpenRenew,
   TOKEN_CATEGORIES,
-  ExpiryPill,
   onOpenTokenModal,
   onLogout,
-  onNavigateToLanding,
-  onAccountDeleted,
   showWelcomeModal,
   setShowWelcomeModal,
   welcomeData,
   selectedToken,
+  setSelectedToken,
   handleCloseTokenModal,
-  filters,
-  onFilterChange,
-  onSort,
-  onClearFilters,
   getFilteredAndSortedTokens,
-  sortConfigs,
-  alertDefaultEmail,
   // Global filtering/search/sort state/handlers from App
-  searchQuery,
   setSearchQuery,
-  serverSort,
   setServerSort,
   selectedCategories,
   setSelectedCategories,
@@ -2794,10 +3217,8 @@ function DashboardWrapper({
   globalFacets,
   fetchGlobalFacets,
   fetchTokensForCategoryReset,
-  setOffset,
   setTokens,
   isRefreshing,
-  categoryOffsets,
   categoryHasMore,
   categoryLoading,
   categoryCounts,
@@ -2810,6 +3231,7 @@ function DashboardWrapper({
   setTourType,
   forceRunTour: _forceRunTour,
   setForceRunTour,
+  isProductTourMobile = false,
   // Location entries props
   locationEntries,
   addLocationEntry,
@@ -2818,22 +3240,39 @@ function DashboardWrapper({
   defaultContactGroupId = '',
   createTokenNotesFlushRef,
 }) {
-  const [searchParams] = useSearchParams();
-  const [currentView, setCurrentView] = useState('dashboard');
+  const { pageBg } = useDashboardTheme();
 
-  // Check URL parameter for view on mount and when searchParams change
+  // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
-    const viewParam = searchParams.get('view');
-    if (viewParam === 'account') {
-      setCurrentView('account');
-    } else {
-      setCurrentView('dashboard');
+    if (
+      typeof window === 'undefined' ||
+      isViewer ||
+      isProductTourMobile ||
+      !session
+    ) {
+      return;
     }
-  }, [searchParams]);
+    try {
+      if (window.location.pathname !== '/dashboard') return;
+      const raw = sessionStorage.getItem('tt_tour_resume_pending');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed?.tourType) setTourType(parsed.tourType);
+      setForceRunTour(true);
+      setShowProductTour(true);
+    } catch (_) {}
+  }, [
+    session,
+    isViewer,
+    isProductTourMobile,
+    setForceRunTour,
+    setShowProductTour,
+    setTourType,
+  ]);
 
   // Listen for manual tour trigger events (for testing) - skip for viewers
   useEffect(() => {
-    if (isViewer) return;
+    if (isViewer || isProductTourMobile) return;
     const handleTourStart = event => {
       const tourType = event.detail?.type || 'dashboard';
       setTourType(tourType);
@@ -2844,7 +3283,7 @@ function DashboardWrapper({
     return () => {
       window.removeEventListener('tt:start-tour', handleTourStart);
     };
-  }, [isViewer, setShowProductTour, setTourType]);
+  }, [isViewer, isProductTourMobile, setShowProductTour, setTourType]);
 
   // Check for ?tour=dashboard query parameter to force-run tour - skip for viewers
   useEffect(() => {
@@ -2854,6 +3293,17 @@ function DashboardWrapper({
     const tourParam = urlParams.get('tour');
 
     if (tourParam && window.location.pathname === '/dashboard') {
+      if (isProductTourMobile) {
+        urlParams.delete('tour');
+        const newUrl =
+          window.location.pathname +
+          (urlParams.toString() ? `?${urlParams.toString()}` : '');
+        window.history.replaceState({}, '', newUrl);
+        setForceRunTour(false);
+        setShowProductTour(false);
+        return;
+      }
+
       setForceRunTour(true);
 
       urlParams.delete('tour');
@@ -2868,7 +3318,13 @@ function DashboardWrapper({
         setShowProductTour(true);
       }, 500);
     }
-  }, [isViewer, setShowProductTour, setTourType, setForceRunTour]);
+  }, [
+    isViewer,
+    isProductTourMobile,
+    setShowProductTour,
+    setTourType,
+    setForceRunTour,
+  ]);
 
   return (
     <div
@@ -2879,88 +3335,62 @@ function DashboardWrapper({
         description='Manage your tokens, certificates, and expiring assets'
         noindex
       />
-      <Navigation
-        user={session}
-        onLogout={onLogout}
-        onAccountClick={() => {
-          setCurrentView('account');
-          // Update URL to reflect the account view
-          const url = new URL(window.location);
-          url.searchParams.set('view', 'account');
-          window.history.pushState({}, '', url);
-        }}
-        onNavigateToDashboard={() => {
-          setCurrentView('dashboard');
-          // Clear the view parameter from URL when going to dashboard
-          const url = new URL(window.location);
-          url.searchParams.delete('view');
-          window.history.pushState({}, '', url);
-        }}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-
       <main
         id='main-content'
         style={{
           flex: 1,
-          padding: 'clamp(1rem, 2vw, 2rem)',
+          padding: 0,
           overflowX: 'hidden',
+          background: pageBg,
         }}
       >
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-          {currentView === 'dashboard' ? (
-            <DashboardView
-              _session={session}
-              tokens={tokens}
-              tokensLoading={tokensLoading}
-              contactGroups={contactGroups || []}
-              workspaceContacts={workspaceContacts}
-              formData={formData}
-              formErrors={formErrors}
-              isSubmitting={isSubmitting}
-              onInputChange={onInputChange}
-              onTokenAdd={onTokenAdd}
-              onDeleteToken={onDeleteToken}
-              onOpenRenew={onOpenRenew}
-              TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-              ExpiryPill={ExpiryPill}
-              onOpenTokenModal={onOpenTokenModal}
-              filters={filters}
-              onFilterChange={onFilterChange}
-              onSort={onSort}
-              onClearFilters={onClearFilters}
-              getFilteredAndSortedTokens={getFilteredAndSortedTokens}
-              sortConfigs={sortConfigs}
-              _alertDefaultEmail={alertDefaultEmail}
-              selectedCategories={selectedCategories}
-              setSelectedCategories={setSelectedCategories}
-              tokenFacets={tokenFacets}
-              globalFacets={globalFacets}
-              fetchGlobalFacets={fetchGlobalFacets}
-              fetchTokensForCategoryReset={fetchTokensForCategoryReset}
-              _setOffset={setOffset}
-              _setTokens={setTokens}
-              _searchQuery={searchQuery}
-              _setSearchQuery={setSearchQuery}
-              _serverSort={serverSort}
-              _setServerSort={setServerSort}
-              isRefreshing={isRefreshing}
-              categoryOffsets={categoryOffsets}
-              categoryHasMore={categoryHasMore}
-              categoryLoading={categoryLoading}
-              categoryCounts={categoryCounts}
-              fetchTokensForCategory={fetchTokensForCategory}
-              isViewer={isViewer}
-              locationEntries={locationEntries}
-              addLocationEntry={addLocationEntry}
-              removeLocationEntry={removeLocationEntry}
-              updateLocationEntry={updateLocationEntry}
-              defaultContactGroupId={defaultContactGroupId}
-              createTokenNotesFlushRef={createTokenNotesFlushRef}
-            />
-          ) : currentView === 'account' ? (
-            <Account session={session} onAccountDeleted={onAccountDeleted} />
-          ) : null}
+        <div
+          style={{
+            maxWidth: 'none',
+            margin: 0,
+          }}
+        >
+          <DashboardView
+            _session={session}
+            tokens={tokens}
+            tokensLoading={tokensLoading}
+            contactGroups={contactGroups || []}
+            workspaceContacts={workspaceContacts}
+            formData={formData}
+            formErrors={formErrors}
+            isSubmitting={isSubmitting}
+            onInputChange={onInputChange}
+            onTokenAdd={onTokenAdd}
+            onDeleteToken={onDeleteToken}
+            onOpenRenew={onOpenRenew}
+            TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+            onOpenTokenModal={onOpenTokenModal}
+            getFilteredAndSortedTokens={getFilteredAndSortedTokens}
+            selectedCategories={selectedCategories}
+            setSelectedCategories={setSelectedCategories}
+            tokenFacets={tokenFacets}
+            globalFacets={globalFacets}
+            fetchGlobalFacets={fetchGlobalFacets}
+            fetchTokensForCategoryReset={fetchTokensForCategoryReset}
+            _setTokens={setTokens}
+            _setSearchQuery={setSearchQuery}
+            _setServerSort={setServerSort}
+            isRefreshing={isRefreshing}
+            categoryHasMore={categoryHasMore}
+            categoryLoading={categoryLoading}
+            categoryCounts={categoryCounts}
+            fetchTokensForCategory={fetchTokensForCategory}
+            isViewer={isViewer}
+            locationEntries={locationEntries}
+            addLocationEntry={addLocationEntry}
+            removeLocationEntry={removeLocationEntry}
+            updateLocationEntry={updateLocationEntry}
+            defaultContactGroupId={defaultContactGroupId}
+            createTokenNotesFlushRef={createTokenNotesFlushRef}
+            onLogout={onLogout}
+            selectedToken={selectedToken}
+            handleCloseTokenModal={handleCloseTokenModal}
+          />
         </div>
       </main>
 
@@ -3003,7 +3433,7 @@ function DashboardWrapper({
           } catch (_) {}
         }}
         onStartTour={
-          isViewer
+          isViewer || isProductTourMobile
             ? undefined
             : () => {
                 setShowWelcomeModal(false);
@@ -3031,60 +3461,64 @@ function DashboardWrapper({
                 }
               }
         }
+        introductionVideoUrl={
+          isProductTourMobile ? INTRODUCTION_VIDEO_URL : undefined
+        }
         data={welcomeData}
       />
 
-      {selectedToken && (
-        <TokenDetailModal
-          token={selectedToken}
-          isOpen={true}
-          onClose={handleCloseTokenModal}
-          TOKEN_CATEGORIES={TOKEN_CATEGORIES}
-          isViewer={isViewer}
-          contactGroups={contactGroups}
-          workspaceContacts={workspaceContacts}
-          onTokenUpdated={updated => {
-            if (!updated?.id) return;
-            const prevSection = selectedToken?.section || '';
-            let __nextTokens = null;
-            setTokens(prev => {
-              const arr = prev.map(t => (t.id === updated.id ? updated : t));
-              __nextTokens = arr;
-              return arr;
-            });
-            // Trigger a single dashboard reload so facets/sections update
-            try {
-              window.dispatchEvent(
-                new CustomEvent('tt:tokens-updated', {
-                  detail: { t: Date.now() },
-                })
-              );
-            } catch (_) {}
-            // If section changed, clear section filter in URL so the token remains visible
-            try {
-              const before = String(prevSection || '');
-              const after = String(updated.section || '');
-              if (before !== after) {
-                const search = new URLSearchParams(window.location.search);
-                if (search.get('section')) {
-                  search.delete('section');
-                  const qs = search.toString();
-                  navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, {
-                    replace: true,
-                  });
-                }
+      <TokenDetailModal
+        token={selectedToken}
+        isOpen={Boolean(selectedToken)}
+        onClose={handleCloseTokenModal}
+        TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+        isViewer={isViewer}
+        contactGroups={contactGroups}
+        workspaceContacts={workspaceContacts}
+        onTokenUpdated={updated => {
+          if (!updated?.id) return;
+          const prevSection = selectedToken?.section || '';
+          let __nextTokens = null;
+          setTokens(prev => {
+            const arr = prev.map(t => (t.id === updated.id ? updated : t));
+            __nextTokens = arr;
+            return arr;
+          });
+          setSelectedToken(current =>
+            current?.id === updated.id ? updated : current
+          );
+          // Trigger a single dashboard reload so facets/sections update
+          try {
+            window.dispatchEvent(
+              new CustomEvent('tt:tokens-updated', {
+                detail: { t: Date.now() },
+              })
+            );
+          } catch (_) {}
+          // If section changed, clear section filter in URL so the token remains visible
+          try {
+            const before = String(prevSection || '');
+            const after = String(updated.section || '');
+            if (before !== after) {
+              const search = new URLSearchParams(window.location.search);
+              if (search.get('section')) {
+                search.delete('section');
+                const qs = search.toString();
+                navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, {
+                  replace: true,
+                });
               }
-            } catch (_) {}
-          }}
-        />
-      )}
+            }
+          } catch (_) {}
+        }}
+      />
     </div>
   );
 }
 
 /**
  * Dashboard View Component
- * Note: SortableTh and domain helper functions have been extracted to ./components/DashboardHelpers.jsx
+ * Note: domain helper functions have been extracted to ./components/DashboardHelpers.jsx
  */
 
 const CreateTokenNotesField = memo(function CreateTokenNotesField({
@@ -3153,17 +3587,10 @@ function DashboardView({
   onDeleteToken,
   onOpenRenew,
   TOKEN_CATEGORIES,
-  ExpiryPill,
   onOpenTokenModal,
-  onSort,
-
   getFilteredAndSortedTokens,
-  sortConfigs,
-  _alertDefaultEmail,
   // Added props for global search, sorting, and category filters
-  _searchQuery,
   _setSearchQuery,
-  _serverSort,
   _setServerSort,
   selectedCategories,
   setSelectedCategories,
@@ -3171,7 +3598,6 @@ function DashboardView({
   globalFacets,
   fetchGlobalFacets,
   fetchTokensForCategoryReset,
-  _setOffset,
   _setTokens,
   // Pagination/data controls
   isRefreshing,
@@ -3187,31 +3613,301 @@ function DashboardView({
   updateLocationEntry,
   defaultContactGroupId = '',
   createTokenNotesFlushRef,
+  onLogout,
+  selectedToken,
+  handleCloseTokenModal,
 }) {
-  const { colorMode } = useColorMode();
-  const isLight = colorMode === 'light';
+  const navigate = useNavigate();
+  const location = useLocation();
+  const handleAccountClick = useCallback(() => {
+    navigate('/account');
+  }, [navigate]);
+  const { workspaceId, selectWorkspace } = useWorkspace();
+  const {
+    pageBg,
+    surface,
+    text,
+    muted,
+    border,
+    inputBg: themeInputBg,
+  } = useDashboardTheme();
 
   // Move useColorModeValue calls to the top to comply with Rules of Hooks
-  const menuBg = useColorModeValue('gray.100', 'gray.800');
-  const menuBorder = useColorModeValue('gray.400', 'gray.600');
+  const {
+    menuListProps: dashboardMenuListProps,
+    menuItemProps: dashboardMenuItemProps,
+  } = useDashboardMenuStyles();
   const _popoverBg = useColorModeValue('gray.100', 'gray.800');
   const _popoverBorder = useColorModeValue('gray.400', 'gray.600');
-  const helpTextColor = useColorModeValue('gray.600', 'gray.400');
+  const helpTextColor = useColorModeValue('gray.500', 'gray.400');
 
-  // Use reusable dashboard color hooks
+  const inputBg = themeInputBg;
+  const inputBorder = border;
+  const placeholderColor = muted;
+  const emptyTextColor = muted;
+  const hoverBgColor = useColorModeValue('gray.50', 'rgba(30, 41, 59, 0.45)');
+  const filterLabelColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.86)'
+  );
+  const mobileCardBg = useColorModeValue('white', 'rgba(15, 23, 42, 0.55)');
+  const secondaryTextColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.9)'
+  );
+  const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
+  const tableHeadColor = useColorModeValue(
+    'gray.600',
+    'rgba(148, 163, 184, 0.92)'
+  );
+  const tableCellColor = useColorModeValue(
+    'gray.800',
+    'rgba(226, 232, 240, 0.94)'
+  );
+  const formLabelColor = useColorModeValue(
+    'gray.700',
+    'rgba(203, 213, 225, 0.9)'
+  );
+  const fieldTextColor = useColorModeValue(
+    'gray.900',
+    'rgba(248, 250, 252, 0.96)'
+  );
   const {
-    bgColor,
-    borderColor,
-    inputBg,
-    inputBorder,
-    placeholderColor,
-    emptyTextColor,
-    hoverBgColor,
-    thHoverBg,
-    filterLabelColor,
-    mobileCardBg,
-    secondaryTextColor,
-  } = useDashboardColors();
+    overlayProps: dashboardModalOverlayProps,
+    headerProps: dashboardModalHeaderProps,
+    bodyProps: dashboardModalBodyProps,
+    footerProps: dashboardModalFooterProps,
+    closeButtonProps: dashboardModalCloseButtonProps,
+    outlineButtonProps: dashboardModalOutlineButtonProps,
+    primaryButtonProps: dashboardModalPrimaryButtonProps,
+    tokens: dashboardModalTokens,
+  } = useDashboardModalProps();
+  const createTokenFormId = 'create-token-form';
+  const canSubmitCreateToken =
+    (typeof canCreateToken === 'boolean' ? canCreateToken : true) &&
+    (typeof isViewer === 'boolean' ? !isViewer : true);
+  const optionBg = useColorModeValue('white', '#0f172a');
+  const optionColor = useColorModeValue('gray.900', 'white');
+  const outlineButtonHoverColor = useColorModeValue('gray.900', 'white');
+  const bulkActionBarBg = useColorModeValue(
+    'gray.50',
+    'rgba(30, 41, 59, 0.58)'
+  );
+  const bulkActionBarBorder = useColorModeValue(
+    'gray.200',
+    'rgba(148, 163, 184, 0.16)'
+  );
+  const paginationControlColor = useColorModeValue(
+    'gray.600',
+    'rgba(203, 213, 225, 0.9)'
+  );
+  const paginationControlHoverBg = useColorModeValue(
+    'gray.100',
+    'rgba(30, 41, 59, 0.72)'
+  );
+  const paginationPageBg = useColorModeValue(
+    'blue.50',
+    'rgba(37, 99, 235, 0.18)'
+  );
+  const paginationPageColor = useColorModeValue('blue.700', 'white');
+  const paginationPageBorder = useColorModeValue(
+    'blue.200',
+    'rgba(59, 130, 246, 0.38)'
+  );
+  const pageTextColor = text;
+  const mutedTextColor = muted;
+  const sessionName =
+    _session?.displayName || _session?.name || _session?.email || 'User';
+  const sessionEmail = _session?.email || '';
+  const sessionInitials = String(sessionName)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join('')
+    .toUpperCase();
+  const workspaceName =
+    _session?.workspaceName || _session?.workspace?.name || 'Current Workspace';
+  const workspaceLabel = workspaceName;
+  const isSystemAdmin = _session?.isAdmin === true;
+  const [dashboardWorkspaces, setDashboardWorkspaces] = useState([]);
+  const [dashboardWorkspace, setDashboardWorkspace] = useState(null);
+  const [dashboardCanSeeManagerNav, setDashboardCanSeeManagerNav] =
+    useState(false);
+  const [dashboardNotifications, setDashboardNotifications] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDashboardWorkspaces() {
+      if (!_session) {
+        if (!cancelled) {
+          setDashboardWorkspaces([]);
+          setDashboardWorkspace(null);
+          setDashboardCanSeeManagerNav(false);
+        }
+        return;
+      }
+
+      try {
+        const ws = await workspaceAPI.list(50, 0);
+        if (cancelled) return;
+        const items = ws?.items || [];
+        const roles = items.map(w => String(w.role || '').toLowerCase());
+        const managerAny =
+          roles.includes('admin') || roles.includes('workspace_manager');
+        let desiredId = workspaceId || null;
+        if (!desiredId) {
+          try {
+            desiredId = localStorage.getItem('tt_last_workspace_id') || null;
+          } catch (_) {
+            desiredId = null;
+          }
+        }
+        const selected =
+          (desiredId && items.find(w => w.id === desiredId)) ||
+          items[0] ||
+          null;
+
+        setDashboardWorkspaces(items);
+        setDashboardWorkspace(selected);
+        setDashboardCanSeeManagerNav(
+          isSystemAdmin || (items.length ? managerAny : true)
+        );
+      } catch (_) {
+        if (!cancelled) {
+          setDashboardWorkspaces([]);
+          setDashboardWorkspace(null);
+          setDashboardCanSeeManagerNav(isSystemAdmin);
+        }
+      }
+    }
+
+    loadDashboardWorkspaces();
+    const refresh = () => loadDashboardWorkspaces();
+    window.addEventListener('tt:workspaces-updated', refresh);
+    window.addEventListener('tt:plan-updated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('tt:workspaces-updated', refresh);
+      window.removeEventListener('tt:plan-updated', refresh);
+    };
+  }, [_session, isSystemAdmin, workspaceId]);
+
+  const handleDashboardWorkspaceSelect = workspace => {
+    if (!workspace?.id) return;
+    setDashboardWorkspace(workspace);
+    try {
+      selectWorkspace(workspace.id);
+      localStorage.setItem('tt_last_workspace_id', workspace.id);
+    } catch (_) {}
+    try {
+      window.dispatchEvent(new CustomEvent('tt:workspaces-updated'));
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDashboardNotifications() {
+      if (!_session || !dashboardWorkspace?.id) {
+        if (!cancelled) setDashboardNotifications([]);
+        return;
+      }
+
+      try {
+        const [settingsRes, notificationsRes] = await Promise.all([
+          workspaceAPI.getAlertSettings(dashboardWorkspace.id),
+          workspaceAPI
+            .getNotifications(dashboardWorkspace.id)
+            .catch(() => ({ items: [] })),
+        ]);
+        if (cancelled) return;
+
+        const data = settingsRes?.data || settingsRes || {};
+        const emailEnabled = data.email_alerts_enabled === true;
+        const webhooks = data.webhook_urls;
+        const hasWebhooks = Array.isArray(webhooks) && webhooks.length > 0;
+        const smtpConfigured = data.smtp_configured !== false;
+        const allDisabled = !emailEnabled && !hasWebhooks;
+        const contactGroups = Array.isArray(data.contact_groups)
+          ? data.contact_groups
+          : [];
+        const hasAnyContact = contactGroups.some(group => {
+          const emailIds = Array.isArray(group.email_contact_ids)
+            ? group.email_contact_ids
+            : [];
+          const whatsappIds = Array.isArray(group.whatsapp_contact_ids)
+            ? group.whatsapp_contact_ids
+            : [];
+          return emailIds.length > 0 || whatsappIds.length > 0;
+        });
+        const currentRole = String(
+          dashboardWorkspace?.role || ''
+        ).toLowerCase();
+        const canManageWorkspaceAlerts =
+          isSystemAdmin ||
+          currentRole === 'admin' ||
+          currentRole === 'workspace_manager';
+        const list = [];
+
+        if (canManageWorkspaceAlerts) {
+          const operational = Array.isArray(notificationsRes?.items)
+            ? notificationsRes.items
+            : [];
+          for (const item of operational) {
+            list.push({
+              id: item.id,
+              kind: item.kind === 'error' ? 'error' : 'warning',
+              text: item.text,
+              href: item.href || null,
+            });
+          }
+        }
+
+        if (!canManageWorkspaceAlerts) {
+          setDashboardNotifications(list);
+          return;
+        }
+
+        if (!smtpConfigured) {
+          list.push({
+            id: 'smtp-not-configured',
+            kind: 'warning',
+            text: isSystemAdmin
+              ? 'SMTP is not configured. Email notifications will not be sent.'
+              : 'SMTP is not configured. Ask a system administrator to configure email delivery.',
+            href: isSystemAdmin ? '/system-settings' : null,
+          });
+        }
+        if (allDisabled) {
+          list.push({
+            id: 'alerts-disabled',
+            kind: 'warning',
+            text: 'Alerts are disabled until a channel is defined.',
+            href: '/workspace-preferences',
+          });
+        }
+        if (!hasAnyContact) {
+          list.push({
+            id: 'no-contacts-defined',
+            kind: 'warning',
+            text: 'No contacts assigned to any contact group. Alerts will not reach anyone.',
+            href: '/workspace-preferences',
+          });
+        }
+        setDashboardNotifications(list);
+      } catch (_) {
+        if (!cancelled) setDashboardNotifications([]);
+      }
+    }
+
+    loadDashboardNotifications();
+    const refresh = () => loadDashboardNotifications();
+    window.addEventListener('tt:notifications-refresh', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('tt:notifications-refresh', refresh);
+    };
+  }, [_session, dashboardWorkspace, isSystemAdmin]);
 
   const commitCreateNotes = useCallback(
     v => {
@@ -3220,8 +3916,8 @@ function DashboardView({
     [onInputChange]
   );
 
-  const contactTagBg = useColorModeValue('blue.100', 'blue.800');
-  const contactTagColor = useColorModeValue('blue.800', 'blue.200');
+  const contactTagBg = 'rgba(59, 130, 246, 0.16)';
+  const contactTagColor = '#bfdbfe';
 
   const contactInputRef = useRef(null);
   const [contactTags, setContactTags] = useState([]);
@@ -3309,14 +4005,21 @@ function DashboardView({
   const renderContactTagInput = placeholder => (
     <Box
       border='1px solid'
-      borderColor={inputBorder}
-      borderRadius='md'
-      bg={inputBg}
-      px={2}
-      py='6px'
-      minH='40px'
+      borderColor={dashboardModalTokens.inputBorder}
+      borderRadius='10px'
+      bg={dashboardModalTokens.inputBg}
+      px={3}
+      py='3px'
+      minH='32px'
+      color={dashboardModalTokens.text}
       cursor='text'
+      transition='border-color 120ms ease, box-shadow 120ms ease'
       onClick={() => contactInputRef.current?.focus()}
+      _hover={{ borderColor: dashboardModalTokens.focusBorder }}
+      _focusWithin={{
+        borderColor: dashboardModalTokens.focusBorder,
+        boxShadow: `0 0 0 1px ${dashboardModalTokens.focusBorder}`,
+      }}
     >
       <Flex wrap='wrap' gap={1} alignItems='center'>
         {contactTags.map((tag, i) => (
@@ -3325,18 +4028,21 @@ function DashboardView({
             align='center'
             bg={contactTagBg}
             color={contactTagColor}
-            borderRadius='md'
+            border='1px solid'
+            borderColor='rgba(96, 165, 250, 0.28)'
+            borderRadius='8px'
             px={2}
             py='2px'
-            fontSize='sm'
+            fontSize='xs'
             gap={1}
           >
-            <Text fontSize='sm' lineHeight='short'>
+            <Text fontSize='xs' lineHeight='short'>
               {tag}
             </Text>
             <Box
               as='button'
               type='button'
+              aria-label={`Remove contact ${tag}`}
               onClick={e => {
                 e.stopPropagation();
                 removeContactTag(i);
@@ -3345,14 +4051,21 @@ function DashboardView({
               cursor='pointer'
               opacity={0.7}
               _hover={{ opacity: 1 }}
-              fontSize='xs'
+              fontSize='0'
               fontWeight='bold'
+              sx={{
+                '&::after': {
+                  content: '"x"',
+                  fontSize: '0.75rem',
+                },
+              }}
             >
               ×
             </Box>
           </Flex>
         ))}
-        <Input
+        <Box
+          as='input'
           ref={contactInputRef}
           type='text'
           value={contactInputValue}
@@ -3360,34 +4073,148 @@ function DashboardView({
           onKeyDown={handleContactKeyDown}
           list='workspace-contacts-suggestions'
           placeholder={contactTags.length === 0 ? placeholder : ''}
-          _placeholder={{ color: placeholderColor }}
+          aria-label='Contacts'
           border='none'
           bg='transparent'
+          color={dashboardModalTokens.text}
           p={0}
-          h='28px'
+          h='24px'
           flex={1}
           minW='120px'
-          fontSize='sm'
-          _focus={{ boxShadow: 'none', outline: 'none' }}
+          fontFamily='inherit'
+          fontSize='0.875rem'
+          fontWeight='normal'
+          lineHeight='1.5'
+          outline='none'
+          boxShadow='none'
+          sx={{
+            caretColor: dashboardModalTokens.text,
+            appearance: 'none',
+            border: '0 !important',
+            borderRadius: '0 !important',
+            background: 'transparent !important',
+            boxShadow: 'none !important',
+            '&::placeholder': {
+              color: dashboardModalTokens.muted,
+              opacity: 1,
+            },
+            '&:hover': {
+              border: '0 !important',
+              boxShadow: 'none !important',
+            },
+            '&:focus': {
+              border: '0 !important',
+              boxShadow: 'none !important',
+            },
+            '&:focus-visible': {
+              border: '0 !important',
+              boxShadow: 'none !important',
+            },
+          }}
         />
       </Flex>
     </Box>
   );
 
-  // Per-panel search terms keyed by category value
-  const [panelQueries, setPanelQueries] = useState(() => {
-    try {
-      const section = new URLSearchParams(window.location.search).get(
-        'section'
-      );
-      return { __section: section || '__all__' };
-    } catch (_) {
-      return { __section: '__all__' };
-    }
-  });
+  const inventoryUrl = useInventoryUrlState();
 
+  const panelQueries = useMemo(
+    () => ({
+      __section: inventoryUrl.section,
+      __global: inventoryUrl.search,
+    }),
+    [inventoryUrl.section, inventoryUrl.search]
+  );
+
+  const setPanelQueries = useCallback(
+    updater => {
+      const prev = {
+        __section: inventoryUrl.section,
+        __global: inventoryUrl.search,
+      };
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next.__section !== prev.__section) {
+        inventoryUrl.setSection(next.__section);
+      }
+      if (next.__global !== prev.__global) {
+        inventoryUrl.setSearch(next.__global || '');
+      }
+    },
+    [inventoryUrl]
+  );
+
+  const statusFilter = inventoryUrl.status;
+  const setStatusFilter = inventoryUrl.setStatus;
+
+  const [assetPage, setAssetPage] = useState(1);
   const [selectedTokenIds, setSelectedTokenIds] = useState([]);
+
+  useEffect(() => {
+    setSelectedCategories(prev => {
+      if (categoriesEqual(prev, inventoryUrl.categories)) return prev;
+      return inventoryUrl.categories;
+    });
+    setSelectedTokenIds([]);
+    setAssetPage(1);
+    if (inventoryUrl.offset > 0) {
+      inventoryUrl.setOffset(0);
+    }
+  }, [inventoryUrl.categories, inventoryUrl.offset, inventoryUrl.setOffset]);
+
+  useEffect(() => {
+    if (typeof _setSearchQuery === 'function') {
+      _setSearchQuery(inventoryUrl.search);
+    }
+  }, [inventoryUrl.search, _setSearchQuery]);
+
+  const pendingUserFilterModalCheckRef = useRef(false);
+
+  const handleFilterReset = useCallback(() => {
+    setSelectedTokenIds([]);
+    setAssetPage(1);
+    if (inventoryUrl.offset > 0) {
+      inventoryUrl.setOffset(0);
+    }
+    pendingUserFilterModalCheckRef.current = true;
+  }, [inventoryUrl]);
+
+  const handleClearAllFilters = useCallback(() => {
+    inventoryUrl.clearAllFilters();
+    setSelectedCategories([]);
+    if (typeof _setSearchQuery === 'function') {
+      _setSearchQuery('');
+    }
+    handleFilterReset();
+  }, [inventoryUrl, setSelectedCategories, _setSearchQuery, handleFilterReset]);
+
+  const handleSetSelectedCategories = useCallback(
+    updater => {
+      setSelectedCategories(prev => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        inventoryUrl.setCategories(next);
+        return next;
+      });
+    },
+    [inventoryUrl, setSelectedCategories]
+  );
+
+  const categoryIcons = useMemo(
+    () => ({
+      cert: BadgeCheck,
+      key_secret: KeyRound,
+      license: LockKeyhole,
+      general: Database,
+    }),
+    []
+  );
+  const [assetSort, setAssetSort] = useState({
+    key: 'expiresAt',
+    direction: 'asc',
+  });
+  const [assetPageSize, setAssetPageSize] = useState(50);
+
   const [bulkSectionDrafts, setBulkSectionDrafts] = useState({});
+
   const safeSetTokens = updater => {
     if (typeof _setTokens === 'function') {
       _setTokens(updater);
@@ -3420,7 +4247,15 @@ function DashboardView({
     onClose: onDomainModalClose,
   } = useDisclosure();
   // Form collapse state - collapsed by default for cleaner UI
-  const [isFormExpanded, setIsFormExpanded] = useState(false);
+  const [isCreateTokenModalOpen, setCreateTokenModalOpen] = useState(false);
+
+  useEffect(() => {
+    const handleOpenCreate = () => setCreateTokenModalOpen(true);
+    window.addEventListener('tt:open-create-token', handleOpenCreate);
+    return () => {
+      window.removeEventListener('tt:open-create-token', handleOpenCreate);
+    };
+  }, []);
 
   const toggleTokenSelection = tokenId => {
     if (isViewer) return;
@@ -3433,10 +4268,11 @@ function DashboardView({
 
   const handleBulkDelete = async () => {
     if (isViewer) return;
-    if (selectedTokenIds.length === 0) return;
+    const bulkDeleteIds = selectedVisibleTokenIds;
+    if (bulkDeleteIds.length === 0) return;
     if (
       !window.confirm(
-        `Are you sure you want to delete ${selectedTokenIds.length} selected tokens? Any linked endpoint monitors will also be deleted.`
+        `Delete ${bulkDeleteIds.length} selected on this page? Any linked endpoint monitors will also be deleted.`
       )
     ) {
       return;
@@ -3444,7 +4280,7 @@ function DashboardView({
 
     try {
       const response = await apiClient.delete('/api/tokens/bulk', {
-        data: { ids: selectedTokenIds },
+        data: { ids: bulkDeleteIds },
       });
 
       const data = response.data || {};
@@ -3457,8 +4293,10 @@ function DashboardView({
         prev.filter(t => !deletedIds.includes(String(t.id)))
       );
 
-      // Clear selection
-      setSelectedTokenIds([]);
+      // Clear deleted ids from selection (other pages may retain selection)
+      setSelectedTokenIds(prev =>
+        prev.filter(id => !bulkDeleteIds.includes(id))
+      );
 
       // Notify user
       if (failedCount === 0) {
@@ -3593,10 +4431,8 @@ function DashboardView({
       }
 
       if (format === 'yaml') {
-        const yamlMod = await import(
-          /* @vite-ignore */ 'https://esm.sh/js-yaml@4.1.0'
-        );
-        const yaml = yamlMod?.dump ? yamlMod : yamlMod.default;
+        const yamlMod = await import('js-yaml');
+        const yaml = yamlMod?.default ?? yamlMod;
         const payload = { tokens: currentTokens };
         const text = yaml.dump ? yaml.dump(payload) : yaml.dump(payload);
         const blob = new Blob([text], { type: 'text/yaml' });
@@ -3690,9 +4526,7 @@ function DashboardView({
       }
 
       if (format === 'xlsx') {
-        const XLSX = await import(
-          /* @vite-ignore */ 'https://esm.sh/xlsx@0.18.5'
-        );
+        const XLSX = await import('xlsx');
         const rows = currentTokens.map(t => ({
           name: t.name ?? '',
           category: t.category ?? '',
@@ -3803,1938 +4637,1546 @@ function DashboardView({
     return () => window.removeEventListener('tt:tokens-imported', handler);
   }, [activePanelSection, safeFetchGlobalFacets]);
 
-  return (
-    <Box>
-      <Heading size='lg' mb={8}>
-        Token Management Dashboard
-      </Heading>
+  const categoryByValue = useMemo(
+    () =>
+      TOKEN_CATEGORIES.reduce((acc, category) => {
+        acc[category.value] = category;
+        return acc;
+      }, {}),
+    [TOKEN_CATEGORIES]
+  );
 
-      {/* Token Creation Form (hidden for viewers) - Collapsible */}
-      {!isViewer && (
-        <Box
-          data-tour='add-token-form'
-          bg={bgColor}
-          p={{ base: 4, md: 6 }}
-          borderRadius='lg'
-          boxShadow='sm'
-          border='1px solid'
-          borderColor={borderColor}
-          mb={8}
-          overflow='visible'
-          transition='box-shadow 0.2s ease'
-          _hover={{ boxShadow: 'md' }}
-        >
-          {/* Collapsible Header */}
-          <Flex
-            align='center'
-            justify='space-between'
-            direction={{ base: 'column', md: 'row' }}
-            gap={{ base: 3, md: 0 }}
-            cursor='pointer'
-            onClick={() => setIsFormExpanded(!isFormExpanded)}
-            py={1}
-            _hover={{ opacity: 0.85 }}
-            transition='opacity 0.15s ease'
+  const selectedCategoryValues = useMemo(
+    () => (Array.isArray(selectedCategories) ? selectedCategories : []),
+    [selectedCategories]
+  );
+
+  const allLoadedTokens = useMemo(() => {
+    const dedupe = new Map();
+    const source = Array.isArray(tokens) ? tokens.filter(Boolean) : [];
+    for (const token of source) {
+      const key =
+        token.id ??
+        token._id ??
+        `${token.name}-${token.category}-${token.type}-${token.expiresAt}`;
+      dedupe.set(String(key), token);
+    }
+    return Array.from(dedupe.values());
+  }, [tokens]);
+
+  const loadedAssetMetrics = useLoadedAssetMetrics(allLoadedTokens, {
+    categoryCounts,
+    categoryHasMore,
+    categoryLoading,
+  });
+
+  const visibleTokens = useMemo(() => {
+    const sectionParam = panelQueries?.__section || '__all__';
+    const dashboardSearch = panelQueries?.__global || '';
+    const selected =
+      selectedCategoryValues.length > 0
+        ? selectedCategoryValues
+        : TOKEN_CATEGORIES.map(category => category.value);
+    const dedupe = new Map();
+
+    for (const categoryValue of selected) {
+      const category = categoryByValue[categoryValue];
+      if (!category) continue;
+      const categoryTokens = getFilteredAndSortedTokens(
+        tokens,
+        category,
+        dashboardSearch,
+        sectionParam
+      );
+      for (const token of categoryTokens) {
+        const status = getDashboardStatusMeta(token.expiresAt).key;
+        const matchesStatus =
+          statusFilter === 'all' ||
+          statusFilter === status ||
+          (statusFilter === 'due' && status === 'due-soon') ||
+          (statusFilter === 'critical' &&
+            (status === 'critical' || status === 'expired')) ||
+          (statusFilter === 'healthy' && status === 'healthy');
+        if (matchesStatus) dedupe.set(String(token.id), token);
+      }
+    }
+
+    return Array.from(dedupe.values()).sort(
+      (a, b) =>
+        getDaysUntilExpiration(a.expiresAt) -
+          getDaysUntilExpiration(b.expiresAt) ||
+        String(a.name || '').localeCompare(String(b.name || ''))
+    );
+  }, [
+    TOKEN_CATEGORIES,
+    categoryByValue,
+    getFilteredAndSortedTokens,
+    panelQueries,
+    selectedCategoryValues,
+    statusFilter,
+    tokens,
+  ]);
+
+  useEffect(() => {
+    if (!pendingUserFilterModalCheckRef.current) return;
+    pendingUserFilterModalCheckRef.current = false;
+    if (!selectedToken || typeof handleCloseTokenModal !== 'function') return;
+
+    const visibleIds = new Set(visibleTokens.map(token => String(token.id)));
+    if (!visibleIds.has(String(selectedToken.id))) {
+      handleCloseTokenModal();
+    }
+  }, [
+    handleCloseTokenModal,
+    panelQueries.__global,
+    panelQueries.__section,
+    selectedCategoryValues,
+    selectedToken,
+    statusFilter,
+    visibleTokens,
+  ]);
+
+  const inventoryFilterContext = useMemo(
+    () =>
+      buildInventoryFilterContext({
+        statusFilter,
+        selectedCategoryValues,
+        sectionParam: panelQueries?.__section || '__all__',
+        search: panelQueries?.__global || '',
+      }),
+    [
+      panelQueries?.__global,
+      panelQueries?.__section,
+      selectedCategoryValues,
+      statusFilter,
+    ]
+  );
+
+  const getInventoryStatusKey = useCallback(
+    expiry => getDashboardStatusMeta(expiry).key,
+    []
+  );
+
+  const statusFilterMetrics = useMemo(() => {
+    if (!isAnyInventoryFilterActive(inventoryFilterContext)) {
+      return loadedAssetMetrics;
+    }
+
+    return computeInventoryStatusMetrics(
+      filterTokensForInventoryCounts(
+        allLoadedTokens,
+        inventoryFilterContext,
+        'status',
+        getInventoryStatusKey
+      )
+    );
+  }, [
+    allLoadedTokens,
+    getInventoryStatusKey,
+    inventoryFilterContext,
+    loadedAssetMetrics,
+  ]);
+
+  const statusFilterOptions = useMemo(
+    () => [
+      {
+        value: 'all',
+        label: 'All',
+        count: statusFilterMetrics.total,
+        color: '#3b82f6',
+      },
+      {
+        value: 'critical',
+        label: 'Critical',
+        count: statusFilterMetrics.critical,
+        color: '#ef4444',
+      },
+      {
+        value: 'due',
+        label: 'Due Soon',
+        count: statusFilterMetrics.expiring30,
+        color: '#f97316',
+      },
+      {
+        value: 'healthy',
+        label: 'Healthy',
+        count: statusFilterMetrics.healthy,
+        color: '#22c55e',
+      },
+      {
+        value: 'expired',
+        label: 'Expired',
+        count: statusFilterMetrics.expired,
+        color: '#64748b',
+      },
+    ],
+    [statusFilterMetrics]
+  );
+
+  const categoryFilterOptions = useMemo(
+    () =>
+      buildCategoryFilterOptions({
+        tokenCategories: TOKEN_CATEGORIES,
+        tokens: allLoadedTokens,
+        ctx: inventoryFilterContext,
+        selectedCategoryValues,
+        globalFacets,
+        tokenFacets,
+        categoryCounts,
+        getStatusKey: getInventoryStatusKey,
+      }),
+    [
+      TOKEN_CATEGORIES,
+      allLoadedTokens,
+      categoryCounts,
+      getInventoryStatusKey,
+      globalFacets,
+      inventoryFilterContext,
+      selectedCategoryValues,
+      tokenFacets,
+    ]
+  );
+
+  const sectionFilterOptions = useMemo(
+    () =>
+      buildSectionFilterOptions({
+        tokens: allLoadedTokens,
+        ctx: inventoryFilterContext,
+        facetSource: globalFacets?.section || tokenFacets?.section || [],
+        categoryCounts,
+        getSectionColorScheme: _getSectionColorScheme,
+        getStatusKey: getInventoryStatusKey,
+      }),
+    [
+      allLoadedTokens,
+      categoryCounts,
+      getInventoryStatusKey,
+      globalFacets,
+      inventoryFilterContext,
+      tokenFacets,
+    ]
+  );
+
+  useEffect(() => {
+    const sectionParam = inventoryUrl.section || '__all__';
+    if (sectionParam === '__all__') return;
+
+    if (
+      shouldClearSectionSelection({
+        sectionParam,
+        tokens: allLoadedTokens,
+        ctx: inventoryFilterContext,
+        facetSource: globalFacets?.section || tokenFacets?.section || [],
+        categoryCounts,
+        getStatusKey: getInventoryStatusKey,
+      })
+    ) {
+      inventoryUrl.setSection('__all__');
+    }
+  }, [
+    allLoadedTokens,
+    categoryCounts,
+    getInventoryStatusKey,
+    globalFacets?.section,
+    inventoryFilterContext,
+    inventoryUrl.section,
+    inventoryUrl.setSection,
+    tokenFacets?.section,
+  ]);
+
+  useEffect(() => {
+    if (selectedCategoryValues.length === 0) return;
+
+    const pruned = pruneSelectedCategories({
+      selectedCategoryValues,
+      tokens: allLoadedTokens,
+      ctx: inventoryFilterContext,
+      globalFacets,
+      tokenFacets,
+      categoryCounts,
+      getStatusKey: getInventoryStatusKey,
+    });
+
+    if (!categoriesEqual(pruned, selectedCategoryValues)) {
+      handleSetSelectedCategories(pruned);
+    }
+  }, [
+    allLoadedTokens,
+    categoryCounts,
+    getInventoryStatusKey,
+    globalFacets,
+    handleSetSelectedCategories,
+    inventoryFilterContext,
+    selectedCategoryValues,
+    tokenFacets,
+  ]);
+
+  const requestAssetSort = useCallback(
+    key => {
+      const nextSort = {
+        key,
+        direction:
+          assetSort.key === key && assetSort.direction === 'asc'
+            ? 'desc'
+            : 'asc',
+      };
+      setAssetSort(nextSort);
+      setAssetPage(1);
+
+      const serverSortByKey = {
+        expiresAt:
+          nextSort.direction === 'asc' ? 'expiration_asc' : 'expiration_desc',
+        last_used:
+          nextSort.direction === 'asc' ? 'last_used_asc' : 'last_used_desc',
+        name: 'name_asc',
+      };
+      const nextServerSort = serverSortByKey[key];
+      if (nextServerSort && typeof _setServerSort === 'function') {
+        _setServerSort(nextServerSort);
+      }
+    },
+    [assetSort, _setServerSort]
+  );
+
+  const sortedVisibleTokens = useMemo(() => {
+    const getTypeLabel = token => {
+      const category = categoryByValue[token.category];
+      const type = category?.types?.find(t => t.value === token.type);
+      return type?.label || token.type || '';
+    };
+    const getSortValue = token => {
+      if (assetSort.key === 'category') {
+        return categoryByValue[token.category]?.label || token.category || '';
+      }
+      if (assetSort.key === 'type') return getTypeLabel(token);
+      if (assetSort.key === 'location') return getTokenLocation(token);
+      if (assetSort.key === 'owner') return getTokenOwner(token);
+      if (assetSort.key === 'contact_group') {
+        return resolveContactGroupLabel(
+          token,
+          contactGroups,
+          defaultContactGroupId
+        );
+      }
+      if (assetSort.key === 'last_used') {
+        return token.last_used ? new Date(token.last_used).getTime() : 0;
+      }
+      if (assetSort.key === 'expiresAt') {
+        return getDaysUntilExpiration(token.expiresAt);
+      }
+      if (assetSort.key === 'status') {
+        return getDashboardStatusMeta(token.expiresAt).key;
+      }
+      return token.name || '';
+    };
+
+    return visibleTokens.slice().sort((a, b) => {
+      const aValue = getSortValue(a);
+      const bValue = getSortValue(b);
+      const direction = assetSort.direction === 'asc' ? 1 : -1;
+
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return (aValue - bValue) * direction;
+      }
+
+      return (
+        String(aValue).localeCompare(String(bValue), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }) * direction
+      );
+    });
+  }, [
+    assetSort,
+    categoryByValue,
+    visibleTokens,
+    contactGroups,
+    defaultContactGroupId,
+  ]);
+
+  const assetPageCount = Math.max(
+    1,
+    Math.ceil(sortedVisibleTokens.length / assetPageSize)
+  );
+
+  useEffect(() => {
+    setAssetPage(page => Math.min(Math.max(page, 1), assetPageCount));
+  }, [assetPageCount]);
+
+  const paginatedVisibleTokens = useMemo(() => {
+    const start = (assetPage - 1) * assetPageSize;
+    return sortedVisibleTokens.slice(start, start + assetPageSize);
+  }, [assetPage, assetPageSize, sortedVisibleTokens]);
+
+  const assetRangeStart =
+    sortedVisibleTokens.length === 0 ? 0 : (assetPage - 1) * assetPageSize + 1;
+  const assetRangeEnd = Math.min(
+    assetPage * assetPageSize,
+    sortedVisibleTokens.length
+  );
+
+  const selectedVisibleTokenIds = useMemo(() => {
+    const visibleIds = new Set(paginatedVisibleTokens.map(token => token.id));
+    return selectedTokenIds.filter(id => visibleIds.has(id));
+  }, [paginatedVisibleTokens, selectedTokenIds]);
+
+  const handleToggleSelectAll = useCallback(
+    (checked, pageIds) => {
+      if (isViewer) return;
+      setSelectedTokenIds(prev => {
+        if (checked) {
+          return Array.from(new Set([...prev, ...pageIds]));
+        }
+        const pageSet = new Set(pageIds);
+        return prev.filter(id => !pageSet.has(id));
+      });
+    },
+    [isViewer]
+  );
+
+  const inventoryBulkActions =
+    !isViewer && selectedVisibleTokenIds.length > 0 ? (
+      <Flex
+        mb={4}
+        gap={3}
+        align={{ base: 'stretch', md: 'center' }}
+        justify='space-between'
+        direction={{ base: 'column', md: 'row' }}
+        p={3}
+        bg={bulkActionBarBg}
+        border='1px solid'
+        borderColor={bulkActionBarBorder}
+        borderRadius='md'
+      >
+        <Text color={text} fontSize='sm'>
+          {selectedVisibleTokenIds.length} asset(s) selected
+        </Text>
+        <HStack spacing={2} flexWrap='wrap'>
+          <Button
+            size='xs'
+            colorScheme='red'
+            variant='outline'
+            leftIcon={<FiTrash2 />}
+            onClick={handleBulkDelete}
           >
-            <HStack spacing={3}>
+            Delete selected on this page
+          </Button>
+          <Input
+            size='xs'
+            w='170px'
+            placeholder='Section label'
+            value={bulkSectionDrafts?.__dashboard || ''}
+            onChange={event =>
+              setBulkSectionDrafts(prev => ({
+                ...prev,
+                __dashboard: event.target.value,
+              }))
+            }
+            bg={inputBg}
+            borderColor={inputBorder}
+          />
+          <Button
+            size='xs'
+            colorScheme='blue'
+            variant='outline'
+            onClick={() =>
+              handleBulkAssignSection(selectedVisibleTokenIds, '__dashboard')
+            }
+          >
+            Assign section
+          </Button>
+        </HStack>
+      </Flex>
+    ) : null;
+
+  const loadMoreCategories = useMemo(
+    () =>
+      TOKEN_CATEGORIES.filter(category => categoryHasMore?.[category.value]),
+    [TOKEN_CATEGORIES, categoryHasMore]
+  );
+
+  const getAssetTypeLabel = useCallback(
+    token => {
+      const category = categoryByValue[token?.category];
+      const type = category?.types?.find(t => t.value === token?.type);
+      return type?.label || token?.type || '-';
+    },
+    [categoryByValue]
+  );
+
+  const getCategoryLabel = useCallback(
+    token => categoryByValue[token?.category]?.label || token?.category || '-',
+    [categoryByValue]
+  );
+
+  const renderAssetPaginationControls = () => (
+    <Flex
+      align={{ base: 'stretch', md: 'center' }}
+      justify={{ base: 'space-between', md: 'end' }}
+      direction={{ base: 'column', sm: 'row' }}
+      gap={3}
+      flex='1'
+      minW={0}
+    >
+      <HStack spacing={2}>
+        <Text color={mutedTextColor} fontSize='sm'>
+          Show
+        </Text>
+        <Select
+          size='sm'
+          w='84px'
+          value={assetPageSize}
+          bg={inputBg}
+          borderColor={inputBorder}
+          onChange={event => {
+            setAssetPageSize(Number(event.target.value));
+            setAssetPage(1);
+          }}
+        >
+          {ASSET_PAGE_SIZE_OPTIONS.map(size => (
+            <option key={size} value={size}>
+              {size}
+            </option>
+          ))}
+        </Select>
+      </HStack>
+
+      <HStack spacing={3} justify={{ base: 'space-between', sm: 'end' }}>
+        <Text color={mutedTextColor} fontSize='sm' whiteSpace='nowrap'>
+          {assetRangeStart}-{assetRangeEnd} of {sortedVisibleTokens.length}
+        </Text>
+        <HStack spacing={1}>
+          <IconButton
+            aria-label='Previous assets page'
+            icon={<FiChevronRight />}
+            size='sm'
+            variant='ghost'
+            color={paginationControlColor}
+            isDisabled={assetPage <= 1}
+            onClick={() => setAssetPage(page => Math.max(1, page - 1))}
+            sx={{ svg: { transform: 'rotate(180deg)' } }}
+            _hover={{
+              bg: paginationControlHoverBg,
+              color: outlineButtonHoverColor,
+            }}
+          />
+          <Button
+            size='sm'
+            variant='outline'
+            borderColor={paginationPageBorder}
+            color={paginationPageColor}
+            bg={paginationPageBg}
+            minW='38px'
+          >
+            {assetPage}
+          </Button>
+          <IconButton
+            aria-label='Next assets page'
+            icon={<FiChevronRight />}
+            size='sm'
+            variant='ghost'
+            color={paginationControlColor}
+            isDisabled={assetPage >= assetPageCount}
+            onClick={() =>
+              setAssetPage(page => Math.min(assetPageCount, page + 1))
+            }
+            _hover={{
+              bg: paginationControlHoverBg,
+              color: outlineButtonHoverColor,
+            }}
+          />
+        </HStack>
+      </HStack>
+    </Flex>
+  );
+
+  const renderDashboardWorkspace = () => (
+    <VStack spacing={3} align='stretch' minW={0}>
+      <DashboardPanel surface={surface} border={border}>
+        <AssetFilters
+          panelQueries={panelQueries}
+          setPanelQueries={setPanelQueries}
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          selectedCategories={selectedCategoryValues}
+          setSelectedCategories={handleSetSelectedCategories}
+          statusFilterOptions={statusFilterOptions}
+          categoryFilterOptions={categoryFilterOptions}
+          sectionFilterOptions={sectionFilterOptions}
+          TOKEN_CATEGORIES={TOKEN_CATEGORIES}
+          categoryIcons={categoryIcons}
+          onGlobalSearchChange={_setSearchQuery}
+          onFilterReset={handleFilterReset}
+          onClearAllFilters={handleClearAllFilters}
+          onSectionNavigate={inventoryUrl.setSection}
+        />
+      </DashboardPanel>
+
+      <DashboardPanel
+        title='Assets'
+        surface={surface}
+        border={border}
+        data-tour='token-list'
+        style={{
+          transition: 'opacity 180ms ease, transform 180ms ease',
+          opacity: isRefreshing ? 0.35 : 1,
+          transform: isRefreshing ? 'scale(0.995)' : 'scale(1)',
+        }}
+      >
+        <AssetInventoryTable
+          tokens={paginatedVisibleTokens}
+          selectedCategories={selectedCategoryValues}
+          sort={assetSort}
+          onSort={requestAssetSort}
+          selectedIds={selectedTokenIds}
+          onToggleSelect={toggleTokenSelection}
+          onToggleSelectAll={handleToggleSelectAll}
+          bulkActions={inventoryBulkActions}
+          paginationControls={renderAssetPaginationControls()}
+          visibleCount={sortedVisibleTokens.length}
+          tokensLoading={tokensLoading}
+          allTokensCount={tokens.length}
+          sortedVisibleCount={sortedVisibleTokens.length}
+          isViewer={isViewer}
+          loadMoreCategories={loadMoreCategories}
+          fetchTokensForCategory={fetchTokensForCategory}
+          categoryLoading={categoryLoading}
+          onOpenTokenModal={onOpenTokenModal}
+          onOpenRenew={onOpenRenew}
+          onDeleteToken={onDeleteToken}
+          getAssetTypeLabel={getAssetTypeLabel}
+          getCategoryLabel={getCategoryLabel}
+          getStatusMeta={getDashboardStatusMeta}
+          getTokenLocation={getTokenLocation}
+          getTokenOwner={getTokenOwner}
+          contactGroups={contactGroups}
+          defaultContactGroupId={defaultContactGroupId}
+          emptyTextColor={emptyTextColor}
+          mutedTextColor={mutedTextColor}
+          secondaryTextColor={secondaryTextColor}
+          mobileCardBg={mobileCardBg}
+          hoverBgColor={hoverBgColor}
+        />
+      </DashboardPanel>
+    </VStack>
+  );
+
+  return (
+    <Box
+      color={pageTextColor}
+      minH='100vh'
+      bg={pageBg}
+      sx={{
+        '.chakra-form__label': { color: formLabelColor },
+        '.chakra-table th': {
+          color: tableHeadColor,
+          borderColor: border,
+          background: tableHeadBg,
+          fontSize: '0.72rem',
+          letterSpacing: '0',
+          textTransform: 'none',
+          paddingTop: '0.55rem',
+          paddingBottom: '0.55rem',
+        },
+        '.chakra-table td': {
+          color: tableCellColor,
+          borderColor: border,
+          paddingTop: '0.55rem',
+          paddingBottom: '0.55rem',
+        },
+        '.chakra-input, .chakra-select, .chakra-textarea': {
+          color: fieldTextColor,
+        },
+        option: {
+          background: optionBg,
+          color: optionColor,
+        },
+      }}
+    >
+      <DashboardShell
+        dashboardColors={{
+          pageBg,
+          surface,
+          text,
+          muted,
+          border,
+          inputBg: themeInputBg,
+        }}
+        currentPath={location.pathname}
+        sessionName={sessionName}
+        sessionEmail={sessionEmail}
+        sessionInitials={sessionInitials}
+        dashboardWorkspaces={dashboardWorkspaces}
+        dashboardWorkspace={dashboardWorkspace}
+        workspaceLabel={workspaceLabel}
+        onWorkspaceSelect={handleDashboardWorkspaceSelect}
+        dashboardNotifications={dashboardNotifications}
+        onLogout={onLogout}
+        onAccountClick={handleAccountClick}
+        isViewer={isViewer}
+        dashboardCanSeeManagerNav={dashboardCanSeeManagerNav}
+        isSystemAdmin={isSystemAdmin}
+        pageTitle='Asset Inventory'
+      >
+        <Box px={{ base: 4, lg: 4, '2xl': 5 }} py={{ base: 5, lg: 3 }}>
+          {/* Token creation actions (hidden for viewers) */}
+          {!isViewer && (
+            <>
               <Box
-                as='span'
-                transition='transform 0.2s ease'
-                transform={isFormExpanded ? 'rotate(90deg)' : 'rotate(0deg)'}
-                display='flex'
-                alignItems='center'
+                bg={surface}
+                p={{ base: 4, md: 4 }}
+                borderRadius='md'
+                boxShadow='0 14px 42px rgba(0, 0, 0, 0.18)'
+                border='1px solid'
+                borderColor={border}
+                mb={4}
+                overflow='visible'
               >
-                <FiChevronRight size={18} />
-              </Box>
-              <Heading size='md'>Create New Token</Heading>
-              {!isFormExpanded && (
-                <Badge
-                  colorScheme='blue'
-                  variant='solid'
-                  bg={isLight ? 'blue.100' : 'blue.800'}
-                  color={isLight ? 'blue.700' : 'blue.200'}
-                  fontSize='xs'
-                >
-                  Click to expand
-                </Badge>
-              )}
-            </HStack>
-            <HStack
-              spacing={2}
-              wrap='wrap'
-              justify={{ base: 'center', md: 'flex-end' }}
-              align='center'
-              maxW='100%'
-              onClick={e => e.stopPropagation()}
-              position='relative'
-              zIndex={1}
-            >
-              <Menu placement='bottom-end'>
-                <MenuButton
-                  data-tour='export-tokens'
-                  as={Button}
-                  leftIcon={<FiDownload />}
-                  size='sm'
-                  variant='outline'
-                  minW='fit-content'
-                  maxW={{ base: '100%', sm: 'none' }}
-                  whiteSpace='nowrap'
-                >
-                  Export tokens
-                </MenuButton>
-                <Portal>
-                  <MenuList
-                    zIndex={1500}
-                    bg={menuBg}
-                    borderColor={menuBorder}
-                    borderWidth='1px'
+                <HStack spacing={3} flexWrap='wrap' justify='flex-start'>
+                  <Button
+                    data-tour='create-token-button'
+                    size='sm'
+                    colorScheme='blue'
+                    leftIcon={<FiPlus />}
+                    borderRadius='md'
+                    onClick={() => setCreateTokenModalOpen(true)}
                   >
-                    <MenuItem onClick={() => exportTokens('csv')}>CSV</MenuItem>
-                    <MenuItem onClick={() => exportTokens('xlsx')}>
-                      XLSX
-                    </MenuItem>
-                    <MenuItem onClick={() => exportTokens('json')}>
-                      JSON
-                    </MenuItem>
-                    <MenuItem onClick={() => exportTokens('yaml')}>
-                      YAML
-                    </MenuItem>
-                  </MenuList>
-                </Portal>
-              </Menu>
-              <Button
-                size='sm'
-                colorScheme='blue'
-                variant='outline'
-                leftIcon={<FiGlobe />}
-                onClick={onDomainModalOpen}
-                minW='fit-content'
-                aria-label='Endpoint and SSL monitoring (single URL health checks or domain-wide SSL discovery)'
-              >
-                Endpoint & SSL monitor
-              </Button>
-              <Box data-tour='import-tokens'>
-                <ImportTokensButton />
+                    Create New Token
+                  </Button>
+                  <Menu placement='bottom-end' autoSelect={false}>
+                    <MenuButton
+                      data-tour='export-tokens'
+                      as={Button}
+                      leftIcon={<Download size={16} />}
+                      size='sm'
+                      variant='outline'
+                      minW='fit-content'
+                      maxW={{ base: '100%', sm: 'none' }}
+                      whiteSpace='nowrap'
+                    >
+                      Export tokens
+                    </MenuButton>
+                    <Portal>
+                      <MenuList {...dashboardMenuListProps}>
+                        <MenuItem
+                          onClick={() => exportTokens('csv')}
+                          {...dashboardMenuItemProps}
+                        >
+                          CSV
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => exportTokens('xlsx')}
+                          {...dashboardMenuItemProps}
+                        >
+                          XLSX
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => exportTokens('json')}
+                          {...dashboardMenuItemProps}
+                        >
+                          JSON
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => exportTokens('yaml')}
+                          {...dashboardMenuItemProps}
+                        >
+                          YAML
+                        </MenuItem>
+                      </MenuList>
+                    </Portal>
+                  </Menu>
+                  <Button
+                    data-tour='endpoint-ssl-monitor'
+                    size='sm'
+                    colorScheme='blue'
+                    variant='outline'
+                    leftIcon={<ActivityIcon size={16} />}
+                    onClick={onDomainModalOpen}
+                    minW='fit-content'
+                    aria-label='Endpoint and SSL monitoring'
+                  >
+                    Endpoint & SSL monitor
+                  </Button>
+                  <Box data-tour='import-tokens'>
+                    <ImportTokensButton label='Import tokens' />
+                  </Box>
+                </HStack>
               </Box>
-            </HStack>
-          </Flex>
 
-          <Collapse in={isFormExpanded} animateOpacity>
-            <Box pt={4}>
-              <form onSubmit={onTokenAdd}>
-                <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
-                  {/* Name Field */}
-                  <FormControl isInvalid={!!formErrors.name}>
-                    <FormLabel htmlFor='name'>Name *</FormLabel>
-                    <Input
-                      type='text'
-                      id='name'
-                      name='name'
-                      value={formData.name}
-                      onChange={onInputChange}
-                      bg={inputBg}
-                      borderColor={formErrors.name ? 'red.500' : inputBorder}
-                      _placeholder={{ color: placeholderColor }}
-                      maxLength={100}
-                      aria-required='true'
-                      aria-invalid={formErrors.name ? 'true' : 'false'}
-                      aria-describedby={
-                        formErrors.name ? 'name-error' : undefined
-                      }
-                    />
-                    {formErrors.name && (
-                      <FormErrorMessage id='name-error'>
-                        {formErrors.name}
-                      </FormErrorMessage>
-                    )}
-                  </FormControl>
-
-                  {/* Category Field */}
-                  <FormControl isInvalid={!!formErrors.category}>
-                    <FormLabel htmlFor='category'>Category *</FormLabel>
-                    <Select
-                      id='category'
-                      name='category'
-                      value={formData.category}
-                      onChange={onInputChange}
-                      bg={inputBg}
-                      borderColor={
-                        formErrors.category ? 'red.500' : inputBorder
-                      }
-                      aria-required='true'
-                      aria-invalid={formErrors.category ? 'true' : 'false'}
-                      aria-describedby={
-                        formErrors.category ? 'category-error' : undefined
-                      }
-                    >
-                      {TOKEN_CATEGORIES.map(category => (
-                        <option key={category.value} value={category.value}>
-                          {category.label}
-                        </option>
-                      ))}
-                    </Select>
-                    {formErrors.category && (
-                      <FormErrorMessage id='category-error'>
-                        {formErrors.category}
-                      </FormErrorMessage>
-                    )}
-                  </FormControl>
-
-                  {/* Type Field - Dynamic based on category */}
-                  <FormControl isInvalid={!!formErrors.type}>
-                    <FormLabel htmlFor='type'>Type *</FormLabel>
-                    <Select
-                      id='type'
-                      name='type'
-                      value={formData.type}
-                      onChange={onInputChange}
-                      bg={inputBg}
-                      borderColor={formErrors.type ? 'red.500' : inputBorder}
-                      aria-required='true'
-                      aria-invalid={formErrors.type ? 'true' : 'false'}
-                      aria-describedby={
-                        formErrors.type ? 'type-error' : undefined
-                      }
-                    >
-                      <option value=''>Select a type</option>
-                      {formData.category &&
-                        TOKEN_CATEGORIES.find(
-                          cat => cat.value === formData.category
-                        )?.types.map(type => (
-                          <option key={type.value} value={type.value}>
-                            {type.label}
-                          </option>
-                        ))}
-                    </Select>
-                    {formErrors.type && (
-                      <FormErrorMessage id='type-error'>
-                        {formErrors.type}
-                      </FormErrorMessage>
-                    )}
-                  </FormControl>
-
-                  {/* Section Field */}
-                  <FormControl>
-                    <FormLabel htmlFor='section'>Section</FormLabel>
-                    <Input
-                      type='text'
-                      id='section'
-                      name='section'
-                      value={formData.section}
-                      onChange={onInputChange}
-                      bg={inputBg}
-                      borderColor={inputBorder}
-                      placeholder='e.g., prod, AWS, security team'
-                      maxLength={120}
-                    />
-                  </FormControl>
-
-                  {/* Contact group selector - replaces per-token email override */}
-                  <FormControl>
-                    <FormLabel>Contact group (alerts)</FormLabel>
-                    <Select
-                      name='contact_group_id'
-                      value={formData.contact_group_id || ''}
-                      onChange={onInputChange}
-                      isDisabled={isViewer}
-                      bg={inputBg}
-                      borderColor={inputBorder}
-                    >
-                      <option value=''>Use workspace default</option>
-                      {Array.isArray(contactGroups) &&
-                        contactGroups.map(g => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                    </Select>
-                    {isViewer ? (
-                      <Text fontSize='xs' color={helpTextColor} mt={1}>
-                        Only workspace managers and admins can set per‑token
-                        contact group.
-                      </Text>
-                    ) : null}
-                  </FormControl>
-
-                  {/* Expiration Date Field */}
-                  <FormControl isInvalid={!!formErrors.expiresAt}>
-                    <FormLabel htmlFor='expiresAt'>Expiration Date</FormLabel>
-                    <Input
-                      type='date'
-                      id='expiresAt'
-                      name='expiresAt'
-                      value={formData.expiresAt}
-                      onChange={onInputChange}
-                      bg={inputBg}
-                      borderColor={
-                        formErrors.expiresAt ? 'red.500' : inputBorder
-                      }
-                      aria-invalid={formErrors.expiresAt ? 'true' : 'false'}
-                      aria-describedby={
-                        formErrors.expiresAt ? 'expiresAt-error' : undefined
-                      }
-                    />
-                    {formErrors.expiresAt && (
-                      <FormErrorMessage id='expiresAt-error'>
-                        {formErrors.expiresAt}
-                      </FormErrorMessage>
-                    )}
-                  </FormControl>
-                </SimpleGrid>
-
-                {/* Category-specific fields */}
-                {formData.category === 'cert' && (
-                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6} mt={6}>
-                    <FormControl isInvalid={!!formErrors.domains}>
-                      <FormLabel htmlFor='domains'>
-                        Domains (comma-separated)
-                      </FormLabel>
-                      <Input
-                        type='text'
-                        id='domains'
-                        name='domains'
-                        value={formData.domains}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={
-                          formErrors.domains ? 'red.500' : inputBorder
-                        }
-                        placeholder='example.com, www.example.com'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={500}
-                      />
-                      {formErrors.domains && (
-                        <FormErrorMessage id='domains-error'>
-                          {formErrors.domains}
-                        </FormErrorMessage>
-                      )}
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='issuer'>Issuer</FormLabel>
-                      <Input
-                        type='text'
-                        id='issuer'
-                        name='issuer'
-                        value={formData.issuer}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder={"Let's Encrypt, DigiCert"}
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={100}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='serial_number'>
-                        Serial Number
-                      </FormLabel>
-                      <Input
-                        type='text'
-                        id='serial_number'
-                        name='serial_number'
-                        value={formData.serial_number}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Optional'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={50}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='subject'>Subject</FormLabel>
-                      <Input
-                        type='text'
-                        id='subject'
-                        name='subject'
-                        value={formData.subject}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='CN=example.com, O=Example Corp, C=US'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={300}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='renewal_url'>Renewal URL</FormLabel>
-                      <Input
-                        type='url'
-                        id='renewal_url'
-                        name='renewal_url'
-                        value={formData.renewal_url}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='https://provider.com/renew'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={500}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='contacts'>
-                        Contacts (Key custodian)
-                      </FormLabel>
-                      {renderContactTagInput('Who manages this certificate?')}
-                    </FormControl>
-                  </SimpleGrid>
-                )}
-
-                {formData.category === 'key_secret' && (
-                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6} mt={6}>
-                    <FormControl>
-                      <FormLabel>Locations</FormLabel>
-                      <VStack spacing={2} align='stretch'>
-                        {locationEntries.map((location, index) => (
-                          <HStack key={index} spacing={2}>
+              <Modal
+                isOpen={isCreateTokenModalOpen}
+                onClose={() => setCreateTokenModalOpen(false)}
+                size='6xl'
+                isCentered
+                scrollBehavior='inside'
+                motionPreset='none'
+              >
+                <ModalOverlay {...dashboardModalOverlayProps} />
+                <DashboardModalFrame maxW='1100px'>
+                  <ModalHeader {...dashboardModalHeaderProps}>
+                    <DashboardModalTitle color={dashboardModalTokens.text}>
+                      Create New Token
+                    </DashboardModalTitle>
+                    <DashboardModalDescription>
+                      Add a certificate, key, secret, license, or general asset.
+                    </DashboardModalDescription>
+                  </ModalHeader>
+                  <ModalCloseButton {...dashboardModalCloseButtonProps} />
+                  <ModalBody {...dashboardModalBodyProps}>
+                    <Box pt={0}>
+                      <form id={createTokenFormId} onSubmit={onTokenAdd}>
+                        <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6}>
+                          {/* Name Field */}
+                          <FormControl isInvalid={!!formErrors.name}>
+                            <FormLabel htmlFor='name'>Name *</FormLabel>
                             <Input
                               type='text'
-                              value={location}
-                              onChange={e =>
-                                updateLocationEntry(index, e.target.value)
-                              }
+                              id='name'
+                              name='name'
+                              value={formData.name}
+                              onChange={onInputChange}
                               bg={inputBg}
-                              borderColor={inputBorder}
-                              placeholder='AWS Secrets Manager, /etc/ssl/certs'
+                              borderColor={
+                                formErrors.name ? 'red.500' : inputBorder
+                              }
                               _placeholder={{ color: placeholderColor }}
+                              maxLength={100}
+                              aria-required='true'
+                              aria-invalid={formErrors.name ? 'true' : 'false'}
+                              aria-describedby={
+                                formErrors.name ? 'name-error' : undefined
+                              }
                             />
-                            {locationEntries.length > 1 && (
-                              <IconButton
-                                icon={<FiX />}
-                                onClick={() => removeLocationEntry(index)}
-                                aria-label='Remove location'
-                                size='sm'
-                                colorScheme='red'
-                                variant='ghost'
-                              />
+                            {formErrors.name && (
+                              <FormErrorMessage id='name-error'>
+                                {formErrors.name}
+                              </FormErrorMessage>
                             )}
-                          </HStack>
-                        ))}
-                        <Button
-                          leftIcon={<FiPlus />}
-                          onClick={addLocationEntry}
-                          size='sm'
-                          variant='outline'
-                          alignSelf='flex-start'
-                        >
-                          Add Location
-                        </Button>
-                      </VStack>
-                    </FormControl>
+                          </FormControl>
 
-                    <FormControl>
-                      <FormLabel htmlFor='used_by'>Used By</FormLabel>
-                      <Input
-                        type='text'
-                        id='used_by'
-                        name='used_by'
-                        value={formData.used_by}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Web server, API service'
-                        _placeholder={{ color: placeholderColor }}
-                      />
-                    </FormControl>
+                          {/* Category Field */}
+                          <FormControl isInvalid={!!formErrors.category}>
+                            <FormLabel htmlFor='category'>Category *</FormLabel>
+                            <Select
+                              id='category'
+                              name='category'
+                              value={formData.category}
+                              onChange={onInputChange}
+                              bg={inputBg}
+                              borderColor={
+                                formErrors.category ? 'red.500' : inputBorder
+                              }
+                              aria-required='true'
+                              aria-invalid={
+                                formErrors.category ? 'true' : 'false'
+                              }
+                              aria-describedby={
+                                formErrors.category
+                                  ? 'category-error'
+                                  : undefined
+                              }
+                            >
+                              {TOKEN_CATEGORIES.map(category => (
+                                <option
+                                  key={category.value}
+                                  value={category.value}
+                                >
+                                  {category.label}
+                                </option>
+                              ))}
+                            </Select>
+                            {formErrors.category && (
+                              <FormErrorMessage id='category-error'>
+                                {formErrors.category}
+                              </FormErrorMessage>
+                            )}
+                          </FormControl>
 
-                    <FormControl>
-                      <FormLabel htmlFor='description'>Description</FormLabel>
-                      <Input
-                        type='text'
-                        id='description'
-                        name='description'
-                        value={formData.description}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Use case or context for this key/secret'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={300}
-                      />
-                    </FormControl>
+                          {/* Type Field - Dynamic based on category */}
+                          <FormControl isInvalid={!!formErrors.type}>
+                            <FormLabel htmlFor='type'>Type *</FormLabel>
+                            <Select
+                              id='type'
+                              name='type'
+                              value={formData.type}
+                              onChange={onInputChange}
+                              bg={inputBg}
+                              borderColor={
+                                formErrors.type ? 'red.500' : inputBorder
+                              }
+                              aria-required='true'
+                              aria-invalid={formErrors.type ? 'true' : 'false'}
+                              aria-describedby={
+                                formErrors.type ? 'type-error' : undefined
+                              }
+                            >
+                              <option value=''>Select a type</option>
+                              {formData.category &&
+                                TOKEN_CATEGORIES.find(
+                                  cat => cat.value === formData.category
+                                )?.types.map(type => (
+                                  <option key={type.value} value={type.value}>
+                                    {type.label}
+                                  </option>
+                                ))}
+                            </Select>
+                            {formErrors.type && (
+                              <FormErrorMessage id='type-error'>
+                                {formErrors.type}
+                              </FormErrorMessage>
+                            )}
+                          </FormControl>
 
-                    {/* Algorithm and Key Size only for encryption_key and ssh_key */}
-                    {(formData.type === 'encryption_key' ||
-                      formData.type === 'ssh_key') && (
-                      <>
-                        <FormControl>
-                          <FormLabel htmlFor='algorithm'>Algorithm</FormLabel>
-                          <Input
-                            type='text'
-                            id='algorithm'
-                            name='algorithm'
-                            value={formData.algorithm}
-                            onChange={onInputChange}
-                            bg={inputBg}
-                            borderColor={inputBorder}
-                            placeholder='AES-256, RSA'
-                            _placeholder={{ color: placeholderColor }}
-                            maxLength={50}
-                          />
-                        </FormControl>
-
-                        <FormControl isInvalid={!!formErrors.key_size}>
-                          <FormLabel htmlFor='key_size'>
-                            Key Size (bits)
-                          </FormLabel>
-                          <Input
-                            type='number'
-                            id='key_size'
-                            name='key_size'
-                            value={formData.key_size}
-                            onChange={onInputChange}
-                            bg={inputBg}
-                            borderColor={
-                              formErrors.key_size ? 'red.500' : inputBorder
-                            }
-                            placeholder='256, 2048'
-                            _placeholder={{ color: placeholderColor }}
-                            min={128}
-                            max={16384}
-                            step={1}
-                          />
-                          {formErrors.key_size && (
-                            <FormErrorMessage id='key_size-error'>
-                              {formErrors.key_size}
-                            </FormErrorMessage>
-                          )}
-                        </FormControl>
-                      </>
-                    )}
-
-                    <FormControl>
-                      <FormLabel htmlFor='renewal_url'>Renewal URL</FormLabel>
-                      <Input
-                        type='url'
-                        id='renewal_url'
-                        name='renewal_url'
-                        value={formData.renewal_url}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='https://provider.com/renew'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={500}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='contacts'>
-                        Contacts (Key custodian)
-                      </FormLabel>
-                      {renderContactTagInput('Who manages this key/secret?')}
-                    </FormControl>
-                  </SimpleGrid>
-                )}
-
-                {formData.category === 'license' && (
-                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6} mt={6}>
-                    <FormControl>
-                      <FormLabel htmlFor='vendor'>Vendor</FormLabel>
-                      <Input
-                        type='text'
-                        id='vendor'
-                        name='vendor'
-                        value={formData.vendor}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Microsoft, Adobe'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={100}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='license_type'>License Type</FormLabel>
-                      <Input
-                        type='text'
-                        id='license_type'
-                        name='license_type'
-                        value={formData.license_type}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Perpetual, Subscription'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={50}
-                      />
-                    </FormControl>
-
-                    <FormControl isInvalid={!!formErrors.cost}>
-                      <FormLabel htmlFor='cost'>Cost ($)</FormLabel>
-                      <Input
-                        type='number'
-                        id='cost'
-                        name='cost'
-                        value={formData.cost}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={formErrors.cost ? 'red.500' : inputBorder}
-                        placeholder='0.00'
-                        step='0.01'
-                        min='0'
-                        max='999999999999.99'
-                        _placeholder={{ color: placeholderColor }}
-                      />
-                      {formErrors.cost && (
-                        <FormErrorMessage id='cost-error'>
-                          {formErrors.cost}
-                        </FormErrorMessage>
-                      )}
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='renewal_url'>Renewal URL</FormLabel>
-                      <Input
-                        type='url'
-                        id='renewal_url'
-                        name='renewal_url'
-                        value={formData.renewal_url}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='https://vendor.com/renew'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={500}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='renewal_date'>Renewal Date</FormLabel>
-                      <Input
-                        type='date'
-                        id='renewal_date'
-                        name='renewal_date'
-                        value={formData.renewal_date}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Optional'
-                        _placeholder={{ color: placeholderColor }}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel htmlFor='contacts'>Contacts</FormLabel>
-                      {renderContactTagInput('Who owns this renewal?')}
-                    </FormControl>
-                  </SimpleGrid>
-                )}
-
-                {formData.category === 'general' && (
-                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={6} mt={6}>
-                    <FormControl>
-                      <FormLabel>Locations</FormLabel>
-                      <VStack spacing={2} align='stretch'>
-                        {locationEntries.map((location, index) => (
-                          <HStack key={index} spacing={2}>
+                          {/* Section Field */}
+                          <FormControl>
+                            <FormLabel htmlFor='section'>Section</FormLabel>
                             <Input
                               type='text'
-                              value={location}
-                              onChange={e =>
-                                updateLocationEntry(index, e.target.value)
-                              }
+                              id='section'
+                              name='section'
+                              value={formData.section}
+                              onChange={onInputChange}
                               bg={inputBg}
                               borderColor={inputBorder}
-                              placeholder='Folder path, cloud location'
-                              _placeholder={{ color: placeholderColor }}
+                              placeholder='e.g., prod, AWS, security team'
+                              maxLength={120}
                             />
-                            {locationEntries.length > 1 && (
-                              <IconButton
-                                icon={<FiX />}
-                                onClick={() => removeLocationEntry(index)}
-                                aria-label='Remove location'
-                                size='sm'
-                                colorScheme='red'
-                                variant='ghost'
-                              />
+                          </FormControl>
+
+                          {/* Contact group selector - replaces per-token email override */}
+                          <FormControl>
+                            <FormLabel>Contact group (alerts)</FormLabel>
+                            <Select
+                              name='contact_group_id'
+                              value={formData.contact_group_id || ''}
+                              onChange={onInputChange}
+                              isDisabled={isViewer}
+                              bg={inputBg}
+                              borderColor={inputBorder}
+                            >
+                              <option value=''>Use workspace default</option>
+                              {Array.isArray(contactGroups) &&
+                                contactGroups.map(g => (
+                                  <option key={g.id} value={g.id}>
+                                    {g.name}
+                                  </option>
+                                ))}
+                            </Select>
+                            {isViewer ? (
+                              <Text fontSize='xs' color={helpTextColor} mt={1}>
+                                Only workspace managers and admins can set
+                                per-token contact group.
+                              </Text>
+                            ) : null}
+                          </FormControl>
+
+                          {/* Expiration Date Field */}
+                          <FormControl isInvalid={!!formErrors.expiresAt}>
+                            <FormLabel htmlFor='expiresAt'>
+                              Expiration Date
+                            </FormLabel>
+                            <Input
+                              type='date'
+                              id='expiresAt'
+                              name='expiresAt'
+                              value={formData.expiresAt}
+                              onChange={onInputChange}
+                              bg={inputBg}
+                              borderColor={
+                                formErrors.expiresAt ? 'red.500' : inputBorder
+                              }
+                              aria-invalid={
+                                formErrors.expiresAt ? 'true' : 'false'
+                              }
+                              aria-describedby={
+                                formErrors.expiresAt
+                                  ? 'expiresAt-error'
+                                  : undefined
+                              }
+                            />
+                            {formErrors.expiresAt && (
+                              <FormErrorMessage id='expiresAt-error'>
+                                {formErrors.expiresAt}
+                              </FormErrorMessage>
                             )}
-                          </HStack>
-                        ))}
-                        <Button
-                          leftIcon={<FiPlus />}
-                          onClick={addLocationEntry}
-                          size='sm'
-                          variant='outline'
-                          alignSelf='flex-start'
-                        >
-                          Add Location
-                        </Button>
-                      </VStack>
-                    </FormControl>
+                          </FormControl>
+                        </SimpleGrid>
 
-                    <FormControl>
-                      <FormLabel htmlFor='used_by'>Used By</FormLabel>
-                      <Input
-                        type='text'
-                        id='used_by'
-                        name='used_by'
-                        value={formData.used_by}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='Application, service'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={200}
-                      />
-                    </FormControl>
+                        {/* Category-specific fields */}
+                        {formData.category === 'cert' && (
+                          <SimpleGrid
+                            columns={{ base: 1, md: 3 }}
+                            spacing={6}
+                            mt={6}
+                          >
+                            <FormControl isInvalid={!!formErrors.domains}>
+                              <FormLabel htmlFor='domains'>
+                                Domains (comma-separated)
+                              </FormLabel>
+                              <Input
+                                type='text'
+                                id='domains'
+                                name='domains'
+                                value={formData.domains}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={
+                                  formErrors.domains ? 'red.500' : inputBorder
+                                }
+                                placeholder='example.com, www.example.com'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={500}
+                              />
+                              {formErrors.domains && (
+                                <FormErrorMessage id='domains-error'>
+                                  {formErrors.domains}
+                                </FormErrorMessage>
+                              )}
+                            </FormControl>
 
-                    <FormControl>
-                      <FormLabel htmlFor='renewal_url'>Renewal URL</FormLabel>
-                      <Input
-                        type='url'
-                        id='renewal_url'
-                        name='renewal_url'
-                        value={formData.renewal_url}
-                        onChange={onInputChange}
-                        bg={inputBg}
-                        borderColor={inputBorder}
-                        placeholder='https://provider.com/renew'
-                        _placeholder={{ color: placeholderColor }}
-                        maxLength={500}
-                      />
-                    </FormControl>
+                            <FormControl>
+                              <FormLabel htmlFor='issuer'>Issuer</FormLabel>
+                              <Input
+                                type='text'
+                                id='issuer'
+                                name='issuer'
+                                value={formData.issuer}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder={"Let's Encrypt, DigiCert"}
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={100}
+                              />
+                            </FormControl>
 
-                    <FormControl>
-                      <FormLabel htmlFor='contacts'>Contacts</FormLabel>
-                      {renderContactTagInput('Who manages this item?')}
-                    </FormControl>
-                  </SimpleGrid>
-                )}
+                            <FormControl>
+                              <FormLabel htmlFor='serial_number'>
+                                Serial Number
+                              </FormLabel>
+                              <Input
+                                type='text'
+                                id='serial_number'
+                                name='serial_number'
+                                value={formData.serial_number}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Optional'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={50}
+                              />
+                            </FormControl>
 
-                {/* Datalist for workspace contacts suggestions (creation form) */}
-                <datalist id='workspace-contacts-suggestions'>
-                  {(Array.isArray(workspaceContacts) ? workspaceContacts : [])
-                    .map(c => {
-                      const name = [c.first_name, c.last_name]
-                        .filter(Boolean)
-                        .join(' ')
-                        .trim();
-                      const phone = (c.phone_e164 || '').trim();
-                      const parts = [name, phone].filter(Boolean);
-                      const label = parts.join(' - ');
-                      return { c, label };
-                    })
-                    .filter(
-                      ({ label }) => label && !selectedContactLabels.has(label)
-                    )
-                    .map(({ c, label }) => (
-                      <option key={c.id} value={label} />
-                    ))}
-                </datalist>
+                            <FormControl>
+                              <FormLabel htmlFor='subject'>Subject</FormLabel>
+                              <Input
+                                type='text'
+                                id='subject'
+                                name='subject'
+                                value={formData.subject}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='CN=example.com, O=Example Corp, C=US'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={300}
+                              />
+                            </FormControl>
 
-                {/* Notes field for all categories */}
-                <FormControl mt={6}>
-                  <FormLabel htmlFor='notes'>Notes</FormLabel>
-                  <CreateTokenNotesField
-                    parentNotes={formData.notes}
-                    onCommitNotes={commitCreateNotes}
-                    submitFlushRef={createTokenNotesFlushRef}
-                    inputBg={inputBg}
-                    inputBorder={inputBorder}
-                    placeholderColor={placeholderColor}
-                  />
-                </FormControl>
+                            <FormControl>
+                              <FormLabel htmlFor='renewal_url'>
+                                Renewal URL
+                              </FormLabel>
+                              <Input
+                                type='url'
+                                id='renewal_url'
+                                name='renewal_url'
+                                value={formData.renewal_url}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='https://provider.com/renew'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={500}
+                              />
+                            </FormControl>
 
-                {(typeof canCreateToken === 'boolean'
-                  ? canCreateToken
-                  : true) && (
-                  <Flex justify='flex-end' mt={8}>
-                    {typeof isViewer === 'boolean' ? (
-                      !isViewer && (
+                            <FormControl>
+                              <FormLabel htmlFor='contacts'>
+                                Contacts (Key custodian)
+                              </FormLabel>
+                              {renderContactTagInput(
+                                'Who manages this certificate?'
+                              )}
+                            </FormControl>
+                          </SimpleGrid>
+                        )}
+
+                        {formData.category === 'key_secret' && (
+                          <SimpleGrid
+                            columns={{ base: 1, md: 3 }}
+                            spacing={6}
+                            mt={6}
+                          >
+                            <FormControl>
+                              <FormLabel>Locations</FormLabel>
+                              <VStack spacing={2} align='stretch'>
+                                {locationEntries.map((location, index) => (
+                                  <HStack key={index} spacing={2}>
+                                    <Input
+                                      type='text'
+                                      value={location}
+                                      onChange={e =>
+                                        updateLocationEntry(
+                                          index,
+                                          e.target.value
+                                        )
+                                      }
+                                      bg={inputBg}
+                                      borderColor={inputBorder}
+                                      placeholder='AWS Secrets Manager, /etc/ssl/certs'
+                                      _placeholder={{
+                                        color: placeholderColor,
+                                      }}
+                                    />
+                                    {locationEntries.length > 1 && (
+                                      <IconButton
+                                        icon={<FiX />}
+                                        onClick={() =>
+                                          removeLocationEntry(index)
+                                        }
+                                        aria-label='Remove location'
+                                        size='sm'
+                                        colorScheme='red'
+                                        variant='ghost'
+                                      />
+                                    )}
+                                  </HStack>
+                                ))}
+                                <Button
+                                  leftIcon={<FiPlus />}
+                                  onClick={addLocationEntry}
+                                  size='sm'
+                                  variant='outline'
+                                  alignSelf='flex-start'
+                                >
+                                  Add Location
+                                </Button>
+                              </VStack>
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='used_by'>Used By</FormLabel>
+                              <Input
+                                type='text'
+                                id='used_by'
+                                name='used_by'
+                                value={formData.used_by}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Web server, API service'
+                                _placeholder={{ color: placeholderColor }}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='privileges'>
+                                Privileges
+                              </FormLabel>
+                              <Textarea
+                                id='privileges'
+                                name='privileges'
+                                value={formData.privileges}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='e.g. read:api, write:registry, secrets:read'
+                                _placeholder={{ color: placeholderColor }}
+                                rows={3}
+                                maxLength={5000}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='description'>
+                                Description
+                              </FormLabel>
+                              <Input
+                                type='text'
+                                id='description'
+                                name='description'
+                                value={formData.description}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Use case or context for this key/secret'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={300}
+                              />
+                            </FormControl>
+
+                            {/* Algorithm and Key Size only for encryption_key and ssh_key */}
+                            {(formData.type === 'encryption_key' ||
+                              formData.type === 'ssh_key') && (
+                              <>
+                                <FormControl>
+                                  <FormLabel htmlFor='algorithm'>
+                                    Algorithm
+                                  </FormLabel>
+                                  <Input
+                                    type='text'
+                                    id='algorithm'
+                                    name='algorithm'
+                                    value={formData.algorithm}
+                                    onChange={onInputChange}
+                                    bg={inputBg}
+                                    borderColor={inputBorder}
+                                    placeholder='AES-256, RSA'
+                                    _placeholder={{ color: placeholderColor }}
+                                    maxLength={50}
+                                  />
+                                </FormControl>
+
+                                <FormControl isInvalid={!!formErrors.key_size}>
+                                  <FormLabel htmlFor='key_size'>
+                                    Key Size (bits)
+                                  </FormLabel>
+                                  <Input
+                                    type='number'
+                                    id='key_size'
+                                    name='key_size'
+                                    value={formData.key_size}
+                                    onChange={onInputChange}
+                                    bg={inputBg}
+                                    borderColor={
+                                      formErrors.key_size
+                                        ? 'red.500'
+                                        : inputBorder
+                                    }
+                                    placeholder='256, 2048'
+                                    _placeholder={{ color: placeholderColor }}
+                                    min={128}
+                                    max={16384}
+                                    step={1}
+                                  />
+                                  {formErrors.key_size && (
+                                    <FormErrorMessage id='key_size-error'>
+                                      {formErrors.key_size}
+                                    </FormErrorMessage>
+                                  )}
+                                </FormControl>
+                              </>
+                            )}
+
+                            <FormControl>
+                              <FormLabel htmlFor='renewal_url'>
+                                Renewal URL
+                              </FormLabel>
+                              <Input
+                                type='url'
+                                id='renewal_url'
+                                name='renewal_url'
+                                value={formData.renewal_url}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='https://provider.com/renew'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={500}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='contacts'>
+                                Contacts (Key custodian)
+                              </FormLabel>
+                              {renderContactTagInput(
+                                'Who manages this key/secret?'
+                              )}
+                            </FormControl>
+                          </SimpleGrid>
+                        )}
+
+                        {formData.category === 'license' && (
+                          <SimpleGrid
+                            columns={{ base: 1, md: 3 }}
+                            spacing={6}
+                            mt={6}
+                          >
+                            <FormControl>
+                              <FormLabel htmlFor='vendor'>Vendor</FormLabel>
+                              <Input
+                                type='text'
+                                id='vendor'
+                                name='vendor'
+                                value={formData.vendor}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Microsoft, Adobe'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={100}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='license_type'>
+                                License Type
+                              </FormLabel>
+                              <Input
+                                type='text'
+                                id='license_type'
+                                name='license_type'
+                                value={formData.license_type}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Perpetual, Subscription'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={50}
+                              />
+                            </FormControl>
+
+                            <FormControl isInvalid={!!formErrors.cost}>
+                              <FormLabel htmlFor='cost'>Cost ($)</FormLabel>
+                              <Input
+                                type='number'
+                                id='cost'
+                                name='cost'
+                                value={formData.cost}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={
+                                  formErrors.cost ? 'red.500' : inputBorder
+                                }
+                                placeholder='0.00'
+                                step='0.01'
+                                min='0'
+                                max='999999999999.99'
+                                _placeholder={{ color: placeholderColor }}
+                              />
+                              {formErrors.cost && (
+                                <FormErrorMessage id='cost-error'>
+                                  {formErrors.cost}
+                                </FormErrorMessage>
+                              )}
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='renewal_url'>
+                                Renewal URL
+                              </FormLabel>
+                              <Input
+                                type='url'
+                                id='renewal_url'
+                                name='renewal_url'
+                                value={formData.renewal_url}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='https://vendor.com/renew'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={500}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='renewal_date'>
+                                Renewal Date
+                              </FormLabel>
+                              <Input
+                                type='date'
+                                id='renewal_date'
+                                name='renewal_date'
+                                value={formData.renewal_date}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Optional'
+                                _placeholder={{ color: placeholderColor }}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='contacts'>Contacts</FormLabel>
+                              {renderContactTagInput('Who owns this renewal?')}
+                            </FormControl>
+                          </SimpleGrid>
+                        )}
+
+                        {formData.category === 'general' && (
+                          <SimpleGrid
+                            columns={{ base: 1, md: 2 }}
+                            spacing={6}
+                            mt={6}
+                          >
+                            <FormControl>
+                              <FormLabel>Locations</FormLabel>
+                              <VStack spacing={2} align='stretch'>
+                                {locationEntries.map((location, index) => (
+                                  <HStack key={index} spacing={2}>
+                                    <Input
+                                      type='text'
+                                      value={location}
+                                      onChange={e =>
+                                        updateLocationEntry(
+                                          index,
+                                          e.target.value
+                                        )
+                                      }
+                                      bg={inputBg}
+                                      borderColor={inputBorder}
+                                      placeholder='Folder path, cloud location'
+                                      _placeholder={{
+                                        color: placeholderColor,
+                                      }}
+                                    />
+                                    {locationEntries.length > 1 && (
+                                      <IconButton
+                                        icon={<FiX />}
+                                        onClick={() =>
+                                          removeLocationEntry(index)
+                                        }
+                                        aria-label='Remove location'
+                                        size='sm'
+                                        colorScheme='red'
+                                        variant='ghost'
+                                      />
+                                    )}
+                                  </HStack>
+                                ))}
+                                <Button
+                                  leftIcon={<FiPlus />}
+                                  onClick={addLocationEntry}
+                                  size='sm'
+                                  variant='outline'
+                                  alignSelf='flex-start'
+                                >
+                                  Add Location
+                                </Button>
+                              </VStack>
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='used_by'>Used By</FormLabel>
+                              <Input
+                                type='text'
+                                id='used_by'
+                                name='used_by'
+                                value={formData.used_by}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='Application, service'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={200}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='renewal_url'>
+                                Renewal URL
+                              </FormLabel>
+                              <Input
+                                type='url'
+                                id='renewal_url'
+                                name='renewal_url'
+                                value={formData.renewal_url}
+                                onChange={onInputChange}
+                                bg={inputBg}
+                                borderColor={inputBorder}
+                                placeholder='https://provider.com/renew'
+                                _placeholder={{ color: placeholderColor }}
+                                maxLength={500}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel htmlFor='contacts'>Contacts</FormLabel>
+                              {renderContactTagInput('Who manages this item?')}
+                            </FormControl>
+                          </SimpleGrid>
+                        )}
+
+                        {/* Datalist for workspace contacts suggestions (creation form) */}
+                        <datalist id='workspace-contacts-suggestions'>
+                          {(Array.isArray(workspaceContacts)
+                            ? workspaceContacts
+                            : []
+                          )
+                            .map(c => {
+                              const name = [c.first_name, c.last_name]
+                                .filter(Boolean)
+                                .join(' ')
+                                .trim();
+                              const phone = (c.phone_e164 || '').trim();
+                              const parts = [name, phone].filter(Boolean);
+                              const label = parts.join(' - ');
+                              return { c, label };
+                            })
+                            .filter(
+                              ({ label }) =>
+                                label && !selectedContactLabels.has(label)
+                            )
+                            .map(({ c, label }) => (
+                              <option key={c.id} value={label} />
+                            ))}
+                        </datalist>
+
+                        {/* Notes field for all categories */}
+                        <FormControl mt={6}>
+                          <FormLabel htmlFor='notes'>Notes</FormLabel>
+                          <CreateTokenNotesField
+                            parentNotes={formData.notes}
+                            onCommitNotes={commitCreateNotes}
+                            submitFlushRef={createTokenNotesFlushRef}
+                            inputBg={dashboardModalTokens.inputBg}
+                            inputBorder={dashboardModalTokens.inputBorder}
+                            placeholderColor={dashboardModalTokens.muted}
+                          />
+                        </FormControl>
+                      </form>
+                    </Box>
+                  </ModalBody>
+                  <ModalFooter {...dashboardModalFooterProps}>
+                    <Flex
+                      w='100%'
+                      gap={3}
+                      justify={{ base: 'stretch', sm: 'flex-end' }}
+                      direction={{ base: 'column-reverse', sm: 'row' }}
+                    >
+                      <Button
+                        onClick={() => setCreateTokenModalOpen(false)}
+                        minW={{ base: '100%', sm: '104px' }}
+                        {...dashboardModalOutlineButtonProps}
+                      >
+                        Cancel
+                      </Button>
+                      {canSubmitCreateToken && (
                         <Button
                           type='submit'
+                          form={createTokenFormId}
                           disabled={isSubmitting}
-                          colorScheme='blue'
-                          size='lg'
-                          px={8}
+                          minW={{ base: '100%', sm: '128px' }}
                           isLoading={isSubmitting}
                           loadingText='Creating...'
+                          {...dashboardModalPrimaryButtonProps}
                         >
                           Create Token
                         </Button>
-                      )
-                    ) : (
-                      <Button
-                        type='submit'
-                        disabled={isSubmitting}
-                        colorScheme='blue'
-                        size='lg'
-                        px={8}
-                        isLoading={isSubmitting}
-                        loadingText='Creating...'
-                      >
-                        Create Token
-                      </Button>
-                    )}
-                  </Flex>
-                )}
-              </form>
-            </Box>
-          </Collapse>
-        </Box>
-      )}
-
-      <Box mb={6}>
-        <Flex
-          justify='space-between'
-          align={{ base: 'start', md: 'center' }}
-          direction={{ base: 'column', md: 'row' }}
-          gap={4}
-          mb={2}
-        >
-          <Box>
-            {/* Category filter */}
-            <Text fontSize='sm' color={filterLabelColor} mb={1}>
-              Category filter
-            </Text>
-          </Box>
-        </Flex>
-        <HStack spacing={2} flexWrap='wrap' mb={2}>
-          {TOKEN_CATEGORIES.map(cat => {
-            const isAll = selectedCategories.length === 0;
-            const active = selectedCategories.includes(cat.value);
-            const _visible = isAll || active;
-            // Prefer precomputed counts per category; fallback to facets; finally 0
-            const facetsCount = (
-              globalFacets.category ||
-              tokenFacets.category ||
-              []
-            ).find(f => String(f.category) === cat.value)?.c;
-            const sectionActive =
-              (panelQueries.__section || '__all__') !== '__all__';
-
-            // Priority:
-            // 1. If facets are available, they always reflect the true intersection (server-side)
-            // 2. Fallback to local categoryCounts state
-            // 3. Fallback to 0
-            const count =
-              typeof facetsCount === 'number'
-                ? facetsCount
-                : sectionActive || selectedCategories.length > 0
-                  ? (() => {
-                      const sec = panelQueries.__section;
-                      const norm = v =>
-                        String(v || '')
-                          .trim()
-                          .toLowerCase();
-                      if (sec === '__none__') {
-                        return tokens.filter(
-                          t =>
-                            t.category === cat.value &&
-                            (!t.section ||
-                              (Array.isArray(t.section) &&
-                                t.section.length === 0) ||
-                              String(t.section).trim() === '')
-                        ).length;
-                      }
-                      const wantedList =
-                        (sec || '__all__') === '__all__'
-                          ? []
-                          : String(sec)
-                              .split(',')
-                              .map(s => norm(s))
-                              .filter(Boolean);
-
-                      return tokens.filter(t => {
-                        if (t.category !== cat.value) return false;
-                        if (wantedList.length === 0) return true;
-                        const tokenSections = Array.isArray(t.section)
-                          ? t.section.map(s => norm(s))
-                          : [norm(t.section)];
-                        return wantedList.every(w => tokenSections.includes(w));
-                      }).length;
-                    })()
-                  : typeof categoryCounts?.[cat.value] === 'number'
-                    ? categoryCounts[cat.value]
-                    : 0;
-
-            return (
-              <Button
-                key={cat.value}
-                size='sm'
-                variant={active ? 'solid' : 'outline'}
-                colorScheme={cat.color}
-                fontWeight={active ? 'semibold' : 'medium'}
-                bg={
-                  active
-                    ? `${cat.color}.500`
-                    : isLight
-                      ? `${cat.color}.100`
-                      : `${cat.color}.900`
-                }
-                color={
-                  active
-                    ? 'white'
-                    : isLight
-                      ? `${cat.color}.600`
-                      : `${cat.color}.200`
-                }
-                borderWidth='1px'
-                borderColor={
-                  active
-                    ? `${cat.color}.500`
-                    : isLight
-                      ? `${cat.color}.500`
-                      : `${cat.color}.600`
-                }
-                _hover={{
-                  bg: active
-                    ? `${cat.color}.600`
-                    : isLight
-                      ? `${cat.color}.200`
-                      : `${cat.color}.800`,
-                  borderColor: `${cat.color}.${active ? '600' : '600'}`,
-                }}
-                transition='all 0.15s ease'
-                onClick={() => {
-                  setSelectedCategories(_prev => (active ? [] : [cat.value]));
-                }}
-              >
-                {cat.label}
-                <Badge
-                  ml={2}
-                  variant='solid'
-                  bg={
-                    active
-                      ? 'whiteAlpha.300'
-                      : isLight
-                        ? `${cat.color}.500`
-                        : `${cat.color}.700`
-                  }
-                  color='white'
-                  fontSize='xs'
-                  fontWeight='bold'
-                >
-                  {count}
-                </Badge>
-              </Button>
-            );
-          })}
-        </HStack>
-        {/* Section filter */}
-        <Text fontSize='sm' color={filterLabelColor} mt={4} mb={1}>
-          Section filter
-        </Text>
-        <HStack spacing={2} flexWrap='wrap' mt={3}>
-          {(() => {
-            // Helper to normalize and split strings
-            const norm = v =>
-              String(v || '')
-                .trim()
-                .toLowerCase();
-            const splitAndTrim = val =>
-              String(val || '')
-                .split(',')
-                .map(s => s.trim())
-                .filter(Boolean);
-
-            // 1. Build initial flattened list from backend facets
-            const facetSource =
-              globalFacets.section || tokenFacets.section || [];
-            const rawMap = {};
-
-            facetSource.forEach(r => {
-              const labels = splitAndTrim(r.section);
-              if (labels.length === 0) {
-                const key = '';
-                if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
-                rawMap[key].count += r.c || 0;
-              } else {
-                labels.forEach(l => {
-                  const key = norm(l);
-                  if (!rawMap[key]) rawMap[key] = { name: l, count: 0 };
-                  rawMap[key].count = Math.max(rawMap[key].count, r.c || 0);
-                });
-              }
-            });
-
-            // 2. Merge in sections from current tokens for immediate UI feedback
-            try {
-              tokens.forEach(t => {
-                // IMPORTANT: Only merge sections from tokens that match the current category filter
-                // to avoid showing sections from other categories.
-                if (
-                  selectedCategories.length > 0 &&
-                  !selectedCategories.includes(t.category)
-                ) {
-                  return;
-                }
-
-                // ALSO: Only merge sections from tokens that match the current section filter (AND logic)
-                const currentSection = panelQueries.__section || '__all__';
-                if (currentSection !== '__all__') {
-                  const tokenSections = Array.isArray(t.section)
-                    ? t.section.map(s => norm(s))
-                    : [norm(t.section)];
-
-                  if (currentSection === '__none__') {
-                    if (
-                      t.section &&
-                      (!Array.isArray(t.section) || t.section.length > 0)
-                    )
-                      return;
-                  } else {
-                    const wanted = currentSection
-                      .split(',')
-                      .map(s => norm(s))
-                      .filter(Boolean);
-                    if (!wanted.every(w => tokenSections.includes(w))) {
-                      return;
-                    }
-                  }
-                }
-
-                const labels = Array.isArray(t.section)
-                  ? t.section.flatMap(s => splitAndTrim(s))
-                  : splitAndTrim(t.section);
-
-                if (labels.length === 0) {
-                  const key = '';
-                  if (!rawMap[key]) rawMap[key] = { name: '', count: 0 };
-                } else {
-                  const uniqueInToken = [...new Set(labels.map(s => norm(s)))];
-                  uniqueInToken.forEach(key => {
-                    const originalLabel = labels.find(s => norm(s) === key);
-                    if (!rawMap[key])
-                      rawMap[key] = { name: originalLabel, count: 0 };
-                  });
-                }
-              });
-            } catch (_) {}
-
-            const raw = Object.values(rawMap);
-            raw.sort(
-              (a, b) => b.count - a.count || a.name.localeCompare(b.name)
-            );
-
-            const allCount =
-              selectedCategories.length > 0
-                ? selectedCategories.reduce(
-                    (sum, cat) => sum + (categoryCounts[cat] || 0),
-                    0
-                  )
-                : Object.values(categoryCounts).reduce(
-                    (sum, c) => sum + (c || 0),
-                    0
-                  );
-
-            const all = [
-              {
-                name: '__all__',
-                label: 'All sections',
-                count: allCount,
-              },
-              {
-                name: '__none__',
-                label: 'No section',
-                count: rawMap['']?.count || 0,
-              },
-              ...raw
-                .filter(s => (s.name || '').length > 0 && s.count > 0)
-                .map(s => ({ name: s.name, label: s.name, count: s.count })),
-            ];
-            return all.map(s => {
-              const current = panelQueries.__section || '__all__';
-              let active = false;
-              if (s.name === '__all__') {
-                active = current === '__all__';
-              } else if (s.name === '__none__') {
-                active = current === '__none__';
-              } else {
-                active = current.split(',').includes(s.name);
-              }
-              const scheme =
-                s.name === '__none__'
-                  ? 'gray'
-                  : s.name === '__all__'
-                    ? 'blue'
-                    : _getSectionColorScheme(s.name);
-              return (
-                <Button
-                  key={`section-${s.name || 'none'}`}
-                  size='sm'
-                  variant={active ? 'solid' : 'outline'}
-                  colorScheme={scheme}
-                  fontWeight={active ? 'semibold' : 'medium'}
-                  bg={
-                    active
-                      ? `${scheme}.500`
-                      : isLight
-                        ? `${scheme}.100`
-                        : `${scheme}.900`
-                  }
-                  color={
-                    active
-                      ? 'white'
-                      : isLight
-                        ? `${scheme}.600`
-                        : `${scheme}.200`
-                  }
-                  borderWidth='1px'
-                  borderColor={
-                    active
-                      ? `${scheme}.500`
-                      : isLight
-                        ? `${scheme}.500`
-                        : `${scheme}.600`
-                  }
-                  _hover={{
-                    bg: active
-                      ? `${scheme}.600`
-                      : isLight
-                        ? `${scheme}.200`
-                        : `${scheme}.800`,
-                    borderColor: `${scheme}.${active ? '600' : '600'}`,
-                  }}
-                  transition='all 0.15s ease'
-                  onClick={() => {
-                    const currentVal = panelQueries?.__section || '__all__';
-                    let next;
-
-                    if (s.name === '__all__') {
-                      next = '__all__';
-                    } else if (s.name === '__none__') {
-                      next = '__none__';
-                    } else {
-                      // Multi-select logic for specific sections
-                      let parts =
-                        currentVal === '__all__' || currentVal === '__none__'
-                          ? []
-                          : currentVal.split(',').filter(Boolean);
-
-                      if (parts.includes(s.name)) {
-                        parts = parts.filter(p => p !== s.name);
-                      } else {
-                        parts.push(s.name);
-                      }
-
-                      next = parts.length > 0 ? parts.join(',') : '__all__';
-                    }
-
-                    setPanelQueries(prev => ({ ...prev, __section: next }));
-                    // Reflect selection in URL so downstream fetches include section
-                    try {
-                      const search = new URLSearchParams(
-                        window.location.search
-                      );
-                      if (next === '__all__') search.delete('section');
-                      else search.set('section', next);
-                      navigate(`/dashboard?${search.toString()}`, {
-                        replace: true,
-                      });
-                    } catch (_) {}
-                  }}
-                >
-                  {s.label}
-                  <Badge
-                    ml={2}
-                    variant='solid'
-                    bg={
-                      active
-                        ? 'whiteAlpha.300'
-                        : isLight
-                          ? `${scheme}.200`
-                          : `${scheme}.700`
-                    }
-                    color={
-                      active
-                        ? 'white'
-                        : isLight
-                          ? `${scheme}.800`
-                          : `${scheme}.100`
-                    }
-                    fontSize='xs'
-                    fontWeight='bold'
-                  >
-                    {s.count}
-                  </Badge>
-                </Button>
-              );
-            });
-          })()}
-        </HStack>
-        <Box h={4} />
-      </Box>
-
-      {/* Tokens List - Organized by Categories */}
-      {tokensLoading && tokens.length === 0 ? (
-        <Flex justify='center' p={{ base: 4, md: 8 }} overflowX='hidden'>
-          <AccessibleSpinner size='lg' aria-label='Loading tokens' />
-        </Flex>
-      ) : tokens.length === 0 ? (
-        <Text
-          textAlign='center'
-          color={emptyTextColor}
-          p={{ base: 4, md: 8 }}
-          overflowX='hidden'
-        >
-          {isViewer
-            ? 'No tokens in this workspace.'
-            : 'No tokens found. Create your first token above.'}
-        </Text>
-      ) : (
-        <VStack
-          data-tour='token-list'
-          spacing={6}
-          align='stretch'
-          style={{
-            transition: 'opacity 180ms ease, transform 180ms ease',
-            opacity: isRefreshing ? 0.35 : 1,
-            transform: isRefreshing ? 'scale(0.995)' : 'scale(1)',
-          }}
-        >
-          {TOKEN_CATEGORIES.map(category => {
-            const panelSearch =
-              (panelQueries && panelQueries[category.value]) || '';
-            const sectionParam =
-              (panelQueries && panelQueries.__section) || '__all__';
-            const categoryTokens = getFilteredAndSortedTokens(
-              tokens,
-              category,
-              panelSearch,
-              sectionParam
-            );
-
-            // Hide entire panel if a category filter is active and this category is not selected
-            if (
-              Array.isArray(selectedCategories) &&
-              selectedCategories.length > 0 &&
-              !selectedCategories.includes(category.value)
-            ) {
-              return null;
-            }
-
-            return (
-              <Collapse key={category.value} in={true} animateOpacity>
-                <Box
-                  bg={bgColor}
-                  p={{ base: 4, md: 6 }}
-                  borderRadius='lg'
-                  boxShadow='sm'
-                  border='1px solid'
-                  borderColor={borderColor}
-                  borderTopWidth='3px'
-                  borderTopColor={`${category.color}.500`}
-                  transition='all 180ms ease'
-                  overflowX='hidden'
-                  _hover={{ boxShadow: 'md' }}
-                >
-                  <Flex align='center' justify='space-between' mb={4}>
-                    <HStack spacing={4}>
-                      <Heading
-                        size='md'
-                        color={`${category.color}.${isLight ? '600' : '400'}`}
-                      >
-                        {category.label}
-                      </Heading>
-                      {(() => {
-                        const selectedInCategory = selectedTokenIds.filter(id =>
-                          categoryTokens.some(t => t.id === id)
-                        );
-                        if (!isViewer && selectedInCategory.length > 0) {
-                          return (
-                            <HStack spacing={2} flexWrap='nowrap'>
-                              <Button
-                                size='xs'
-                                colorScheme='red'
-                                variant='outline'
-                                leftIcon={<FiTrash2 />}
-                                onClick={handleBulkDelete}
-                              >
-                                Delete ({selectedInCategory.length})
-                              </Button>
-                              <Button
-                                size='xs'
-                                colorScheme='blue'
-                                variant='outline'
-                                onClick={() =>
-                                  handleBulkAssignSection(
-                                    selectedInCategory,
-                                    category.value
-                                  )
-                                }
-                              >
-                                Assign section
-                              </Button>
-                              <Input
-                                size='xs'
-                                maxW='150px'
-                                placeholder='Section label'
-                                value={
-                                  bulkSectionDrafts?.[category.value] || ''
-                                }
-                                onChange={e =>
-                                  setBulkSectionDrafts(prev => ({
-                                    ...prev,
-                                    [category.value]: e.target.value,
-                                  }))
-                                }
-                              />
-                            </HStack>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </HStack>
-                    <Input
-                      value={panelQueries[category.value] || ''}
-                      onChange={e =>
-                        setPanelQueries(prev => ({
-                          ...prev,
-                          [category.value]: e.target.value,
-                        }))
-                      }
-                      placeholder={`Search ${category.label.toLowerCase()}...`}
-                      size='sm'
-                      maxW='260px'
-                      bg={inputBg}
-                      borderColor={borderColor}
-                    />
-                  </Flex>
-
-                  {categoryTokens.length === 0 ? (
-                    <Text color={emptyTextColor} fontSize='sm' py={2}>
-                      No results in this category.
-                    </Text>
-                  ) : (
-                    <>
-                      {/* Mobile: Card list */}
-                      <Box display={{ base: 'block', md: 'none' }}>
-                        <VStack align='stretch' spacing={3}>
-                          {categoryTokens.map(token => {
-                            const type = category.types.find(
-                              t => t.value === token.type
-                            );
-                            return (
-                              <Box
-                                key={token.id}
-                                p={4}
-                                bg={mobileCardBg}
-                                border='1px solid'
-                                borderColor={borderColor}
-                                borderRadius='md'
-                              >
-                                <HStack
-                                  justify='space-between'
-                                  align='start'
-                                  mb={2}
-                                  gap={2}
-                                >
-                                  <Box flex='1' minW='0'>
-                                    <Text
-                                      fontWeight='semibold'
-                                      wordBreak='break-word'
-                                    >
-                                      {token.name}
-                                    </Text>
-                                    <Text
-                                      fontSize='sm'
-                                      color={secondaryTextColor}
-                                      noOfLines={1}
-                                    >
-                                      {type?.label || token.type}
-                                      {token.category === 'cert' &&
-                                      token.domains?.length
-                                        ? ` • ${token.domains.join(', ')}`
-                                        : token.category === 'key_secret' &&
-                                            token.location
-                                          ? ` • ${token.location}`
-                                          : token.category === 'license' &&
-                                              token.vendor
-                                            ? ` • ${token.vendor}`
-                                            : token.category === 'general' &&
-                                                token.used_by
-                                              ? ` • ${token.used_by}`
-                                              : ''}
-                                    </Text>
-                                  </Box>
-                                  <ExpiryPill expiry={token.expiresAt} />
-                                  {token.monitor_health_status && (
-                                    <Tooltip
-                                      label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${token.monitor_response_ms ? ` (${token.monitor_response_ms}ms)` : ''}`}
-                                    >
-                                      <Box as='span' display='inline-flex'>
-                                        <FiActivity
-                                          size={18}
-                                          color={
-                                            token.monitor_health_status ===
-                                            'healthy'
-                                              ? '#22c55e'
-                                              : token.monitor_health_status ===
-                                                  'error'
-                                                ? '#e11d48'
-                                                : '#ff6b00'
-                                          }
-                                        />
-                                      </Box>
-                                    </Tooltip>
-                                  )}
-                                </HStack>
-                                <VStack align='stretch' spacing={2}>
-                                  <Text fontSize='sm' color='gray.600'>
-                                    {isNeverExpires(token.expiresAt)
-                                      ? formatExpirationDate(token.expiresAt)
-                                      : `Expires ${formatDate(token.expiresAt)}`}
-                                  </Text>
-                                  {token.last_used && (
-                                    <Text fontSize='xs' color='gray.500'>
-                                      Last used: {formatDate(token.last_used)}
-                                    </Text>
-                                  )}
-                                  <HStack spacing={2} flexWrap='wrap'>
-                                    <Button
-                                      size='sm'
-                                      colorScheme='blue'
-                                      onClick={() => onOpenTokenModal(token)}
-                                    >
-                                      Details
-                                    </Button>
-                                    {!isViewer && (
-                                      <>
-                                        <Button
-                                          size='sm'
-                                          colorScheme='teal'
-                                          onClick={() => onOpenRenew(token)}
-                                        >
-                                          Renew
-                                        </Button>
-                                        <Button
-                                          size='sm'
-                                          colorScheme='red'
-                                          onClick={() =>
-                                            onDeleteToken(token.id)
-                                          }
-                                        >
-                                          Delete
-                                        </Button>
-                                      </>
-                                    )}
-                                  </HStack>
-                                </VStack>
-                              </Box>
-                            );
-                          })}
-                        </VStack>
-                      </Box>
-
-                      {/* Desktop: Table */}
-                      <Box
-                        overflowX='auto'
-                        display={{ base: 'none', md: 'block' }}
-                      >
-                        <Table
-                          variant='simple'
-                          size='sm'
-                          transition='opacity 160ms ease'
-                          opacity={isRefreshing ? 0.7 : 1}
-                        >
-                          <Thead>
-                            <Tr
-                              borderBottom='2px solid'
-                              borderColor={borderColor}
-                            >
-                              {!isViewer && (
-                                <Th width='40px'>
-                                  <Checkbox
-                                    isChecked={
-                                      categoryTokens.length > 0 &&
-                                      categoryTokens.every(t =>
-                                        selectedTokenIds.includes(t.id)
-                                      )
-                                    }
-                                    isIndeterminate={
-                                      categoryTokens.some(t =>
-                                        selectedTokenIds.includes(t.id)
-                                      ) &&
-                                      !categoryTokens.every(t =>
-                                        selectedTokenIds.includes(t.id)
-                                      )
-                                    }
-                                    onChange={e => {
-                                      const ids = categoryTokens.map(t => t.id);
-                                      if (e.target.checked) {
-                                        setSelectedTokenIds(prev => [
-                                          ...new Set([...prev, ...ids]),
-                                        ]);
-                                      } else {
-                                        setSelectedTokenIds(prev =>
-                                          prev.filter(id => !ids.includes(id))
-                                        );
-                                      }
-                                    }}
-                                  />
-                                </Th>
-                              )}
-                              <SortableTh
-                                minW='100px'
-                                sortKey='name'
-                                sortConfig={sortConfigs[category.value] || {}}
-                                onSort={key => onSort(key, category.value)}
-                                hoverBg={thHoverBg}
-                              >
-                                Name
-                              </SortableTh>
-                              <SortableTh
-                                minW='110px'
-                                sortKey='type'
-                                sortConfig={sortConfigs[category.value] || {}}
-                                onSort={key => onSort(key, category.value)}
-                                hoverBg={thHoverBg}
-                              >
-                                Type
-                              </SortableTh>
-                              {category.value === 'cert' && (
-                                <>
-                                  <SortableTh
-                                    minW='130px'
-                                    sortKey='domains'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Domains
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='100px'
-                                    sortKey='issuer'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Issuer
-                                  </SortableTh>
-                                </>
-                              )}
-                              {category.value === 'key_secret' && (
-                                <>
-                                  <SortableTh
-                                    minW='100px'
-                                    sortKey='location'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Location
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='120px'
-                                    sortKey='used_by'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Used By
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='130px'
-                                    sortKey='privileges'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Privileges
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='90px'
-                                    sortKey='last_used'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Last Used
-                                  </SortableTh>
-                                </>
-                              )}
-                              {category.value === 'license' && (
-                                <>
-                                  <SortableTh
-                                    minW='120px'
-                                    sortKey='vendor'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Vendor
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='130px'
-                                    sortKey='license_type'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    License Type
-                                  </SortableTh>
-                                </>
-                              )}
-                              {category.value === 'general' && (
-                                <>
-                                  <SortableTh
-                                    minW='100px'
-                                    sortKey='location'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Location
-                                  </SortableTh>
-                                  <SortableTh
-                                    minW='150px'
-                                    sortKey='used_by'
-                                    sortConfig={
-                                      sortConfigs[category.value] || {}
-                                    }
-                                    onSort={key => onSort(key, category.value)}
-                                    hoverBg={thHoverBg}
-                                  >
-                                    Used By
-                                  </SortableTh>
-                                </>
-                              )}
-                              <SortableTh
-                                minW='90px'
-                                sortKey='expiresAt'
-                                sortConfig={sortConfigs[category.value] || {}}
-                                onSort={key => onSort(key, category.value)}
-                                hoverBg={thHoverBg}
-                              >
-                                Expiration
-                              </SortableTh>
-                              <Th minW='70px'>Status</Th>
-                              <Th textAlign='center' minW='90px'>
-                                {isViewer ? 'Details' : 'Actions'}
-                              </Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {categoryTokens.map(token => {
-                              const type = category.types.find(
-                                t => t.value === token.type
-                              );
-                              // Get status color for left border accent
-                              const statusInfo = getExpiryStatus(
-                                token.expiresAt
-                              );
-
-                              return (
-                                <Tr
-                                  key={token.id}
-                                  borderBottom='1px solid'
-                                  borderColor={borderColor}
-                                  cursor='pointer'
-                                  onClick={e => {
-                                    // Don't trigger if clicking on buttons or checkboxes
-                                    if (e.target.closest('button')) return;
-                                    if (
-                                      e.target.closest('input[type="checkbox"]')
-                                    )
-                                      return;
-                                    onOpenTokenModal(token);
-                                  }}
-                                  _hover={{
-                                    bg: hoverBgColor,
-                                  }}
-                                  transition='all 0.15s ease'
-                                >
-                                  {!isViewer && (
-                                    <Td
-                                      onClick={e => e.stopPropagation()}
-                                      borderLeft='4px solid'
-                                      borderLeftColor={statusInfo.color}
-                                    >
-                                      <Checkbox
-                                        isChecked={selectedTokenIds.includes(
-                                          token.id
-                                        )}
-                                        onChange={() =>
-                                          toggleTokenSelection(token.id)
-                                        }
-                                      />
-                                    </Td>
-                                  )}
-                                  <Td
-                                    fontWeight='medium'
-                                    {...(isViewer
-                                      ? {
-                                          borderLeft: '4px solid',
-                                          borderLeftColor: statusInfo.color,
-                                        }
-                                      : {})}
-                                  >
-                                    <Text
-                                      wordBreak='break-word'
-                                      whiteSpace='normal'
-                                    >
-                                      {token.name}
-                                    </Text>
-                                  </Td>
-                                  <Td>
-                                    <TruncatedText
-                                      text={type?.label || token.type}
-                                      maxLines={3}
-                                      maxWidth='110px'
-                                    />
-                                  </Td>
-
-                                  {/* Certificate-specific columns */}
-                                  {category.value === 'cert' && (
-                                    <>
-                                      <Td>
-                                        {token.domains &&
-                                        token.domains.length > 0 ? (
-                                          <VStack align='start' spacing={1}>
-                                            <HStack
-                                              spacing={1}
-                                              minW='0'
-                                              w='full'
-                                            >
-                                              <Link
-                                                href={domainValueToUrl(
-                                                  token.domains[0]
-                                                )}
-                                                isExternal
-                                                fontSize='sm'
-                                                color='blue.400'
-                                                textDecoration='underline'
-                                                display='block'
-                                                whiteSpace='normal'
-                                                wordBreak='break-all'
-                                                overflowWrap='anywhere'
-                                                flex='1'
-                                                onClick={e =>
-                                                  e.stopPropagation()
-                                                }
-                                              >
-                                                {token.domains[0]}
-                                              </Link>
-                                              <IconButton
-                                                as='a'
-                                                href={domainValueToUrl(
-                                                  token.domains[0]
-                                                )}
-                                                target='_blank'
-                                                rel='noopener'
-                                                size='xs'
-                                                variant='ghost'
-                                                icon={<FiExternalLink />}
-                                                aria-label='Open domain'
-                                                onClick={e =>
-                                                  e.stopPropagation()
-                                                }
-                                              />
-                                            </HStack>
-                                            {token.domains.length > 1 && (
-                                              <Text
-                                                fontSize='xs'
-                                                color={secondaryTextColor}
-                                              >
-                                                +{token.domains.length - 1} more
-                                              </Text>
-                                            )}
-                                          </VStack>
-                                        ) : (
-                                          <Text color={emptyTextColor}>-</Text>
-                                        )}
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.issuer}
-                                          maxLines={3}
-                                          maxWidth='100px'
-                                        />
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  {/* Key/Secret-specific columns */}
-                                  {category.value === 'key_secret' && (
-                                    <>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.location}
-                                          maxLines={3}
-                                          maxWidth='100px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.used_by}
-                                          maxLines={3}
-                                          maxWidth='120px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.privileges}
-                                          maxLines={3}
-                                          maxWidth='130px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <Text fontSize='xs' color='gray.500'>
-                                          {token.last_used
-                                            ? formatDate(token.last_used)
-                                            : '-'}
-                                        </Text>
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  {/* License-specific columns */}
-                                  {category.value === 'license' && (
-                                    <>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.vendor}
-                                          maxLines={3}
-                                          maxWidth='120px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.license_type}
-                                          maxLines={3}
-                                          maxWidth='130px'
-                                        />
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  {/* General-specific columns */}
-                                  {category.value === 'general' && (
-                                    <>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.location}
-                                          maxLines={3}
-                                          maxWidth='100px'
-                                        />
-                                      </Td>
-                                      <Td>
-                                        <TruncatedText
-                                          text={token.used_by}
-                                          maxLines={3}
-                                          maxWidth='150px'
-                                        />
-                                      </Td>
-                                    </>
-                                  )}
-
-                                  <Td>
-                                    {formatExpirationDate(token.expiresAt)}
-                                  </Td>
-                                  <Td>
-                                    <HStack spacing={2} align='center'>
-                                      <ExpiryPill expiry={token.expiresAt} />
-                                      {token.monitor_health_status && (
-                                        <Tooltip
-                                          label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${token.monitor_response_ms ? ` (${token.monitor_response_ms}ms)` : ''}`}
-                                        >
-                                          <Box as='span' display='inline-flex'>
-                                            <FiActivity
-                                              size={18}
-                                              color={
-                                                token.monitor_health_status ===
-                                                'healthy'
-                                                  ? '#22c55e'
-                                                  : token.monitor_health_status ===
-                                                      'error'
-                                                    ? '#e11d48'
-                                                    : '#ff6b00'
-                                              }
-                                            />
-                                          </Box>
-                                        </Tooltip>
-                                      )}
-                                    </HStack>
-                                  </Td>
-                                  <Td textAlign='center'>
-                                    <VStack spacing={1} align='center'>
-                                      <Button
-                                        onClick={() => onOpenTokenModal(token)}
-                                        colorScheme='blue'
-                                        size='xs'
-                                        aria-label={`Show full details for token ${token.name}`}
-                                      >
-                                        Details
-                                      </Button>
-                                      {!isViewer && (
-                                        <>
-                                          <Button
-                                            onClick={() => onOpenRenew(token)}
-                                            colorScheme='teal'
-                                            size='xs'
-                                            aria-label={`Renew token ${token.name}`}
-                                          >
-                                            Renew
-                                          </Button>
-                                          <Button
-                                            onClick={() =>
-                                              onDeleteToken(token.id)
-                                            }
-                                            colorScheme='red'
-                                            size='xs'
-                                            aria-label={`Delete token ${token.name}`}
-                                          >
-                                            Delete
-                                          </Button>
-                                        </>
-                                      )}
-                                    </VStack>
-                                  </Td>
-                                </Tr>
-                              );
-                            })}
-                          </Tbody>
-                        </Table>
-                      </Box>
-                    </>
-                  )}
-                  {categoryHasMore?.[category.value] && (
-                    <Flex justify='center' mt={4}>
-                      <Button
-                        size='sm'
-                        onClick={() => fetchTokensForCategory(category.value)}
-                        isLoading={!!categoryLoading?.[category.value]}
-                        loadingText='Loading...'
-                      >
-                        Load more {category.label}
-                      </Button>
+                      )}
                     </Flex>
-                  )}
-                </Box>
-              </Collapse>
-            );
-          })}
-        </VStack>
-      )}
+                  </ModalFooter>
+                </DashboardModalFrame>
+              </Modal>
+            </>
+          )}
 
-      {/* Global load more removed in favor of per-category controls */}
+          {renderDashboardWorkspace()}
+        </Box>
+      </DashboardShell>
 
       <EndpointSslMonitorModal
         isOpen={isDomainModalOpen}
@@ -5749,7 +6191,7 @@ function DashboardView({
     </Box>
   );
 }
-function ImportTokensButton() {
+function ImportTokensButton({ label = 'Import' }) {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [searchParams, setSearchParams] = useSearchParams();
   const [openRequest, setOpenRequest] = useState(null);
@@ -5786,6 +6228,14 @@ function ImportTokensButton() {
     setSearchParams(next, { replace: true });
   }, [searchParams, onOpen, setSearchParams]);
 
+  useEffect(() => {
+    const handleOpenImport = () => onOpen();
+    window.addEventListener('tt:open-import-tokens', handleOpenImport);
+    return () => {
+      window.removeEventListener('tt:open-import-tokens', handleOpenImport);
+    };
+  }, [onOpen]);
+
   const onImported = newOnes => {
     try {
       if (Array.isArray(newOnes) && newOnes.length > 0) {
@@ -5808,7 +6258,7 @@ function ImportTokensButton() {
         maxW={{ base: '100%', sm: 'none' }}
         whiteSpace='nowrap'
       >
-        Import tokens
+        {label}
       </Button>
       <ImportTokensModal
         isOpen={isOpen}

@@ -1,6 +1,28 @@
 const { pool } = require("../database");
 const { logger } = require("../../utils/logger.js");
 
+const DATE_ONLY_PATTERN = /^(\d{4}-\d{2}-\d{2})/;
+
+const padDatePart = (value) => String(value).padStart(2, "0");
+
+const formatDateOnly = (value, fallback = null) => {
+  if (!value) return fallback;
+
+  if (typeof value === "string") {
+    const match = value.trim().match(DATE_ONLY_PATTERN);
+    if (match) return match[1];
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+
+  return [
+    date.getFullYear(),
+    padDatePart(date.getMonth() + 1),
+    padDatePart(date.getDate()),
+  ].join("-");
+};
+
 // Helper function to convert numeric fields from strings to numbers
 const convertNumericFields = (token) => {
   if (token.key_size !== null && token.key_size !== undefined) {
@@ -37,16 +59,12 @@ const convertNumericFields = (token) => {
 
   // Convert expiration to expiresAt for frontend compatibility
   // If missing or null, default to "never expires" sentinel (2099-12-31)
-  const date = token.expiration
-    ? new Date(token.expiration)
-    : new Date("2099-12-31");
-  token.expiresAt = date.toISOString().split("T")[0];
+  token.expiresAt = formatDateOnly(token.expiration, "2099-12-31");
   delete token.expiration;
 
   // Format renewal_date consistently as YYYY-MM-DD
   if (token.renewal_date) {
-    const date = new Date(token.renewal_date);
-    token.renewal_date = date.toISOString().split("T")[0];
+    token.renewal_date = formatDateOnly(token.renewal_date);
   }
 
   // Ensure last_used, created_at, imported_at are ISO strings if they exist

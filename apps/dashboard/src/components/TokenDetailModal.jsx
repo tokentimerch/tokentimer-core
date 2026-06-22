@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalFooter,
   ModalBody,
@@ -11,12 +10,12 @@ import {
   Heading,
   Text,
   Button,
+  Flex,
   Grid,
   GridItem,
   Badge,
   HStack,
   VStack,
-  Divider,
   Input,
   Textarea,
   Select,
@@ -25,30 +24,14 @@ import {
 } from '@chakra-ui/react';
 import { getColorFromString } from '../styles/colors.js';
 import { formatDate, tokenAPI } from '../utils/apiClient';
+import {
+  DASHBOARD_MODAL_HEADING_FONT,
+  DashboardModalFrame,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
 
-/**
- * Token Detail Modal Component
- * Displays detailed information about a token with inline editing capability
- */
-function TokenDetailModal({
-  token,
-  isOpen,
-  onClose,
-  TOKEN_CATEGORIES,
-  onTokenUpdated,
-  isViewer,
-  contactGroups,
-  workspaceContacts = [],
-}) {
-  const bgColor = useColorModeValue('gray.100', 'gray.800');
-  const textColor = useColorModeValue('gray.800', 'white');
-  const labelColor = useColorModeValue('gray.600', 'gray.400');
-  const inputBg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.700');
-  const inputBorder = useColorModeValue('gray.400', 'gray.600');
-  const [_saving, setSaving] = useState(false);
-  const [_saveError, setSaveError] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [editData, setEditData] = useState({
+function createTokenEditData(token) {
+  return {
     name: token?.name || '',
     section: Array.isArray(token?.section)
       ? token.section.join(', ')
@@ -72,8 +55,50 @@ function TokenDetailModal({
     contacts: token?.contacts || '',
     description: token?.description || '',
     notes: token?.notes || '',
+    privileges: token?.privileges || '',
     contact_group_id: token?.contact_group_id || '',
-  });
+  };
+}
+
+/**
+ * Token Detail Modal Component
+ * Displays detailed information about a token with inline editing capability
+ */
+function TokenDetailModal({
+  token,
+  isOpen,
+  onClose,
+  TOKEN_CATEGORIES,
+  onTokenUpdated,
+  isViewer,
+  contactGroups,
+  workspaceContacts = [],
+}) {
+  const {
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
+  const fieldBg = modalTokens.fieldBg;
+  const borderColor = modalTokens.border;
+  const textColor = modalTokens.text;
+  const labelColor = modalTokens.muted;
+  const subtleTextColor = modalTokens.subtleText;
+  const inputBg = modalTokens.inputBg;
+  const inputBorder = modalTokens.inputBorder;
+  const focusBorderColor = modalTokens.focusBorder;
+  const sectionAccent = modalTokens.sectionAccent;
+  const dangerBg = useColorModeValue('#fef2f2', 'rgba(127, 29, 29, 0.28)');
+  const dangerBorder = useColorModeValue('#fecaca', 'rgba(248, 113, 113, 0.3)');
+  const dangerText = useColorModeValue('#b91c1c', '#fecaca');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editData, setEditData] = useState(() => createTokenEditData(token));
 
   // Memoize category/type lookups to avoid recomputing on every render
   const category = useMemo(
@@ -86,35 +111,10 @@ function TokenDetailModal({
   );
 
   useEffect(() => {
-    if (token) {
-      setSaveError('');
-      setEditData({
-        name: token?.name || '',
-        section: Array.isArray(token?.section)
-          ? token.section.join(', ')
-          : token?.section || '',
-        expiresAt: token?.expiresAt || '',
-        domains: Array.isArray(token?.domains)
-          ? token.domains.join(', ')
-          : token?.domains || '',
-        location: token?.location || '',
-        used_by: token?.used_by || '',
-        issuer: token?.issuer || '',
-        serial_number: token?.serial_number || '',
-        subject: token?.subject || '',
-        key_size: token?.key_size || '',
-        algorithm: token?.algorithm || '',
-        license_type: token?.license_type || '',
-        vendor: token?.vendor || '',
-        cost: token?.cost || '',
-        renewal_url: token?.renewal_url || '',
-        renewal_date: token?.renewal_date || '',
-        contacts: token?.contacts || '',
-        description: token?.description || '',
-        notes: token?.notes || '',
-        contact_group_id: token?.contact_group_id || '',
-      });
-    }
+    setSaveError('');
+    setSaving(false);
+    setIsEditing(false);
+    setEditData(createTokenEditData(token));
   }, [token]);
 
   const renderRenewalInfo = useCallback(() => {
@@ -127,14 +127,25 @@ function TokenDetailModal({
     if (renewalInfo.length === 0) return null;
 
     return (
-      <GridItem colSpan={2}>
-        <Box>
-          <Text fontSize='sm' fontWeight='medium' color={labelColor} mb={1}>
+      <GridItem colSpan={{ base: 1, md: 2 }}>
+        <Box
+          bg={fieldBg}
+          border='1px solid'
+          borderColor={borderColor}
+          borderRadius='12px'
+          p={{ base: 3.5, md: 4 }}
+        >
+          <Text fontSize='sm' fontWeight='semibold' color={labelColor} mb={2}>
             Renewal Information
           </Text>
           <VStack align='start' spacing={1}>
             {renewalInfo.map((info, index) => (
-              <Text key={index} fontSize='md' color={textColor}>
+              <Text
+                key={index}
+                fontSize={{ base: 'sm', md: 'md' }}
+                color={textColor}
+                wordBreak='break-word'
+              >
                 {info}
               </Text>
             ))}
@@ -148,6 +159,8 @@ function TokenDetailModal({
     token?.contacts,
     labelColor,
     textColor,
+    fieldBg,
+    borderColor,
   ]);
 
   const handleSave = useCallback(async () => {
@@ -171,11 +184,11 @@ function TokenDetailModal({
       } else if (payload.domains === '') {
         payload.domains = null;
       }
-      if (
-        payload.expiresAt &&
-        typeof payload.expiresAt === 'string' &&
-        !payload.expiresAt.includes('T')
-      ) {
+      const originalExpiresAt = token?.expiresAt ? String(token.expiresAt) : '';
+      const nextExpiresAt =
+        payload.expiresAt == null ? '' : String(payload.expiresAt).trim();
+      if (nextExpiresAt === originalExpiresAt) {
+        delete payload.expiresAt;
       }
       if (
         payload.key_size !== undefined &&
@@ -207,6 +220,7 @@ function TokenDetailModal({
         'contacts',
         'description',
         'notes',
+        'privileges',
       ].forEach(k => {
         if (payload[k] !== undefined && String(payload[k]).trim() === '')
           payload[k] = null;
@@ -221,7 +235,7 @@ function TokenDetailModal({
     } finally {
       setSaving(false);
     }
-  }, [editData, token?.id, onTokenUpdated]);
+  }, [editData, token?.expiresAt, token?.id, onTokenUpdated]);
 
   const contactGroupOptions = useMemo(
     () => (
@@ -255,44 +269,117 @@ function TokenDetailModal({
 
   if (!token) return null;
 
-  const renderField = (label, value, isMultiline = false) => {
-    if (!value) return null;
+  const commonInputProps = {
+    bg: inputBg,
+    borderColor: inputBorder,
+    borderRadius: '10px',
+    color: textColor,
+    minH: '40px',
+    _placeholder: { color: labelColor },
+    _hover: { borderColor: focusBorderColor },
+    _focusVisible: {
+      borderColor: focusBorderColor,
+      boxShadow: `0 0 0 1px ${focusBorderColor}`,
+    },
+  };
+
+  const renderFieldShell = (
+    label,
+    children,
+    colSpan = { base: 1, md: 1 },
+    tooltipLabel = null
+  ) => {
+    const shell = (
+      <Box
+        bg={fieldBg}
+        border='1px solid'
+        borderColor={borderColor}
+        borderRadius='12px'
+        p={{ base: 3.5, md: 4 }}
+        minH='88px'
+      >
+        <Text fontSize='sm' fontWeight='semibold' color={labelColor} mb={2}>
+          {label}
+        </Text>
+        {children}
+      </Box>
+    );
 
     return (
-      <GridItem colSpan={{ base: 1, md: 1 }}>
-        <Box>
-          <Text fontSize='sm' fontWeight='medium' color={labelColor} mb={1}>
+      <GridItem colSpan={colSpan}>
+        {tooltipLabel ? (
+          <Tooltip label={tooltipLabel} hasArrow placement='top'>
+            <Box w='full'>{shell}</Box>
+          </Tooltip>
+        ) : (
+          shell
+        )}
+      </GridItem>
+    );
+  };
+
+  const renderValueText = (value, isMultiline = false) => (
+    <Text
+      fontSize={{ base: 'sm', md: 'md' }}
+      fontWeight='semibold'
+      color={textColor}
+      lineHeight='1.45'
+      whiteSpace={isMultiline ? 'pre-wrap' : 'normal'}
+      wordBreak='break-word'
+    >
+      {value || '-'}
+    </Text>
+  );
+
+  const renderSectionTitle = (label, withDivider = true) => (
+    <GridItem colSpan={{ base: 1, md: 2 }}>
+      <Box
+        borderTop={withDivider ? '1px solid' : '0'}
+        borderColor={borderColor}
+        pt={withDivider ? { base: 4, md: 5 } : 0}
+        mt={withDivider ? { base: 1, md: 2 } : 0}
+      >
+        <HStack spacing={3}>
+          <Box
+            w='3px'
+            h='18px'
+            borderRadius='full'
+            bg={sectionAccent}
+            flexShrink={0}
+          />
+          <Text
+            fontSize={{ base: 'md', md: 'lg' }}
+            fontWeight='bold'
+            fontFamily={DASHBOARD_MODAL_HEADING_FONT}
+            color={textColor}
+          >
             {label}
           </Text>
-          {isMultiline ? (
-            <Text fontSize='md' color={textColor} whiteSpace='pre-wrap'>
-              {value}
-            </Text>
-          ) : (
-            <Text fontSize='md' color={textColor}>
-              {value}
-            </Text>
-          )}
-        </Box>
-      </GridItem>
+        </HStack>
+      </Box>
+    </GridItem>
+  );
+
+  const renderField = (
+    label,
+    value,
+    isMultiline = false,
+    tooltipLabel = null
+  ) => {
+    if (!value) return null;
+
+    return renderFieldShell(
+      label,
+      renderValueText(value, isMultiline),
+      { base: 1, md: 1 },
+      tooltipLabel
     );
   };
 
   const renderDateField = (label, value) => {
     if (!value) return null;
 
-    return (
-      <GridItem colSpan={{ base: 1, md: 1 }}>
-        <Box>
-          <Text fontSize='sm' fontWeight='medium' color={labelColor} mb={1}>
-            {label}
-          </Text>
-          <Text fontSize='md' color={textColor}>
-            {formatDate(value)}
-          </Text>
-        </Box>
-      </GridItem>
-    );
+    return renderFieldShell(label, renderValueText(formatDate(value)));
   };
 
   // Inline editable field renderers
@@ -304,8 +391,15 @@ function TokenDetailModal({
   ) => {
     return (
       <GridItem colSpan={{ base: 1, md: multiline ? 2 : 1 }}>
-        <Box>
-          <Text fontSize='sm' fontWeight='medium' color={labelColor} mb={1}>
+        <Box
+          bg={fieldBg}
+          border='1px solid'
+          borderColor={borderColor}
+          borderRadius='12px'
+          p={{ base: 3.5, md: 4 }}
+          minH={multiline ? 'auto' : '88px'}
+        >
+          <Text fontSize='sm' fontWeight='semibold' color={labelColor} mb={2}>
             {label}
           </Text>
           {isEditing ? (
@@ -315,8 +409,7 @@ function TokenDetailModal({
                 onChange={e =>
                   setEditData(d => ({ ...d, [key]: e.target.value }))
                 }
-                bg={inputBg}
-                borderColor={inputBorder}
+                {...commonInputProps}
                 {...inputProps}
               />
             ) : (
@@ -326,19 +419,12 @@ function TokenDetailModal({
                 onChange={e =>
                   setEditData(d => ({ ...d, [key]: e.target.value }))
                 }
-                bg={inputBg}
-                borderColor={inputBorder}
+                {...commonInputProps}
                 {...inputProps}
               />
             )
           ) : (
-            <Text
-              fontSize='md'
-              color={textColor}
-              whiteSpace={multiline ? 'pre-wrap' : 'normal'}
-            >
-              {displayValue || '-'}
-            </Text>
+            renderValueText(displayValue, multiline)
           )}
         </Box>
       </GridItem>
@@ -347,9 +433,16 @@ function TokenDetailModal({
 
   const renderEditableSelect = (label, key, options) => {
     return (
-      <GridItem colSpan={2}>
-        <Box>
-          <Text fontSize='sm' fontWeight='medium' color={labelColor} mb={1}>
+      <GridItem colSpan={{ base: 1, md: 1 }}>
+        <Box
+          bg={fieldBg}
+          border='1px solid'
+          borderColor={borderColor}
+          borderRadius='12px'
+          p={{ base: 3.5, md: 4 }}
+          minH='88px'
+        >
+          <Text fontSize='sm' fontWeight='semibold' color={labelColor} mb={2}>
             {label}
           </Text>
           {isEditing ? (
@@ -358,13 +451,19 @@ function TokenDetailModal({
               onChange={e =>
                 setEditData(d => ({ ...d, [key]: e.target.value }))
               }
+              {...commonInputProps}
             >
               {options}
             </Select>
           ) : (
-            <Text fontSize='md' color={textColor}>
+            <Text
+              fontSize={{ base: 'sm', md: 'md' }}
+              fontWeight='semibold'
+              color={textColor}
+              wordBreak='break-word'
+            >
               {(() => {
-                const id = editData[key] || '';
+                const id = (isEditing ? editData[key] : token?.[key]) || '';
                 if (!id) return 'Use workspace default';
                 const g = Array.isArray(contactGroups)
                   ? contactGroups.find(x => String(x.id) === String(id))
@@ -378,71 +477,81 @@ function TokenDetailModal({
     );
   };
 
+  const categoryLabel = category?.label || token.category || 'Asset';
+  const typeLabel = type?.label || token.type || 'Unknown type';
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size='xl' scrollBehavior='inside'>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size='xl'
+      scrollBehavior='inside'
+      isCentered
+      motionPreset='none'
+    >
       <ModalOverlay />
-      <ModalContent bg={bgColor} maxW='800px'>
-        <ModalHeader>
-          <Box
-            display='flex'
-            alignItems='center'
-            justifyContent='space-between'
+      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '760px' }}>
+        <ModalHeader {...headerProps}>
+          <Flex
+            align={{ base: 'flex-start', md: 'center' }}
+            justify='space-between'
+            gap={4}
+            direction={{ base: 'column', sm: 'row' }}
           >
-            <Box>
-              <Heading size='md' color={textColor}>
+            <Box minW={0}>
+              <Heading
+                size={{ base: 'md', md: 'lg' }}
+                color={textColor}
+                fontFamily={DASHBOARD_MODAL_HEADING_FONT}
+                noOfLines={2}
+              >
                 {token.name}
               </Heading>
-              <Text fontSize='sm' color={labelColor} mt={1}>
-                {category?.label} • {type?.label || token.type}
+              <Text
+                fontSize={{ base: 'sm', md: 'md' }}
+                color={subtleTextColor}
+                mt={2}
+                noOfLines={2}
+              >
+                {categoryLabel} - {typeLabel}
               </Text>
             </Box>
             <Badge
               colorScheme={category?.color || 'gray'}
               variant='subtle'
-              fontSize='sm'
+              fontSize='xs'
+              borderRadius='8px'
               px={3}
-              py={1}
+              py={1.5}
+              flexShrink={0}
             >
-              {category?.label}
+              {categoryLabel}
             </Badge>
-          </Box>
+          </Flex>
         </ModalHeader>
-        <ModalCloseButton />
+        <ModalCloseButton {...closeButtonProps} />
 
-        <ModalBody pb={6}>
-          <Grid templateColumns={{ base: '1fr', md: 'repeat(2, 1fr)' }} gap={6}>
-            {/* Basic Information */}
-            <GridItem colSpan={2}>
-              <Text
-                fontSize='lg'
-                fontWeight='semibold'
-                color={textColor}
-                mb={4}
-              >
-                Basic Information
-              </Text>
-            </GridItem>
+        <ModalBody {...bodyProps}>
+          <Grid
+            templateColumns={{ base: 'minmax(0, 1fr)', md: 'repeat(2, 1fr)' }}
+            gap={{ base: 3, md: 4 }}
+          >
+            {renderSectionTitle('Basic Information', false)}
 
             {/* Token ID - non-editable identifier */}
             {renderField('Token ID', token.id)}
 
-            {isEditing ? (
-              <Tooltip label='Cannot edit type' hasArrow placement='top'>
-                <Box cursor='not-allowed' opacity={0.8}>
-                  {renderField('Type', type?.label || token.type)}
-                </Box>
-              </Tooltip>
-            ) : (
-              renderField('Type', type?.label || token.type)
+            {renderField(
+              'Type',
+              type?.label || token.type,
+              false,
+              isEditing ? 'Cannot edit type' : null
             )}
-            {isEditing ? (
-              <Tooltip label='Cannot edit category' hasArrow placement='top'>
-                <Box cursor='not-allowed' opacity={0.8}>
-                  {renderField('Category', category?.label)}
-                </Box>
-              </Tooltip>
-            ) : (
-              renderField('Category', category?.label)
+            {renderField(
+              'Category',
+              category?.label,
+              false,
+              isEditing ? 'Cannot edit category' : null
             )}
             {renderEditable('Name', 'name', token.name, {
               inputProps: { maxLength: 100 },
@@ -463,12 +572,19 @@ function TokenDetailModal({
               )
             ) : (
               <GridItem colSpan={1}>
-                <Box>
+                <Box
+                  bg={fieldBg}
+                  border='1px solid'
+                  borderColor={borderColor}
+                  borderRadius='12px'
+                  p={{ base: 3.5, md: 4 }}
+                  minH='88px'
+                >
                   <Text
                     fontSize='sm'
-                    fontWeight='medium'
+                    fontWeight='semibold'
                     color={labelColor}
-                    mb={1}
+                    mb={2}
                   >
                     Section
                   </Text>
@@ -498,7 +614,11 @@ function TokenDetailModal({
                         ));
                       }
                       return (
-                        <Text fontSize='md' color={textColor}>
+                        <Text
+                          fontSize={{ base: 'sm', md: 'md' }}
+                          fontWeight='semibold'
+                          color={textColor}
+                        >
                           -
                         </Text>
                       );
@@ -525,22 +645,11 @@ function TokenDetailModal({
             {renderDateField('Imported At', token.imported_at)}
             {renderDateField('Last Used', token.last_used)}
             {renderDateField('Last Updated', token.updated_at)}
-            {renderField('Privileges/Scopes', token.privileges)}
 
             {/* Category-specific fields */}
             {token.category === 'cert' && (
               <>
-                <GridItem colSpan={2}>
-                  <Divider my={4} />
-                  <Text
-                    fontSize='lg'
-                    fontWeight='semibold'
-                    color={textColor}
-                    mb={4}
-                  >
-                    Certificate Details
-                  </Text>
-                </GridItem>
+                {renderSectionTitle('Certificate Details')}
 
                 {(isEditing ||
                   (Array.isArray(token.domains) && token.domains.length)) &&
@@ -605,12 +714,19 @@ function TokenDetailModal({
                 {(isEditing || token.contacts) &&
                   (isEditing ? (
                     <GridItem colSpan={{ base: 1, md: 1 }}>
-                      <Box>
+                      <Box
+                        bg={fieldBg}
+                        border='1px solid'
+                        borderColor={borderColor}
+                        borderRadius='12px'
+                        p={{ base: 3.5, md: 4 }}
+                        minH='88px'
+                      >
                         <Text
                           fontSize='sm'
-                          fontWeight='medium'
+                          fontWeight='semibold'
                           color={labelColor}
-                          mb={1}
+                          mb={2}
                         >
                           Contacts (Key custodian)
                         </Text>
@@ -623,8 +739,7 @@ function TokenDetailModal({
                               contacts: e.target.value,
                             }))
                           }
-                          bg={inputBg}
-                          borderColor={inputBorder}
+                          {...commonInputProps}
                           list='workspace-contacts-suggestions'
                           placeholder='Who manages this certificate?'
                           maxLength={200}
@@ -649,17 +764,7 @@ function TokenDetailModal({
 
             {token.category === 'key_secret' && (
               <>
-                <GridItem colSpan={2}>
-                  <Divider my={4} />
-                  <Text
-                    fontSize='lg'
-                    fontWeight='semibold'
-                    color={textColor}
-                    mb={4}
-                  >
-                    Key/Secret Details
-                  </Text>
-                </GridItem>
+                {renderSectionTitle('Key/Secret Details')}
 
                 {(isEditing || token.location) &&
                   renderEditable('Locations', 'location', token.location, {
@@ -675,6 +780,16 @@ function TokenDetailModal({
                     inputProps: {
                       maxLength: 200,
                       placeholder: 'Application, service',
+                    },
+                  })}
+                {(isEditing || token.privileges) &&
+                  renderEditable('Privileges', 'privileges', token.privileges, {
+                    multiline: true,
+                    inputProps: {
+                      maxLength: 5000,
+                      placeholder:
+                        'e.g. read:api, write:registry, secrets:read',
+                      rows: 3,
                     },
                   })}
                 {(isEditing || token.description) &&
@@ -742,12 +857,19 @@ function TokenDetailModal({
                 {(isEditing || token.contacts) &&
                   (isEditing ? (
                     <GridItem colSpan={{ base: 1, md: 1 }}>
-                      <Box>
+                      <Box
+                        bg={fieldBg}
+                        border='1px solid'
+                        borderColor={borderColor}
+                        borderRadius='12px'
+                        p={{ base: 3.5, md: 4 }}
+                        minH='88px'
+                      >
                         <Text
                           fontSize='sm'
-                          fontWeight='medium'
+                          fontWeight='semibold'
                           color={labelColor}
-                          mb={1}
+                          mb={2}
                         >
                           Contacts (Key custodian)
                         </Text>
@@ -760,8 +882,7 @@ function TokenDetailModal({
                               contacts: e.target.value,
                             }))
                           }
-                          bg={inputBg}
-                          borderColor={inputBorder}
+                          {...commonInputProps}
                           list='workspace-contacts-suggestions'
                           placeholder='Who manages this key/secret?'
                           maxLength={200}
@@ -786,17 +907,7 @@ function TokenDetailModal({
 
             {token.category === 'license' && (
               <>
-                <GridItem colSpan={2}>
-                  <Divider my={4} />
-                  <Text
-                    fontSize='lg'
-                    fontWeight='semibold'
-                    color={textColor}
-                    mb={4}
-                  >
-                    License Details
-                  </Text>
-                </GridItem>
+                {renderSectionTitle('License Details')}
 
                 {(isEditing || token.vendor) &&
                   renderEditable('Vendor', 'vendor', token.vendor, {
@@ -830,12 +941,19 @@ function TokenDetailModal({
                 {(isEditing || token.contacts) &&
                   (isEditing ? (
                     <GridItem colSpan={{ base: 1, md: 1 }}>
-                      <Box>
+                      <Box
+                        bg={fieldBg}
+                        border='1px solid'
+                        borderColor={borderColor}
+                        borderRadius='12px'
+                        p={{ base: 3.5, md: 4 }}
+                        minH='88px'
+                      >
                         <Text
                           fontSize='sm'
-                          fontWeight='medium'
+                          fontWeight='semibold'
                           color={labelColor}
-                          mb={1}
+                          mb={2}
                         >
                           Contacts
                         </Text>
@@ -848,8 +966,7 @@ function TokenDetailModal({
                               contacts: e.target.value,
                             }))
                           }
-                          bg={inputBg}
-                          borderColor={inputBorder}
+                          {...commonInputProps}
                           list='workspace-contacts-suggestions'
                           placeholder='Who owns this renewal?'
                           maxLength={200}
@@ -893,17 +1010,7 @@ function TokenDetailModal({
 
             {token.category === 'general' && (
               <>
-                <GridItem colSpan={2}>
-                  <Divider my={4} />
-                  <Text
-                    fontSize='lg'
-                    fontWeight='semibold'
-                    color={textColor}
-                    mb={4}
-                  >
-                    General Details
-                  </Text>
-                </GridItem>
+                {renderSectionTitle('General Details')}
 
                 {(isEditing || token.location) &&
                   renderEditable('Locations', 'location', token.location, {
@@ -947,12 +1054,19 @@ function TokenDetailModal({
                 {(isEditing || token.contacts) &&
                   (isEditing ? (
                     <GridItem colSpan={{ base: 1, md: 1 }}>
-                      <Box>
+                      <Box
+                        bg={fieldBg}
+                        border='1px solid'
+                        borderColor={borderColor}
+                        borderRadius='12px'
+                        p={{ base: 3.5, md: 4 }}
+                        minH='88px'
+                      >
                         <Text
                           fontSize='sm'
-                          fontWeight='medium'
+                          fontWeight='semibold'
                           color={labelColor}
-                          mb={1}
+                          mb={2}
                         >
                           Contacts
                         </Text>
@@ -965,8 +1079,7 @@ function TokenDetailModal({
                               contacts: e.target.value,
                             }))
                           }
-                          bg={inputBg}
-                          borderColor={inputBorder}
+                          {...commonInputProps}
                           list='workspace-contacts-suggestions'
                           placeholder='Who manages this item?'
                           maxLength={200}
@@ -987,17 +1100,7 @@ function TokenDetailModal({
             {/* Notes */}
             {(isEditing || token.notes) && (
               <>
-                <GridItem colSpan={2}>
-                  <Divider my={4} />
-                  <Text
-                    fontSize='lg'
-                    fontWeight='semibold'
-                    color={textColor}
-                    mb={4}
-                  >
-                    Notes
-                  </Text>
-                </GridItem>
+                {renderSectionTitle('Notes')}
 
                 {renderEditable('Notes', 'notes', token.notes, {
                   multiline: true,
@@ -1015,26 +1118,76 @@ function TokenDetailModal({
           </datalist>
         </ModalBody>
 
-        <ModalFooter>
-          {!isViewer && (
-            <Button
-              mr={3}
-              variant='outline'
-              onClick={() => setIsEditing(e => !e)}
+        <ModalFooter {...footerProps}>
+          <Flex
+            w='100%'
+            align={{ base: 'stretch', md: 'center' }}
+            justify='space-between'
+            gap={3}
+            direction={{ base: 'column', md: 'row' }}
+          >
+            {saveError ? (
+              <Box
+                bg={dangerBg}
+                border='1px solid'
+                borderColor={dangerBorder}
+                borderRadius='10px'
+                color={dangerText}
+                fontSize='sm'
+                fontWeight='semibold'
+                px={3}
+                py={2}
+                flex='1'
+              >
+                {saveError}
+              </Box>
+            ) : (
+              <Text fontSize='sm' color={labelColor}>
+                {isViewer
+                  ? 'You have read-only access to this asset.'
+                  : isEditing
+                    ? 'Review your changes before saving.'
+                    : 'Asset details are read-only until edit mode is enabled.'}
+              </Text>
+            )}
+
+            <Flex
+              gap={3}
+              justify={{ base: 'stretch', md: 'flex-end' }}
+              direction={{ base: 'column-reverse', sm: 'row' }}
+              flexShrink={0}
             >
-              {isEditing ? 'Cancel edit' : 'Edit'}
-            </Button>
-          )}
-          <Button onClick={onClose} colorScheme='blue'>
-            Close
-          </Button>
-          {!isViewer && isEditing && (
-            <Button ml={3} colorScheme='green' onClick={handleSave}>
-              Save
-            </Button>
-          )}
+              {!isViewer && (
+                <Button
+                  onClick={() => setIsEditing(e => !e)}
+                  minW={{ base: '100%', sm: '104px' }}
+                  {...outlineButtonProps}
+                >
+                  {isEditing ? 'Cancel edit' : 'Edit'}
+                </Button>
+              )}
+              <Button
+                onClick={onClose}
+                minW={{ base: '100%', sm: '104px' }}
+                {...primaryButtonProps}
+              >
+                Close
+              </Button>
+              {!isViewer && isEditing && (
+                <Button
+                  {...primaryButtonProps}
+                  colorScheme='green'
+                  onClick={handleSave}
+                  isLoading={saving}
+                  minW={{ base: '100%', sm: '104px' }}
+                >
+                  Save
+                </Button>
+              )}
+            </Flex>
+          </Flex>
         </ModalFooter>
-      </ModalContent>
+      </DashboardModalFrame>
     </Modal>
   );
 }

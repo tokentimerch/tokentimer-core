@@ -11,10 +11,19 @@ const NEVER_EXPIRES_DATE = '2099-12-31';
  */
 export function isNeverExpires(date) {
   if (!date) return false;
-  const dateStr = typeof date === 'string' ? date : date.toISOString?.();
-  if (!dateStr) return false;
-  // Check if date starts with 2099-12-31 (handles both date-only and datetime strings)
-  return dateStr.startsWith(NEVER_EXPIRES_DATE);
+
+  const dateStr =
+    typeof date === 'string'
+      ? date
+      : date instanceof Date
+        ? date.toISOString()
+        : String(date);
+
+  if (!dateStr || dateStr === 'N/A') {
+    return false;
+  }
+
+  return dateStr.startsWith(NEVER_EXPIRES_DATE) || dateStr.startsWith('9999-');
 }
 
 /**

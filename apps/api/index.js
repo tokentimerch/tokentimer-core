@@ -586,6 +586,8 @@ app.use(require("./routes/tokens"));
 app.use(require("./routes/health"));
 // --- USAGE (extracted to routes/usage.js) ---
 app.use(require("./routes/usage"));
+// --- CONTROL CENTER (extracted to routes/controlCenter.js) ---
+app.use(require("./routes/controlCenter"));
 // --- ALERTS (extracted to routes/alerts.js) ---
 app.use(require("./routes/alerts"));
 // --- ACCOUNT (extracted to routes/account.js) ---

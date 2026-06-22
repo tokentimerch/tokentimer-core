@@ -1,31 +1,41 @@
 import { useEffect, useState } from 'react';
 import {
   Box,
-  Heading,
   Text,
   VStack,
   HStack,
+  Stack,
   FormControl,
   FormLabel,
   Input,
-  Button,
   Alert,
   AlertIcon,
   AlertDescription,
   Badge,
-  useColorModeValue,
   Divider,
+  Icon,
   InputGroup,
   InputRightElement,
   IconButton,
   Tooltip,
   Switch,
 } from '@chakra-ui/react';
-import { FiEye, FiEyeOff, FiCheck, FiX } from 'react-icons/fi';
+import { FiEye, FiEyeOff, FiMail } from 'react-icons/fi';
+import { FaWhatsapp } from 'react-icons/fa';
+import TestWhatsappButton from '../components/TestWhatsappButton.jsx';
 import apiClient from '../utils/apiClient';
 import { showSuccess, showWarning } from '../utils/toast.js';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+  DashboardState,
+} from '../components/DashboardPrimitives';
+import { SettingsIntegrationCard } from '../components/SettingsIntegrationHub.jsx';
+import { SettingsFormWidth } from '../components/SettingsPageShell.jsx';
+import { SETTINGS_SECTION_GAP } from '../styles/dashboardLayout';
 import SEO from '../components/SEO.jsx';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -33,13 +43,7 @@ import { logger } from '../utils/logger.js';
  * Allows configuring SMTP and Twilio WhatsApp settings from the UI.
  * Fields set via environment variables are greyed out with a warning badge.
  */
-export default function SystemSettings({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+export default function SystemSettings({ session, onLogout, onAccountClick }) {
   const [loading, setLoading] = useState(true);
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState(false);
@@ -53,12 +57,10 @@ export default function SystemSettings({
   const [testPhone, setTestPhone] = useState('');
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showAuthToken, setShowAuthToken] = useState(false);
+  const [openIntegration, setOpenIntegration] = useState('smtp');
 
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const lockedInputBg = useColorModeValue('gray.100', 'gray.700');
-  const grayText = useColorModeValue('gray.600', 'gray.400');
-  const subTitleColor = useColorModeValue('gray.600', 'gray.300');
+  const { muted, dashboard } = useDashboardTheme();
+  const lockedInputBg = dashboard.bg.panelHover;
 
   useEffect(() => {
     loadSettings();
@@ -209,18 +211,24 @@ export default function SystemSettings({
           <HStack spacing={2}>
             <Text>{label}</Text>
             {isLocked && (
-              <Tooltip label='This value is set via an environment variable and cannot be changed from the UI. To modify it, update your .env file or container environment and restart the application.'>
-                <Badge
-                  colorScheme='orange'
-                  variant='solid'
-                  fontSize='xs'
-                  px={2}
-                  py={0.5}
-                  borderRadius='md'
-                  cursor='help'
-                >
-                  ENV
-                </Badge>
+              <Tooltip
+                hasArrow
+                placement='top'
+                label='This value is set via an environment variable and cannot be changed from the UI. To modify it, update your .env file or container environment and restart the application.'
+              >
+                <Box as='span' display='inline-block'>
+                  <Badge
+                    colorScheme='orange'
+                    variant='solid'
+                    fontSize='xs'
+                    px={2}
+                    py={0.5}
+                    borderRadius='md'
+                    cursor='help'
+                  >
+                    ENV
+                  </Badge>
+                </Box>
               </Tooltip>
             )}
             {!isLocked && setting.source === 'database' && (
@@ -293,18 +301,24 @@ export default function SystemSettings({
           <HStack spacing={2}>
             <Text>{label}</Text>
             {isLocked && (
-              <Tooltip label='This value is set via an environment variable and cannot be changed from the UI. To modify it, update your .env file or container environment and restart the application.'>
-                <Badge
-                  colorScheme='orange'
-                  variant='solid'
-                  fontSize='xs'
-                  px={2}
-                  py={0.5}
-                  borderRadius='md'
-                  cursor='help'
-                >
-                  ENV
-                </Badge>
+              <Tooltip
+                hasArrow
+                placement='top'
+                label='This value is set via an environment variable and cannot be changed from the UI. To modify it, update your .env file or container environment and restart the application.'
+              >
+                <Box as='span' display='inline-block'>
+                  <Badge
+                    colorScheme='orange'
+                    variant='solid'
+                    fontSize='xs'
+                    px={2}
+                    py={0.5}
+                    borderRadius='md'
+                    cursor='help'
+                  >
+                    ENV
+                  </Badge>
+                </Box>
               </Tooltip>
             )}
             {!isLocked && setting.source === 'database' && (
@@ -322,7 +336,7 @@ export default function SystemSettings({
             }
             isDisabled={isLocked}
           />
-          <Text fontSize='sm' color={grayText}>
+          <Text fontSize='sm' color={muted}>
             {options.helpText || ''}
           </Text>
         </HStack>
@@ -334,16 +348,18 @@ export default function SystemSettings({
     return (
       <>
         <SEO title='System Settings' />
-        <Navigation
-          user={session}
+        <DashboardPageLayout
+          session={session}
           onLogout={onLogout}
           onAccountClick={onAccountClick}
-          onNavigateToDashboard={onNavigateToDashboard}
-          onNavigateToLanding={onNavigateToLanding}
-        />
-        <Box maxW='800px' mx='auto' py={8} px={4}>
-          <Text>Loading system settings...</Text>
-        </Box>
+          pageTitle='System settings'
+          variant='wide'
+          contentProps={{ overflowX: 'hidden', w: 'full', maxW: '100%' }}
+        >
+          <DashboardPanel>
+            <DashboardState type='loading' title='Loading system settings...' />
+          </DashboardPanel>
+        </DashboardPageLayout>
       </>
     );
   }
@@ -351,219 +367,179 @@ export default function SystemSettings({
   return (
     <>
       <SEO title='System Settings' />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box maxW='800px' mx='auto' py={8} px={4}>
-        <VStack align='stretch' spacing={6}>
-          <Heading size='lg'>System Settings</Heading>
-          <Text color={subTitleColor}>
-            Configure email (SMTP) and WhatsApp (Twilio) notification providers.
-            Settings defined via environment variables take priority and cannot
-            be changed here.
-          </Text>
-
-          {/* SMTP Configuration */}
-          <Box
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
+        pageTitle='System settings'
+        variant='wide'
+        contentProps={{ overflowX: 'hidden', w: 'full', maxW: '100%' }}
+      >
+        <VStack align='stretch' spacing={SETTINGS_SECTION_GAP} w='full'>
+          <SettingsIntegrationCard
+            title='Email (SMTP)'
+            description='Configure outgoing email delivery for alert notifications.'
+            icon={<Icon as={FiMail} boxSize={6} color='blue.500' />}
+            configured={smtp.configured}
+            isOpen={openIntegration === 'smtp'}
+            onToggle={() =>
+              setOpenIntegration(prev => (prev === 'smtp' ? null : 'smtp'))
+            }
           >
-            <HStack justify='space-between' mb={4}>
-              <Heading size='md'>Email (SMTP)</Heading>
-              <HStack spacing={2}>
-                {smtp.configured ? (
-                  <Badge
-                    colorScheme='green'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiCheck size={12} /> Configured
-                  </Badge>
-                ) : (
-                  <Badge
-                    colorScheme='orange'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiX size={12} /> Not configured
-                  </Badge>
-                )}
-              </HStack>
-            </HStack>
-
-            <VStack align='stretch' spacing={3}>
-              <HStack spacing={4} align='start'>
-                <Box flex={3}>
-                  {renderField(
-                    'SMTP Host',
-                    'host',
-                    smtp,
-                    smtpForm,
-                    setSmtpForm,
-                    { placeholder: 'smtp.example.com' }
-                  )}
-                </Box>
-                <Box flex={1}>
-                  {renderField('Port', 'port', smtp, smtpForm, setSmtpForm, {
-                    placeholder: '465',
-                  })}
-                </Box>
-              </HStack>
-              {renderField('SMTP User', 'user', smtp, smtpForm, setSmtpForm, {
-                placeholder: 'user@example.com',
-              })}
-              {renderField(
-                'SMTP Password',
-                'pass',
-                smtp,
-                smtpForm,
-                setSmtpForm,
-                {
-                  isSecret: true,
-                  showState: showSmtpPass,
-                  toggleShow: () => setShowSmtpPass(p => !p),
-                  placeholder: 'Enter SMTP password',
-                }
-              )}
-              <HStack spacing={4} align='start'>
-                <Box flex={1}>
-                  {renderBooleanField(
-                    'Force SSL/TLS (SMTPS)',
-                    'secure',
-                    smtp,
-                    smtpForm,
-                    setSmtpForm,
-                    {
-                      helpText:
-                        'When disabled, SSL is auto-detected from port 465.',
-                    }
-                  )}
-                </Box>
-                <Box flex={1}>
-                  {renderBooleanField(
-                    'Require STARTTLS upgrade',
-                    'require_tls',
-                    smtp,
-                    smtpForm,
-                    setSmtpForm,
-                    {
-                      helpText: 'Recommended and enabled by default.',
-                    }
-                  )}
-                </Box>
-              </HStack>
-              <Divider />
-              <HStack spacing={4} align='start'>
-                <Box flex={1}>
-                  {renderField(
-                    'From Email',
-                    'from_email',
-                    smtp,
-                    smtpForm,
-                    setSmtpForm,
-                    { placeholder: 'noreply@example.com' }
-                  )}
-                </Box>
-                <Box flex={1}>
-                  {renderField(
-                    'From Name',
-                    'from_name',
-                    smtp,
-                    smtpForm,
-                    setSmtpForm,
-                    { placeholder: 'TokenTimer' }
-                  )}
-                </Box>
-              </HStack>
-            </VStack>
-
-            <HStack
-              mt={4}
-              spacing={3}
-              justify='space-between'
-              align='end'
-              flexWrap='wrap'
-              rowGap={3}
-            >
-              <HStack spacing={3} align='end' flexWrap='wrap' rowGap={2}>
-                <FormControl maxW='220px' isDisabled={!smtp.configured}>
-                  <FormLabel fontSize='sm' mb={1}>
-                    Test recipient
-                  </FormLabel>
-                  <Input
-                    size='sm'
-                    placeholder={session?.email || 'recipient@example.com'}
-                    value={testEmail}
-                    onChange={e => setTestEmail(e.target.value)}
-                  />
-                </FormControl>
-                <Button
-                  size='sm'
-                  colorScheme='blue'
-                  variant='outline'
-                  px={4}
-                  isLoading={testingSmtp}
-                  onClick={handleTestSmtp}
-                  isDisabled={!smtp.configured}
+            <SettingsFormWidth maxW='100%'>
+              <VStack align='stretch' spacing={3}>
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
                 >
-                  Send test email
-                </Button>
-              </HStack>
-              <Button
-                size='sm'
-                colorScheme='blue'
-                isLoading={savingSmtp}
-                onClick={handleSaveSmtp}
-              >
-                Save SMTP
-              </Button>
-            </HStack>
-          </Box>
-
-          {/* Twilio WhatsApp Configuration */}
-          <Box
-            bg={cardBg}
-            p={6}
-            borderRadius='md'
-            boxShadow='sm'
-            border='1px solid'
-            borderColor={borderColor}
-          >
-            <HStack justify='space-between' mb={4}>
-              <Heading size='md'>WhatsApp (Twilio)</Heading>
-              <HStack spacing={2}>
-                {whatsapp.configured ? (
-                  <Badge
-                    colorScheme='green'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiCheck size={12} /> Configured
-                  </Badge>
-                ) : (
-                  <Badge
-                    colorScheme='orange'
-                    display='flex'
-                    alignItems='center'
-                    gap={1}
-                  >
-                    <FiX size={12} /> Not configured
-                  </Badge>
+                  <Box flex={3}>
+                    {renderField(
+                      'SMTP Host',
+                      'host',
+                      smtp,
+                      smtpForm,
+                      setSmtpForm,
+                      { placeholder: 'smtp.example.com' }
+                    )}
+                  </Box>
+                  <Box flex={1}>
+                    {renderField('Port', 'port', smtp, smtpForm, setSmtpForm, {
+                      placeholder: '465',
+                    })}
+                  </Box>
+                </Stack>
+                {renderField('SMTP User', 'user', smtp, smtpForm, setSmtpForm, {
+                  placeholder: 'user@example.com',
+                })}
+                {renderField(
+                  'SMTP Password',
+                  'pass',
+                  smtp,
+                  smtpForm,
+                  setSmtpForm,
+                  {
+                    isSecret: true,
+                    showState: showSmtpPass,
+                    toggleShow: () => setShowSmtpPass(p => !p),
+                    placeholder: 'Enter SMTP password',
+                  }
                 )}
-              </HStack>
-            </HStack>
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
+                >
+                  <Box flex={1}>
+                    {renderBooleanField(
+                      'Force SSL/TLS (SMTPS)',
+                      'secure',
+                      smtp,
+                      smtpForm,
+                      setSmtpForm,
+                      {
+                        helpText:
+                          'When disabled, SSL is auto-detected from port 465.',
+                      }
+                    )}
+                  </Box>
+                  <Box flex={1}>
+                    {renderBooleanField(
+                      'Require STARTTLS upgrade',
+                      'require_tls',
+                      smtp,
+                      smtpForm,
+                      setSmtpForm,
+                      {
+                        helpText: 'Recommended and enabled by default.',
+                      }
+                    )}
+                  </Box>
+                </Stack>
+                <Divider />
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
+                >
+                  <Box flex={1}>
+                    {renderField(
+                      'From Email',
+                      'from_email',
+                      smtp,
+                      smtpForm,
+                      setSmtpForm,
+                      { placeholder: 'noreply@example.com' }
+                    )}
+                  </Box>
+                  <Box flex={1}>
+                    {renderField(
+                      'From Name',
+                      'from_name',
+                      smtp,
+                      smtpForm,
+                      setSmtpForm,
+                      { placeholder: 'TokenTimer' }
+                    )}
+                  </Box>
+                </Stack>
+              </VStack>
 
+              <HStack
+                mt={4}
+                spacing={3}
+                justify='space-between'
+                align='end'
+                flexWrap='wrap'
+                rowGap={3}
+              >
+                <HStack spacing={3} align='end' flexWrap='wrap' rowGap={2}>
+                  <FormControl maxW='220px' isDisabled={!smtp.configured}>
+                    <FormLabel fontSize='sm' mb={1}>
+                      Test recipient
+                    </FormLabel>
+                    <Input
+                      size='sm'
+                      placeholder={session?.email || 'recipient@example.com'}
+                      value={testEmail}
+                      onChange={e => setTestEmail(e.target.value)}
+                    />
+                  </FormControl>
+                  <DashboardActionButton
+                    colorScheme='blue'
+                    variant='outline'
+                    isLoading={testingSmtp}
+                    onClick={handleTestSmtp}
+                    isDisabled={!smtp.configured}
+                    w={{ base: '100%', md: 'auto' }}
+                  >
+                    Send test email
+                  </DashboardActionButton>
+                </HStack>
+                <DashboardActionButton
+                  colorScheme='blue'
+                  isLoading={savingSmtp}
+                  onClick={handleSaveSmtp}
+                  w={{ base: '100%', md: 'auto' }}
+                >
+                  Save SMTP
+                </DashboardActionButton>
+              </HStack>
+            </SettingsFormWidth>
+          </SettingsIntegrationCard>
+
+          <SettingsIntegrationCard
+            title='WhatsApp (Twilio)'
+            description='Configure Twilio WhatsApp delivery and alert templates.'
+            icon={<Icon as={FaWhatsapp} boxSize={6} color='#25D366' />}
+            configured={whatsapp.configured}
+            isOpen={openIntegration === 'whatsapp'}
+            onToggle={() =>
+              setOpenIntegration(prev =>
+                prev === 'whatsapp' ? null : 'whatsapp'
+              )
+            }
+          >
             {!whatsapp.configured && (
               <Alert status='info' mb={4} borderRadius='md'>
                 <AlertIcon />
@@ -575,160 +551,172 @@ export default function SystemSettings({
               </Alert>
             )}
 
-            <VStack align='stretch' spacing={3}>
-              <Text fontWeight='semibold' fontSize='sm' color={grayText}>
-                Required
-              </Text>
-              {renderField(
-                'Account SID',
-                'account_sid',
-                whatsapp,
-                whatsappForm,
-                setWhatsappForm,
-                { placeholder: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }
-              )}
-              {renderField(
-                'Auth Token',
-                'auth_token',
-                whatsapp,
-                whatsappForm,
-                setWhatsappForm,
-                {
-                  isSecret: true,
-                  showState: showAuthToken,
-                  toggleShow: () => setShowAuthToken(p => !p),
-                  placeholder: 'Enter Twilio Auth Token',
-                }
-              )}
-              <HStack spacing={4} align='start'>
-                <Box flex={1}>
-                  {renderField(
-                    'WhatsApp From Number',
-                    'whatsapp_from',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: '+14155238886' }
-                  )}
-                </Box>
-              </HStack>
-
-              <Divider />
-              <Text fontWeight='semibold' fontSize='sm' color={grayText}>
-                Content Templates
-              </Text>
-              <HStack spacing={4} align='start'>
-                <Box flex={1}>
-                  {renderField(
-                    'Alert (Expires) Template SID',
-                    'alert_content_sid_expires',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: 'HXxxxxxxxxx' }
-                  )}
-                </Box>
-                <Box flex={1}>
-                  {renderField(
-                    'Alert (Expired) Template SID',
-                    'alert_content_sid_expired',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: 'HXxxxxxxxxx' }
-                  )}
-                </Box>
-              </HStack>
-              <HStack spacing={4} align='start'>
-                <Box flex={1}>
-                  {renderField(
-                    'Endpoint Down Template SID',
-                    'alert_content_sid_endpoint_down',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: 'HXxxxxxxxxx' }
-                  )}
-                </Box>
-                <Box flex={1}>
-                  {renderField(
-                    'Endpoint Recovered Template SID',
-                    'alert_content_sid_endpoint_recovered',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: 'HXxxxxxxxxx' }
-                  )}
-                </Box>
-              </HStack>
-              <HStack spacing={4} align='start'>
-                <Box flex={1}>
-                  {renderField(
-                    'Test Message Template SID',
-                    'test_content_sid',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: 'HXxxxxxxxxx' }
-                  )}
-                </Box>
-                <Box flex={1}>
-                  {renderField(
-                    'Weekly Digest Template SID',
-                    'weekly_digest_content_sid',
-                    whatsapp,
-                    whatsappForm,
-                    setWhatsappForm,
-                    { placeholder: 'HXxxxxxxxxx' }
-                  )}
-                </Box>
-              </HStack>
-            </VStack>
-
-            <HStack
-              mt={4}
-              spacing={3}
-              justify='space-between'
-              align='end'
-              flexWrap='wrap'
-              rowGap={3}
-            >
-              <HStack spacing={3} align='end' flexWrap='wrap' rowGap={2}>
-                <FormControl maxW='200px' isDisabled={!whatsapp.configured}>
-                  <FormLabel fontSize='sm' mb={1}>
-                    Test recipient
-                  </FormLabel>
-                  <Input
-                    size='sm'
-                    placeholder='+14155550100'
-                    value={testPhone}
-                    onChange={e => setTestPhone(e.target.value)}
-                  />
-                </FormControl>
-                <Button
-                  size='sm'
-                  colorScheme='green'
-                  variant='outline'
-                  px={4}
-                  isLoading={testingWhatsapp}
-                  onClick={handleTestWhatsapp}
-                  isDisabled={!whatsapp.configured}
+            <SettingsFormWidth maxW='100%'>
+              <VStack align='stretch' spacing={3}>
+                <Text fontWeight='semibold' fontSize='sm' color={muted}>
+                  Required
+                </Text>
+                {renderField(
+                  'Account SID',
+                  'account_sid',
+                  whatsapp,
+                  whatsappForm,
+                  setWhatsappForm,
+                  { placeholder: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }
+                )}
+                {renderField(
+                  'Auth Token',
+                  'auth_token',
+                  whatsapp,
+                  whatsappForm,
+                  setWhatsappForm,
+                  {
+                    isSecret: true,
+                    showState: showAuthToken,
+                    toggleShow: () => setShowAuthToken(p => !p),
+                    placeholder: 'Enter Twilio Auth Token',
+                  }
+                )}
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
                 >
-                  Send test WhatsApp
-                </Button>
-              </HStack>
-              <Button
-                size='sm'
-                colorScheme='blue'
-                isLoading={savingWhatsapp}
-                onClick={handleSaveWhatsapp}
+                  <Box flex={1}>
+                    {renderField(
+                      'WhatsApp From Number',
+                      'whatsapp_from',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: '+14155238886' }
+                    )}
+                  </Box>
+                </Stack>
+
+                <Divider />
+                <Text fontWeight='semibold' fontSize='sm' color={muted}>
+                  Content Templates
+                </Text>
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
+                >
+                  <Box flex={1}>
+                    {renderField(
+                      'Alert (Expires) Template SID',
+                      'alert_content_sid_expires',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: 'HXxxxxxxxxx' }
+                    )}
+                  </Box>
+                  <Box flex={1}>
+                    {renderField(
+                      'Alert (Expired) Template SID',
+                      'alert_content_sid_expired',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: 'HXxxxxxxxxx' }
+                    )}
+                  </Box>
+                </Stack>
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
+                >
+                  <Box flex={1}>
+                    {renderField(
+                      'Endpoint Down Template SID',
+                      'alert_content_sid_endpoint_down',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: 'HXxxxxxxxxx' }
+                    )}
+                  </Box>
+                  <Box flex={1}>
+                    {renderField(
+                      'Endpoint Recovered Template SID',
+                      'alert_content_sid_endpoint_recovered',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: 'HXxxxxxxxxx' }
+                    )}
+                  </Box>
+                </Stack>
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={4}
+                  align='stretch'
+                >
+                  <Box flex={1}>
+                    {renderField(
+                      'Test Message Template SID',
+                      'test_content_sid',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: 'HXxxxxxxxxx' }
+                    )}
+                  </Box>
+                  <Box flex={1}>
+                    {renderField(
+                      'Weekly Digest Template SID',
+                      'weekly_digest_content_sid',
+                      whatsapp,
+                      whatsappForm,
+                      setWhatsappForm,
+                      { placeholder: 'HXxxxxxxxxx' }
+                    )}
+                  </Box>
+                </Stack>
+              </VStack>
+
+              <HStack
+                mt={4}
+                spacing={3}
+                justify='space-between'
+                align='end'
+                flexWrap='wrap'
+                rowGap={3}
               >
-                Save WhatsApp
-              </Button>
-            </HStack>
-          </Box>
+                <HStack spacing={3} align='end' flexWrap='wrap' rowGap={2}>
+                  <FormControl maxW='200px' isDisabled={!whatsapp.configured}>
+                    <FormLabel fontSize='sm' mb={1}>
+                      Test recipient
+                    </FormLabel>
+                    <Input
+                      size='sm'
+                      placeholder='+14155550100'
+                      value={testPhone}
+                      onChange={e => setTestPhone(e.target.value)}
+                    />
+                  </FormControl>
+                  <TestWhatsappButton
+                    onClick={handleTestWhatsapp}
+                    isLoading={testingWhatsapp}
+                    isDisabled={!whatsapp.configured || !testPhone.trim()}
+                  />
+                </HStack>
+                <DashboardActionButton
+                  colorScheme='blue'
+                  isLoading={savingWhatsapp}
+                  onClick={handleSaveWhatsapp}
+                  w={{ base: '100%', md: 'auto' }}
+                >
+                  Save WhatsApp
+                </DashboardActionButton>
+              </HStack>
+            </SettingsFormWidth>
+          </SettingsIntegrationCard>
         </VStack>
-      </Box>
+      </DashboardPageLayout>
     </>
   );
 }

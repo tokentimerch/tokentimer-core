@@ -2146,6 +2146,80 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/stats:
+    get:
+      tags: [Workspaces]
+      summary: Control Center dashboard stats
+      operationId: getControlCenterStats
+      description: >-
+        Returns aggregated Control Center statistics for the workspace dashboard.
+        Requires workspace admin or workspace manager role.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Control Center stats payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - totalAssets
+                  - buckets
+                  - sources
+                  - needsAttention
+                  - neverExpires
+                  - privilegeHighlights
+                  - autoSync
+                  - generatedAt
+                  - isComplete
+                properties:
+                  totalAssets:
+                    type: integer
+                  buckets:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        name:
+                          type: string
+                        count:
+                          type: integer
+                  needsAttention:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  neverExpires:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  privilegeHighlights:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  autoSync:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  generatedAt:
+                    type: string
+                    format: date-time
+                  isComplete:
+                    type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/contacts:
     get:
       tags: [Workspaces]

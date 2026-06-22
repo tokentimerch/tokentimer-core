@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -8,6 +7,7 @@ import Workspaces from '../../src/pages/Workspaces.jsx';
 import Usage from '../../src/pages/Usage.jsx';
 import Audit from '../../src/pages/Audit.jsx';
 import Account from '../../src/pages/Account.jsx';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const {
   apiGetMock,
@@ -102,9 +102,15 @@ vi.mock('../../src/utils/apiClient', () => ({
 function renderWithProviders(ui) {
   return render(
     <ChakraProvider>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter>{ui}</MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
+}
+
+function expectTextPresent(text) {
+  expect(screen.getAllByText(text).length).toBeGreaterThan(0);
 }
 
 const baseProps = {
@@ -135,9 +141,7 @@ describe('Dashboard page smoke tests', () => {
 
   it('renders Workspaces route with mocked empty state', async () => {
     renderWithProviders(<Workspaces {...baseProps} />);
-    await waitFor(() =>
-      expect(screen.getByText('Workspaces')).toBeInTheDocument()
-    );
+    await waitFor(() => expectTextPresent('Workspaces'));
     expect(workspaceListMock).toHaveBeenCalled();
   });
 
@@ -145,7 +149,7 @@ describe('Dashboard page smoke tests', () => {
     apiGetMock.mockRejectedValueOnce(new Error('usage failed'));
     renderWithProviders(<Usage {...baseProps} />);
 
-    await waitFor(() => expect(screen.getByText('Usage')).toBeInTheDocument());
+    await waitFor(() => expectTextPresent('Usage'));
     await waitFor(() =>
       expect(screen.getByText('Failed to load usage data')).toBeInTheDocument()
     );
@@ -167,12 +171,8 @@ describe('Dashboard page smoke tests', () => {
     ]);
     renderWithProviders(<Audit {...baseProps} />);
 
-    await waitFor(() =>
-      expect(screen.getByText('Audit Log')).toBeInTheDocument()
-    );
-    await waitFor(() =>
-      expect(screen.getByText('LOGIN_SUCCESS')).toBeInTheDocument()
-    );
+    await waitFor(() => expectTextPresent('Audit events'));
+    await waitFor(() => expectTextPresent('LOGIN_SUCCESS'));
   });
 
   it('renders SSO audit metadata in Audit route', async () => {
@@ -204,11 +204,9 @@ describe('Dashboard page smoke tests', () => {
 
     renderWithProviders(<Audit {...baseProps} />);
 
-    await waitFor(() =>
-      expect(screen.getByText(/Provider: entra/)).toBeInTheDocument()
-    );
-    expect(screen.getByText(/Observed groups:/)).toBeInTheDocument();
-    expect(screen.getByText(/System admin after login: yes/)).toBeInTheDocument();
+    await waitFor(() => expectTextPresent(/Provider: entra/));
+    expectTextPresent(/Observed groups:/);
+    expectTextPresent(/System admin after login: yes/);
   });
 
   it('shows organization scope for system admins on Audit route', async () => {
@@ -227,17 +225,15 @@ describe('Dashboard page smoke tests', () => {
       />
     );
 
-    await waitFor(() =>
-      expect(screen.getByText('Audit Log')).toBeInTheDocument()
-    );
+    await waitFor(() => expectTextPresent('Audit events'));
     expect(
       screen.getByRole('option', { name: 'Organization (admin)' })
     ).toBeInTheDocument();
   });
 
-  it('renders Account route fallback when session is missing', async () => {
+  it('renders Account route fallback when session is missing', () => {
     renderWithProviders(<Account session={null} onAccountDeleted={vi.fn()} />);
-    expect(screen.getByText('Account Settings')).toBeInTheDocument();
+    expectTextPresent('Account Settings');
     expect(
       screen.getByText('Session not found. Please log in again.')
     ).toBeInTheDocument();

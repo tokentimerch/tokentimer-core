@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Box,
-  Heading,
   Text,
   VStack,
   HStack,
-  useColorModeValue,
   Table,
   Thead,
   Tbody,
@@ -13,7 +11,6 @@ import {
   Th,
   Td,
   Badge,
-  Button,
   Tooltip,
   Alert,
   AlertIcon,
@@ -24,6 +21,7 @@ import {
   StatNumber,
   StatHelpText,
   Select,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import apiClient, {
   API_ENDPOINTS,
@@ -32,19 +30,21 @@ import apiClient, {
   formatDate,
   workspaceAPI,
 } from '../utils/apiClient';
-import Navigation from '../components/Navigation';
+import DashboardPageLayout from '../components/DashboardPageLayout';
+import {
+  DashboardActionButton,
+  DashboardErrorAlert,
+  DashboardPanel,
+  DashboardPanelHeader,
+  DashboardState,
+} from '../components/DashboardPrimitives';
 import SEO from '../components/SEO.jsx';
 import TruncatedText from '../components/TruncatedText';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { logger } from '../utils/logger';
+import { useDashboardTheme } from '../hooks/useDashboardTheme';
 
-export default function Usage({
-  session,
-  onLogout,
-  onAccountClick,
-  onNavigateToDashboard,
-  onNavigateToLanding,
-}) {
+export default function Usage({ session, onLogout, onAccountClick }) {
   const { workspaceId, selectWorkspace } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [queue, setQueue] = useState([]);
@@ -74,14 +74,18 @@ export default function Usage({
   const lastLoadedRef = useRef('');
   const loadGenerationRef = useRef(0);
 
-  const cardBg = useColorModeValue('rgba(255, 255, 255, 0.95)', 'gray.800');
-  const borderColor = useColorModeValue('gray.400', 'gray.600');
-  const subtextColor = useColorModeValue('gray.600', 'gray.400');
-  const selectBg = useColorModeValue('rgba(255, 255, 255, 0.72)', 'gray.800');
-  const selectBorder = useColorModeValue('gray.200', 'gray.600');
-  const selectColor = useColorModeValue('gray.800', 'gray.100');
-  const selectHoverBorder = useColorModeValue('gray.300', 'gray.500');
-  const selectFocusBorder = useColorModeValue('blue.500', 'blue.300');
+  const {
+    surface: cardBg,
+    border: borderColor,
+    muted: subtextColor,
+    inputBg: selectBg,
+    text: selectColor,
+    dashboard,
+  } = useDashboardTheme();
+  const selectBorder = borderColor;
+  const selectHoverBorder = dashboard.border.strong;
+  const selectFocusBorder = dashboard.accent.primary;
+  const elevatedPanelBg = dashboard.bg.panelHover;
 
   const loadData = async (isRefresh = false) => {
     const generation = ++loadGenerationRef.current;
@@ -391,16 +395,21 @@ export default function Usage({
     return acc;
   }, {});
 
+  const successValueColor = useColorModeValue('#15803d', '#22c55e');
+  const cautionValueColor = useColorModeValue('#c2410c', '#fb923c');
+  const pendingValueColor = useColorModeValue('#b45309', '#facc15');
+  const blockedValueColor = useColorModeValue('#b91c1c', '#f87171');
+
   // Delivery usage thresholds: >=90% red, >=75% orange, else green
   const usageRatio = planInfo.alertLimitMonth
     ? Math.min(1, (stats.monthUsage || 0) / planInfo.alertLimitMonth)
     : 0;
   const usageColor =
     usageRatio >= 0.9
-      ? 'red.500'
+      ? blockedValueColor
       : usageRatio >= 0.75
-        ? 'orange.500'
-        : 'green.500';
+        ? cautionValueColor
+        : successValueColor;
 
   // Workspaces where user has privileged role
   const eligibleWorkspaces = workspaces.filter(
@@ -412,16 +421,22 @@ export default function Usage({
   if (loading) {
     return (
       <>
-        <Navigation
-          user={session}
+        <SEO
+          title='Usage'
+          description='View your usage statistics and alert queue'
+          noindex
+        />
+        <DashboardPageLayout
+          session={session}
           onLogout={onLogout}
           onAccountClick={onAccountClick}
-          onNavigateToDashboard={onNavigateToDashboard}
-          onNavigateToLanding={onNavigateToLanding}
-        />
-        <Box maxW='6xl' mx='auto' p={{ base: 4, md: 6 }} overflowX='hidden'>
-          <Text>Loading usage data...</Text>
-        </Box>
+          pageTitle='Usage'
+          variant='wide'
+        >
+          <DashboardPanel>
+            <DashboardState type='loading' title='Loading usage data...' />
+          </DashboardPanel>
+        </DashboardPageLayout>
       </>
     );
   }
@@ -433,52 +448,41 @@ export default function Usage({
         description='View your usage statistics and alert queue'
         noindex
       />
-      <Navigation
-        user={session}
+      <DashboardPageLayout
+        session={session}
         onLogout={onLogout}
         onAccountClick={onAccountClick}
-        onNavigateToDashboard={onNavigateToDashboard}
-        onNavigateToLanding={onNavigateToLanding}
-      />
-      <Box maxW='6xl' mx='auto' p={6} data-tour='usage-page'>
+        pageTitle='Usage'
+        variant='wide'
+        contentProps={{ 'data-tour': 'usage-page' }}
+      >
         <VStack spacing={6} align='stretch'>
-          <HStack justify='space-between' align='center'>
-            <Heading size='lg'>Usage</Heading>
-            <Button
+          <HStack justify='flex-end' align='center'>
+            <DashboardActionButton
               onClick={() => loadData(true)}
               isLoading={refreshing}
-              size='sm'
               variant='outline'
             >
               Refresh
-            </Button>
+            </DashboardActionButton>
           </HStack>
 
-          {error && (
-            <Alert status='error'>
-              <AlertIcon />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+          {error && <DashboardErrorAlert>{error}</DashboardErrorAlert>}
 
           {/* Organization (admin) and workspace (manager/admin) usage */}
           {isAdminAny && !hasManagerOrViewerRole && (
-            <Box
-              bg={cardBg}
-              p={4}
-              borderRadius='md'
-              border='1px solid'
-              borderColor={borderColor}
-            >
-              <Heading size='sm' mb={3}>
-                Organization (admin only)
-              </Heading>
+            <DashboardPanel>
+              <DashboardPanelHeader
+                title='Organization'
+                description='Admin-only usage across the deployment.'
+                mb={3}
+              />
               <SimpleGrid
                 columns={{ base: 1, sm: 2, md: 3, lg: 5 }}
                 spacing={4}
               >
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -489,7 +493,7 @@ export default function Usage({
                   <StatHelpText>Across organization</StatHelpText>
                 </Stat>
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -500,7 +504,7 @@ export default function Usage({
                   <StatHelpText>Across organization</StatHelpText>
                 </Stat>
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -511,7 +515,7 @@ export default function Usage({
                   <StatHelpText>Across workspaces</StatHelpText>
                 </Stat>
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -523,7 +527,7 @@ export default function Usage({
                 </Stat>
                 {(stats.whatsappMonth || 0) > 0 && (
                   <Stat
-                    bg={cardBg}
+                    bg={elevatedPanelBg}
                     p={4}
                     borderRadius='md'
                     border='1px solid'
@@ -535,19 +539,12 @@ export default function Usage({
                   </Stat>
                 )}
               </SimpleGrid>
-            </Box>
+            </DashboardPanel>
           )}
 
           {eligibleWorkspaces.length > 0 && (
-            <Box
-              data-tour='usage-metrics'
-              bg={cardBg}
-              p={4}
-              borderRadius='md'
-              border='1px solid'
-              borderColor={borderColor}
-            >
-              <HStack mb={3}>
+            <DashboardPanel data-tour='usage-metrics'>
+              <HStack mb={3} flexWrap='wrap' rowGap={2}>
                 <Text fontWeight='semibold'>Workspace:</Text>
                 {eligibleWorkspaces.length === 0 ? (
                   <Text color={subtextColor}>Personal workspace</Text>
@@ -586,14 +583,14 @@ export default function Usage({
                 spacing={4}
               >
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
                   borderColor={borderColor}
                 >
                   <StatLabel>Successful deliveries</StatLabel>
-                  <StatNumber color={usageColor}>
+                  <StatNumber color={usageColor} style={{ color: usageColor }}>
                     {typeof stats.allMonthSuccesses === 'number' &&
                     stats.allMonthSuccesses >= 0
                       ? stats.allMonthSuccesses
@@ -601,7 +598,7 @@ export default function Usage({
                   </StatNumber>
                 </Stat>
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -611,7 +608,7 @@ export default function Usage({
                   <StatNumber>{stats.emailsMonth || 0}</StatNumber>
                 </Stat>
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -622,7 +619,7 @@ export default function Usage({
                 </Stat>
                 {(stats.whatsappMonth || 0) > 0 && (
                   <Stat
-                    bg={cardBg}
+                    bg={elevatedPanelBg}
                     p={4}
                     borderRadius='md'
                     border='1px solid'
@@ -633,7 +630,7 @@ export default function Usage({
                   </Stat>
                 )}
                 <Stat
-                  bg={cardBg}
+                  bg={elevatedPanelBg}
                   p={4}
                   borderRadius='md'
                   border='1px solid'
@@ -644,7 +641,7 @@ export default function Usage({
                   <StatHelpText>In this workspace</StatHelpText>
                 </Stat>
               </SimpleGrid>
-            </Box>
+            </DashboardPanel>
           )}
 
           {/* Queue status (for selected workspace) - Only show for managers and admins */}
@@ -658,7 +655,10 @@ export default function Usage({
                 borderColor={borderColor}
               >
                 <StatLabel>Pending</StatLabel>
-                <StatNumber color='yellow.500'>
+                <StatNumber
+                  color={pendingValueColor}
+                  style={{ color: pendingValueColor }}
+                >
                   {queueSummary.pending || 0}
                 </StatNumber>
                 <StatHelpText>Awaiting delivery</StatHelpText>
@@ -671,7 +671,10 @@ export default function Usage({
                 borderColor={borderColor}
               >
                 <StatLabel>Blocked</StatLabel>
-                <StatNumber color='red.500'>
+                <StatNumber
+                  color={blockedValueColor}
+                  style={{ color: blockedValueColor }}
+                >
                   {queueSummary.blocked || 0}
                 </StatNumber>
                 <StatHelpText>Delivery blocked</StatHelpText>
@@ -681,17 +684,13 @@ export default function Usage({
 
           {/* Alert Queue - Only show for managers and admins */}
           {eligibleWorkspaces.length > 0 && (
-            <Box
-              data-tour='usage-alert-queue'
-              bg={cardBg}
-              p={6}
-              borderRadius='md'
-              boxShadow='sm'
-              border='1px solid'
-              borderColor={borderColor}
-            >
+            <DashboardPanel data-tour='usage-alert-queue'>
               <VStack align='stretch' spacing={4}>
-                <Heading size='md'>Alert Queue (workspace)</Heading>
+                <DashboardPanelHeader
+                  title='Alert queue'
+                  description='Pending, blocked, or failed workspace alert deliveries.'
+                  mb={0}
+                />
                 <VStack align='start' spacing={2}>
                   {(() => {
                     const atLimit =
@@ -707,28 +706,24 @@ export default function Usage({
                       : 'Requeue failed or plan-limit blocked alerts for this workspace';
                     return (
                       <HStack>
-                        <Tooltip
-                          label={btnTitle}
-                          hasArrow
-                          placement='top-start'
-                        >
-                          <Button
-                            size='sm'
-                            colorScheme='blue'
-                            variant='solid'
-                            title={btnTitle}
-                            onClick={async () => {
-                              try {
-                                await alertAPI.requeueAlerts({
-                                  workspaceId: selectedWorkspaceId || null,
-                                });
-                                await loadData(true);
-                              } catch (_) {}
-                            }}
-                            isDisabled={!selectedWorkspaceId || atLimit}
-                          >
-                            Requeue blocked/failed
-                          </Button>
+                        <Tooltip label={btnTitle} hasArrow placement='top'>
+                          <Box as='span' display='inline-block'>
+                            <DashboardActionButton
+                              colorScheme='blue'
+                              variant='solid'
+                              onClick={async () => {
+                                try {
+                                  await alertAPI.requeueAlerts({
+                                    workspaceId: selectedWorkspaceId || null,
+                                  });
+                                  await loadData(true);
+                                } catch (_) {}
+                              }}
+                              isDisabled={!selectedWorkspaceId || atLimit}
+                            >
+                              Requeue blocked/failed
+                            </DashboardActionButton>
+                          </Box>
                         </Tooltip>
                       </HStack>
                     );
@@ -738,7 +733,7 @@ export default function Usage({
                   </Text>
                 </VStack>
                 {workspaces.length > 0 && (
-                  <HStack>
+                  <HStack flexWrap='wrap' rowGap={2}>
                     <Text fontWeight='semibold'>Workspace:</Text>
                     <Select
                       size='sm'
@@ -788,117 +783,219 @@ export default function Usage({
                 </Alert>
 
                 {queue.length === 0 ? (
-                  <VStack spacing={4} py={8}>
-                    <Text color={subtextColor} fontSize='lg'>
-                      No pending or failed alerts
-                    </Text>
-                    <Text color='gray.400' fontSize='sm' textAlign='center'>
-                      Alerts appear here when they{"'"}re queued for delivery
-                      but haven{"'"}t been sent yet, or when delivery has
-                      failed. Successfully sent alerts are removed from this
-                      queue.
-                    </Text>
-                  </VStack>
+                  <DashboardState
+                    title='No pending or failed alerts'
+                    description='Alerts appear here when they are queued for delivery but have not been sent yet, or when delivery has failed.'
+                  />
                 ) : (
-                  <Box overflowX='auto'>
-                    <Table size='sm' variant='simple'>
-                      <Thead>
-                        <Tr>
-                          <Th>Token</Th>
-                          <Th isNumeric width='80px'>
-                            Days
-                          </Th>
-                          <Th width='130px'>Due</Th>
-                          <Th>Status</Th>
-                          <Th>Channel</Th>
-                          <Th isNumeric>Attempts</Th>
-                          <Th>Error</Th>
-                          <Th>Updated</Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {queue.map(a => {
-                          const now = new Date();
-                          const nextAt = a.next_attempt_at
-                            ? new Date(a.next_attempt_at)
-                            : null;
-                          const cooldownActive = nextAt && nextAt > now;
-                          const remainingMs = cooldownActive ? nextAt - now : 0;
-                          const _remainingMin = Math.max(
-                            0,
-                            Math.floor(remainingMs / 60000)
-                          );
-                          const _remainingSec = Math.max(
-                            0,
-                            Math.floor((remainingMs % 60000) / 1000)
-                          );
-                          const channelAttempts =
-                            a.channel === 'email'
-                              ? typeof a.attempts_email === 'number'
-                                ? a.attempts_email
-                                : a.attempts
-                              : a.channel === 'webhooks'
-                                ? typeof a.attempts_webhooks === 'number'
-                                  ? a.attempts_webhooks
+                  <>
+                    <Box
+                      overflowX='auto'
+                      display={{ base: 'none', lg: 'block' }}
+                    >
+                      <Table size='sm' variant='simple'>
+                        <Thead>
+                          <Tr>
+                            <Th>Token</Th>
+                            <Th isNumeric width='80px'>
+                              Days
+                            </Th>
+                            <Th width='130px'>Due</Th>
+                            <Th>Status</Th>
+                            <Th>Channel</Th>
+                            <Th isNumeric>Attempts</Th>
+                            <Th>Error</Th>
+                            <Th>Updated</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {queue.map(a => {
+                            const now = new Date();
+                            const nextAt = a.next_attempt_at
+                              ? new Date(a.next_attempt_at)
+                              : null;
+                            const cooldownActive = nextAt && nextAt > now;
+                            const remainingMs = cooldownActive
+                              ? nextAt - now
+                              : 0;
+                            const _remainingMin = Math.max(
+                              0,
+                              Math.floor(remainingMs / 60000)
+                            );
+                            const _remainingSec = Math.max(
+                              0,
+                              Math.floor((remainingMs % 60000) / 1000)
+                            );
+                            const channelAttempts =
+                              a.channel === 'email'
+                                ? typeof a.attempts_email === 'number'
+                                  ? a.attempts_email
                                   : a.attempts
-                                : a.attempts;
+                                : a.channel === 'webhooks'
+                                  ? typeof a.attempts_webhooks === 'number'
+                                    ? a.attempts_webhooks
+                                    : a.attempts
+                                  : a.attempts;
 
-                          return (
-                            <Tr key={`${a.id}-${a.channel}`}>
-                              <Td>
-                                <VStack align='start' spacing={0}>
-                                  <Text fontWeight='medium'>
+                            return (
+                              <Tr key={`${a.id}-${a.channel}`}>
+                                <Td>
+                                  <VStack align='start' spacing={0}>
+                                    <Text fontWeight='medium'>
+                                      {a.token_name || `Token #${a.token_id}`}
+                                    </Text>
+                                    <Text fontSize='sm' color={subtextColor}>
+                                      {a.token_type || 'Unknown'}
+                                    </Text>
+                                  </VStack>
+                                </Td>
+                                <Td isNumeric>{a.threshold_days}</Td>
+                                <Td>
+                                  {a.due_date
+                                    ? new Date(a.due_date)
+                                        .toISOString()
+                                        .slice(0, 10)
+                                    : '-'}
+                                </Td>
+                                <Td>{getStatusBadge(a.status)}</Td>
+                                <Td>
+                                  <Badge
+                                    colorScheme={
+                                      a.channel === 'email' ? 'green' : 'blue'
+                                    }
+                                    size='sm'
+                                  >
+                                    {a.channel_display || a.channel || 'None'}
+                                  </Badge>
+                                </Td>
+                                <Td isNumeric>{channelAttempts}</Td>
+                                <Td maxW='200px'>
+                                  <TruncatedText
+                                    text={friendlyErrorMessage(
+                                      a.channel_error_message ||
+                                        a.error_message ||
+                                        ''
+                                    )}
+                                    maxLines={3}
+                                    maxWidth='200px'
+                                  />
+                                </Td>
+                                <Td>{formatRelativeTime(a.updated_at)}</Td>
+                              </Tr>
+                            );
+                          })}
+                        </Tbody>
+                      </Table>
+                    </Box>
+                    <VStack
+                      display={{ base: 'flex', lg: 'none' }}
+                      align='stretch'
+                      spacing={3}
+                    >
+                      {queue.map(a => {
+                        const channelAttempts =
+                          a.channel === 'email'
+                            ? typeof a.attempts_email === 'number'
+                              ? a.attempts_email
+                              : a.attempts
+                            : a.channel === 'webhooks'
+                              ? typeof a.attempts_webhooks === 'number'
+                                ? a.attempts_webhooks
+                                : a.attempts
+                              : a.attempts;
+                        const errorText = friendlyErrorMessage(
+                          a.channel_error_message || a.error_message || ''
+                        );
+
+                        return (
+                          <Box
+                            key={`${a.id}-${a.channel}-card`}
+                            border='1px solid'
+                            borderColor={borderColor}
+                            borderRadius='md'
+                            bg={elevatedPanelBg}
+                            p={4}
+                          >
+                            <VStack align='stretch' spacing={3}>
+                              <HStack justify='space-between' align='start'>
+                                <Box minW={0}>
+                                  <Text fontWeight='semibold' noOfLines={2}>
                                     {a.token_name || `Token #${a.token_id}`}
                                   </Text>
                                   <Text fontSize='sm' color={subtextColor}>
                                     {a.token_type || 'Unknown'}
                                   </Text>
-                                </VStack>
-                              </Td>
-                              <Td isNumeric>{a.threshold_days}</Td>
-                              <Td>
-                                {a.due_date
-                                  ? new Date(a.due_date)
-                                      .toISOString()
-                                      .slice(0, 10)
-                                  : '-'}
-                              </Td>
-                              <Td>{getStatusBadge(a.status)}</Td>
-                              <Td>
-                                <Badge
-                                  colorScheme={
-                                    a.channel === 'email' ? 'green' : 'blue'
-                                  }
-                                  size='sm'
-                                >
-                                  {a.channel_display || a.channel || 'None'}
-                                </Badge>
-                              </Td>
-                              <Td isNumeric>{channelAttempts}</Td>
-                              <Td maxW='200px'>
-                                <TruncatedText
-                                  text={friendlyErrorMessage(
-                                    a.channel_error_message ||
-                                      a.error_message ||
-                                      ''
-                                  )}
-                                  maxLines={3}
-                                  maxWidth='200px'
-                                />
-                              </Td>
-                              <Td>{formatRelativeTime(a.updated_at)}</Td>
-                            </Tr>
-                          );
-                        })}
-                      </Tbody>
-                    </Table>
-                  </Box>
+                                </Box>
+                                {getStatusBadge(a.status)}
+                              </HStack>
+                              <SimpleGrid columns={2} spacing={3}>
+                                <Box>
+                                  <Text fontSize='xs' color={subtextColor}>
+                                    Due
+                                  </Text>
+                                  <Text fontSize='sm'>
+                                    {a.due_date
+                                      ? new Date(a.due_date)
+                                          .toISOString()
+                                          .slice(0, 10)
+                                      : '-'}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize='xs' color={subtextColor}>
+                                    Days
+                                  </Text>
+                                  <Text fontSize='sm'>{a.threshold_days}</Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize='xs' color={subtextColor}>
+                                    Channel
+                                  </Text>
+                                  <Badge
+                                    colorScheme={
+                                      a.channel === 'email' ? 'green' : 'blue'
+                                    }
+                                    size='sm'
+                                  >
+                                    {a.channel_display || a.channel || 'None'}
+                                  </Badge>
+                                </Box>
+                                <Box>
+                                  <Text fontSize='xs' color={subtextColor}>
+                                    Attempts
+                                  </Text>
+                                  <Text fontSize='sm'>{channelAttempts}</Text>
+                                </Box>
+                              </SimpleGrid>
+                              {errorText ? (
+                                <Box>
+                                  <Text
+                                    fontSize='xs'
+                                    color={subtextColor}
+                                    mb={1}
+                                  >
+                                    Error
+                                  </Text>
+                                  <Text fontSize='sm' whiteSpace='pre-wrap'>
+                                    {errorText}
+                                  </Text>
+                                </Box>
+                              ) : null}
+                              <Text fontSize='xs' color={subtextColor}>
+                                Updated {formatRelativeTime(a.updated_at)}
+                              </Text>
+                            </VStack>
+                          </Box>
+                        );
+                      })}
+                    </VStack>
+                  </>
                 )}
               </VStack>
-            </Box>
+            </DashboardPanel>
           )}
         </VStack>
-      </Box>
+      </DashboardPageLayout>
     </>
   );
 }

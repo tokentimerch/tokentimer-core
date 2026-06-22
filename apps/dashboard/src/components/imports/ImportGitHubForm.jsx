@@ -310,6 +310,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             colorScheme='blue'
             onClick={doGithubScan}
             isLoading={isScanning}
+            loadingText='Scanning...'
           >
             Scan
           </Button>

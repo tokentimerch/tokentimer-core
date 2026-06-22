@@ -32,7 +32,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 - **Unified expiration visibility:** Track certificates, tokens, secrets, licenses, subscriptions, and other expiring assets across providers and environments in one place.
 - **Flexible multi-channel alerting:** Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
 - **Native integrations, auto-sync, and automated discovery:** Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
-- **Built for teams and audits** ([demo](docs/assets/dashboard-teams-ops.gif)): Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
+- **Built for teams and audits** ([demo](docs/assets/dashboard-overview.gif)): Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
 - **Security-first by design:** TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys. Integration scan credentials are discarded after one-off imports; if you enable auto-sync, they are encrypted at rest in the database for scheduled re-scans.
 
 <p align="center">
@@ -47,30 +47,8 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 
 # Get Started
 
-<a href="https://tokentimer.ch">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
-  <img alt="TokenTimer Cloud - fully managed SaaS, always up to date." src="docs/assets/readme/tokentimer-cloud-cta.svg">
-</picture>
-</a>
-&nbsp; &nbsp;
-<a href="https://tokentimer.ch/pricing">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
-  <img alt="TokenTimer Enterprise - premium self-hosted edition with priority support." src="docs/assets/readme/tokentimer-enterprise-cta.svg">
-</picture>
-</a>
-&nbsp; &nbsp;
-<a href="QUICKSTART.md">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
-    <img alt="TokenTimer Core - full-featured self-hosted edition." src="docs/assets/readme/tokentimer-core-cta.svg">
-</picture>
-</a>
-<br>
+| [![TokenTimer Cloud](docs/assets/readme/tokentimer-cloud-cta.svg)](https://tokentimer.ch) | [![TokenTimer Enterprise](docs/assets/readme/tokentimer-enterprise-cta.svg)](https://tokentimer.ch/pricing) | [![TokenTimer Core](docs/assets/readme/tokentimer-core-cta.svg)](QUICKSTART.md) |
+|:---:|:---:|:---:|
 
 ### Run it on your own server
 

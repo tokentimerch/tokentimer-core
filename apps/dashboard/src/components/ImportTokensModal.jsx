@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Modal,
   ModalOverlay,
-  ModalContent,
   ModalHeader,
   ModalCloseButton,
   ModalBody,
@@ -12,6 +11,7 @@ import {
   Box,
   VStack,
   HStack,
+  Flex,
   Text,
   Alert,
   AlertIcon,
@@ -30,7 +30,6 @@ import {
   Tooltip,
   IconButton,
   useColorMode,
-  useColorModeValue,
   Link as ChakraLink,
   Code,
   InputGroup,
@@ -72,6 +71,13 @@ import ImportAWSForm, {
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
+import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
+import {
+  DashboardModalFrame,
+  DashboardModalDescription,
+  DashboardModalTitle,
+  useDashboardModalProps,
+} from './DashboardModalFrame.jsx';
 
 function toKey(s) {
   try {
@@ -83,6 +89,8 @@ function toKey(s) {
     return '';
   }
 }
+
+import { dashboardModalInlineActionButtonProps } from '../styles/theme.js';
 
 // Parse error message and extract commands for copyable display
 function parseErrorMessage(errorMsg) {
@@ -294,25 +302,13 @@ function normalizeRow(raw) {
   return row;
 }
 
-async function dynamicImport(moduleName, cdnUrl) {
-  try {
-    return await import(/* @vite-ignore */ moduleName);
-  } catch (_) {
-    if (cdnUrl) {
-      return await import(/* @vite-ignore */ cdnUrl);
-    }
-    throw _;
-  }
-}
-
 async function parseFile(file) {
   const name = (file && file.name) || '';
   const lower = name.toLowerCase();
 
   if (lower.endsWith('.csv')) {
-    const Papa =
-      (await dynamicImport('papaparse', 'https://esm.sh/papaparse@5.4.1'))
-        .default || (await dynamicImport('papaparse', null));
+    const papaparseMod = await import('papaparse');
+    const Papa = papaparseMod.default ?? papaparseMod;
     return new Promise((resolve, reject) => {
       try {
         Papa.parse(file, {
@@ -390,8 +386,8 @@ async function parseFile(file) {
   }
 
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-    // Load SheetJS from CDN at runtime to avoid bundling vulnerable package into the app
-    const XLSX = await import(/* @vite-ignore */ 'https://esm.sh/xlsx@0.18.5');
+    const xlsxMod = await import('xlsx');
+    const XLSX = xlsxMod.default ?? xlsxMod;
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheetName = wb.SheetNames && wb.SheetNames[0];
@@ -401,10 +397,8 @@ async function parseFile(file) {
   }
 
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) {
-    const jsyaml = await dynamicImport(
-      'js-yaml',
-      'https://esm.sh/js-yaml@4.1.0'
-    );
+    const jsyamlMod = await import('js-yaml');
+    const jsyaml = jsyamlMod.default ?? jsyamlMod;
     const text = await file.text();
     const doc = jsyaml.load(text);
     if (Array.isArray(doc)) return doc;
@@ -771,10 +765,19 @@ export default function ImportTokensModal({
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
 
-  const cardBg = useColorModeValue('gray.100', 'gray.800');
-  const borderColor = useColorModeValue('gray.400', 'gray.600');
-  const helpTextColor = useColorModeValue('gray.700', 'gray.300');
-  const confirmBoxBg = useColorModeValue('gray.50', 'gray.700');
+  const { border, muted } = useDashboardTheme();
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    fieldProps,
+    outlineButtonProps,
+    primaryButtonProps,
+    dangerButtonProps,
+    tokens: modalTokens,
+  } = useDashboardModalProps();
 
   // Timezone list with fallback for older browsers missing Intl.supportedValuesOf
   const timezoneList = React.useMemo(() => {
@@ -2010,15 +2013,22 @@ export default function ImportTokensModal({
         isOpen={isOpen}
         onClose={onCloseInternal}
         size='4xl'
+        isCentered
         motionPreset='none'
+        scrollBehavior='inside'
       >
-        <ModalOverlay />
-        <ModalContent bg={cardBg} border='1px solid' borderColor={borderColor}>
-          <ModalHeader>
-            <Text>Import tokens</Text>
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame maxW='960px'>
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              Import tokens
+            </DashboardModalTitle>
+            <DashboardModalDescription>
+              Import assets from files or connected infrastructure providers.
+            </DashboardModalDescription>
           </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
               {/* Source selector */}
               <Box>
@@ -2094,133 +2104,159 @@ export default function ImportTokensModal({
                           ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
                           : ''
                       : '';
-                    return (
-                      <VStack key={card.key} spacing={2} align='center'>
+                    const selectCard = () => {
+                      if (!isLocked) setSource(card.key);
+                    };
+
+                    const cardContent = (
+                      <VStack
+                        spacing={2}
+                        align='center'
+                        justify='center'
+                        p={3}
+                        minH={{ base: '116px', md: '132px' }}
+                        w='100%'
+                        bg={modalTokens.fieldBg}
+                        border='1px solid'
+                        borderColor={
+                          source === card.key
+                            ? modalTokens.focusBorder
+                            : modalTokens.border
+                        }
+                        borderRadius='12px'
+                        boxShadow={
+                          source === card.key
+                            ? '0 0 0 1px rgba(59, 130, 246, 0.35)'
+                            : 'none'
+                        }
+                        cursor={isLocked ? 'not-allowed' : 'pointer'}
+                        opacity={isLocked ? 0.6 : 1}
+                        onClick={selectCard}
+                        onKeyDown={e => {
+                          if (
+                            !isLocked &&
+                            (e.key === 'Enter' || e.key === ' ')
+                          ) {
+                            e.preventDefault();
+                            selectCard();
+                          }
+                        }}
+                        tabIndex={isLocked ? -1 : 0}
+                        role='button'
+                        aria-label={card.alt}
+                        aria-disabled={isLocked}
+                        aria-pressed={source === card.key}
+                        transition='border-color 0.15s ease, box-shadow 0.15s ease'
+                        _hover={
+                          isLocked
+                            ? undefined
+                            : {
+                                borderColor: modalTokens.focusBorder,
+                                bg: modalTokens.fieldBg,
+                              }
+                        }
+                        _focusVisible={{
+                          outline: '2px solid',
+                          outlineColor: modalTokens.focusBorder,
+                          outlineOffset: '2px',
+                        }}
+                      >
                         <HStack spacing={1}>
-                          <Text fontSize='sm' fontWeight='medium'>
+                          <Text
+                            fontSize='sm'
+                            fontWeight='semibold'
+                            color={modalTokens.text}
+                          >
                             {card.label}
                           </Text>
                           {isLocked && (
-                            <Tooltip label={lockReason} fontSize='xs'>
-                              <Badge colorScheme='orange' fontSize='2xs'>
-                                {isViewer ? 'ADMIN' : 'LIMIT'}
-                              </Badge>
-                            </Tooltip>
+                            <Badge colorScheme='orange' fontSize='2xs'>
+                              {isViewer ? 'ADMIN' : 'LIMIT'}
+                            </Badge>
                           )}
                         </HStack>
                         {card.type === 'icon' ? (
-                          <Box
-                            p={2}
-                            border={
-                              source === card.key
-                                ? '2px solid'
-                                : '2px solid transparent'
-                            }
-                            borderColor={
-                              source === card.key ? 'blue.400' : 'transparent'
-                            }
-                            borderRadius='md'
-                            cursor='pointer'
-                            onClick={() => setSource(card.key)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ' ')
-                                setSource(card.key);
-                            }}
-                            tabIndex={0}
-                            role='button'
-                            aria-label={card.alt}
-                            _focus={{
-                              outline: '2px solid',
-                              outlineColor: 'blue.400',
-                            }}
-                          >
+                          <Box p={2}>
                             <Box
                               as={FiDownload}
                               boxSize={{ base: '40px', md: '56px' }}
                               color={
-                                source === card.key ? 'blue.500' : 'inherit'
+                                source === card.key
+                                  ? modalTokens.focusBorder
+                                  : modalTokens.muted
                               }
                             />
                           </Box>
                         ) : (
-                          <Tooltip
-                            label={isLocked ? lockReason : ''}
-                            fontSize='xs'
-                            isDisabled={!isLocked}
-                          >
-                            <Box position='relative'>
-                              <Image
-                                src={card.src}
-                                alt={card.alt}
-                                maxH={{ base: '56px', md: '72px' }}
-                                maxW='100%'
-                                objectFit='contain'
-                                cursor={isLocked ? 'not-allowed' : 'pointer'}
-                                onClick={() => !isLocked && setSource(card.key)}
-                                onKeyDown={e => {
-                                  if (
-                                    !isLocked &&
-                                    (e.key === 'Enter' || e.key === ' ')
-                                  )
-                                    setSource(card.key);
-                                }}
-                                tabIndex={isLocked ? -1 : 0}
-                                role='button'
-                                aria-label={card.alt}
-                                border={source === card.key ? '2px solid' : '0'}
-                                borderColor='blue.400'
-                                borderRadius='md'
-                                opacity={isLocked ? 0.4 : 1}
-                                filter={isLocked ? 'grayscale(100%)' : 'none'}
-                              />
-                              {/* Icon badge to differentiate Azure services */}
-                              {card.key === 'azure' && (
-                                <Tooltip label='Azure Key Vault' fontSize='xs'>
-                                  <Box
-                                    position='absolute'
-                                    top='-6px'
-                                    right='-6px'
-                                    bg='blue.500'
-                                    borderRadius='full'
-                                    p={1.5}
-                                    boxShadow='md'
-                                    border='2px solid white'
-                                  >
-                                    <Box
-                                      as={FiKey}
-                                      boxSize='14px'
-                                      color='white'
-                                    />
-                                  </Box>
-                                </Tooltip>
-                              )}
-                              {card.key === 'azure-ad' && (
-                                <Tooltip
-                                  label='Azure Active Directory'
-                                  fontSize='xs'
+                          <Box position='relative'>
+                            <Image
+                              src={card.src}
+                              alt=''
+                              aria-hidden
+                              maxH={{ base: '56px', md: '72px' }}
+                              maxW='100%'
+                              objectFit='contain'
+                              opacity={isLocked ? 0.4 : 1}
+                              filter={isLocked ? 'grayscale(100%)' : 'none'}
+                            />
+                            {/* Icon badge to differentiate Azure services */}
+                            {card.key === 'azure' && (
+                              <Tooltip label='Azure Key Vault' fontSize='xs'>
+                                <Box
+                                  position='absolute'
+                                  top='-6px'
+                                  right='-6px'
+                                  bg='blue.500'
+                                  borderRadius='full'
+                                  p={1.5}
+                                  boxShadow='md'
+                                  border='2px solid white'
                                 >
                                   <Box
-                                    position='absolute'
-                                    top='-6px'
-                                    right='-6px'
-                                    bg='purple.500'
-                                    borderRadius='full'
-                                    p={1.5}
-                                    boxShadow='md'
-                                    border='2px solid white'
-                                  >
-                                    <Box
-                                      as={FiUsers}
-                                      boxSize='14px'
-                                      color='white'
-                                    />
-                                  </Box>
-                                </Tooltip>
-                              )}
-                            </Box>
-                          </Tooltip>
+                                    as={FiKey}
+                                    boxSize='14px'
+                                    color='white'
+                                  />
+                                </Box>
+                              </Tooltip>
+                            )}
+                            {card.key === 'azure-ad' && (
+                              <Tooltip
+                                label='Azure Active Directory'
+                                fontSize='xs'
+                              >
+                                <Box
+                                  position='absolute'
+                                  top='-6px'
+                                  right='-6px'
+                                  bg='purple.500'
+                                  borderRadius='full'
+                                  p={1.5}
+                                  boxShadow='md'
+                                  border='2px solid white'
+                                >
+                                  <Box
+                                    as={FiUsers}
+                                    boxSize='14px'
+                                    color='white'
+                                  />
+                                </Box>
+                              </Tooltip>
+                            )}
+                          </Box>
                         )}
                       </VStack>
+                    );
+
+                    return (
+                      <Tooltip
+                        key={card.key}
+                        label={lockReason}
+                        fontSize='xs'
+                        isDisabled={!isLocked || !lockReason}
+                      >
+                        {cardContent}
+                      </Tooltip>
                     );
                   })}
                 </Box>
@@ -2254,7 +2290,7 @@ export default function ImportTokensModal({
               {autoSyncManageMode ? (
                 <Box
                   border='1px solid'
-                  borderColor={borderColor}
+                  borderColor={border}
                   borderRadius='md'
                   p={4}
                 >
@@ -2290,7 +2326,7 @@ export default function ImportTokensModal({
                             : ''}
                         </Text>
                       ) : (
-                        <Text fontSize='sm' color={helpTextColor}>
+                        <Text fontSize='sm' color={muted}>
                           No sync run yet
                         </Text>
                       )}
@@ -2347,7 +2383,7 @@ export default function ImportTokensModal({
                       <Text fontSize='sm' fontWeight='semibold' mb={1}>
                         Credentials
                       </Text>
-                      <Text fontSize='sm' color={helpTextColor}>
+                      <Text fontSize='sm' color={muted}>
                         Enter a new token or API key to rotate stored
                         credentials. Leave blank to keep the current secret.
                       </Text>
@@ -2359,7 +2395,7 @@ export default function ImportTokensModal({
               {source === 'file' ? (
                 <>
                   <Box>
-                    <Text fontSize='sm' color={helpTextColor}>
+                    <Text fontSize='sm' color={muted}>
                       Upload a file in .csv, .xlsx, .json, .yaml or .yml format.
                       Required fields per row: name, category, type, expiresAt.
                     </Text>
@@ -2396,7 +2432,7 @@ export default function ImportTokensModal({
                     >
                       Choose file
                     </Button>
-                    <Text fontSize='sm' color={helpTextColor}>
+                    <Text fontSize='sm' color={muted}>
                       {fileName ? fileName : 'No file chosen'}
                     </Text>
                   </HStack>
@@ -2419,8 +2455,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2447,8 +2483,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2476,8 +2512,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   autoSyncManageMode={autoSyncManageMode}
                   updateQuotaFromResponse={updateQuotaFromResponse}
@@ -2506,8 +2542,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2534,8 +2570,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2562,8 +2598,8 @@ export default function ImportTokensModal({
                     setScanSucceededFor(prev => new Set(prev).add(s))
                   }
                   onSelectionChange={setIntegrationSelectedCount}
-                  borderColor={borderColor}
-                  helpTextColor={helpTextColor}
+                  borderColor={border}
+                  helpTextColor={muted}
                   autoSyncTokenPlaceholder={autoSyncTokenPlaceholder}
                   updateQuotaFromResponse={updateQuotaFromResponse}
                   refreshIntegrationQuota={refreshIntegrationQuota}
@@ -2577,7 +2613,7 @@ export default function ImportTokensModal({
               {source === 'azure-ad' && !autoSyncManageMode ? (
                 <VStack align='stretch' spacing={3}>
                   <Box>
-                    <Text fontSize='sm' color={helpTextColor}>
+                    <Text fontSize='sm' color={muted}>
                       Scans Azure AD for app registrations and service
                       principals with expiring client secrets and certificates.
                       Token is used for scanning and stored encrypted if
@@ -2628,7 +2664,7 @@ export default function ImportTokensModal({
                           />
                         </InputRightElement>
                       </InputGroup>
-                      <Text fontSize='xs' color={helpTextColor} mt={1}>
+                      <Text fontSize='xs' color={muted} mt={1}>
                         Get token:{' '}
                         <Code fontSize='xs'>
                           az account get-access-token --resource
@@ -2668,7 +2704,7 @@ export default function ImportTokensModal({
                   {azureADSummary.length > 0 && !error && (
                     <Box
                       border='1px solid'
-                      borderColor={borderColor}
+                      borderColor={border}
                       borderRadius='md'
                       p={3}
                     >
@@ -2719,7 +2755,7 @@ export default function ImportTokensModal({
                         );
                       }
                     }}
-                    borderColor={borderColor}
+                    borderColor={border}
                     getDetailsForItem={getAzureADItemDetails}
                     onUpdateItem={updateAzureADItem}
                     duplicateIndices={azureADDuplicates}
@@ -2731,7 +2767,7 @@ export default function ImportTokensModal({
                     contactGroupId={bulkContactGroupId}
                     onContactGroupChange={setBulkContactGroupId}
                     contactGroups={contactGroups}
-                    borderColor={borderColor}
+                    borderColor={border}
                   />
                 </VStack>
               ) : null}
@@ -2827,7 +2863,7 @@ export default function ImportTokensModal({
                         </Table>
                         <HStack justify='space-between' mt={1}>
                           {failedRows.length > 10 ? (
-                            <Text fontSize='xs' color={helpTextColor}>
+                            <Text fontSize='xs' color={muted}>
                               Showing first 10 of {failedRows.length} errors.
                             </Text>
                           ) : (
@@ -2937,7 +2973,7 @@ export default function ImportTokensModal({
                     maxH='260px'
                     overflowY='auto'
                     border='1px solid'
-                    borderColor={borderColor}
+                    borderColor={border}
                     borderRadius='md'
                   >
                     <Table size='sm' variant='simple'>
@@ -2997,33 +3033,44 @@ export default function ImportTokensModal({
               ) : null}
 
               {autoSyncManageMode && !isViewer ? (
-                <HStack justify='flex-end' spacing={3} pt={2}>
+                <Flex
+                  direction={{ base: 'column', md: 'row' }}
+                  gap={3}
+                  pt={2}
+                  justify={{ base: 'stretch', md: 'flex-end' }}
+                  align={{ base: 'stretch', md: 'center' }}
+                  flexWrap='wrap'
+                >
                   <Button
+                    {...dashboardModalInlineActionButtonProps}
+                    {...outlineButtonProps}
                     colorScheme='red'
-                    variant='outline'
                     onClick={handleDisableAutoSync}
                     isLoading={savingAutoSync}
-                    isDisabled={runningAutoSyncNow}
+                    isDisabled={savingAutoSync}
                   >
                     Disable auto-sync
                   </Button>
                   <Button
-                    variant='outline'
+                    {...dashboardModalInlineActionButtonProps}
+                    {...outlineButtonProps}
                     onClick={handleRunAutoSyncNow}
                     isLoading={runningAutoSyncNow}
-                    isDisabled={savingAutoSync}
+                    loadingText='Syncing...'
+                    isDisabled={savingAutoSync || runningAutoSyncNow}
                   >
                     Sync now
                   </Button>
                   <Button
-                    colorScheme='blue'
+                    {...dashboardModalInlineActionButtonProps}
+                    {...primaryButtonProps}
                     onClick={handleSaveAutoSyncChanges}
                     isLoading={savingAutoSync}
-                    isDisabled={runningAutoSyncNow}
+                    isDisabled={savingAutoSync}
                   >
                     Save changes
                   </Button>
-                </HStack>
+                </Flex>
               ) : null}
 
               {isImporting ? (
@@ -3045,20 +3092,27 @@ export default function ImportTokensModal({
               ) : null}
             </VStack>
           </ModalBody>
-          <ModalFooter flexDirection='column' alignItems='stretch' gap={3}>
-            <HStack w='full' justify='flex-end' flexWrap='wrap'>
+          <ModalFooter {...footerProps}>
+            <Flex
+              w='full'
+              direction={{ base: 'column', sm: 'row' }}
+              gap={3}
+              justify={{ base: 'stretch', sm: 'flex-end' }}
+              align={{ base: 'stretch', sm: 'center' }}
+              flexWrap='wrap'
+            >
               {!autoSyncManageMode ? (
                 source === 'file' ? (
                   !isImporting ? (
                     <Button
+                      {...primaryButtonProps}
                       onClick={onStartImport}
-                      colorScheme='blue'
                       isDisabled={selectedRowsFile.size === 0}
                     >
                       Import {selectedRowsFile.size} selected
                     </Button>
                   ) : (
-                    <Button onClick={onCancelImport} variant='outline'>
+                    <Button {...outlineButtonProps} onClick={onCancelImport}>
                       Cancel
                     </Button>
                   )
@@ -3068,6 +3122,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       vaultFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3080,6 +3135,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       gitlabFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3092,6 +3148,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       githubFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3104,6 +3161,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       awsFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3116,6 +3174,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       azureFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3125,6 +3184,7 @@ export default function ImportTokensModal({
                 ) : source === 'azure-ad' ? (
                   <Button
                     onClick={importAzureADSelected}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={selectedRowsAzureAD.size === 0 || isImporting}
                     isLoading={isImporting}
@@ -3137,6 +3197,7 @@ export default function ImportTokensModal({
                       setIsImporting(true);
                       gcpFormRef.current?.importSelected();
                     }}
+                    {...primaryButtonProps}
                     colorScheme='green'
                     isDisabled={integrationSelectedCount === 0 || isImporting}
                     isLoading={isImporting}
@@ -3145,7 +3206,9 @@ export default function ImportTokensModal({
                   </Button>
                 ) : null
               ) : null}
-              <Button onClick={onCloseInternal}>Close</Button>
+              <Button {...outlineButtonProps} onClick={onCloseInternal}>
+                Close
+              </Button>
               {source !== 'file' && !isViewer && !hasAutoSync ? (
                 <Tooltip
                   label={
@@ -3156,29 +3219,33 @@ export default function ImportTokensModal({
                         : 'Save current credentials for scheduled automatic scans'
                   }
                   fontSize='xs'
+                  hasArrow
+                  placement='top'
                 >
-                  <Button
-                    colorScheme='blue'
-                    variant='outline'
-                    onClick={handleEnableAutoSync}
-                    isLoading={savingAutoSync}
-                    isDisabled={
-                      !isAutoSyncAllowed || !scanSucceededFor.has(source)
-                    }
-                    opacity={
-                      isAutoSyncAllowed && scanSucceededFor.has(source)
-                        ? 1
-                        : 0.5
-                    }
-                  >
-                    Enable auto-sync
-                    {!isAutoSyncAllowed && ' (unavailable)'}
-                  </Button>
+                  <Box as='span' display='inline-block'>
+                    <Button
+                      {...outlineButtonProps}
+                      colorScheme='blue'
+                      onClick={handleEnableAutoSync}
+                      isLoading={savingAutoSync}
+                      isDisabled={
+                        !isAutoSyncAllowed || !scanSucceededFor.has(source)
+                      }
+                      opacity={
+                        isAutoSyncAllowed && scanSucceededFor.has(source)
+                          ? 1
+                          : 0.5
+                      }
+                    >
+                      Enable auto-sync
+                      {!isAutoSyncAllowed && ' (unavailable)'}
+                    </Button>
+                  </Box>
                 </Tooltip>
               ) : null}
-            </HStack>
+            </Flex>
           </ModalFooter>
-        </ModalContent>
+        </DashboardModalFrame>
       </Modal>
 
       {/* Enable auto-sync modal */}
@@ -3187,12 +3254,20 @@ export default function ImportTokensModal({
         onClose={onEnableAutoSyncClose}
         isCentered
         size='md'
+        scrollBehavior='inside'
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Enable Auto-Sync</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame maxW='520px'>
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              Enable Auto-Sync
+            </DashboardModalTitle>
+            <DashboardModalDescription>
+              Save credentials for scheduled infrastructure scans.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
             <VStack spacing={4} align='stretch'>
               <Alert status='info' borderRadius='md'>
                 <AlertIcon />
@@ -3202,7 +3277,7 @@ export default function ImportTokensModal({
                   credentials later from the Manage auto-sync tab.
                 </Text>
               </Alert>
-              <Box p={3} bg={confirmBoxBg} borderRadius='md'>
+              <Box {...fieldProps} p={3}>
                 <Text fontSize='sm' fontWeight='semibold' mb={1}>
                   Provider: {source}
                 </Text>
@@ -3246,19 +3321,21 @@ export default function ImportTokensModal({
               </FormControl>
             </VStack>
           </ModalBody>
-          <ModalFooter>
-            <Button variant='ghost' mr={3} onClick={onEnableAutoSyncClose}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme='blue'
-              onClick={confirmEnableAutoSync}
-              isLoading={savingAutoSync}
-            >
-              Enable Auto-Sync
-            </Button>
+          <ModalFooter {...footerProps}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
+              <Button {...outlineButtonProps} onClick={onEnableAutoSyncClose}>
+                Cancel
+              </Button>
+              <Button
+                {...primaryButtonProps}
+                onClick={confirmEnableAutoSync}
+                isLoading={savingAutoSync}
+              >
+                Enable Auto-Sync
+              </Button>
+            </HStack>
           </ModalFooter>
-        </ModalContent>
+        </DashboardModalFrame>
       </Modal>
 
       {/* Disable auto-sync confirmation modal */}
@@ -3267,12 +3344,20 @@ export default function ImportTokensModal({
         onClose={onDisableAutoSyncClose}
         isCentered
         size='sm'
+        scrollBehavior='inside'
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Disable Auto-Sync</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
+        <ModalOverlay {...overlayProps} />
+        <DashboardModalFrame maxW='460px'>
+          <ModalHeader {...headerProps}>
+            <DashboardModalTitle color={modalTokens.text}>
+              Disable Auto-Sync
+            </DashboardModalTitle>
+            <DashboardModalDescription>
+              Stop scheduled scans for this provider.
+            </DashboardModalDescription>
+          </ModalHeader>
+          <ModalCloseButton {...closeButtonProps} />
+          <ModalBody {...bodyProps}>
             <VStack spacing={3} align='stretch'>
               <Alert status='warning' borderRadius='md'>
                 <AlertIcon />
@@ -3282,7 +3367,7 @@ export default function ImportTokensModal({
                 </Text>
               </Alert>
               {autoSyncConfig && (
-                <Box p={3} bg={confirmBoxBg} borderRadius='md'>
+                <Box {...fieldProps} p={3}>
                   <Text fontSize='sm'>
                     <Text as='span' fontWeight='semibold'>
                       Provider:
@@ -3309,15 +3394,17 @@ export default function ImportTokensModal({
               )}
             </VStack>
           </ModalBody>
-          <ModalFooter>
-            <Button variant='ghost' mr={3} onClick={onDisableAutoSyncClose}>
-              Cancel
-            </Button>
-            <Button colorScheme='red' onClick={confirmDisableAutoSync}>
-              Disable Auto-Sync
-            </Button>
+          <ModalFooter {...footerProps}>
+            <HStack w='full' justify='flex-end' flexWrap='wrap' spacing={3}>
+              <Button {...outlineButtonProps} onClick={onDisableAutoSyncClose}>
+                Cancel
+              </Button>
+              <Button {...dangerButtonProps} onClick={confirmDisableAutoSync}>
+                Disable Auto-Sync
+              </Button>
+            </HStack>
           </ModalFooter>
-        </ModalContent>
+        </DashboardModalFrame>
       </Modal>
     </>
   );

@@ -351,7 +351,6 @@ export const handleApiError = (error, customMessage = null) => {
           '/blog',
           '/compare',
           '/pricing',
-          '/help',
           '/privacy-policy',
           '/terms-of-service',
           '/faq',
@@ -503,6 +502,8 @@ export const API_ENDPOINTS = {
     `/api/v1/workspaces/${id}/invitations/${invitationId}`,
   WORKSPACE_ALERT_SETTINGS: id => `/api/v1/workspaces/${id}/alert-settings`,
   WORKSPACE_NOTIFICATIONS: id => `/api/v1/workspaces/${id}/notifications`,
+  WORKSPACE_CONTROL_CENTER_STATS: id =>
+    `/api/v1/workspaces/${id}/control-center/stats`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
   // Vault integration (workspace_id required for scan)
   VAULT_SCAN: workspaceId =>
@@ -815,13 +816,22 @@ export const alertAPI = {
   getAuditEvents: async (
     limit = 100,
     offset = 0,
-    { scope = 'user', workspaceId = null, action = null, query = null } = {}
+    {
+      scope = 'user',
+      workspaceId = null,
+      action = null,
+      query = null,
+      since = null,
+      until = null,
+    } = {}
   ) => {
     try {
       let response;
       const params = { limit, offset };
       if (action) params.action = action;
       if (query) params.query = query;
+      if (since) params.since = since;
+      if (until) params.until = until;
 
       if (scope === 'organization') {
         params.scope = 'organization';
@@ -846,6 +856,7 @@ export const alertAPI = {
     format = 'json',
     limit = 10000,
     since = null,
+    until = null,
     action = null,
     query = null,
   } = {}) => {
@@ -853,6 +864,7 @@ export const alertAPI = {
       const params = { scope, format, limit };
       if (workspaceId) params.workspace_id = workspaceId;
       if (since) params.since = since;
+      if (until) params.until = until;
       if (action) params.action = action;
       if (query) params.query = query;
       const response = await apiClient.get(API_ENDPOINTS.AUDIT_EXPORT, {

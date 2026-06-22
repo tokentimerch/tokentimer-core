@@ -420,10 +420,14 @@ export default function IntegrationImportTable({
                         <Tooltip
                           label='This token type does not have an expiration date'
                           fontSize='xs'
+                          hasArrow
+                          placement='top'
                         >
-                          <Badge colorScheme='blue' fontSize='2xs'>
-                            ∞
-                          </Badge>
+                          <Box as='span' display='inline-block'>
+                            <Badge colorScheme='blue' fontSize='2xs'>
+                              ∞
+                            </Badge>
+                          </Box>
                         </Tooltip>
                       )}
                     </HStack>
@@ -438,15 +442,19 @@ export default function IntegrationImportTable({
                               : 'Save changes'
                           }
                           fontSize='xs'
+                          hasArrow
+                          placement='top'
                         >
-                          <IconButton
-                            icon={<FiCheck />}
-                            size='xs'
-                            colorScheme='green'
-                            onClick={() => saveEditing(index)}
-                            aria-label='Save'
-                            isDisabled={!isEditValid()}
-                          />
+                          <Box as='span' display='inline-block'>
+                            <IconButton
+                              icon={<FiCheck />}
+                              size='xs'
+                              colorScheme='green'
+                              onClick={() => saveEditing(index)}
+                              aria-label='Save'
+                              isDisabled={!isEditValid()}
+                            />
+                          </Box>
                         </Tooltip>
                         <IconButton
                           icon={<Text fontSize='lg'>×</Text>}
