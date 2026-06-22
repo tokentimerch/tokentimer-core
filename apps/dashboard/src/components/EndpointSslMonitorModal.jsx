@@ -1592,7 +1592,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                           }
                         >
                           <option value=''>Default workspace group</option>
-                          {contactGroups.map(g => (
+                          {(contactGroups || []).map(g => (
                             <option key={g.id} value={g.id}>
                               {g.name}
                             </option>
@@ -1606,6 +1606,7 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                       size='sm'
                       colorScheme='purple'
                       isLoading={domainCheckerImporting}
+                      loadingText='Importing...'
                       isDisabled={
                         selectedIds.size === 0 || domainCheckerImporting
                       }

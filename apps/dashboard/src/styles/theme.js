@@ -595,6 +595,18 @@ const components = {
       _focus: {
         boxShadow: 'outline',
       },
+      _loading: {
+        opacity: 1,
+        cursor: 'not-allowed',
+        _hover: {
+          opacity: 1,
+        },
+        '& .chakra-button__spinner': {
+          opacity: 1,
+          color: 'currentColor',
+          animation: 'spin 0.65s linear infinite',
+        },
+      },
     },
     variants: {
       solid: props => ({
@@ -671,6 +683,15 @@ const components = {
         fontSize: 'sm',
         px: '3',
       },
+    },
+  },
+  Spinner: {
+    baseStyle: {
+      color: 'blue.500',
+      emptyColor: 'gray.200',
+      speed: '0.65s',
+      thickness: '3px',
+      animation: 'spin 0.65s linear infinite',
     },
   },
   Input: {
@@ -1213,6 +1234,13 @@ export const theme = extendTheme({
   },
   styles: {
     global: props => ({
+      '@keyframes spin': {
+        from: { transform: 'rotate(0deg)' },
+        to: { transform: 'rotate(360deg)' },
+      },
+      '.chakra-button__spinner, .chakra-spinner': {
+        animation: 'spin 0.65s linear infinite',
+      },
       body: {
         bg: props.colorMode === 'dark' ? 'gray.900' : 'white',
         color: props.colorMode === 'dark' ? 'white' : 'gray.900',

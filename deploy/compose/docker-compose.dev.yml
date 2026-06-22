@@ -281,8 +281,9 @@ services:
       - DB_PASSWORD=password
       - SESSION_SECRET=dev_session_secret_change_in_production
       - API_URL=http://api:4000
-      - "WORKER_AUTO_SYNC_CRON=${WORKER_AUTO_SYNC_CRON:-0 * * * *}"
+      - "WORKER_AUTO_SYNC_CRON=${WORKER_AUTO_SYNC_CRON:-*/1 * * * *}"
       - WORKER_AUTO_SYNC_INTERVAL_MS=${WORKER_AUTO_SYNC_INTERVAL_MS:-}
+      - WORKER_AUTO_SYNC_RUN_ON_START=${WORKER_AUTO_SYNC_RUN_ON_START:-true}
       - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}
       - WORKER_EXIT_ON_ERROR=${WORKER_EXIT_ON_ERROR:-false}
     depends_on:

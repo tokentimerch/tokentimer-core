@@ -99,21 +99,6 @@
           min-height: 250px;
         }
       }
-      /* User preference: reduced motion (stored in localStorage) */
-      html[data-reduce-motion='true'] *,
-      html[data-reduce-motion='true'] *::before,
-      html[data-reduce-motion='true'] *::after {
-        animation-duration: 0.001ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.001ms !important;
-        scroll-behavior: auto !important;
-      }
-      /* User preference: compact density (stored in localStorage) */
-      html[data-density='compact'] .chakra-table th,
-      html[data-density='compact'] .chakra-table td {
-        padding-top: 0.35rem !important;
-        padding-bottom: 0.35rem !important;
-      }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -200,20 +185,6 @@
           } else {
             applyToBody();
           }
-        } catch (e) {}
-      })();
-      // Apply local UI preferences early (reduced motion / density)
-      (function () {
-        try {
-          var reduce = localStorage.getItem('tt_pref_reduced_motion') === 'true';
-          var compact =
-            localStorage.getItem('tt_pref_compact_density') === 'true';
-          document.documentElement.dataset.reduceMotion = reduce
-            ? 'true'
-            : 'false';
-          document.documentElement.dataset.density = compact
-            ? 'compact'
-            : 'comfortable';
         } catch (e) {}
       })();
     </script>

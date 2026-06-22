@@ -321,6 +321,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             colorScheme='blue'
             onClick={doGitlabScan}
             isLoading={isScanning}
+            loadingText='Scanning...'
           >
             Scan
           </Button>

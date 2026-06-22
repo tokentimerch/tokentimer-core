@@ -47,30 +47,8 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 
 # Get Started
 
-<a href="https://tokentimer.ch">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-cloud-cta.svg">
-  <img alt="TokenTimer Cloud - fully managed SaaS, always up to date." src="docs/assets/readme/tokentimer-cloud-cta.svg">
-</picture>
-</a>
-&nbsp; &nbsp;
-<a href="https://tokentimer.ch/pricing">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-enterprise-cta.svg">
-  <img alt="TokenTimer Enterprise - premium self-hosted edition with priority support." src="docs/assets/readme/tokentimer-enterprise-cta.svg">
-</picture>
-</a>
-&nbsp; &nbsp;
-<a href="QUICKSTART.md">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/readme/tokentimer-core-cta.svg">
-    <img alt="TokenTimer Core - full-featured self-hosted edition." src="docs/assets/readme/tokentimer-core-cta.svg">
-</picture>
-</a>
-<br>
+| [![TokenTimer Cloud](docs/assets/readme/tokentimer-cloud-cta.svg)](https://tokentimer.ch) | [![TokenTimer Enterprise](docs/assets/readme/tokentimer-enterprise-cta.svg)](https://tokentimer.ch/pricing) | [![TokenTimer Core](docs/assets/readme/tokentimer-core-cta.svg)](QUICKSTART.md) |
+|:---:|:---:|:---:|
 
 ### Run it on your own server
 
