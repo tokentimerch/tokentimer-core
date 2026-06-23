@@ -1817,14 +1817,18 @@ export default function Workspaces({ session, onLogout, onAccountClick }) {
                     setConfirmOpen(false);
                     setDeleteConfirmName('');
                   } catch (e) {
-                    const msg = String(e?.message || '').toUpperCase();
-                    if (msg.includes('PERSONAL_DEFAULT')) {
+                    const msg = String(e?.message || '');
+                    const upper = msg.toUpperCase();
+                    if (
+                      upper.includes('PERSONAL_DEFAULT') ||
+                      upper.includes('PERSONAL DEFAULT WORKSPACE')
+                    ) {
                       showWarning(
                         'Cannot delete personal workspace',
                         'Your default personal workspace cannot be deleted.'
                       );
                     } else {
-                      showError(e?.message || 'Failed to delete workspace');
+                      showError(msg || 'Failed to delete workspace');
                     }
                   } finally {
                     setDeleting(false);

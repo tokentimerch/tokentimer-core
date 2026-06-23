@@ -387,6 +387,9 @@ export const handleApiError = (error, customMessage = null) => {
         message =
           data.error ||
           "Access denied. You don't have permission for this action.";
+        if (data?.code === 'PERSONAL_DEFAULT') {
+          suppressToast = true;
+        }
         break;
       case 404:
         message = data.error || 'Resource not found.';

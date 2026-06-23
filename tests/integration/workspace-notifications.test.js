@@ -39,7 +39,10 @@ describe("Workspace operational notifications API", function () {
     admin = await TestUtils.createAuthenticatedUser();
     adminCookie = admin.cookie;
     adminUserId = admin.id || admin.user?.id;
-    workspaceId = await TestUtils.ensureTestWorkspace(adminCookie);
+    workspaceId = await TestUtils.ensureDedicatedTestWorkspace(
+      adminCookie,
+      "Notifications WS",
+    );
 
     viewer = await TestUtils.createAuthenticatedUser();
     viewerCookie = viewer.cookie;

@@ -18,11 +18,13 @@ describe("Control center stats API", function () {
       "SecureTest123!@#",
     );
 
-    const wsRes = await request(BASE)
-      .get("/api/v1/workspaces?limit=50&offset=0")
-      .set("Cookie", ownerSession.cookie)
-      .expect(200);
-    workspaceId = wsRes?.body?.items?.[0]?.id;
+    workspaceId = (
+      await request(BASE)
+        .post("/api/v1/workspaces")
+        .set("Cookie", ownerSession.cookie)
+        .send({ name: `Control Center Stats WS ${Date.now()}` })
+        .expect(201)
+    ).body.id;
 
     viewerUser = await TestUtils.createVerifiedTestUser();
     viewerSession = await TestUtils.loginTestUser(
