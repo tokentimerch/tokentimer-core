@@ -591,7 +591,7 @@ router.get(
               deferredCount === 1
                 ? "1 alert waiting for delivery window"
                 : `${deferredCount} alerts waiting for delivery window`,
-            href: "/usage",
+            href: "/control-center",
             count: deferredCount,
           });
         }

@@ -17,6 +17,7 @@ import {
   AlertDescription,
   Divider,
   Link,
+  Checkbox,
   useColorModeValue,
 } from '@chakra-ui/react';
 import axios from 'axios';
@@ -29,6 +30,7 @@ function ResetPassword() {
   const [token, setToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetTwoFactor, setResetTwoFactor] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -120,6 +122,7 @@ function ResetPassword() {
         {
           token,
           newPassword,
+          resetTwoFactor,
         },
         { withCredentials: true }
       );
@@ -192,7 +195,9 @@ function ResetPassword() {
           </Text>
           {step === 'reset' && (
             <Text mt={2} fontSize='sm' color={textColor}>
-              For security, the reset link is valid for 5 minutes.
+              For security, the reset link is valid for 5 minutes. If you lost
+              access to your authenticator app, you can reset two-factor
+              authentication when setting your new password.
             </Text>
           )}
         </Box>
@@ -310,6 +315,15 @@ function ResetPassword() {
                   />
                 </FormControl>
 
+                <Checkbox
+                  isChecked={resetTwoFactor}
+                  onChange={e => setResetTwoFactor(e.target.checked)}
+                  colorScheme='blue'
+                  alignSelf='flex-start'
+                >
+                  Also reset two-factor authentication (authenticator app)
+                </Checkbox>
+
                 <Button
                   type='submit'
                   colorScheme='blue'
@@ -333,6 +347,7 @@ function ResetPassword() {
                     setToken('');
                     setNewPassword('');
                     setConfirmPassword('');
+                    setResetTwoFactor(false);
                     setMessage('');
                     setError('');
                   }}

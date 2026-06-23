@@ -77,16 +77,13 @@ const validateToken = [
     .withMessage("Invalid category"),
   body("expiresAt")
     .optional()
-    .custom((value, { req }) => {
+    .custom((value) => {
       if (!value || value === "" || value === null || value === undefined)
         return true;
       const date = new Date(value);
       if (isNaN(date.getTime()))
         throw new Error("Invalid expiration date format");
-      const allowPastInTest =
-        process.env.NODE_ENV === "test" &&
-        String(req.body?.category || "").toLowerCase() === "general";
-      if (date <= new Date() && !allowPastInTest) {
+      if (date <= new Date()) {
         throw new Error("Expiration date must be in the future");
       }
       return true;

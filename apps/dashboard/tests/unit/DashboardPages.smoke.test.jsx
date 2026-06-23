@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import Workspaces from '../../src/pages/Workspaces.jsx';
-import Usage from '../../src/pages/Usage.jsx';
 import Audit from '../../src/pages/Audit.jsx';
 import Account from '../../src/pages/Account.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
@@ -29,8 +28,43 @@ const {
   tokenGetTokensMock: vi.fn(),
 }));
 
-vi.mock('../../src/components/Navigation', () => ({
-  default: () => <div>navigation</div>,
+vi.mock('../../src/hooks/useDashboardShellProps.js', () => ({
+  useDashboardShellProps: ({ pageTitle = '' } = {}) => ({
+    dashboardColors: {},
+    currentPath: '/',
+    sessionName: 'Test User',
+    sessionEmail: 'test@example.com',
+    sessionInitials: 'TU',
+    dashboardWorkspaces: [],
+    dashboardWorkspace: null,
+    workspaceLabel: 'Workspace',
+    onWorkspaceSelect: vi.fn(),
+    dashboardNotifications: [],
+    onLogout: vi.fn(),
+    onAccountClick: vi.fn(),
+    isViewer: false,
+    dashboardCanSeeManagerNav: true,
+    isSystemAdmin: false,
+    pageTitle,
+  }),
+}));
+
+vi.mock('../../src/components/DashboardShell', () => ({
+  default: ({ children, pageTitle }) => (
+    <div>
+      {pageTitle ? <h1>{pageTitle}</h1> : null}
+      {children}
+    </div>
+  ),
+}));
+
+vi.mock('../../src/components/DashboardPageLayout', () => ({
+  default: ({ children, pageTitle }) => (
+    <div>
+      {pageTitle ? <h1>{pageTitle}</h1> : null}
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock('../../src/components/SEO.jsx', () => ({
@@ -143,16 +177,6 @@ describe('Dashboard page smoke tests', () => {
     renderWithProviders(<Workspaces {...baseProps} />);
     await waitFor(() => expectTextPresent('Workspaces'));
     expect(workspaceListMock).toHaveBeenCalled();
-  });
-
-  it('renders Usage route and handles error state', async () => {
-    apiGetMock.mockRejectedValueOnce(new Error('usage failed'));
-    renderWithProviders(<Usage {...baseProps} />);
-
-    await waitFor(() => expectTextPresent('Usage'));
-    await waitFor(() =>
-      expect(screen.getByText('Failed to load usage data')).toBeInTheDocument()
-    );
   });
 
   it('renders Audit route with mocked data state', async () => {

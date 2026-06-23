@@ -63,10 +63,24 @@ function formatDateTime(dateString) {
 }
 
 const AUDIT_FILTER_VALUE_RE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/;
+const AUDIT_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function dateInputToAuditDateParam(value) {
-  if (!value) return null;
-  return AUDIT_FILTER_VALUE_RE.test(value) ? value : null;
+function dateInputToAuditDateParam(value, boundary = 'start') {
+  if (!value || !AUDIT_FILTER_VALUE_RE.test(value)) return null;
+
+  if (AUDIT_DATE_ONLY_RE.test(value)) {
+    const localDate =
+      boundary === 'end'
+        ? new Date(`${value}T23:59:59.999`)
+        : new Date(`${value}T00:00:00`);
+    if (Number.isNaN(localDate.getTime())) return null;
+    return localDate.toISOString();
+  }
+
+  const normalized = value.length === 16 ? `${value}:00` : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
 }
 
 // Exhaustive list of all possible audit actions
@@ -283,7 +297,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         const pageLimit = auditPageSize + 1;
         const currentOffset = (page - 1) * auditPageSize;
         const since = dateInputToAuditDateParam(dateFrom);
-        const until = dateInputToAuditDateParam(dateTo);
+        const until = dateInputToAuditDateParam(dateTo, 'end');
         const eventsData = await alertAPI.getAuditEvents(
           pageLimit,
           currentOffset,
@@ -1108,7 +1122,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           : scope;
       const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
       const since = dateInputToAuditDateParam(dateFrom);
-      const until = dateInputToAuditDateParam(dateTo);
+      const until = dateInputToAuditDateParam(dateTo, 'end');
       const { blob, filename, contentType } = await alertAPI.exportAudit({
         scope: effectiveScope,
         workspaceId:
@@ -1142,7 +1156,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           : scope;
       const effectiveWorkspaceId = auditWorkspaceId || workspaceId || null;
       const since = dateInputToAuditDateParam(dateFrom);
-      const until = dateInputToAuditDateParam(dateTo);
+      const until = dateInputToAuditDateParam(dateTo, 'end');
       const { blob, filename, contentType } = await alertAPI.exportAudit({
         scope: effectiveScope,
         workspaceId:

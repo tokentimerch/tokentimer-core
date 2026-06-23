@@ -28,6 +28,7 @@ export function WorkspaceProvider({ children }) {
     }
   });
   const normalizedRef = useRef(false);
+  const prevPathRef = useRef(location.pathname);
 
   const selectWorkspace = useCallback(
     (id, { replace = false } = {}) => {
@@ -43,6 +44,7 @@ export function WorkspaceProvider({ children }) {
         (typeof window !== 'undefined' ? window.location.hash : '') ||
         '';
       navigate(`${path}?${params.toString()}${hash}`, { replace });
+      setWorkspaceId(id);
       try {
         localStorage.setItem('tt_last_workspace_id', id);
       } catch (_) {}
@@ -52,7 +54,7 @@ export function WorkspaceProvider({ children }) {
 
   // Sync local state when URL changes (e.g., back/forward, programmatic navigation).
   // Only update when a workspace IS present in the URL; don't clear when navigating
-  // to routes without the param (e.g., docs, help) to avoid losing context.
+  // to routes without the param (e.g., /workspace-preferences) to avoid losing context.
   useEffect(() => {
     const inUrl = searchParams.get('workspace');
     if (inUrl) {
@@ -62,6 +64,11 @@ export function WorkspaceProvider({ children }) {
 
   // Ensure a workspace is always selected/defined by normalizing URL and state
   useEffect(() => {
+    if (prevPathRef.current !== location.pathname) {
+      normalizedRef.current = false;
+      prevPathRef.current = location.pathname;
+    }
+
     const path = location.pathname || '';
     const isPublicRoute =
       path === '/login' ||
@@ -87,14 +94,19 @@ export function WorkspaceProvider({ children }) {
     const workspaceInUrl = searchParams.get('workspace');
     if (workspaceInUrl && workspaceInUrl === workspaceId) return;
 
-    if (workspaceId && !workspaceInUrl) return;
+    // Keep URL in sync when state/localStorage already has a workspace selected.
+    if (workspaceId && !workspaceInUrl) {
+      selectWorkspace(workspaceId, { replace: true });
+      return;
+    }
+
     if (normalizedRef.current) return;
     normalizedRef.current = true;
     (async () => {
       let items = [];
       try {
         const ws = await workspaceAPI.list(50, 0);
-        items = ws?.items || [];
+        items = (ws?.items || []).filter(w => !w.is_frozen);
       } catch (_) {}
 
       const ids = new Set(items.map(w => w.id));
@@ -103,7 +115,6 @@ export function WorkspaceProvider({ children }) {
         const last = localStorage.getItem('tt_last_workspace_id');
         if (last && ids.has(last)) {
           selectWorkspace(last, { replace: true });
-          setWorkspaceId(last);
           return;
         }
       } catch (_) {}
@@ -111,10 +122,6 @@ export function WorkspaceProvider({ children }) {
       const first = items[0];
       if (first && first.id) {
         selectWorkspace(first.id, { replace: true });
-        setWorkspaceId(first.id);
-        try {
-          localStorage.setItem('tt_last_workspace_id', first.id);
-        } catch (_) {}
       }
     })();
   }, [workspaceId, searchParams, location.pathname, selectWorkspace]);
@@ -151,7 +158,7 @@ export function WorkspaceProvider({ children }) {
       try {
         const ws = await workspaceAPI.list(50, 0);
         if (cancelled) return;
-        const items = ws?.items || [];
+        const items = (ws?.items || []).filter(w => !w.is_frozen);
         if (items.length === 0) return;
         const ids = new Set(items.map(w => w.id));
 
@@ -172,10 +179,6 @@ export function WorkspaceProvider({ children }) {
               : items[0].id;
         if (!workspaceId || !ids.has(workspaceId) || inUrl !== chosen) {
           selectWorkspace(chosen, { replace: true });
-          setWorkspaceId(chosen);
-          try {
-            localStorage.setItem('tt_last_workspace_id', chosen);
-          } catch (_) {}
         }
       } catch (_) {
         // ignore

@@ -1119,7 +1119,8 @@ router.post(
   authSlowdown,
   async (req, res) => {
     try {
-      const { token, newPassword } = req.body;
+      const { token, newPassword, resetTwoFactor } = req.body;
+      const shouldResetTwoFactor = resetTwoFactor === true;
 
       if (!token || !newPassword) {
         return res
@@ -1182,12 +1183,41 @@ router.post(
           .json({ error: "Invalid or expired password reset token" });
       }
 
+      const hadTwoFactor =
+        !!user.two_factor_enabled && user.auth_method !== "google";
+
       // Hash new password
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(newPassword, saltRounds);
 
       // Update password and clear reset token
       await User.resetPassword(token, passwordHash);
+
+      let twoFactorReset = false;
+      if (shouldResetTwoFactor && hadTwoFactor) {
+        await pool.query(
+          "UPDATE users SET two_factor_enabled = FALSE, two_factor_secret = NULL, updated_at = NOW() WHERE id = $1",
+          [user.id],
+        );
+        twoFactorReset = true;
+        try {
+          await writeAudit({
+            actorUserId: user.id,
+            subjectUserId: user.id,
+            action: "TWO_FACTOR_DISABLED",
+            targetType: "user",
+            targetId: user.id,
+            channel: null,
+            workspaceId: null,
+            metadata: { via: "password_reset" },
+          });
+        } catch (err) {
+          logger.error("Audit insert failed", {
+            action: "TWO_FACTOR_DISABLED",
+            error: err.message,
+          });
+        }
+      }
 
       // Revoke every session for this user so any attacker with a live
       // session is kicked and only the new password lets them back in.
@@ -1204,10 +1234,14 @@ router.post(
         });
       }
 
-      res.json({
-        message:
-          "Password reset successfully! You can now log in with your new password.",
-      });
+      let message =
+        "Password reset successfully! You can now log in with your new password.";
+      if (twoFactorReset) {
+        message +=
+          " Two-factor authentication has been reset; set it up again from Account settings after you sign in.";
+      }
+
+      res.json({ message, twoFactorReset });
       // Audit: password reset completed
       try {
         await writeAudit({

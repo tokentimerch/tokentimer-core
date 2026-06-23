@@ -14,7 +14,7 @@ import { logger } from '../utils/logger';
 
 /** Chakra lg breakpoint: sidebar/topbar vs legacy nav drawer split */
 const LAYOUT_LG_BREAKPOINT_PX = 992;
-/** Dashboard topbar min height (not legacy Navigation 78px bar) */
+/** Dashboard topbar min height (DashboardShell chrome). */
 const TOPBAR_OFFSET_PX = 54;
 const JOYRIDE_SPOTLIGHT_PADDING_PX = 6;
 const TOUR_TOOLTIP_VIEWPORT_MARGIN_PX = 16;
@@ -41,7 +41,7 @@ const isElementVisible = el => {
   );
 };
 
-/** First visible match (avoids hidden legacy Navigation duplicates). */
+/** First visible match (avoids hidden duplicate tour targets). */
 const findVisibleTourTarget = selector => {
   if (typeof document === 'undefined' || !selector) return null;
   const nodes = document.querySelectorAll(selector);
@@ -1237,7 +1237,7 @@ export default function ProductTour({
     if (typeof window === 'undefined') return;
     if (window.innerWidth >= LAYOUT_LG_BREAKPOINT_PX) return;
 
-    // First, dispatch the custom event to trigger Navigation.jsx's listener
+    // Dispatch tt:close-mobile-nav; DashboardShell listens and closes the drawer.
     closeMobileNav();
     await wait(100);
 

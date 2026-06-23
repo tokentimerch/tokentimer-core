@@ -203,11 +203,13 @@ export function useDashboardShellProps({
             ? notificationsRes.items
             : [];
           for (const item of operational) {
+            const href =
+              item.href === '/usage' ? '/control-center' : item.href || null;
             list.push({
               id: item.id,
               kind: item.kind === 'error' ? 'error' : 'warning',
               text: item.text,
-              href: item.href || null,
+              href,
             });
           }
         }

@@ -65,21 +65,20 @@ describe("Alert Bug Fixes", function () {
   });
 
   it("should not send alerts for expired tokens when user has default thresholds", async () => {
-    // Create a token that expired 2 days ago
+    // Create a token that expired 2 days ago (DB seed; API rejects past expiresAt)
     const expiredDate = new Date();
     expiredDate.setDate(expiredDate.getDate() - 2);
 
-    const res = await request(BASE)
-      .post("/api/tokens")
-      .set("Cookie", cookie)
-      .send({
-        name: "Expired Token Test",
-        type: "api_key",
-        category: "general",
-        expiresAt: expiredDate.toISOString().slice(0, 10),
-        workspace_id: workspaceId,
-      });
-    expect(res.status).to.equal(201);
+    await TestUtils.execQuery(
+      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+       VALUES ($1, $2, $1, $3, $4, 'api_key', 'general')`,
+      [
+        user.id,
+        workspaceId,
+        "Expired Token Test",
+        expiredDate.toISOString().slice(0, 10),
+      ],
+    );
 
     // Run queue discovery - should not create alerts for expired tokens
     await TestUtils.runNode(
@@ -114,21 +113,20 @@ describe("Alert Bug Fixes", function () {
       .send({ alert_thresholds: [30, 7, 1, 0, -1, -2] })
       .expect(200);
 
-    // Create a token that expired 1 day ago
+    // Create a token that expired 1 day ago (DB seed; API rejects past expiresAt)
     const expiredDate = new Date();
     expiredDate.setDate(expiredDate.getDate() - 1);
 
-    const res = await request(BASE)
-      .post("/api/tokens")
-      .set("Cookie", cookie)
-      .send({
-        name: "Expired Token With Negative Thresholds",
-        type: "api_key",
-        category: "general",
-        expiresAt: expiredDate.toISOString().slice(0, 10),
-        workspace_id: workspaceId,
-      });
-    expect(res.status).to.equal(201);
+    await TestUtils.execQuery(
+      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+       VALUES ($1, $2, $1, $3, $4, 'api_key', 'general')`,
+      [
+        user.id,
+        workspaceId,
+        "Expired Token With Negative Thresholds",
+        expiredDate.toISOString().slice(0, 10),
+      ],
+    );
 
     // Run queue discovery - should create alerts for expired tokens with negative thresholds
     await TestUtils.runNode(
@@ -217,17 +215,16 @@ describe("Alert Bug Fixes", function () {
     const expiredDate = new Date();
     expiredDate.setDate(expiredDate.getDate() - 3);
 
-    const res = await request(BASE)
-      .post("/api/tokens")
-      .set("Cookie", cookie)
-      .send({
-        name: "Message Format Test Token",
-        type: "api_key",
-        category: "general",
-        expiresAt: expiredDate.toISOString().slice(0, 10),
-        workspace_id: workspaceId,
-      });
-    expect(res.status).to.equal(201);
+    await TestUtils.execQuery(
+      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+       VALUES ($1, $2, $1, $3, $4, 'api_key', 'general')`,
+      [
+        user.id,
+        workspaceId,
+        "Message Format Test Token",
+        expiredDate.toISOString().slice(0, 10),
+      ],
+    );
 
     // Update user to have negative thresholds
     await request(BASE)

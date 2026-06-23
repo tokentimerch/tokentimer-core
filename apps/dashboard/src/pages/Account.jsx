@@ -891,34 +891,46 @@ function Account({
               </VStack>
             </ModalBody>
             <ModalFooter {...footerProps}>
-              <Button onClick={closeTwoFaWizard} mr={3} {...outlineButtonProps}>
-                Cancel
-              </Button>
-              <Button
-                isDisabled={!twoFaCode.trim()}
-                onClick={async () => {
-                  setTwoFaError('');
-                  try {
-                    const { data } = await apiClient.post(
-                      '/api/account/2fa/enable',
-                      { token: twoFaCode }
-                    );
-                    showSuccess(
-                      data.message || 'Two-factor authentication enabled'
-                    );
-                    onSessionUpdate?.({ twoFactorEnabled: true });
-                    setTwoFaCode('');
-                    closeTwoFaWizard();
-                  } catch (e) {
-                    const msg =
-                      e?.response?.data?.error || 'Failed to enable 2FA';
-                    setTwoFaError(msg);
-                  }
-                }}
-                {...primaryButtonProps}
+              <Flex
+                w='100%'
+                gap={3}
+                justify={{ base: 'stretch', sm: 'flex-end' }}
+                direction={{ base: 'column-reverse', sm: 'row' }}
               >
-                Confirm & Enable
-              </Button>
+                <Button
+                  onClick={closeTwoFaWizard}
+                  minW={{ base: '100%', sm: '104px' }}
+                  {...outlineButtonProps}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  isDisabled={!twoFaCode.trim()}
+                  minW={{ base: '100%', sm: '160px' }}
+                  onClick={async () => {
+                    setTwoFaError('');
+                    try {
+                      const { data } = await apiClient.post(
+                        '/api/account/2fa/enable',
+                        { token: twoFaCode }
+                      );
+                      showSuccess(
+                        data.message || 'Two-factor authentication enabled'
+                      );
+                      onSessionUpdate?.({ twoFactorEnabled: true });
+                      setTwoFaCode('');
+                      closeTwoFaWizard();
+                    } catch (e) {
+                      const msg =
+                        e?.response?.data?.error || 'Failed to enable 2FA';
+                      setTwoFaError(msg);
+                    }
+                  }}
+                  {...primaryButtonProps}
+                >
+                  Confirm & Enable
+                </Button>
+              </Flex>
             </ModalFooter>
           </DashboardModalFrame>
         </Modal>

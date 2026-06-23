@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: TokenTimer Core API Contract
-  version: 0.8.0
+  version: 0.8.1
   description: |
     TokenTimer Core API for authentication, workspaces, token lifecycle management,
     alerts, audit, and integration import/scan workflows.
@@ -298,6 +298,11 @@ paths:
                 newPassword:
                   type: string
                   minLength: 12
+                resetTwoFactor:
+                  type: boolean
+                  description: >-
+                    When true, clears TOTP two-factor authentication after the
+                    password is reset (ignored for Google SSO accounts).
       responses:
         "200":
           description: Password updated
@@ -309,6 +314,9 @@ paths:
                 properties:
                   message:
                     type: string
+                  twoFactorReset:
+                    type: boolean
+                    description: True when authenticator 2FA was cleared during reset.
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -1127,6 +1135,8 @@ paths:
           schema:
             type: integer
             minimum: 1
+        - $ref: "#/components/parameters/auditSinceParam"
+        - $ref: "#/components/parameters/auditUntilParam"
       responses:
         "200":
           description: Audit export payload or CSV
@@ -1243,6 +1253,8 @@ paths:
           name: query
           schema:
             type: string
+        - $ref: "#/components/parameters/auditSinceParam"
+        - $ref: "#/components/parameters/auditUntilParam"
       responses:
         "200":
           description: Audit event list
@@ -1264,6 +1276,8 @@ paths:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/limitParam"
         - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/auditSinceParam"
+        - $ref: "#/components/parameters/auditUntilParam"
       responses:
         "200":
           description: Workspace audit event list
@@ -2941,6 +2955,26 @@ components:
       schema:
         type: integer
         minimum: 0
+    auditSinceParam:
+      in: query
+      name: since
+      description: >-
+        Lower bound for occurred_at filtering. Accepts ISO 8601 UTC (recommended),
+        YYYY-MM-DD (start of day), or a datetime without timezone
+        (YYYY-MM-DDTHH:mm, optional seconds).
+      schema:
+        type: string
+        example: "2026-06-04"
+    auditUntilParam:
+      in: query
+      name: until
+      description: >-
+        Upper bound for occurred_at filtering. Accepts ISO 8601 UTC (recommended),
+        YYYY-MM-DD (end of day), or a datetime without timezone
+        (YYYY-MM-DDTHH:mm, optional seconds).
+      schema:
+        type: string
+        example: "2026-06-04"
   responses:
     BadRequest:
       description: Bad request

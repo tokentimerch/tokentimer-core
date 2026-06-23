@@ -999,6 +999,10 @@ export default function AlertPreferences({
 
   async function handleAddContactSubmit() {
     setContactPhoneError('');
+    if (!workspaceId) {
+      showError('Please select a workspace first');
+      return;
+    }
     const phoneNorm = newContactPhone.trim();
     const emailVal = String(newContactDetails.email || '').trim();
     let phoneE164 = '';
@@ -2401,6 +2405,10 @@ export default function AlertPreferences({
 
   async function handleSaveEditedContact() {
     if (!editingContactId) return;
+    if (!workspaceId) {
+      showError('Please select a workspace first');
+      return;
+    }
     setEditContactPhoneError('');
     const phoneNorm = editContactPhone.trim();
     const emailVal = String(editContactDetails.email || '').trim();
@@ -2456,6 +2464,10 @@ export default function AlertPreferences({
   }
 
   async function handleRemoveContact(contact) {
+    if (!workspaceId) {
+      showError('Please select a workspace first');
+      return;
+    }
     try {
       const deletedContactId = contact.id;
       await apiClient.delete(
@@ -2984,6 +2996,7 @@ export default function AlertPreferences({
                       size='sm'
                       colorScheme='blue'
                       onClick={onAddContactOpen}
+                      isDisabled={!workspaceId}
                       data-tour='preferences-contacts-add-trigger'
                     >
                       Add contact
