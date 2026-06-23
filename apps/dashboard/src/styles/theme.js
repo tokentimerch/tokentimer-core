@@ -178,12 +178,13 @@ export const dashboardDialogFooterLayoutSx = {
   height: 'auto !important',
   minHeight: '0 !important',
   maxHeight: 'none !important',
-  alignItems: 'flex-start !important',
-  justifyContent: 'flex-start !important',
+  flexDirection: { base: 'column', md: 'row' },
+  alignItems: { base: 'stretch', md: 'center' },
+  justifyContent: { base: 'flex-start', md: 'flex-end' },
   '& > *': {
     flex: '0 0 auto !important',
     minHeight: '0 !important',
-    width: '100%',
+    width: { base: '100%', md: 'auto' },
   },
 };
 
@@ -389,7 +390,6 @@ const dashboardDialogBaseStyle = {
     overflowY: 'auto',
     px: { base: 5, md: 6 },
     py: { base: 5, md: 6 },
-    maxH: { base: 'calc(100dvh - 11rem)', md: 'calc(100vh - 12rem)' },
     _light: {
       bg: 'dashboard.modal.surface',
       color: 'dashboard.modal.text',
@@ -416,8 +416,6 @@ const dashboardDialogBaseStyle = {
     flexShrink: 0,
     flexGrow: 0,
     mt: 'auto',
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
     _light: {
       bg: 'dashboard.modal.footerBg',
       borderColor: 'dashboard.modal.border',

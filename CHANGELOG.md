@@ -9,6 +9,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-22
+
+### Added
+
+- **Password reset + 2FA** — `POST /auth/reset-password` accepts optional `resetTwoFactor: true` to clear authenticator 2FA when completing a reset; Reset Password page adds a matching checkbox.
+- **OpenAPI** — documented `since` / `until` audit filter query params on list and export routes.
+- **Integration test** — `workspace-notifications.test.js` covers workspace operational notifications API.
+
+### Changed
+
+- **Dashboard shell** — notification bell action hints name Control Center, Preferences, and Import targets; deferred-alert notification href points to `/control-center` instead of legacy `/usage`.
+- **Workspace context** — keeps `?workspace=` in the URL when navigating between dashboard routes; excludes frozen workspaces from auto-selection; resets normalization on pathname change.
+- **Control Center** — auto-selects the first eligible workspace and syncs the URL query param on load.
+- **Legacy Usage page** — reduced to a stub (`/usage` redirects to Control Center in `App.jsx`); removed unused `Navigation.jsx`.
+- **Version metadata bumped to 0.8.1** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Audit filters** — date/time range filters convert browser local time to UTC ISO bounds before querying (fixes off-by-timezone filtering).
+- **2FA setup modal** — Confirm & Enable footer no longer clips on narrow viewports; dialog footer layout stacks on mobile.
+- **Alert preferences** — contact add, edit, and delete guarded when no workspace is selected; Add contact button disabled without a workspace.
+
 ## [0.8.0] - 2026-06-22
 
 ### Added

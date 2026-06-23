@@ -28,11 +28,13 @@ tests/integration/workspace-transfer-tokens.test.js
 tests/integration/workspace-invitations-list.integration.test.js
 tests/integration/workspace-invitations-cancel.integration.test.js
 tests/integration/control-center-stats-rbac.integration.test.js
+tests/integration/control-center-stats.integration.test.js
 tests/integration/contact-group-reassignment.test.js
 
 # Alert system
 tests/integration/alert-queue.test.js
 tests/integration/alert-notifications.test.js
+tests/integration/workspace-notifications.test.js
 tests/integration/alert-settings.test.js
 tests/integration/alert-bug-fixes.test.js
 tests/integration/alert-delivery-email-routing.test.js

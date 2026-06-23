@@ -92,7 +92,9 @@ export function useControlCenterData(initialWorkspaceId = '') {
         );
 
         if (!selectedWorkspaceId && eligibleWorkspaces.length > 0) {
-          setSelectedWorkspaceId(eligibleWorkspaces[0].id);
+          const defaultWorkspaceId = eligibleWorkspaces[0].id;
+          setSelectedWorkspaceId(defaultWorkspaceId);
+          selectWorkspace(defaultWorkspaceId, { replace: true });
         }
 
         const effectiveWorkspaceId = selectedIsEligible
@@ -278,7 +280,7 @@ export function useControlCenterData(initialWorkspaceId = '') {
         }
       }
     },
-    [selectedWorkspaceId]
+    [selectedWorkspaceId, selectWorkspace]
   );
 
   useEffect(() => {
@@ -288,9 +290,6 @@ export function useControlCenterData(initialWorkspaceId = '') {
   useEffect(() => {
     if (workspaceId && workspaceId !== selectedWorkspaceId) {
       setSelectedWorkspaceId(workspaceId);
-    }
-    if (!workspaceId) {
-      setSelectedWorkspaceId('');
     }
   }, [workspaceId, selectedWorkspaceId]);
 

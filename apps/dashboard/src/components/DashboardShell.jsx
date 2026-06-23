@@ -76,6 +76,7 @@ function getInitialDashboardSidebarWidth() {
 function dashboardNavTourAttr(itemKey) {
   if (itemKey === 'tokens') return 'tokens-nav';
   if (itemKey === 'control-center') return 'usage-nav';
+  if (itemKey === 'workspaces') return 'workspaces-nav';
   if (itemKey === 'docs') return 'docs-nav';
   if (itemKey === 'alert-settings') return 'workspace-alert-settings-nav';
   return undefined;
@@ -87,6 +88,31 @@ function mobileNavTourAttr(itemKey) {
   if (itemKey === 'alert-settings') return 'mobile-alert-settings-nav';
   if (itemKey === 'control-center') return 'usage-nav';
   return dashboardNavTourAttr(itemKey);
+}
+
+function notificationActionHint(notification) {
+  if (!notification?.href) {
+    if (notification?.id === 'smtp-not-configured') {
+      return 'Contact a system administrator to configure SMTP.';
+    }
+    return 'No action available';
+  }
+  if (notification.id === 'smtp-not-configured') {
+    return 'Go to System Settings to configure SMTP.';
+  }
+  if (notification.id?.startsWith('auto-sync-failed-')) {
+    return 'Opens Import tokens on the Manage auto-sync tab.';
+  }
+  if (notification.id === 'alerts-out-of-window') {
+    return 'View the alert queue on the Control center page.';
+  }
+  if (
+    notification.id === 'alerts-disabled' ||
+    notification.id === 'no-contacts-defined'
+  ) {
+    return 'Go to Preferences to update alert settings.';
+  }
+  return 'Open related page';
 }
 
 function MobileDrawerSection({
@@ -891,9 +917,7 @@ export default function DashboardShell({
                               {notification.text}
                             </Text>
                             <Text color={mutedTextColor} fontSize='xs'>
-                              {isClickable
-                                ? 'Open related settings'
-                                : 'No action available'}
+                              {notificationActionHint(notification)}
                             </Text>
                           </VStack>
                         </MenuItem>
