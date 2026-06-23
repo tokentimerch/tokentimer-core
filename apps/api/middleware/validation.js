@@ -83,8 +83,7 @@ const validateToken = [
       const date = new Date(value);
       if (isNaN(date.getTime()))
         throw new Error("Invalid expiration date format");
-      const allowPastInTest = process.env.NODE_ENV === "test";
-      if (date <= new Date() && !allowPastInTest) {
+      if (date <= new Date()) {
         throw new Error("Expiration date must be in the future");
       }
       return true;

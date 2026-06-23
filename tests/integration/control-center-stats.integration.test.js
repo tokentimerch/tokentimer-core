@@ -59,20 +59,15 @@ describe("Control center stats API", function () {
   it("returns aggregated stats for workspace managers", async () => {
     const expired = new Date();
     expired.setUTCDate(expired.getUTCDate() - 3);
+    const expiredDate = expired.toISOString().slice(0, 10);
     const soon = new Date();
     soon.setUTCDate(soon.getUTCDate() + 5);
 
-    await request(BASE)
-      .post("/api/tokens")
-      .set("Cookie", ownerSession.cookie)
-      .send({
-        name: "CC Stats Expired Cert",
-        type: "tls_cert",
-        category: "cert",
-        expiresAt: expired.toISOString().slice(0, 10),
-        workspace_id: workspaceId,
-      })
-      .expect(201);
+    await TestUtils.execQuery(
+      `INSERT INTO tokens (user_id, workspace_id, created_by, name, expiration, type, category)
+       VALUES ($1, $2, $1, $3, $4, 'tls_cert', 'cert')`,
+      [ownerUser.id, workspaceId, "CC Stats Expired Cert", expiredDate],
+    );
 
     await request(BASE)
       .post("/api/tokens")
