@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/certops-inventory.schema.json",
+  "title": "CertOps Managed Certificate Inventory Record",
+  "description": "Public-material-only inventory record for a CertOps managed certificate. Frozen in Phase 0; descriptive fields expand in M1. A conforming record MUST NOT contain private key material under any property (enforced at runtime by apps/api/utils/secretMaterial.js and the API rejection boundary).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "workspaceId", "status"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "description": "Stable identifier for the managed certificate."
+    },
+    "workspaceId": {
+      "type": "string",
+      "description": "Owning workspace identifier."
+    },
+    "tokenId": {
+      "type": ["string", "null"],
+      "description": "Optional link to the underlying tokens row this certificate maps to."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "discovered",
+        "active",
+        "renewing",
+        "expiring",
+        "expired",
+        "revoked",
+        "decommissioned"
+      ]
+    },
+    "commonName": {
+      "type": ["string", "null"]
+    },
+    "subjectAltNames": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "issuer": {
+      "type": ["string", "null"]
+    },
+    "serialNumber": {
+      "type": ["string", "null"]
+    },
+    "fingerprintSha256": {
+      "type": ["string", "null"],
+      "description": "Lowercase hex SHA-256 of the DER certificate. Public material."
+    },
+    "notBefore": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "notAfter": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "keyMode": {
+      "type": ["string", "null"],
+      "enum": [
+        "agent-local",
+        "proxy-agent-local",
+        "cert-manager-managed",
+        "appliance-managed",
+        "hsm-managed",
+        "vault-managed",
+        "os-store-managed",
+        "external-unknown",
+        null
+      ],
+      "description": "Where the private key lives on the execution plane (plan section 9.1). The control plane records the mode only; it never holds the key."
+    },
+    "keyReference": {
+      "type": ["string", "null"],
+      "description": "Opaque, non-secret reference to where the key lives on the execution plane (e.g. agent id + path handle, pkcs11 URI, k8s secret ref). Never the key itself."
+    },
+    "createdAt": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

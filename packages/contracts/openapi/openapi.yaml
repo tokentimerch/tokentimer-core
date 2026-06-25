@@ -28,6 +28,10 @@ tags:
     description: Alert rules, destinations, queue visibility, and preferences.
   - name: Integrations
     description: Integration scans, discovery, and import operations.
+  - name: CertOps
+    description: Certificate lifecycle orchestration (workspace-scoped). Control plane never stores private key material.
+  - name: CertOps Agent
+    description: Machine surface for the CertOps executor and outbound-only agent. Scoped-token authenticated.
 security:
   - cookieAuth: []
 paths:
@@ -2910,6 +2914,365 @@ paths:
                 additionalProperties: true
         "500":
           $ref: "#/components/responses/InternalError"
+  # ----------------------------------------------------------------------------
+  # CertOps route skeletons (Phase 0 freeze).
+  # Documented-but-not-yet-implemented. Frozen to keep M1/M2 unblocked.
+  # Request/response schemas are filled in during M1 (inventory) and M2 (jobs,
+  # tokens, executor). No CertOps runtime routes exist yet, so these do not
+  # affect openapi runtime-coverage (runtime -> spec direction only).
+  # ----------------------------------------------------------------------------
+  /api/v1/workspaces/{id}/certops/certificates:
+    get:
+      tags: [CertOps]
+      summary: List managed certificates
+      operationId: listCertOpsCertificates
+      description: Returns the workspace's managed certificate inventory (public material only). Skeleton; response schema lands in M1.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Managed certificate inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Create or register a managed certificate
+      operationId: createCertOpsCertificate
+      description: Registers a managed certificate from public material. Bodies containing private key material are rejected (422). Skeleton; request schema lands in M1.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Managed certificate registered
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}:
+    get:
+      tags: [CertOps]
+      summary: Get a managed certificate
+      operationId: getCertOpsCertificate
+      description: Returns a single managed certificate (public material only). Skeleton; response schema lands in M1.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+          description: Managed certificate identifier.
+      responses:
+        "200":
+          description: Managed certificate detail
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/imports:
+    post:
+      tags: [CertOps]
+      summary: Import certificates from public material
+      operationId: createCertOpsImport
+      description: Imports certificates from PEM/public material. Private key material is rejected (422). Skeleton; request schema lands in M1.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "202":
+          description: Import accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs:
+    get:
+      tags: [CertOps]
+      summary: List CertOps jobs
+      operationId: listCertOpsJobs
+      description: Returns orchestration jobs for the workspace. Skeleton; response schema lands in M2.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Job list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/tokens:
+    get:
+      tags: [CertOps]
+      summary: List CertOps API tokens
+      operationId: listCertOpsTokens
+      description: Returns scoped CertOps API tokens (metadata only, never secrets). Skeleton; response schema lands in M2.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: API token metadata list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Issue a scoped CertOps API token
+      operationId: createCertOpsToken
+      description: Issues a scoped API token for executor/agent use. The plaintext token is returned once at creation and never stored in recoverable form. Skeleton; request/response schema lands in M2.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: API token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/executor/events:
+    post:
+      tags: [CertOps Agent]
+      summary: Report executor events
+      operationId: createCertOpsExecutorEvent
+      description: Executor reports job progress and evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). Skeleton; body schema lands in M2.
+      security:
+        - certOpsTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "202":
+          description: Event accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/register:
+    post:
+      tags: [CertOps Agent]
+      summary: Register an agent
+      operationId: createCertOpsAgentRegistration
+      description: Outbound-only agent registration. Scoped-token authenticated. Frozen namespace skeleton; body schema lands in M4.
+      security:
+        - certOpsTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Agent registered
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/heartbeat:
+    post:
+      tags: [CertOps Agent]
+      summary: Agent heartbeat
+      operationId: createCertOpsAgentHeartbeat
+      description: Agent heartbeat including reported clock offset (clock-drift detection). Scoped-token authenticated. Frozen skeleton; body schema lands in M4.
+      security:
+        - certOpsTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/claim:
+    post:
+      tags: [CertOps Agent]
+      summary: Claim pending jobs
+      operationId: createCertOpsAgentJobClaim
+      description: Agent polls for and claims signed jobs. Scoped-token authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) in M4.
+      security:
+        - certOpsTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Claimed jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/results:
+    post:
+      tags: [CertOps Agent]
+      summary: Report job results and evidence
+      operationId: createCertOpsAgentJobResult
+      description: Agent reports job results and evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands in M4.
+      security:
+        - certOpsTokenAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "202":
+          description: Result accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     cookieAuth:
@@ -2917,6 +3280,10 @@ components:
       in: cookie
       name: sessionId
       description: Session cookie authentication used by authenticated API routes.
+    certOpsTokenAuth:
+      type: http
+      scheme: bearer
+      description: Scoped CertOps API token (bearer) used by the executor and the outbound agent. Never a cookie; CSRF-exempt.
   parameters:
     workspaceIdParam:
       in: path

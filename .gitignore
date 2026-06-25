@@ -76,4 +76,7 @@ reports/
 # Agent-skills setup (Matt Pocock skills, kept local-only per setup-matt-pocock-skills)
 /AGENTS.md
 /docs/agents/
-/.scratch/
+# Keep .scratch local-only, EXCEPT shared CertOps program docs (issue map,
+# cloud overlay verification) that dev B needs from git.
+/.scratch/*
+!/.scratch/certops/

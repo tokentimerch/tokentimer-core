@@ -1,0 +1,57 @@
+{
+  "contractName": "api.certops-route-compat",
+  "version": "0.8.1",
+  "status": "frozen-skeleton",
+  "description": "Frozen CertOps route namespaces and stable routes for M1/M2. Routes are skeletons in Phase 0 (documented in OpenAPI, not yet implemented). This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn. Per-route request/response schemas are added in M1/M2.",
+  "namespacePolicy": {
+    "workspaceScoped": {
+      "prefix": "/api/v1/workspaces/{id}/certops",
+      "auth": "cookieAuth",
+      "notes": [
+        "Human/dashboard surface. Inherits global session + workspace membership + frozen-workspace guards.",
+        "Subject to CSRF protection like other workspace mutations."
+      ]
+    },
+    "executor": {
+      "prefix": "/api/v1/certops/executor",
+      "auth": "certOpsTokenAuth",
+      "notes": [
+        "Machine surface for the M2 executor. Scoped API-token (bearer) auth.",
+        "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
+        "Ingest payloads are scanned and rejected (422) if they contain private key material."
+      ]
+    },
+    "agent": {
+      "prefix": "/api/v1/certops/agent",
+      "auth": "certOpsTokenAuth",
+      "notes": [
+        "Outbound-only agent polling surface (M4). The control plane never connects to agents.",
+        "Scoped API-token (bearer) auth; CSRF-exempt.",
+        "Frozen in Phase 0 to reserve the namespace; bodies specified in M4."
+      ]
+    }
+  },
+  "guarantees": {
+    "stableRoutes": [
+      { "path": "/api/v1/workspaces/{id}/certops/certificates", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/certificates", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/imports", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
+      { "path": "/api/v1/certops/executor/events", "method": "POST" },
+      { "path": "/api/v1/certops/agent/register", "method": "POST" },
+      { "path": "/api/v1/certops/agent/heartbeat", "method": "POST" },
+      { "path": "/api/v1/certops/agent/jobs/claim", "method": "POST" },
+      { "path": "/api/v1/certops/agent/jobs/results", "method": "POST" }
+    ],
+    "rejectionPolicy": {
+      "privateKeyMaterial": {
+        "status": 422,
+        "code": "PRIVATE_KEY_MATERIAL_REJECTED",
+        "notes": "Any request body containing private key material is rejected at the boundary. The control plane never stores, generates, exports, transmits, or processes private key material."
+      }
+    }
+  }
+}
