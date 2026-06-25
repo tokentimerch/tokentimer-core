@@ -828,8 +828,9 @@ export default function DashboardShell({
                   borderColor: workspaceButtonHoverBorder,
                 }}
               >
-                <HStack spacing={3} justify='space-between' minW={0}>
+                <Flex align='center' flex='1' minW={0} gap={2}>
                   <Text
+                    flexShrink={0}
                     color={workspaceLabelColor}
                     fontSize='xs'
                     fontWeight='medium'
@@ -837,14 +838,17 @@ export default function DashboardShell({
                     Workspace
                   </Text>
                   <Text
+                    flex='1'
+                    textAlign='center'
                     color={workspaceNameColor}
                     fontSize='sm'
                     fontWeight='semibold'
                     noOfLines={1}
+                    px={1}
                   >
                     {dashboardWorkspace?.name || workspaceLabel}
                   </Text>
-                </HStack>
+                </Flex>
               </MenuButton>
               <Portal>
                 <MenuList {...menuListProps}>

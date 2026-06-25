@@ -852,7 +852,10 @@ function DuplicateTokenModal({
     closeButtonProps,
     outlineButtonProps,
     primaryButtonProps,
+    tokens,
   } = useDashboardModalProps();
+
+  const existing = duplicateTokenInfo?.existing_token;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
@@ -871,62 +874,44 @@ function DuplicateTokenModal({
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
           <VStack spacing={4} align='stretch'>
-            <Alert status='info' borderRadius='md'>
+            <Alert status='info' borderRadius='12px'>
               <AlertIcon />
               <AlertDescription>
                 {duplicateTokenInfo?.message ||
                   'A token with the same name and location already exists in this workspace.'}
               </AlertDescription>
             </Alert>
-            {duplicateTokenInfo?.existing_token && (
-              <Box
-                p={4}
-                bg='gray.100'
-                _dark={{
-                  bg: 'orange.900',
-                  borderColor: 'orange.500',
-                  color: 'orange.100',
-                }}
-                borderRadius='md'
-                border='1px solid'
-                borderColor='gray.200'
-                color='gray.700'
-              >
-                <Text
-                  fontWeight='bold'
-                  mb={2}
-                  color='gray.800'
-                  _dark={{ color: 'orange.200' }}
-                >
-                  Existing token:
-                </Text>
-                <Text>
-                  <Text as='span' fontWeight='semibold'>
-                    Name:
-                  </Text>{' '}
-                  {duplicateTokenInfo.existing_token.name}
-                </Text>
-                {duplicateTokenInfo.existing_token.location && (
-                  <Box>
-                    <Text as='span' fontWeight='semibold'>
-                      Locations:
-                    </Text>
-                    <Text whiteSpace='pre-wrap' wordBreak='break-all'>
-                      {duplicateTokenInfo.existing_token.location}
-                    </Text>
-                  </Box>
+            {existing && (
+              <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                <DashboardModalSectionTitle tokens={tokens}>
+                  Existing Token
+                </DashboardModalSectionTitle>
+                <DashboardModalFieldCard label='Name' tokens={tokens}>
+                  <DashboardModalValue tokens={tokens}>
+                    {existing.name}
+                  </DashboardModalValue>
+                </DashboardModalFieldCard>
+                {existing.location && (
+                  <DashboardModalFieldCard
+                    label='Locations'
+                    tokens={tokens}
+                    gridColumn={{ base: '1', sm: '1 / -1' }}
+                  >
+                    <DashboardModalValue tokens={tokens}>
+                      {existing.location}
+                    </DashboardModalValue>
+                  </DashboardModalFieldCard>
                 )}
-                {duplicateTokenInfo.existing_token.expiration && (
-                  <Text>
-                    <Text as='span' fontWeight='semibold'>
-                      Expires:
-                    </Text>{' '}
-                    {formatDate(duplicateTokenInfo.existing_token.expiration)}
-                  </Text>
+                {existing.expiration && (
+                  <DashboardModalFieldCard label='Expires' tokens={tokens}>
+                    <DashboardModalValue tokens={tokens}>
+                      {formatDate(existing.expiration)}
+                    </DashboardModalValue>
+                  </DashboardModalFieldCard>
                 )}
-              </Box>
+              </SimpleGrid>
             )}
-            <Text fontSize='sm' color='gray.600' _dark={{ color: 'gray.200' }}>
+            <Text fontSize='sm' color={tokens.muted} lineHeight='1.5'>
               Creating this token will update the existing one with the new
               information you provided.
             </Text>

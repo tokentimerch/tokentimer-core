@@ -58,6 +58,22 @@ describe("controlCenterStats helpers", () => {
     assert.equal(broad.scopeCount, 4);
   });
 
+  it("scorePrivileges treats underscore-separated scopes as high privilege", () => {
+    const fullAccess = buildPrivilegeHighlight(
+      { id: 2, name: "Deploy key", type: "api_key", category: "key_secret" },
+      "full_access",
+    );
+    assert.ok(fullAccess);
+    assert.equal(fullAccess.level, "high");
+
+    const adminAccess = buildPrivilegeHighlight(
+      { id: 3, name: "Admin key", type: "api_key", category: "key_secret" },
+      "admin_access",
+    );
+    assert.ok(adminAccess);
+    assert.equal(adminAccess.level, "high");
+  });
+
   it("buildPrivilegeHighlight returns ranked metadata", () => {
     const highlight = buildPrivilegeHighlight(
       {
