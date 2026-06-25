@@ -19,3 +19,15 @@ Status values: Proposed, Accepted, Superseded, Deprecated. Date each status chan
 
 These skeletons freeze direction so M1/M2 can proceed in parallel. Each carries
 TODO markers for the content that is finalized during M0.
+
+Two things are frozen at different strengths, on purpose:
+
+- The **contract surface** (route namespaces, auth model, JSON schemas, OpenAPI
+  skeletons) is frozen now (`status: frozen-skeleton`) so cloud, enterprise, the
+  executor, and the agent build against a stable shape without route churn.
+- The **ADR decisions** stay `Proposed` until **M0 ratification**, when they move
+  to `Accepted` and their TODOs are resolved. From M0 onward, changing a frozen
+  decision is a new/updated ADR, not a silent code edit.
+
+In short: Phase 0 is a pre-M0 scaffold that freezes the wire/contract shape while
+the rationale is still being ratified.

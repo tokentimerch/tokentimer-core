@@ -113,11 +113,27 @@ function containsPrivateKeyMaterial(value, depth = 0) {
  */
 function redactPrivateKeyMaterial(value) {
   if (typeof value !== "string") return value;
-  if (!PRIVATE_KEY_PEM_PATTERN.test(value)) return value;
-  return value.replace(
-    PRIVATE_KEY_PEM_BLOCK_PATTERN,
-    PRIVATE_KEY_REDACTION_PLACEHOLDER,
-  );
+  if (PRIVATE_KEY_PEM_PATTERN.test(value)) {
+    return value.replace(
+      PRIVATE_KEY_PEM_BLOCK_PATTERN,
+      PRIVATE_KEY_REDACTION_PLACEHOLDER,
+    );
+  }
+  // Detection sees through base64-wrapped PEM, so redaction must too. The
+  // decoded key spans the entire blob, so the whole value is replaced.
+  if (looksBase64(value)) {
+    try {
+      const decoded = Buffer.from(value.replace(/\s+/g, ""), "base64").toString(
+        "utf8",
+      );
+      if (PRIVATE_KEY_PEM_PATTERN.test(decoded)) {
+        return PRIVATE_KEY_REDACTION_PLACEHOLDER;
+      }
+    } catch (_err) {
+      // not valid base64 text; ignore
+    }
+  }
+  return value;
 }
 
 /**
@@ -130,9 +146,11 @@ function redactPrivateKeyMaterial(value) {
  * @param {*} value
  * @returns {*} redacted copy
  */
-function redactGenericSecrets(value, depth = 0) {
+function redactGenericSecrets(value, depth = 0, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
-  if (depth > MAX_SCAN_DEPTH) return value;
+  // Bail with a marker (never the original subtree) so a hostile or accidental
+  // deep nesting cannot defeat redaction by sitting below the scan floor.
+  if (depth > MAX_SCAN_DEPTH) return "[REDACTED:max-depth]";
 
   if (typeof value === "string") {
     return redactPrivateKeyMaterial(value).replace(
@@ -142,17 +160,28 @@ function redactGenericSecrets(value, depth = 0) {
     );
   }
 
-  if (Array.isArray(value)) {
-    return value.map((item) => redactGenericSecrets(item, depth + 1));
+  if (Buffer.isBuffer(value)) {
+    return stringContainsPrivateKey(value.toString("utf8"))
+      ? PRIVATE_KEY_REDACTION_PLACEHOLDER
+      : value;
   }
 
   if (typeof value === "object") {
-    if (Buffer.isBuffer(value)) return value;
-    const out = {};
-    for (const [key, item] of Object.entries(value)) {
-      out[key] = redactGenericSecrets(item, depth + 1);
+    // Path-based cycle guard: a cyclic reference returns a marker, never the
+    // original (which could leak unredacted children of an evidence object).
+    if (seen.has(value)) return "[REDACTED:circular]";
+    seen.add(value);
+    let result;
+    if (Array.isArray(value)) {
+      result = value.map((item) => redactGenericSecrets(item, depth + 1, seen));
+    } else {
+      result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = redactGenericSecrets(item, depth + 1, seen);
+      }
     }
-    return out;
+    seen.delete(value);
+    return result;
   }
 
   return value;

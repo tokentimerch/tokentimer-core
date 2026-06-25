@@ -20,8 +20,8 @@
       "description": "Owning workspace identifier."
     },
     "tokenId": {
-      "type": ["string", "null"],
-      "description": "Optional link to the underlying tokens row this certificate maps to."
+      "type": ["integer", "null"],
+      "description": "Optional link to the underlying tokens row (tokens.id is INTEGER) this certificate maps to."
     },
     "status": {
       "type": "string",

@@ -24,6 +24,9 @@ Legend: [A]=suited to Dev A, [B]=suited to Dev B, dep=depends on.
   and returns 422 `PRIVATE_KEY_MATERIAL_REJECTED`; mount on certops write routes.
 - AC (T1): nested/base64-wrapped private key in any field -> 422; certificate /
   public key passes. Integration test added.
+- AC (T1, detector hardening): extend `secretMaterial.js` with binary PKCS#12/PFX
+  (.p12/.pfx) DER sniffing (deferred from Phase 0) plus adversarial fixtures; the
+  plan forbids PKCS#12/PFX bundles, so a `.p12` body must be rejected (422).
 
 ### CERTOPS-M1-3 GET/POST certificates + GET by id [A]
 - dep: M1-1, M1-2.
@@ -95,16 +98,27 @@ Legend: [A]=suited to Dev A, [B]=suited to Dev B, dep=depends on.
   (`saaSOnly`).
 - AC (T12): frozen workspace -> 403; free plan over CertOps gate -> 402.
 
+### CERTOPS-M2-8 Dedicated machine-token / agent rate limiter [B]
+- dep: M2-2, cloud overlay verification.
+- Add a limiter keyed by token prefix / agent id / workspace id (clone the shape
+  of `createApiLimiter`), mounted before the executor and agent handlers,
+  independent of the session-user baseline limiter. Cloud's authenticated `/api`
+  limiter is keyed by `user-${id}`, which machine (token/agent) calls do not
+  have, so without this they ride the authenticated-user path unbounded.
+- AC (T10/abuse): executor and agent traffic is limited per token/agent/workspace,
+  not per user; high-volume machine traffic cannot bypass limits via the
+  session-user keying. Limiter is enforced even when no session user is present.
+
 ## Dependency order (critical path)
 
 M1-1 -> M1-2 -> M1-3 -> {M1-4, M1-5}; M1-6 parallel.
-M2-1 -> M2-2 -> M2-3 -> M2-4; M2-5 -> M2-6; M2-7 after M1-3.
+M2-1 -> M2-2 -> M2-3 -> M2-4; M2-5 -> M2-6; M2-7 after M1-3; M2-8 after M2-2.
 
 ## Parallelization
 
 - Dev A owns the data/contract spine: M1-1, M1-3, M1-5, M2-1, M2-3.
 - Dev B owns the safety boundary and overlays: M1-2, M1-4, M1-6, M2-2, M2-5,
-  M2-6, M2-7. M2-4 either.
+  M2-6, M2-7, M2-8. M2-4 either.
 - Overlap is minimized: A defines tables/signing; B owns rejection/auth/redaction
   and cloud gating. Shared touch points (`secretMaterial.js`, contracts) are
   frozen in Phase 0.

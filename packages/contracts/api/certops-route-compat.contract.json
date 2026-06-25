@@ -23,13 +23,22 @@
     },
     "agent": {
       "prefix": "/api/v1/certops/agent",
-      "auth": "certOpsTokenAuth",
+      "auth": "split-by-route",
       "notes": [
         "Outbound-only agent polling surface (M4). The control plane never connects to agents.",
-        "Scoped API-token (bearer) auth; CSRF-exempt.",
-        "Frozen in Phase 0 to reserve the namespace; bodies specified in M4."
+        "Enrollment and steady state use different credentials, by design.",
+        "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
+        "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
+        "All routes CSRF-exempt (token-authenticated, non-cookie). Frozen in Phase 0 to reserve the namespace; bodies specified in M4."
       ]
     }
+  },
+  "routeAuth": {
+    "/api/v1/certops/executor/events": "certOpsTokenAuth",
+    "/api/v1/certops/agent/register": "agentBootstrapTokenAuth",
+    "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
+    "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
+    "/api/v1/certops/agent/jobs/results": "agentCredentialAuth"
   },
   "guarantees": {
     "stableRoutes": [

@@ -18,8 +18,16 @@ path, or it would break the zero-custody invariant.
   or transmits `tls.key`.
 - The controller reports public material and status as evidence to the control
   plane; key material stays in the cluster.
-- The controller ships the first Helm RBAC templates and is scoped to the
-  minimum verbs needed (no blanket Secret read).
+- The controller ships the first Helm RBAC templates, scoped to the minimum
+  verbs needed. Note the platform limitation: Kubernetes RBAC cannot restrict
+  access to individual data keys inside a `Secret`, so a controller able to
+  `get` a Secret can technically read both `tls.crt` and `tls.key`. RBAC
+  minimizes Secret access; it cannot prove per-key denial.
+- Per-key non-access is therefore enforced by a strict read hierarchy (prefer
+  Certificate/CertificateRequest status, then annotations, then `tls.crt` only),
+  by code-level enforcement that never reads/deserializes/logs/transmits
+  `tls.key`, by tests asserting that, and by the shared detector scanning
+  everything the controller reports upstream.
 
 ## Alternatives considered
 
@@ -28,6 +36,8 @@ path, or it would break the zero-custody invariant.
 
 ## Consequences
 
-- RBAC must be narrow enough to prove the controller cannot read `tls.key`.
+- RBAC narrows but cannot prove per-key denial; the load-bearing proof is the
+  test suite showing controller code never reads/deserializes/logs/transmits
+  `tls.key`, plus detector scanning of all upstream reports.
 - TODO (M8): exact RBAC verbs/resources, controller reconcile model, Helm chart
   layout, and how status maps to CertOps evidence.

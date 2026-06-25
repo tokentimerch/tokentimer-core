@@ -33,7 +33,7 @@ Adopt the threat / mitigation table below. Every mitigation must have a test.
 | T6 | Clock skew used to widen validity | Reported clock offset; agent rejects out-of-window | Job outside `[issuedAt, expiresAt]` (offset-adjusted) is rejected |
 | T7 | Control plane over-reaches agent | Agent-local allowlists win | Job referencing a non-allowlisted command/path/CA/DNS zone is refused and reported as evidence |
 | T8 | DNS-01 credentials centralized | Credentials agent-local only; control plane stores references | No DNS provider secret is ever stored control-plane side |
-| T9 | k8s controller reads `tls.key` | Read `tls.crt` only; narrow RBAC | RBAC denies Secret `tls.key` access; controller code paths never read it |
+| T9 | k8s controller reads `tls.key` | Read hierarchy (status > annotations > `tls.crt`); narrow RBAC; code-level non-access; detector scan | RBAC minimizes Secret access (cannot prove per-key denial); tests prove controller code never reads/deserializes/logs/transmits `tls.key` |
 | T10 | Stolen agent token reused broadly | Scoped tokens; bounded scope per workspace/agent | A token scoped to workspace A cannot act on workspace B |
 | T11 | Compromised agent supply chain | Signed/checksummed images and packages | Release artifacts carry verifiable checksums/signatures |
 | T12 | Frozen/over-quota workspace still executes | Fail-closed plan/freeze guards (cloud) | Frozen workspace requests return 403 `WORKSPACE_FROZEN`; over-limit returns 402 |

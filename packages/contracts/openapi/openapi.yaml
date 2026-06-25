@@ -3163,9 +3163,9 @@ paths:
       tags: [CertOps Agent]
       summary: Register an agent
       operationId: createCertOpsAgentRegistration
-      description: Outbound-only agent registration. Scoped-token authenticated. Frozen namespace skeleton; body schema lands in M4.
+      description: Outbound-only agent enrollment using a single-use bootstrap token; returns a per-agent credential shown once. Frozen namespace skeleton; body schema lands in M4.
       security:
-        - certOpsTokenAuth: []
+        - agentBootstrapTokenAuth: []
       requestBody:
         required: true
         content:
@@ -3190,9 +3190,9 @@ paths:
       tags: [CertOps Agent]
       summary: Agent heartbeat
       operationId: createCertOpsAgentHeartbeat
-      description: Agent heartbeat including reported clock offset (clock-drift detection). Scoped-token authenticated. Frozen skeleton; body schema lands in M4.
+      description: Agent heartbeat including reported clock offset (clock-drift detection). Per-agent credential authenticated. Frozen skeleton; body schema lands in M4.
       security:
-        - certOpsTokenAuth: []
+        - agentCredentialAuth: []
       requestBody:
         required: true
         content:
@@ -3217,9 +3217,9 @@ paths:
       tags: [CertOps Agent]
       summary: Claim pending jobs
       operationId: createCertOpsAgentJobClaim
-      description: Agent polls for and claims signed jobs. Scoped-token authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) in M4.
+      description: Agent polls for and claims signed jobs. Per-agent credential authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) in M4.
       security:
-        - certOpsTokenAuth: []
+        - agentCredentialAuth: []
       requestBody:
         required: true
         content:
@@ -3244,9 +3244,9 @@ paths:
       tags: [CertOps Agent]
       summary: Report job results and evidence
       operationId: createCertOpsAgentJobResult
-      description: Agent reports job results and evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands in M4.
+      description: Agent reports job results and evidence metadata. Per-agent credential authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands in M4.
       security:
-        - certOpsTokenAuth: []
+        - agentCredentialAuth: []
       requestBody:
         required: true
         content:
@@ -3283,7 +3283,15 @@ components:
     certOpsTokenAuth:
       type: http
       scheme: bearer
-      description: Scoped CertOps API token (bearer) used by the executor and the outbound agent. Never a cookie; CSRF-exempt.
+      description: Scoped CertOps API token (bearer) used by the executor. Never a cookie; CSRF-exempt.
+    agentBootstrapTokenAuth:
+      type: http
+      scheme: bearer
+      description: Single-use, hashed, expiring bootstrap enrollment token used only by POST /api/v1/certops/agent/register. Exchanged for a per-agent credential at registration.
+    agentCredentialAuth:
+      type: http
+      scheme: bearer
+      description: Per-agent credential (bearer) issued at registration, used for agent heartbeat, job claim, and result/evidence calls. CSRF-exempt. Not valid for registration.
   parameters:
     workspaceIdParam:
       in: path
