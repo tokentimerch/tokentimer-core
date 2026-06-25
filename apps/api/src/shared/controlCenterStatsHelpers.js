@@ -61,6 +61,7 @@ function formatSourceEntry(categoryKey) {
 const HIGH_PRIVILEGE_PATTERNS = [
   { pattern: /\badmin\b/i, weight: 50 },
   { pattern: /\bowner\b/i, weight: 40 },
+  { pattern: /\bfull access\b/i, weight: 35 },
   { pattern: /\bdelete\b/i, weight: 25 },
   { pattern: /\bwrite\b/i, weight: 20 },
   { pattern: /\bmanage\b/i, weight: 20 },
@@ -89,7 +90,10 @@ function parsePrivilegeScopes(text) {
 function scorePrivileges(text) {
   const scopes = parsePrivilegeScopes(text);
   let score = scopes.length * 2;
-  const joined = scopes.join(" ");
+  // JS \b treats underscore as a word character, so tokens like full_access
+  // and admin_access never match \bfull\b or \badmin\b. Normalize separators
+  // before keyword scoring.
+  const joined = scopes.join(" ").replace(/[_-]+/g, " ");
 
   for (const { pattern, weight } of HIGH_PRIVILEGE_PATTERNS) {
     if (pattern.test(joined)) {

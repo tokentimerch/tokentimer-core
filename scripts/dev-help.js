@@ -34,7 +34,17 @@ FULL STACK IN DOCKER (all services containerized)
       Postgres + API + worker + dashboard all in containers.
 
   pnpm docker:down
-      Stop deploy/compose/docker-compose.yml services.
+      Stop all local Docker infra: full stack, dev stack, and postgres-only
+      (pnpm dev / dev:postgres). Frees ports 4000, 5173, 5432.
+
+  pnpm docker:down:stack
+      Stop deploy/compose/docker-compose.yml only.
+
+  pnpm docker:down:dev
+      Stop deploy/compose/docker-compose.dev.yml only.
+
+  pnpm docker:down:all
+      Same as docker:down (alias).
 
   pnpm docker:build
       Build deploy/compose/docker-compose.yml images without starting.
