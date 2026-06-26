@@ -165,10 +165,10 @@ describe("CertOps public certificate parser", () => {
     );
   });
 
-  it("does not accept PKCS#12/PFX-like binary input as a public certificate", () => {
+  it("rejects PKCS#12/PFX-like binary input as key material", () => {
     const pfxLike = Buffer.from([0x30, 0x82, 0x01, 0x0a, 0x02, 0x01, 0x03]);
 
-    assertParserCode(pfxLike, CERTOPS_CERTIFICATE_PARSE_FAILED);
+    assertParserCode(pfxLike, PRIVATE_KEY_MATERIAL_REJECTED);
   });
 
   it("allows a public certificate but rejects the same payload when a private key is present", () => {
