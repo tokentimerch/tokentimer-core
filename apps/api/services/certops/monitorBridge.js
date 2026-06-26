@@ -33,8 +33,16 @@ function normalizeFingerprintSha256(value) {
   const text = normalizeText(value);
   if (!text) return null;
   const compact = text.replace(/[:\s-]/g, "").toLowerCase();
-  if (/^[a-f0-9]{32,}$/.test(compact)) return compact;
-  return text.toLowerCase();
+  if (/^[a-f0-9]{64}$/.test(compact)) return compact;
+  return null;
+}
+
+function firstSha256Fingerprint(...values) {
+  for (const value of values) {
+    const normalized = normalizeFingerprintSha256(value);
+    if (normalized) return normalized;
+  }
+  return null;
 }
 
 function commonNameFromSubject(subject) {
@@ -63,11 +71,12 @@ function certificateFromObservation(options) {
   const serialNumber = normalizeText(
     input.serialNumber || input.serial_number || input.ssl_serial,
   );
-  const fingerprintSha256 = normalizeFingerprintSha256(
-    input.fingerprintSha256 ||
-      input.fingerprint256 ||
-      input.fingerprint ||
-      input.ssl_fingerprint,
+  const fingerprintSha256 = firstSha256Fingerprint(
+    input.fingerprintSha256,
+    input.fingerprint_sha256,
+    input.fingerprint256,
+    input.fingerprint,
+    input.ssl_fingerprint,
   );
   const notBefore = normalizeDate(
     input.notBefore || input.validFrom || input.ssl_valid_from,

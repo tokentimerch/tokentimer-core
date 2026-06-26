@@ -54,6 +54,7 @@ const { lookupDomain, normalizeRootDomain, parseDiscoveryLines } =
   ]);
 const {
   bridgeEndpointCertificateObservation,
+  normalizeFingerprintSha256,
 } = requireFirstExisting(["apps/api/services/certops/monitorBridge"]);
 const { pool } = requireFirstExisting(["apps/api/db/database"]);
 
@@ -63,6 +64,7 @@ const API_FINGERPRINT = "b".repeat(64);
 const API_FINGERPRINT_COLON = API_FINGERPRINT.match(/../g)
   .join(":")
   .toUpperCase();
+const SHA1_FINGERPRINT = "d".repeat(40);
 
 function walkKeys(value, visit) {
   if (Array.isArray(value)) {
@@ -251,6 +253,14 @@ describe("Domain checker discovery service integration", function () {
     expect(source).to.include("DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX");
     expect(source).to.include("DOMAIN_CHECKER_RATE_LIMITED");
   });
+
+  it("normalizes only SHA-256 fingerprints for the CertOps bridge", () => {
+    expect(normalizeFingerprintSha256(API_FINGERPRINT_COLON)).to.equal(
+      API_FINGERPRINT,
+    );
+    expect(normalizeFingerprintSha256(SHA1_FINGERPRINT)).to.equal(null);
+    expect(normalizeFingerprintSha256("not-a-fingerprint")).to.equal(null);
+  });
 });
 
 describe("Domain checker API import integration", function () {
@@ -380,6 +390,17 @@ describe("Domain checker API import integration", function () {
         sources: ["subfinder"],
       },
       {
+        id: "disc-sha1",
+        name: "sha1.example.com",
+        domains: ["sha1.example.com"],
+        expiration: "2099-02-06",
+        issuer: "Integration Test CA 3",
+        subject: "CN=sha1.example.com",
+        serialNumber: "serial-sha1",
+        fingerprint: SHA1_FINGERPRINT,
+        sources: ["subfinder"],
+      },
+      {
         id: "disc-outside",
         name: "outside.invalid",
         domains: ["outside.invalid"],
@@ -409,13 +430,13 @@ describe("Domain checker API import integration", function () {
       })
       .expect(201);
 
-    expect(response.body.imported).to.have.length(2);
+    expect(response.body.imported).to.have.length(3);
     expect(response.body.skipped).to.have.length(2);
     expect(response.body.skippedCounts).to.deep.equal({
       duplicate: 0,
       invalid: 2,
     });
-    expect(response.body.monitors).to.deep.equal({ created: 2, existing: 0 });
+    expect(response.body.monitors).to.deep.equal({ created: 3, existing: 0 });
     expect(
       response.body.skipped.map((entry) => entry.detail).sort(),
     ).to.deep.equal([
@@ -431,7 +452,7 @@ describe("Domain checker API import integration", function () {
         ORDER BY name`,
       [tokenIds],
     );
-    expect(tokenRows.rows).to.have.length(2);
+    expect(tokenRows.rows).to.have.length(3);
     expect(tokenRows.rows.every((row) => row.type === "ssl_cert")).to.equal(
       true,
     );
@@ -452,11 +473,19 @@ describe("Domain checker API import integration", function () {
          FROM domain_monitors
         WHERE workspace_id = $1 AND url = ANY($2::text[])
         ORDER BY url`,
-      [workspaceId, ["https://api.example.com", "https://www.example.com"]],
+      [
+        workspaceId,
+        [
+          "https://api.example.com",
+          "https://sha1.example.com",
+          "https://www.example.com",
+        ],
+      ],
     );
-    expect(monitors.rows).to.have.length(2);
+    expect(monitors.rows).to.have.length(3);
     expect(monitors.rows.map((row) => row.url)).to.deep.equal([
       "https://api.example.com",
+      "https://sha1.example.com",
       "https://www.example.com",
     ]);
     expect(
@@ -503,9 +532,16 @@ describe("Domain checker API import integration", function () {
         WHERE ci.workspace_id = $1
           AND ct.url = ANY($2::text[])
         ORDER BY ct.url`,
-      [workspaceId, ["https://api.example.com", "https://www.example.com"]],
+      [
+        workspaceId,
+        [
+          "https://api.example.com",
+          "https://sha1.example.com",
+          "https://www.example.com",
+        ],
+      ],
     );
-    expect(certopsRows.rows).to.have.length(2);
+    expect(certopsRows.rows).to.have.length(3);
 
     const importedTokenByName = Object.fromEntries(
       response.body.imported.map((entry) => [entry.name, entry.tokenId]),
@@ -519,8 +555,17 @@ describe("Domain checker API import integration", function () {
     expect(certopsByUrl["https://www.example.com"].fingerprint_sha256).to.equal(
       WWW_FINGERPRINT,
     );
+    expect(certopsByUrl["https://sha1.example.com"].fingerprint_sha256).to.equal(
+      null,
+    );
+    expect(
+      certopsByUrl["https://sha1.example.com"].observed_fingerprint_sha256,
+    ).to.equal(null);
     expect(certopsByUrl["https://api.example.com"].token_id).to.equal(
       importedTokenByName["api.example.com"],
+    );
+    expect(certopsByUrl["https://sha1.example.com"].token_id).to.equal(
+      importedTokenByName["sha1.example.com"],
     );
     expect(certopsByUrl["https://www.example.com"].token_id).to.equal(
       importedTokenByName["www.example.com"],
@@ -609,15 +654,15 @@ describe("Domain checker API import integration", function () {
     const metadata = normalizeMetadata(audit.rows[0].metadata);
     expect(metadata.domain).to.equal("example.com");
     expect(metadata.source).to.equal("subfinder");
-    expect(metadata.submitted).to.equal(4);
-    expect(metadata.imported).to.equal(2);
+    expect(metadata.submitted).to.equal(5);
+    expect(metadata.imported).to.equal(3);
     expect(metadata.skipped).to.equal(2);
     expect(metadata.skipped_invalid).to.equal(2);
     expect(metadata.skipped_duplicate).to.equal(0);
     expect(metadata.skipped_unreachable).to.equal(0);
     expect(metadata.skipped_other_invalid).to.equal(2);
     expect(metadata.create_monitors).to.equal(true);
-    expect(metadata.monitors_created).to.equal(2);
+    expect(metadata.monitors_created).to.equal(3);
     expect(metadata.monitor_health_check_enabled).to.equal(false);
     expect(metadata.monitor_check_interval).to.equal("daily");
     expect(metadata.monitor_alert_after_failures).to.equal(3);
