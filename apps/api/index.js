@@ -594,6 +594,8 @@ app.use(require("./routes/alerts"));
 app.use(require("./routes/account"));
 // --- INTEGRATIONS (extracted to routes/integrations.js) ---
 app.use(require("./routes/integrations"));
+// --- CERTOPS (extracted to routes/certops.js) ---
+app.use(require("./routes/certops"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 

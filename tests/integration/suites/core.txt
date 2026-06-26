@@ -85,6 +85,7 @@ tests/integration/audit-system-admin-org-scope.test.js
 
 # Schema and utilities
 tests/integration/certops-migration.test.js
+tests/integration/certops-inventory.test.js
 tests/integration/database-schema.test.js
 tests/integration/frontend-integration.test.js
 tests/integration/email-content-formatting.test.js
