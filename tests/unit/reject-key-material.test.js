@@ -5,8 +5,9 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {
+  CERTOPS_KEY_MATERIAL_REJECTED,
   PRIVATE_KEY_MATERIAL_REJECTED,
-  rejectKeyMaterial,
+  createRejectKeyMaterialMiddleware,
 } = require(
   path.resolve(__dirname, "../../apps/api/middleware/reject-key-material.js"),
 );
@@ -25,31 +26,52 @@ function fakePkcs12Buffer() {
   ]);
 }
 
-function runMiddleware(body) {
+const WORKSPACE_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+async function runMiddleware(body, options = {}) {
   let statusCode = null;
   let responseBody = null;
   let nextCalled = false;
-  const req = { body };
+  const auditEvents = [];
+  const order = [];
+  const req = {
+    body,
+    method: "POST",
+    params: { id: WORKSPACE_ID },
+    path: "/api/v1/workspaces/:id/certops/imports",
+    user: { id: 123 },
+    ...(options.req || {}),
+  };
+  const auditWriter =
+    options.auditWriter ||
+    (async (event) => {
+      order.push("audit");
+      auditEvents.push(event);
+    });
   const res = {
     status(code) {
+      order.push("status");
       statusCode = code;
       return this;
     },
     json(payload) {
+      order.push("json");
       responseBody = payload;
       return this;
     },
   };
+  const middleware = createRejectKeyMaterialMiddleware({ auditWriter });
 
-  rejectKeyMaterial(req, res, () => {
+  await middleware(req, res, () => {
+    order.push("next");
     nextCalled = true;
   });
 
-  return { nextCalled, responseBody, statusCode };
+  return { auditEvents, nextCalled, order, responseBody, statusCode };
 }
 
-function assertRejected(body) {
-  const result = runMiddleware(body);
+async function assertRejected(body, options) {
+  const result = await runMiddleware(body, options);
 
   assert.equal(result.nextCalled, false);
   assert.equal(result.statusCode, 422);
@@ -57,24 +79,28 @@ function assertRejected(body) {
     error: "Private key material is not accepted in CertOps requests",
     code: PRIVATE_KEY_MATERIAL_REJECTED,
   });
+  if (options?.expectAuditEvent !== false) {
+    assert.equal(result.auditEvents.length, 1);
+  }
   return result;
 }
 
-function assertAllowed(body) {
-  const result = runMiddleware(body);
+async function assertAllowed(body) {
+  const result = await runMiddleware(body);
 
   assert.equal(result.nextCalled, true);
   assert.equal(result.statusCode, null);
   assert.equal(result.responseBody, null);
+  assert.deepEqual(result.auditEvents, []);
 }
 
 describe("rejectKeyMaterial middleware", () => {
-  it("rejects a direct private key field", () => {
-    assertRejected({ certificate: fakePem("RSA PRIVATE KEY") });
+  it("rejects a direct private key field", async () => {
+    await assertRejected({ certificate: fakePem("RSA PRIVATE KEY") });
   });
 
-  it("rejects nested private key material", () => {
-    assertRejected({
+  it("rejects nested private key material", async () => {
+    await assertRejected({
       import: {
         notes: "nested payload",
         certificate: { pem: fakePem("EC PRIVATE KEY") },
@@ -82,53 +108,100 @@ describe("rejectKeyMaterial middleware", () => {
     });
   });
 
-  it("rejects array-contained private key material", () => {
-    assertRejected({
+  it("rejects array-contained private key material", async () => {
+    await assertRejected({
       certificates: [PUBLIC_CERTIFICATE_PEM, fakePem("PRIVATE KEY")],
     });
   });
 
-  it("rejects base64-wrapped private key PEM", () => {
+  it("rejects base64-wrapped private key PEM", async () => {
     const wrapped = Buffer.from(fakePem("ENCRYPTED PRIVATE KEY")).toString(
       "base64",
     );
 
-    assertRejected({ attachment: wrapped });
+    await assertRejected({ attachment: wrapped });
   });
 
-  it("rejects PKCS#12/PFX-like binary request bodies", () => {
-    assertRejected(fakePkcs12Buffer());
+  it("rejects PKCS#12/PFX-like binary request bodies", async () => {
+    await assertRejected(fakePkcs12Buffer());
   });
 
-  it("rejects base64-wrapped PKCS#12/PFX-like payloads", () => {
-    assertRejected({ bundle: fakePkcs12Buffer().toString("base64") });
+  it("rejects base64-wrapped PKCS#12/PFX-like payloads", async () => {
+    await assertRejected({ bundle: fakePkcs12Buffer().toString("base64") });
   });
 
-  it("allows public certificate PEM input", () => {
-    assertAllowed({ certificatePem: PUBLIC_CERTIFICATE_PEM });
+  it("allows public certificate PEM input", async () => {
+    await assertAllowed({ certificatePem: PUBLIC_CERTIFICATE_PEM });
   });
 
-  it("allows public key PEM input", () => {
-    assertAllowed({ publicKeyPem: PUBLIC_KEY_PEM });
+  it("allows public key PEM input", async () => {
+    await assertAllowed({ publicKeyPem: PUBLIC_KEY_PEM });
   });
 
-  it("allows malformed non-key input", () => {
-    assertAllowed({
+  it("allows malformed non-key input", async () => {
+    await assertAllowed({
       certificatePem: "not a certificate and not private key material",
     });
   });
 
-  it("does not echo private key material in the response", () => {
+  it("records a synchronous audit event without alert_queue dependency", async () => {
+    const result = await assertRejected({
+      payload: fakePem("RSA PRIVATE KEY"),
+    });
+    const auditEvent = result.auditEvents[0];
+
+    assert.deepEqual(result.order, ["audit", "status", "json"]);
+    assert.equal(auditEvent.action, CERTOPS_KEY_MATERIAL_REJECTED);
+    assert.equal(auditEvent.actorUserId, 123);
+    assert.equal(auditEvent.subjectUserId, 123);
+    assert.equal(auditEvent.targetType, "certops_request");
+    assert.equal(auditEvent.workspaceId, WORKSPACE_ID);
+    assert.equal(auditEvent.metadata.code, PRIVATE_KEY_MATERIAL_REJECTED);
+    assert.equal(auditEvent.metadata.method, "POST");
+    assert.equal(auditEvent.metadata.body_type, "object");
+    assert.equal(JSON.stringify(auditEvent).includes("alert_queue"), false);
+    assert.equal(JSON.stringify(auditEvent).includes(FAKE_PRIVATE_BODY), false);
+  });
+
+  it("records tokenless rejection events without requiring a user or alert queue", async () => {
+    const result = await assertRejected(
+      { payload: fakePem("RSA PRIVATE KEY") },
+      { req: { user: null } },
+    );
+    const auditEvent = result.auditEvents[0];
+
+    assert.equal(auditEvent.action, CERTOPS_KEY_MATERIAL_REJECTED);
+    assert.equal(auditEvent.actorUserId, null);
+    assert.equal(auditEvent.subjectUserId, null);
+    assert.equal(auditEvent.workspaceId, WORKSPACE_ID);
+    assert.equal(JSON.stringify(auditEvent).includes("alert_queue"), false);
+  });
+
+  it("still rejects when audit recording fails", async () => {
+    const result = await assertRejected(
+      { payload: fakePem("RSA PRIVATE KEY") },
+      {
+        auditWriter: async () => {
+          throw new Error("audit unavailable");
+        },
+        expectAuditEvent: false,
+      },
+    );
+
+    assert.equal(result.statusCode, 422);
+  });
+
+  it("does not echo private key material in the response", async () => {
     const privateKey = fakePem("RSA PRIVATE KEY");
-    const result = assertRejected({ payload: privateKey });
+    const result = await assertRejected({ payload: privateKey });
     const serialized = JSON.stringify(result.responseBody);
 
     assert.equal(serialized.includes(privateKey), false);
     assert.equal(serialized.includes(FAKE_PRIVATE_BODY), false);
   });
 
-  it("does not introduce private-key-looking response fields", () => {
-    const result = assertRejected({ payload: fakePem("PRIVATE KEY") });
+  it("does not introduce private-key-looking response fields", async () => {
+    const result = await assertRejected({ payload: fakePem("PRIVATE KEY") });
     const responseKeys = Object.keys(result.responseBody);
 
     assert.deepEqual(responseKeys.sort(), ["code", "error"]);
