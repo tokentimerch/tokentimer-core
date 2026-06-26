@@ -7,6 +7,7 @@ const path = require("path");
 const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   containsPrivateKeyMaterial,
+  looksPkcs12Bundle,
   redactPrivateKeyMaterial,
   redactGenericSecrets,
 } = require(
@@ -18,6 +19,13 @@ const {
 const FAKE_BODY = "RkFLRS1OT1QtQS1SRUFMLUtFWQ==";
 const pem = (label) =>
   `-----BEGIN ${label}-----\n${FAKE_BODY}\n-----END ${label}-----`;
+
+function fakePkcs12Buffer() {
+  return Buffer.concat([
+    Buffer.from([0x30, 0x5c, 0x02, 0x01, 0x03]),
+    Buffer.alloc(89, 0),
+  ]);
+}
 
 const PRIVATE_KEY_LABELS = [
   "PRIVATE KEY", // PKCS#8
@@ -51,6 +59,19 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
 
   it("detects base64-wrapped private key PEM", () => {
     const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
+    assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
+  });
+
+  it("detects PKCS#12/PFX-like DER bundles", () => {
+    const pfxLike = fakePkcs12Buffer();
+
+    assert.strictEqual(looksPkcs12Bundle(pfxLike), true);
+    assert.strictEqual(containsPrivateKeyMaterial(pfxLike), true);
+  });
+
+  it("detects base64-wrapped PKCS#12/PFX-like DER bundles", () => {
+    const wrapped = fakePkcs12Buffer().toString("base64");
+
     assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
   });
 
@@ -108,6 +129,12 @@ describe("secretMaterial.redactPrivateKeyMaterial", () => {
     assert.ok(!out.includes(wrapped));
   });
 
+  it("redacts a base64-wrapped PKCS#12/PFX-like bundle to the placeholder", () => {
+    const wrapped = fakePkcs12Buffer().toString("base64");
+    const out = redactPrivateKeyMaterial(wrapped);
+    assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
   it("leaves non-key strings unchanged", () => {
     assert.strictEqual(redactPrivateKeyMaterial("plain text"), "plain text");
   });
@@ -139,6 +166,11 @@ describe("secretMaterial.redactGenericSecrets", () => {
 
   it("redacts a Buffer carrying private key material", () => {
     const out = redactGenericSecrets({ raw: Buffer.from(pem("PRIVATE KEY")) });
+    assert.strictEqual(out.raw, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
+  it("redacts a Buffer carrying PKCS#12/PFX-like material", () => {
+    const out = redactGenericSecrets({ raw: fakePkcs12Buffer() });
     assert.strictEqual(out.raw, PRIVATE_KEY_REDACTION_PLACEHOLDER);
   });
 

@@ -15,11 +15,11 @@
  *   - private key material  -> REJECT (hard 422 at the API boundary)
  *   - other generic secrets -> REDACT (so legitimate operational output is kept)
  *
- * Scope note (Phase 0): PEM private-key blocks (all common variants) and
- * base64-wrapped PEM are detected here. Binary PKCS#12/PFX (.p12/.pfx) DER
- * sniffing is deliberately deferred to M1 hardening; it cannot be reliably
- * distinguished from a DER certificate cheaply, and M1 adds dedicated fixtures.
- * Do not weaken these patterns without updating tests/unit/secretMaterial.test.js.
+ * Scope note: PEM private-key blocks (all common variants), base64-wrapped PEM,
+ * and PKCS#12/PFX-like DER bundles are detected here. PKCS#12/PFX detection is
+ * intentionally a conservative structural sniff for the PFX version field, not
+ * a full ASN.1 parser. Do not weaken these patterns without updating
+ * tests/unit/secretMaterial.test.js.
  */
 
 const PRIVATE_KEY_REDACTION_PLACEHOLDER = "[PRIVATE_KEY_REDACTED]";
@@ -56,6 +56,59 @@ function looksBase64(value) {
 }
 
 /**
+ * Returns the length of a DER TLV header, or null for unsupported encodings.
+ * This intentionally supports only definite lengths used by DER.
+ * @param {Buffer} value
+ * @returns {number|null}
+ */
+function derHeaderLength(value) {
+  if (!Buffer.isBuffer(value) || value.length < 2) return null;
+  const lengthByte = value[1];
+  if ((lengthByte & 0x80) === 0) return 2;
+
+  const lengthBytes = lengthByte & 0x7f;
+  if (lengthBytes === 0 || lengthBytes > 4) return null;
+  if (value.length < 2 + lengthBytes) return null;
+  return 2 + lengthBytes;
+}
+
+/**
+ * Detects a PKCS#12/PFX-like DER envelope. PFX begins with an outer SEQUENCE
+ * followed by INTEGER 3. X.509 certificates begin with an outer SEQUENCE
+ * followed by another SEQUENCE, so this avoids flagging DER certificates.
+ * @param {Buffer} value
+ * @returns {boolean}
+ */
+function looksPkcs12Bundle(value) {
+  if (!Buffer.isBuffer(value) || value.length < 7) return false;
+  if (value[0] !== 0x30) return false;
+
+  const headerLength = derHeaderLength(value);
+  if (headerLength === null || value.length < headerLength + 3) return false;
+
+  return (
+    value[headerLength] === 0x02 &&
+    value[headerLength + 1] === 0x01 &&
+    value[headerLength + 2] === 0x03
+  );
+}
+
+function base64DecodeIfLikely(value) {
+  if (!looksBase64(value)) return null;
+  try {
+    return Buffer.from(value.replace(/\s+/g, ""), "base64");
+  } catch (_err) {
+    return null;
+  }
+}
+
+function bufferContainsPrivateKey(value) {
+  if (!Buffer.isBuffer(value)) return false;
+  if (looksPkcs12Bundle(value)) return true;
+  return stringContainsPrivateKey(value.toString("utf8"));
+}
+
+/**
  * Detects private key material in a single string, including base64-wrapped PEM.
  * @param {string} value
  * @returns {boolean}
@@ -64,15 +117,10 @@ function stringContainsPrivateKey(value) {
   if (typeof value !== "string" || value.length === 0) return false;
   if (PRIVATE_KEY_PEM_PATTERN.test(value)) return true;
 
-  if (looksBase64(value)) {
-    try {
-      const decoded = Buffer.from(value.replace(/\s+/g, ""), "base64").toString(
-        "utf8",
-      );
-      if (PRIVATE_KEY_PEM_PATTERN.test(decoded)) return true;
-    } catch (_err) {
-      // not valid base64 text; ignore
-    }
+  const decoded = base64DecodeIfLikely(value);
+  if (decoded) {
+    if (looksPkcs12Bundle(decoded)) return true;
+    if (PRIVATE_KEY_PEM_PATTERN.test(decoded.toString("utf8"))) return true;
   }
   return false;
 }
@@ -89,7 +137,7 @@ function containsPrivateKeyMaterial(value, depth = 0) {
   if (typeof value === "string") return stringContainsPrivateKey(value);
 
   if (Buffer.isBuffer(value)) {
-    return stringContainsPrivateKey(value.toString("utf8"));
+    return bufferContainsPrivateKey(value);
   }
 
   if (Array.isArray(value)) {
@@ -121,16 +169,13 @@ function redactPrivateKeyMaterial(value) {
   }
   // Detection sees through base64-wrapped PEM, so redaction must too. The
   // decoded key spans the entire blob, so the whole value is replaced.
-  if (looksBase64(value)) {
-    try {
-      const decoded = Buffer.from(value.replace(/\s+/g, ""), "base64").toString(
-        "utf8",
-      );
-      if (PRIVATE_KEY_PEM_PATTERN.test(decoded)) {
-        return PRIVATE_KEY_REDACTION_PLACEHOLDER;
-      }
-    } catch (_err) {
-      // not valid base64 text; ignore
+  const decoded = base64DecodeIfLikely(value);
+  if (decoded) {
+    if (
+      looksPkcs12Bundle(decoded) ||
+      PRIVATE_KEY_PEM_PATTERN.test(decoded.toString("utf8"))
+    ) {
+      return PRIVATE_KEY_REDACTION_PLACEHOLDER;
     }
   }
   return value;
@@ -161,7 +206,7 @@ function redactGenericSecrets(value, depth = 0, seen = new WeakSet()) {
   }
 
   if (Buffer.isBuffer(value)) {
-    return stringContainsPrivateKey(value.toString("utf8"))
+    return bufferContainsPrivateKey(value)
       ? PRIVATE_KEY_REDACTION_PLACEHOLDER
       : value;
   }
@@ -192,6 +237,7 @@ module.exports = {
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   PRIVATE_KEY_PEM_PATTERN,
   containsPrivateKeyMaterial,
+  looksPkcs12Bundle,
   redactPrivateKeyMaterial,
   redactGenericSecrets,
 };
