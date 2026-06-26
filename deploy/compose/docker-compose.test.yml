@@ -48,6 +48,8 @@ services:
       # URLs
       - APP_URL=http://localhost:5173
       - API_URL=http://localhost:4000
+      # CertOps route tests intentionally enable the dark-launch flag.
+      - CERTOPS_ENABLED=${CERTOPS_ENABLED:-true}
       # Auth
       - SESSION_SECRET=test-session-secret-key
       # SMTP (MailHog)
