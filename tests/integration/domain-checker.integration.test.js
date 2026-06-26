@@ -52,8 +52,55 @@ const { lookupDomain, normalizeRootDomain, parseDiscoveryLines } =
     "apps/api/services/domainChecker",
     "apps/saas/services/domainChecker",
   ]);
+const {
+  bridgeEndpointCertificateObservation,
+} = requireFirstExisting(["apps/api/services/certops/monitorBridge"]);
+const { pool } = requireFirstExisting(["apps/api/db/database"]);
 
 const paidPlanForDomainChecker = "pro";
+const WWW_FINGERPRINT = "a".repeat(64);
+const API_FINGERPRINT = "b".repeat(64);
+const API_FINGERPRINT_COLON = API_FINGERPRINT.match(/../g)
+  .join(":")
+  .toUpperCase();
+
+function walkKeys(value, visit) {
+  if (Array.isArray(value)) {
+    for (const item of value) walkKeys(item, visit);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, item] of Object.entries(value)) {
+    visit(key);
+    walkKeys(item, visit);
+  }
+}
+
+function expectNoPrivateKeyFields(value) {
+  const forbiddenFragments = [
+    "private",
+    "pkcs12",
+    "pfx",
+    "key_material",
+    "key_pem",
+    "key_der",
+    "raw_key",
+    "backup",
+    "secret",
+    "credential",
+    "password",
+  ];
+
+  walkKeys(value, (key) => {
+    for (const fragment of forbiddenFragments) {
+      expect(
+        key.toLowerCase().includes(fragment),
+        `${key} looks like private-key custody`,
+      ).to.equal(false);
+    }
+  });
+  expect(JSON.stringify(value)).to.not.include("PRIVATE KEY");
+}
 
 describe("Domain checker discovery service integration", function () {
   this.timeout(60000);
@@ -232,6 +279,18 @@ describe("Domain checker API import integration", function () {
         [workspaceId],
       );
       await TestUtils.execQuery(
+        "DELETE FROM certificate_instances WHERE workspace_id = $1",
+        [workspaceId],
+      );
+      await TestUtils.execQuery(
+        "DELETE FROM certificate_targets WHERE workspace_id = $1 AND source IN ('domain_checker', 'endpoint_monitor')",
+        [workspaceId],
+      );
+      await TestUtils.execQuery(
+        "DELETE FROM managed_certificates WHERE workspace_id = $1 AND source IN ('domain_checker', 'endpoint_monitor')",
+        [workspaceId],
+      );
+      await TestUtils.execQuery(
         "DELETE FROM domain_monitors WHERE workspace_id = $1 AND url LIKE 'https://%.example.com'",
         [workspaceId],
       );
@@ -274,6 +333,26 @@ describe("Domain checker API import integration", function () {
       })
       .expect(400);
     expect(tooMany.body.code).to.equal("TOO_MANY_CERTIFICATES");
+
+    const privateKey = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/domain-checker/import`)
+      .set("Cookie", session.cookie)
+      .send({
+        domain: "example.com",
+        certificates: [
+          {
+            id: "private-key-rejected",
+            name: "www.example.com",
+            domains: ["www.example.com"],
+            expiration: "2099-12-31",
+            certificatePem:
+              "-----BEGIN PRIVATE KEY-----\nRkFLRS1LRVk=\n-----END PRIVATE KEY-----",
+          },
+        ],
+      })
+      .expect(422);
+    expect(privateKey.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+    expect(JSON.stringify(privateKey.body)).to.not.include("RkFLRS1LRVk");
   });
 
   it("imports discovered SSL tokens, creates monitors, reports skipped reasons, and writes audit metadata", async () => {
@@ -286,7 +365,7 @@ describe("Domain checker API import integration", function () {
         issuer: "Integration Test CA",
         subject: "CN=www.example.com",
         serialNumber: "serial-www",
-        fingerprint: "fp-www",
+        fingerprint: WWW_FINGERPRINT,
         sources: ["subfinder"],
       },
       {
@@ -297,6 +376,7 @@ describe("Domain checker API import integration", function () {
         issuerName: "Integration Test CA 2",
         commonName: "api.example.com",
         sourceCertId: "source-api",
+        fingerprint: API_FINGERPRINT_COLON,
         sources: ["subfinder"],
       },
       {
@@ -368,7 +448,7 @@ describe("Domain checker API import integration", function () {
     ).to.equal(true);
 
     const monitors = await TestUtils.execQuery(
-      `SELECT url, health_check_enabled, check_interval, alert_after_failures
+      `SELECT id, url, token_id, health_check_enabled, check_interval, alert_after_failures
          FROM domain_monitors
         WHERE workspace_id = $1 AND url = ANY($2::text[])
         ORDER BY url`,
@@ -388,6 +468,134 @@ describe("Domain checker API import integration", function () {
     expect(
       monitors.rows.every((row) => Number(row.alert_after_failures) === 3),
     ).to.equal(true);
+    expect(monitors.rows.every((row) => tokenIds.includes(row.token_id))).to.equal(
+      true,
+    );
+
+    const certopsRows = await TestUtils.execQuery(
+      `SELECT
+          ci.id,
+          ci.workspace_id,
+          ci.domain_monitor_id,
+          ci.token_id,
+          ci.target_id,
+          ci.managed_certificate_id,
+          ci.observed_fingerprint_sha256,
+          ci.observed_subject,
+          ci.observed_issuer,
+          ci.observed_not_after,
+          ci.public_metadata AS instance_metadata,
+          ct.url,
+          ct.workspace_id AS target_workspace_id,
+          ct.token_id AS target_token_id,
+          ct.public_metadata AS target_metadata,
+          mc.workspace_id AS certificate_workspace_id,
+          mc.token_id AS managed_token_id,
+          mc.fingerprint_sha256,
+          mc.certificate_pem,
+          mc.public_metadata AS certificate_metadata
+         FROM certificate_instances ci
+         JOIN certificate_targets ct
+           ON ct.workspace_id = ci.workspace_id AND ct.id = ci.target_id
+         JOIN managed_certificates mc
+           ON mc.workspace_id = ci.workspace_id
+          AND mc.id = ci.managed_certificate_id
+        WHERE ci.workspace_id = $1
+          AND ct.url = ANY($2::text[])
+        ORDER BY ct.url`,
+      [workspaceId, ["https://api.example.com", "https://www.example.com"]],
+    );
+    expect(certopsRows.rows).to.have.length(2);
+
+    const importedTokenByName = Object.fromEntries(
+      response.body.imported.map((entry) => [entry.name, entry.tokenId]),
+    );
+    const certopsByUrl = Object.fromEntries(
+      certopsRows.rows.map((row) => [row.url, row]),
+    );
+    expect(certopsByUrl["https://api.example.com"].fingerprint_sha256).to.equal(
+      API_FINGERPRINT,
+    );
+    expect(certopsByUrl["https://www.example.com"].fingerprint_sha256).to.equal(
+      WWW_FINGERPRINT,
+    );
+    expect(certopsByUrl["https://api.example.com"].token_id).to.equal(
+      importedTokenByName["api.example.com"],
+    );
+    expect(certopsByUrl["https://www.example.com"].token_id).to.equal(
+      importedTokenByName["www.example.com"],
+    );
+    for (const row of certopsRows.rows) {
+      expect(row.workspace_id).to.equal(workspaceId);
+      expect(row.target_workspace_id).to.equal(workspaceId);
+      expect(row.certificate_workspace_id).to.equal(workspaceId);
+      expect(row.target_token_id).to.equal(row.token_id);
+      expect(row.managed_token_id).to.equal(row.token_id);
+      expect(row.certificate_pem).to.equal(null);
+      expect(row.observed_not_after).to.not.equal(null);
+      expectNoPrivateKeyFields(normalizeMetadata(row.instance_metadata));
+      expectNoPrivateKeyFields(normalizeMetadata(row.target_metadata));
+      expectNoPrivateKeyFields(normalizeMetadata(row.certificate_metadata));
+    }
+
+    const wwwRow = certopsByUrl["https://www.example.com"];
+    const repeatedObservation = await bridgeEndpointCertificateObservation({
+      dbPool: pool,
+      env: { CERTOPS_ENABLED: "true" },
+      workspaceId,
+      domainMonitorId: wwwRow.domain_monitor_id,
+      tokenId: wwwRow.token_id,
+      url: wwwRow.url,
+      hostname: "www.example.com",
+      source: "domain_checker",
+      sourceRef: "disc-www",
+      certificate: {
+        issuer: "Integration Test CA",
+        subject: "CN=www.example.com",
+        serialNumber: "serial-www",
+        fingerprintSha256: WWW_FINGERPRINT,
+        notAfter: "2099-02-03",
+      },
+    });
+    expect(repeatedObservation.instance.id).to.equal(wwwRow.id);
+    const repeatedCount = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS count
+         FROM certificate_instances
+        WHERE workspace_id = $1
+          AND target_id = $2
+          AND managed_certificate_id = $3`,
+      [workspaceId, wwwRow.target_id, wwwRow.managed_certificate_id],
+    );
+    expect(repeatedCount.rows[0].count).to.equal(1);
+
+    const disabledFingerprint = "c".repeat(64);
+    const disabledObservation = await bridgeEndpointCertificateObservation({
+      dbPool: pool,
+      env: { CERTOPS_ENABLED: "false" },
+      workspaceId,
+      domainMonitorId: wwwRow.domain_monitor_id,
+      tokenId: wwwRow.token_id,
+      url: wwwRow.url,
+      hostname: "www.example.com",
+      source: "domain_checker",
+      sourceRef: "disabled-observation",
+      certificate: {
+        issuer: "Integration Test CA",
+        subject: "CN=www.example.com",
+        fingerprintSha256: disabledFingerprint,
+        notAfter: "2099-02-03",
+      },
+    });
+    expect(disabledObservation.skipped).to.equal(true);
+    expect(disabledObservation.reason).to.equal("certops_disabled");
+    const disabledRows = await TestUtils.execQuery(
+      `SELECT id
+         FROM managed_certificates
+        WHERE workspace_id = $1
+          AND fingerprint_sha256 = $2`,
+      [workspaceId, disabledFingerprint],
+    );
+    expect(disabledRows.rows).to.have.length(0);
 
     const audit = await TestUtils.execQuery(
       `SELECT metadata

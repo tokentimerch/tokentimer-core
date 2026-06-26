@@ -244,4 +244,5 @@ module.exports = {
   normalizeLimit,
   normalizeOffset,
   toInventoryRecord,
+  upsertManagedCertificate,
 };

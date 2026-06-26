@@ -14,6 +14,7 @@ import tls from "tls";
 import https from "https";
 import http from "http";
 import { X509Certificate } from "crypto";
+import { createRequire } from "module";
 import {
   resolveContactGroup,
   hasEmailContacts,
@@ -21,6 +22,11 @@ import {
   hasWebhookNames,
   getWebhookNames,
 } from "./shared/contactGroups.js";
+
+const require = createRequire(import.meta.url);
+const { bridgeEndpointCertificateObservation } = require(
+  "../../api/services/certops/monitorBridge.js",
+);
 
 function formatDateYmd(date) {
   if (!date) return null;
@@ -302,6 +308,7 @@ async function runEndpointChecks() {
         workspace_id,
         consecutive_failures,
       } = domain;
+      let currentTokenId = token_id;
       logger.info(`Checking endpoint: ${url}`);
 
       try {
@@ -315,6 +322,8 @@ async function runEndpointChecks() {
 
             if (cert && cert.raw) {
               const x509 = new X509Certificate(cert.raw);
+              const publicCertificatePem =
+                typeof x509.toString === "function" ? x509.toString() : null;
               const sslData = {
                 ssl_issuer: x509.issuer || null,
                 ssl_subject: x509.subject || null,
@@ -325,6 +334,7 @@ async function runEndpointChecks() {
                 ssl_serial: x509.serialNumber || null,
                 ssl_fingerprint:
                   cert.fingerprint256 || cert.fingerprint || null,
+                public_certificate_pem: publicCertificatePem,
               };
 
               // Update endpoint monitor with cert data
@@ -347,7 +357,7 @@ async function runEndpointChecks() {
               );
 
               // Update linked token expiration if cert changed
-              if (token_id && sslData.ssl_valid_to) {
+              if (currentTokenId && sslData.ssl_valid_to) {
                 const newExpiry = formatDateYmd(sslData.ssl_valid_to);
                 if (newExpiry) {
                   await client.query(
@@ -359,14 +369,14 @@ async function runEndpointChecks() {
                       sslData.ssl_issuer,
                       sslData.ssl_serial,
                       sslData.ssl_subject,
-                      token_id,
+                      currentTokenId,
                     ],
                   );
                 }
               }
 
               // Auto-create token if we got cert data but no token is linked yet
-              if (!token_id && sslData.ssl_valid_to) {
+              if (!currentTokenId && sslData.ssl_valid_to) {
                 try {
                   // Resolve workspace default contact group for the new token
                   let defaultCgId = null;
@@ -405,12 +415,42 @@ async function runEndpointChecks() {
                     "UPDATE domain_monitors SET token_id = $1 WHERE id = $2",
                     [tokenRes.rows[0].id, id],
                   );
+                  currentTokenId = tokenRes.rows[0].id;
                 } catch (tokenErr) {
                   logger.warn("Failed to auto-create token for endpoint", {
                     url,
                     error: tokenErr.message,
                   });
                 }
+              }
+
+              try {
+                await bridgeEndpointCertificateObservation({
+                  client,
+                  workspaceId: workspace_id,
+                  domainMonitorId: id,
+                  tokenId: currentTokenId,
+                  url,
+                  hostname: parsedUrl.hostname,
+                  source: "endpoint_monitor",
+                  sourceRef: id,
+                  certificate: {
+                    issuer: sslData.ssl_issuer,
+                    subject: sslData.ssl_subject,
+                    serialNumber: sslData.ssl_serial,
+                    fingerprintSha256: sslData.ssl_fingerprint,
+                    notBefore: sslData.ssl_valid_from,
+                    notAfter: sslData.ssl_valid_to,
+                    certificatePem: sslData.public_certificate_pem,
+                  },
+                });
+              } catch (bridgeErr) {
+                logger.warn("CertOps monitor bridge failed", {
+                  workspaceId: workspace_id,
+                  domainMonitorId: id,
+                  code: bridgeErr.code || null,
+                  error: bridgeErr.message,
+                });
               }
             }
           } catch (sslErr) {

@@ -1,8 +1,10 @@
 "use strict";
 
-const { pool } = require("../../db/database");
-
 const CERTOPS_DISABLED = "CERTOPS_DISABLED";
+
+function defaultPool() {
+  return require("../../db/database").pool;
+}
 
 function parseBoolean(value) {
   if (typeof value === "boolean") return value;
@@ -17,7 +19,7 @@ function envCertOpsEnabled(env = process.env) {
   return parseBoolean(env.CERTOPS_ENABLED);
 }
 
-async function dbCertOpsEnabled(dbPool = pool) {
+async function dbCertOpsEnabled(dbPool = defaultPool()) {
   try {
     const { rows } = await dbPool.query(
       "SELECT certops_settings FROM system_settings WHERE id = 1",
@@ -31,7 +33,7 @@ async function dbCertOpsEnabled(dbPool = pool) {
   }
 }
 
-async function isCertOpsEnabled({ dbPool = pool, env = process.env } = {}) {
+async function isCertOpsEnabled({ dbPool = defaultPool(), env = process.env } = {}) {
   const envValue = envCertOpsEnabled(env);
   if (envValue !== null) return envValue;
 
