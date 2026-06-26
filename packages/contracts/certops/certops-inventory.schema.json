@@ -23,6 +23,10 @@
       "type": ["integer", "null"],
       "description": "Optional link to the underlying tokens row (tokens.id is INTEGER) this certificate maps to."
     },
+    "profileId": {
+      "type": ["string", "null"],
+      "description": "Optional certificate profile identifier used for non-secret issuance/deployment policy metadata."
+    },
     "status": {
       "type": "string",
       "enum": [
@@ -34,6 +38,24 @@
         "revoked",
         "decommissioned"
       ]
+    },
+    "source": {
+      "type": ["string", "null"],
+      "enum": [
+        "manual",
+        "api",
+        "import",
+        "domain_checker",
+        "endpoint_monitor",
+        "integration",
+        "auto_sync",
+        null
+      ],
+      "description": "How this public certificate inventory record entered the control plane."
+    },
+    "sourceRef": {
+      "type": ["string", "null"],
+      "description": "Opaque non-secret source reference, such as a domain monitor id or integration item id."
     },
     "commonName": {
       "type": ["string", "null"]
@@ -51,6 +73,24 @@
     "fingerprintSha256": {
       "type": ["string", "null"],
       "description": "Lowercase hex SHA-256 of the DER certificate. Public material."
+    },
+    "spkiFingerprintSha256": {
+      "type": ["string", "null"],
+      "description": "Lowercase hex SHA-256 fingerprint of the SubjectPublicKeyInfo. Public material."
+    },
+    "certificatePem": {
+      "type": ["string", "null"],
+      "description": "Optional public certificate PEM. Private-key PEM blocks are forbidden and rejected at the API boundary."
+    },
+    "publicKeyAlgorithm": {
+      "type": ["string", "null"]
+    },
+    "publicKeySize": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "signatureAlgorithm": {
+      "type": ["string", "null"]
     },
     "notBefore": {
       "type": ["string", "null"],

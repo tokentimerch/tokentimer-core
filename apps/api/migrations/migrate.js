@@ -563,6 +563,208 @@ const migrations = [
         ON tokens(workspace_id, expiration);
     `,
   },
+  {
+    version: 10,
+    name: "certops_inventory_schema",
+    sql: `
+      -- CertOps profiles contain public/non-secret policy metadata only.
+      CREATE TABLE IF NOT EXISTS certificate_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT NULL,
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'disabled', 'archived')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        issuer TEXT NULL,
+        subject_template TEXT NULL,
+        san_templates TEXT[] NOT NULL DEFAULT '{}',
+        validity_days INTEGER NULL CHECK (validity_days IS NULL OR validity_days > 0),
+        renew_before_days INTEGER NULL CHECK (renew_before_days IS NULL OR renew_before_days >= 0),
+        key_mode TEXT NULL CHECK (
+          key_mode IS NULL OR key_mode IN (
+            'agent-local',
+            'proxy-agent-local',
+            'cert-manager-managed',
+            'appliance-managed',
+            'hsm-managed',
+            'vault-managed',
+            'os-store-managed',
+            'external-unknown'
+          )
+        ),
+        key_reference TEXT NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_profiles_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_profiles_workspace
+        ON certificate_profiles(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_profiles_workspace_status
+        ON certificate_profiles(workspace_id, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_profiles_workspace_name
+        ON certificate_profiles(workspace_id, LOWER(name));
+
+      -- Managed certificates are inventory identities. They store public
+      -- certificate material and metadata only; never customer private keys.
+      CREATE TABLE IF NOT EXISTS managed_certificates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        profile_id UUID NULL REFERENCES certificate_profiles(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'discovered'
+          CHECK (status IN ('discovered', 'active', 'renewing', 'expiring', 'expired', 'revoked', 'decommissioned')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        name TEXT NULL,
+        common_name TEXT NULL,
+        subject_alt_names TEXT[] NOT NULL DEFAULT '{}',
+        issuer TEXT NULL,
+        subject TEXT NULL,
+        serial_number TEXT NULL,
+        certificate_pem TEXT NULL,
+        fingerprint_sha256 TEXT NULL,
+        spki_fingerprint_sha256 TEXT NULL,
+        public_key_algorithm TEXT NULL,
+        public_key_size INTEGER NULL CHECK (public_key_size IS NULL OR public_key_size > 0),
+        signature_algorithm TEXT NULL,
+        not_before TIMESTAMPTZ NULL,
+        not_after TIMESTAMPTZ NULL,
+        key_mode TEXT NULL CHECK (
+          key_mode IS NULL OR key_mode IN (
+            'agent-local',
+            'proxy-agent-local',
+            'cert-manager-managed',
+            'appliance-managed',
+            'hsm-managed',
+            'vault-managed',
+            'os-store-managed',
+            'external-unknown'
+          )
+        ),
+        key_reference TEXT NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_managed_certificates_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace
+        ON managed_certificates(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_status
+        ON managed_certificates(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_token
+        ON managed_certificates(workspace_id, token_id)
+        WHERE token_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_expiry
+        ON managed_certificates(workspace_id, not_after);
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_serial
+        ON managed_certificates(workspace_id, serial_number)
+        WHERE serial_number IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_san
+        ON managed_certificates USING GIN(subject_alt_names);
+
+      -- Certificate targets are deployment references. They may point at
+      -- hosts, endpoints, appliances, or cluster references, but never hold key
+      -- material.
+      CREATE TABLE IF NOT EXISTS certificate_targets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        profile_id UUID NULL REFERENCES certificate_profiles(id) ON DELETE SET NULL,
+        domain_monitor_id UUID NULL REFERENCES domain_monitors(id) ON DELETE SET NULL,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        target_type TEXT NOT NULL
+          CHECK (target_type IN ('endpoint', 'domain', 'host', 'kubernetes-secret', 'load-balancer', 'cdn', 'appliance', 'hsm', 'vault', 'other')),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'inactive', 'decommissioned', 'error')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        hostname TEXT NULL,
+        url TEXT NULL,
+        deployment_reference TEXT NULL,
+        environment TEXT NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_targets_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace
+        ON certificate_targets(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace_status
+        ON certificate_targets(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace_type
+        ON certificate_targets(workspace_id, target_type);
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace_hostname
+        ON certificate_targets(workspace_id, hostname)
+        WHERE hostname IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_domain_monitor
+        ON certificate_targets(workspace_id, domain_monitor_id)
+        WHERE domain_monitor_id IS NOT NULL;
+
+      -- Certificate instances are observed/deployed public certificate copies
+      -- on a target.
+      CREATE TABLE IF NOT EXISTS certificate_instances (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        managed_certificate_id UUID NOT NULL,
+        target_id UUID NOT NULL,
+        domain_monitor_id UUID NULL REFERENCES domain_monitors(id) ON DELETE SET NULL,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'discovered'
+          CHECK (status IN ('discovered', 'active', 'deployed', 'stale', 'drifted', 'expiring', 'expired', 'revoked', 'missing', 'decommissioned', 'error')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        observed_fingerprint_sha256 TEXT NULL,
+        observed_serial_number TEXT NULL,
+        observed_subject TEXT NULL,
+        observed_issuer TEXT NULL,
+        observed_not_before TIMESTAMPTZ NULL,
+        observed_not_after TIMESTAMPTZ NULL,
+        deployment_reference TEXT NULL,
+        observed_at TIMESTAMPTZ NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certificate_instances_managed_certificate
+          FOREIGN KEY (workspace_id, managed_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_certificate_instances_target
+          FOREIGN KEY (workspace_id, target_id)
+          REFERENCES certificate_targets(workspace_id, id)
+          ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace
+        ON certificate_instances(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_certificate
+        ON certificate_instances(workspace_id, managed_certificate_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_target
+        ON certificate_instances(workspace_id, target_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_domain_monitor
+        ON certificate_instances(workspace_id, domain_monitor_id)
+        WHERE domain_monitor_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace_status
+        ON certificate_instances(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace_fingerprint
+        ON certificate_instances(workspace_id, observed_fingerprint_sha256)
+        WHERE observed_fingerprint_sha256 IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_instances_workspace_target_cert
+        ON certificate_instances(workspace_id, target_id, managed_certificate_id);
+    `,
+  },
 ];
 
 async function runMigrations() {
