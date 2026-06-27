@@ -2915,18 +2915,16 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
   # ----------------------------------------------------------------------------
-  # CertOps route skeletons (Phase 0 freeze).
-  # Documented-but-not-yet-implemented. Frozen to keep M1/M2 unblocked.
-  # Request/response schemas are filled in during M1 (inventory) and M2 (jobs,
-  # tokens, executor). No CertOps runtime routes exist yet, so these do not
-  # affect openapi runtime-coverage (runtime -> spec direction only).
+  # CertOps routes. M1 inventory routes are implemented with precise public-only
+  # schemas below. M2/M4 machine, token, job, and agent namespaces remain frozen
+  # skeletons so downstream overlays can build without route churn.
   # ----------------------------------------------------------------------------
   /api/v1/workspaces/{id}/certops/certificates:
     get:
       tags: [CertOps]
       summary: List managed certificates
       operationId: listCertOpsCertificates
-      description: Returns the workspace's managed certificate inventory (public material only). Skeleton; response schema lands in M1.
+      description: Returns the workspace's managed certificate inventory. Response objects contain public certificate material and public metadata only.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/limitParam"
@@ -2937,10 +2935,18 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsManagedCertificateListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
         "403":
           $ref: "#/components/responses/Forbidden"
         "500":
@@ -2949,7 +2955,7 @@ paths:
       tags: [CertOps]
       summary: Create or register a managed certificate
       operationId: createCertOpsCertificate
-      description: Registers a managed certificate from public material. Bodies containing private key material are rejected (422). Skeleton; request schema lands in M1.
+      description: Registers a managed certificate from public certificate material. Request bodies containing private key material are rejected before feature gating.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -2957,29 +2963,62 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsCertificateWriteRequest"
       responses:
         "201":
           description: Managed certificate registered
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsCertificateWriteResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: Missing certificate material, malformed public certificate input, or invalid key reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingCertificate:
+                  value:
+                    error: certificatePem is required
+                    code: CERTOPS_CERTIFICATE_PEM_REQUIRED
+                parseFailed:
+                  value:
+                    error: Certificate input could not be parsed
+                    code: CERTOPS_CERTIFICATE_PARSE_FAILED
+                invalidKeyReference:
+                  value:
+                    error: keyReference must be a non-secret reference
+                    code: CERTOPS_KEY_REFERENCE_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: Authenticated user lacks the workspace manager/admin role required for CertOps writes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Forbidden: insufficient role"
+                code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
         "422":
           description: Request rejected because it contained private key material
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/certificates/{certId}:
@@ -2987,7 +3026,7 @@ paths:
       tags: [CertOps]
       summary: Get a managed certificate
       operationId: getCertOpsCertificate
-      description: Returns a single managed certificate (public material only). Skeleton; response schema lands in M1.
+      description: Returns a single managed certificate. Response objects contain public certificate material and public metadata only.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3002,12 +3041,26 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsManagedCertificateDetailResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the certificate was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                certificateNotFound:
+                  value:
+                    error: Certificate not found
+                    code: CERTOPS_CERTIFICATE_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/imports:
@@ -3015,7 +3068,7 @@ paths:
       tags: [CertOps]
       summary: Import certificates from public material
       operationId: createCertOpsImport
-      description: Imports certificates from PEM/public material. Private key material is rejected (422). Skeleton; request schema lands in M1.
+      description: Imports certificates from PEM/public material. Private key material is rejected before feature gating.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -3023,29 +3076,62 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsCertificateWriteRequest"
       responses:
         "202":
           description: Import accepted
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsCertificateWriteResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: Missing certificate material, malformed public certificate input, or invalid key reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingCertificate:
+                  value:
+                    error: certificatePem is required
+                    code: CERTOPS_CERTIFICATE_PEM_REQUIRED
+                parseFailed:
+                  value:
+                    error: Certificate input could not be parsed
+                    code: CERTOPS_CERTIFICATE_PARSE_FAILED
+                invalidKeyReference:
+                  value:
+                    error: keyReference must be a non-secret reference
+                    code: CERTOPS_KEY_REFERENCE_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: Authenticated user lacks the workspace manager/admin role required for CertOps writes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Forbidden: insufficient role"
+                code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
         "422":
           description: Request rejected because it contained private key material
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs:
@@ -3409,6 +3495,244 @@ components:
         code: VALIDATION_ERROR
         details:
           - email is required
+    CertOpsManagedCertificate:
+      type: object
+      additionalProperties: false
+      description: Public-only CertOps managed certificate inventory record. This schema intentionally excludes private-key custody fields; private key material is rejected at the API boundary.
+      required:
+        - schemaVersion
+        - id
+        - workspaceId
+        - tokenId
+        - profileId
+        - status
+        - source
+        - sourceRef
+        - commonName
+        - subjectAltNames
+        - issuer
+        - serialNumber
+        - fingerprintSha256
+        - spkiFingerprintSha256
+        - certificatePem
+        - publicKeyAlgorithm
+        - publicKeySize
+        - signatureAlgorithm
+        - notBefore
+        - notAfter
+        - keyMode
+        - keyReference
+        - createdAt
+        - updatedAt
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        tokenId:
+          type: integer
+          nullable: true
+        profileId:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum:
+            - discovered
+            - active
+            - renewing
+            - expiring
+            - expired
+            - revoked
+            - decommissioned
+        source:
+          type: string
+          nullable: true
+          enum:
+            - manual
+            - api
+            - import
+            - domain_checker
+            - endpoint_monitor
+            - integration
+            - auto_sync
+            - null
+        sourceRef:
+          type: string
+          nullable: true
+          description: Opaque non-secret source reference.
+        commonName:
+          type: string
+          nullable: true
+        subjectAltNames:
+          type: array
+          items:
+            type: string
+        issuer:
+          type: string
+          nullable: true
+        serialNumber:
+          type: string
+          nullable: true
+        fingerprintSha256:
+          type: string
+          nullable: true
+          pattern: "^[a-f0-9]{64}$"
+          description: Lowercase SHA-256 fingerprint of public certificate material.
+        spkiFingerprintSha256:
+          type: string
+          nullable: true
+          pattern: "^[a-f0-9]{64}$"
+          description: Lowercase SHA-256 fingerprint of the public SubjectPublicKeyInfo.
+        certificatePem:
+          type: string
+          nullable: true
+          description: Public certificate PEM only. Private-key PEM, PFX/PKCS#12, and key-bearing material are rejected.
+        publicKeyAlgorithm:
+          type: string
+          nullable: true
+        publicKeySize:
+          type: integer
+          minimum: 1
+          nullable: true
+        signatureAlgorithm:
+          type: string
+          nullable: true
+        notBefore:
+          type: string
+          format: date-time
+          nullable: true
+        notAfter:
+          type: string
+          format: date-time
+          nullable: true
+        keyMode:
+          type: string
+          nullable: true
+          enum:
+            - agent-local
+            - proxy-agent-local
+            - cert-manager-managed
+            - appliance-managed
+            - hsm-managed
+            - vault-managed
+            - os-store-managed
+            - external-unknown
+            - null
+          description: Non-secret mode describing where the private key lives outside the control plane.
+        keyReference:
+          type: string
+          nullable: true
+          maxLength: 256
+          description: Opaque non-secret external reference. Inline secrets, private-key material, PEM markers, and control characters are rejected.
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsManagedCertificateListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsManagedCertificate"
+        pagination:
+          type: object
+          additionalProperties: false
+          required: [limit, offset]
+          properties:
+            limit:
+              type: integer
+              minimum: 1
+            offset:
+              type: integer
+              minimum: 0
+    CertOpsManagedCertificateDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [certificate]
+      properties:
+        certificate:
+          $ref: "#/components/schemas/CertOpsManagedCertificate"
+    CertOpsCertificateWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [items, count]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsManagedCertificate"
+        count:
+          type: integer
+          minimum: 0
+    CertOpsCertificateWriteRequest:
+      type: object
+      additionalProperties: true
+      description: Recognized fields for public certificate import/register operations. Unknown fields are ignored by the current runtime, but the entire request body is scanned and rejected if any field contains private key material.
+      anyOf:
+        - required: [certificatePem]
+        - required: [pem]
+        - required: [certificate]
+        - required: [chainPem]
+        - required: [certificates]
+      properties:
+        certificatePem:
+          type: string
+          description: Public certificate PEM or PEM chain. Private key material is rejected with PRIVATE_KEY_MATERIAL_REJECTED.
+        pem:
+          type: string
+          description: Public certificate PEM or PEM chain.
+        certificate:
+          type: string
+          description: Public certificate PEM or PEM chain.
+        chainPem:
+          type: string
+          description: Public certificate PEM chain.
+        certificates:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Public certificate PEM blocks joined by the runtime into a chain.
+        sourceRef:
+          type: string
+          nullable: true
+          description: Opaque non-secret source reference.
+        name:
+          type: string
+          nullable: true
+        keyMode:
+          type: string
+          nullable: true
+          enum:
+            - agent-local
+            - proxy-agent-local
+            - cert-manager-managed
+            - appliance-managed
+            - hsm-managed
+            - vault-managed
+            - os-store-managed
+            - external-unknown
+            - null
+          description: Non-secret mode describing where the private key lives outside the control plane.
+        keyReference:
+          type: string
+          nullable: true
+          maxLength: 256
+          description: Opaque non-secret external reference. Invalid references return CERTOPS_KEY_REFERENCE_INVALID; private-key material returns PRIVATE_KEY_MATERIAL_REJECTED.
     SessionUser:
       type: object
       required: [id, email]
