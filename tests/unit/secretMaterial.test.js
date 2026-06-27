@@ -27,6 +27,14 @@ function fakePkcs12Buffer() {
   ]);
 }
 
+function deeplyNested(value, depth = 14) {
+  let node = value;
+  for (let index = 0; index < depth; index += 1) {
+    node = { child: node };
+  }
+  return node;
+}
+
 const PRIVATE_KEY_LABELS = [
   "PRIVATE KEY", // PKCS#8
   "RSA PRIVATE KEY", // PKCS#1
@@ -35,6 +43,21 @@ const PRIVATE_KEY_LABELS = [
   "OPENSSH PRIVATE KEY",
   "ENCRYPTED PRIVATE KEY",
   "RSA ENCRYPTED PRIVATE KEY",
+];
+
+const NONCANONICAL_PRIVATE_KEY_PEMS = [
+  {
+    name: "lowercase PEM armor",
+    value: `-----begin rsa private key-----\n${FAKE_BODY}\n-----end rsa private key-----`,
+  },
+  {
+    name: "extra PEM armor whitespace",
+    value: `-----BEGIN  RSA   PRIVATE   KEY-----\n${FAKE_BODY}\n-----END  RSA   PRIVATE   KEY-----`,
+  },
+  {
+    name: "mixed-case PEM armor",
+    value: `-----BeGiN EnCrYpTeD PrIvAtE KeY-----\n${FAKE_BODY}\n-----eNd EnCrYpTeD PrIvAtE KeY-----`,
+  },
 ];
 
 const NON_KEY_VALUES = [
@@ -57,8 +80,35 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
     });
   }
 
+  for (const fixture of NONCANONICAL_PRIVATE_KEY_PEMS) {
+    it(`detects ${fixture.name}`, () => {
+      assert.strictEqual(containsPrivateKeyMaterial(fixture.value), true);
+    });
+  }
+
+  it("detects noncanonical private key PEM in objects, arrays, and buffers", () => {
+    const privateKey = NONCANONICAL_PRIVATE_KEY_PEMS[1].value;
+
+    assert.strictEqual(
+      containsPrivateKeyMaterial({ certificate: { pem: privateKey } }),
+      true,
+    );
+    assert.strictEqual(
+      containsPrivateKeyMaterial(["public metadata", privateKey]),
+      true,
+    );
+    assert.strictEqual(containsPrivateKeyMaterial(Buffer.from(privateKey)), true);
+  });
+
   it("detects base64-wrapped private key PEM", () => {
     const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
+    assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
+  });
+
+  it("detects base64-wrapped noncanonical private key PEM", () => {
+    const wrapped = Buffer.from(
+      NONCANONICAL_PRIVATE_KEY_PEMS[2].value,
+    ).toString("base64");
     assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
   });
 
@@ -105,10 +155,17 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
     assert.strictEqual(containsPrivateKeyMaterial(payload), false);
   });
 
-  it("does not infinitely recurse on cyclic objects", () => {
+  it("fails closed for harmless values nested beyond the scan depth", () => {
+    assert.strictEqual(
+      containsPrivateKeyMaterial(deeplyNested("harmless public metadata")),
+      true,
+    );
+  });
+
+  it("does not infinitely recurse on cyclic objects and fails closed", () => {
     const a = {};
     a.self = a;
-    assert.strictEqual(containsPrivateKeyMaterial(a), false);
+    assert.strictEqual(containsPrivateKeyMaterial(a), true);
   });
 });
 
@@ -122,8 +179,30 @@ describe("secretMaterial.redactPrivateKeyMaterial", () => {
     assert.ok(out.endsWith("after"));
   });
 
+  for (const fixture of NONCANONICAL_PRIVATE_KEY_PEMS) {
+    it(`redacts ${fixture.name}`, () => {
+      const input = `before\n${fixture.value}\nafter`;
+      const out = redactPrivateKeyMaterial(input);
+
+      assert.ok(out.includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+      assert.ok(!out.includes(FAKE_BODY));
+      assert.ok(!/private\s+key/i.test(out));
+      assert.ok(out.startsWith("before"));
+      assert.ok(out.endsWith("after"));
+    });
+  }
+
   it("redacts a base64-wrapped private key to the placeholder", () => {
     const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
+    const out = redactPrivateKeyMaterial(wrapped);
+    assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+    assert.ok(!out.includes(wrapped));
+  });
+
+  it("redacts a base64-wrapped noncanonical private key to the placeholder", () => {
+    const wrapped = Buffer.from(
+      NONCANONICAL_PRIVATE_KEY_PEMS[0].value,
+    ).toString("base64");
     const out = redactPrivateKeyMaterial(wrapped);
     assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
     assert.ok(!out.includes(wrapped));

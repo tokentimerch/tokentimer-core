@@ -13,6 +13,7 @@ const {
 const { hasAtLeastRole } = require("../services/rbac");
 const {
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_KEY_REFERENCE_INVALID,
   getManagedCertificate,
   importPublicCertificates,
   listManagedCertificates,
@@ -89,6 +90,13 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_KEY_REFERENCE_INVALID) {
+    return res.status(400).json({
+      error: "keyReference must be a non-secret reference",
+      code: CERTOPS_KEY_REFERENCE_INVALID,
+    });
+  }
+
   return null;
 }
 
@@ -116,15 +124,15 @@ async function recordInventoryAudit(req, source, certificates) {
 }
 
 async function importCertificatesHandler(req, res, source, statusCode) {
-  const options = writeOptionsFromRequest(req, source);
-  if (!options.certificatePem) {
-    return res.status(400).json({
-      error: "certificatePem is required",
-      code: "CERTOPS_CERTIFICATE_PEM_REQUIRED",
-    });
-  }
-
   try {
+    const options = writeOptionsFromRequest(req, source);
+    if (!options.certificatePem) {
+      return res.status(400).json({
+        error: "certificatePem is required",
+        code: "CERTOPS_CERTIFICATE_PEM_REQUIRED",
+      });
+    }
+
     const certificates = await importPublicCertificates(options);
     await recordInventoryAudit(req, source, certificates);
     return res.status(statusCode).json({
