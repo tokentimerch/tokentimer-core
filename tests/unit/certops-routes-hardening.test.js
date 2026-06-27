@@ -36,6 +36,7 @@ describe("CertOps M1 route hardening", () => {
     assert.deepEqual(routeMatches.sort(), [
       "GET /api/v1/workspaces/:id/certops/certificates",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
+      "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/imports",
     ].sort());
@@ -48,11 +49,31 @@ describe("CertOps M1 route hardening", () => {
     for (const [method, routePath] of [
       ["get", "/api/v1/workspaces/:id/certops/certificates"],
       ["post", "/api/v1/workspaces/:id/certops/certificates"],
+      [
+        "get",
+        "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
+      ],
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
     ]) {
       assert.match(routeBlock(method, routePath), /requireCertOpsEnabled/);
     }
+  });
+
+  it("declares certificate instance history before generic certificate detail", () => {
+    const instancesIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/certificates/:certId/instances"',
+    );
+    const detailIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/certificates/:certId"',
+    );
+
+    assert.notEqual(instancesIndex, -1);
+    assert.notEqual(detailIndex, -1);
+    assert.ok(
+      instancesIndex < detailIndex,
+      "instance history route must be declared before generic certificate detail",
+    );
   });
 
   it("runs private-key rejection before feature gating on write routes", () => {

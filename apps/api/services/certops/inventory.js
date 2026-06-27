@@ -6,6 +6,7 @@ const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   parsePublicCertificateMaterial,
 } = require("./parser");
+const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
 const CERTOPS_KEY_MODE_INVALID = "CERTOPS_KEY_MODE_INVALID";
@@ -20,6 +21,12 @@ const ALLOWED_KEY_MODES = new Set([
   "os-store-managed",
   "external-unknown",
 ]);
+const CERTOPS_KEY_REFERENCE_INVALID = "CERTOPS_KEY_REFERENCE_INVALID";
+const KEY_REFERENCE_MAX_LENGTH = 256;
+const PEM_MARKER_PATTERN = /-----\s*(?:BEGIN|END)\b/i;
+const SECRET_ASSIGNMENT_PATTERN =
+  /\b(?:password|secret|token|credential|private_key|privatekey|key_material)\s*=/i;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 
 function dateToIso(value) {
   if (!value) return null;
@@ -44,6 +51,27 @@ function chooseCertificateName(certificate, fallbackName) {
     certificate.subject ||
     null
   );
+}
+
+function keyReferenceError() {
+  const err = new Error("CertOps keyReference must be a non-secret reference");
+  err.code = CERTOPS_KEY_REFERENCE_INVALID;
+  return err;
+}
+
+function normalizeKeyReference(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw keyReferenceError();
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > KEY_REFERENCE_MAX_LENGTH) throw keyReferenceError();
+  if (containsPrivateKeyMaterial(trimmed)) throw keyReferenceError();
+  if (PEM_MARKER_PATTERN.test(trimmed)) throw keyReferenceError();
+  if (SECRET_ASSIGNMENT_PATTERN.test(trimmed)) throw keyReferenceError();
+  if (CONTROL_CHARACTER_PATTERN.test(trimmed)) throw keyReferenceError();
+
+  return trimmed;
 }
 
 function toInventoryRecord(row) {
@@ -156,6 +184,7 @@ function publicMetadataFor(certificate, options, chainIndex) {
 }
 
 async function upsertManagedCertificate(client, certificate, options, chainIndex) {
+  const keyReference = normalizeKeyReference(options.keyReference);
   const params = [
     options.workspaceId,
     options.status || "discovered",
@@ -176,7 +205,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
     certificate.notBefore || certificate.validFrom || null,
     certificate.notAfter || certificate.validTo || null,
     options.keyMode || null,
-    options.keyReference || null,
+    keyReference,
     JSON.stringify(publicMetadataFor(certificate, options, chainIndex)),
     options.createdBy || null,
   ];
@@ -338,12 +367,14 @@ module.exports = {
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   CERTOPS_KEY_MODE_INVALID,
+  CERTOPS_KEY_REFERENCE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   getManagedCertificate,
   importPublicCertificates,
   listCertificateInstances,
   listManagedCertificates,
   normalizeKeyMode,
+  normalizeKeyReference,
   normalizeLimit,
   normalizeOffset,
   toInstanceRecord,

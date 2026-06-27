@@ -65,6 +65,8 @@ const API_FINGERPRINT_COLON = API_FINGERPRINT.match(/../g)
   .join(":")
   .toUpperCase();
 const SHA1_FINGERPRINT = "d".repeat(40);
+const NONCANONICAL_PRIVATE_KEY_BODY = "FAKE-TEST-BODY";
+const NONCANONICAL_PRIVATE_KEY_PEM = `-----begin rsa private key-----\n${NONCANONICAL_PRIVATE_KEY_BODY}\n-----end rsa private key-----`;
 
 function walkKeys(value, visit) {
   if (Array.isArray(value)) {
@@ -363,6 +365,58 @@ describe("Domain checker API import integration", function () {
       .expect(422);
     expect(privateKey.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
     expect(JSON.stringify(privateKey.body)).to.not.include("RkFLRS1LRVk");
+  });
+
+  it("rejects noncanonical private-key-like import payloads before persistence", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/domain-checker/import`)
+      .set("Cookie", session.cookie)
+      .send({
+        domain: "example.com",
+        certificates: [
+          {
+            id: "noncanonical-private-key-rejected",
+            name: "keyprobe.example.com",
+            domains: ["keyprobe.example.com"],
+            expiration: "2099-12-31",
+            issuer: "Probe CA",
+            subject: NONCANONICAL_PRIVATE_KEY_PEM,
+            certificatePem: NONCANONICAL_PRIVATE_KEY_PEM,
+            fingerprint: WWW_FINGERPRINT,
+            sources: ["subfinder", NONCANONICAL_PRIVATE_KEY_PEM],
+          },
+        ],
+        monitorOptions: { enabled: true },
+      })
+      .expect(422);
+
+    expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+    expect(JSON.stringify(response.body)).to.not.include(
+      NONCANONICAL_PRIVATE_KEY_BODY,
+    );
+
+    const tokenRows = await TestUtils.execQuery(
+      "SELECT id FROM tokens WHERE workspace_id = $1 AND name = $2",
+      [workspaceId, "keyprobe.example.com"],
+    );
+    expect(tokenRows.rows).to.have.length(0);
+
+    const monitorRows = await TestUtils.execQuery(
+      "SELECT id FROM domain_monitors WHERE workspace_id = $1 AND url = $2",
+      [workspaceId, "https://keyprobe.example.com"],
+    );
+    expect(monitorRows.rows).to.have.length(0);
+
+    const certopsRows = await TestUtils.execQuery(
+      `SELECT ci.id
+         FROM certificate_instances ci
+         JOIN certificate_targets ct
+           ON ct.workspace_id = ci.workspace_id AND ct.id = ci.target_id
+        WHERE ci.workspace_id = $1
+          AND ct.url = $2`,
+      [workspaceId, "https://keyprobe.example.com"],
+    );
+    expect(certopsRows.rows).to.have.length(0);
   });
 
   it("imports discovered SSL tokens and populates CertOps on monitor observations", async () => {

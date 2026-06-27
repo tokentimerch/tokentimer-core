@@ -20,6 +20,12 @@ const FAKE_PRIVATE_BODY = "RkFLRS1OT1QtQS1SRUFMLUtFWQ==";
 const fakePem = (label) =>
   `-----BEGIN ${label}-----\n${FAKE_PRIVATE_BODY}\n-----END ${label}-----`;
 
+const NONCANONICAL_PRIVATE_KEY_PEMS = [
+  `-----begin rsa private key-----\n${FAKE_PRIVATE_BODY}\n-----end rsa private key-----`,
+  `-----BEGIN  RSA   PRIVATE   KEY-----\n${FAKE_PRIVATE_BODY}\n-----END  RSA   PRIVATE   KEY-----`,
+  `-----BeGiN EnCrYpTeD PrIvAtE KeY-----\n${FAKE_PRIVATE_BODY}\n-----eNd EnCrYpTeD PrIvAtE KeY-----`,
+];
+
 const PUBLIC_CERTIFICATE_PEM = fakePem("CERTIFICATE");
 const PUBLIC_KEY_PEM = fakePem("PUBLIC KEY");
 
@@ -28,6 +34,14 @@ function fakePkcs12Buffer() {
     Buffer.from([0x30, 0x5c, 0x02, 0x01, 0x03]),
     Buffer.alloc(89, 0),
   ]);
+}
+
+function deeplyNested(value, depth = 14) {
+  let node = value;
+  for (let index = 0; index < depth; index += 1) {
+    node = { child: node };
+  }
+  return node;
 }
 
 const WORKSPACE_ID = "550e8400-e29b-41d4-a716-446655440000";
@@ -103,11 +117,24 @@ describe("rejectKeyMaterial middleware", () => {
     await assertRejected({ certificate: fakePem("RSA PRIVATE KEY") });
   });
 
+  it("rejects noncanonical private key PEM armor", async () => {
+    await assertRejected({ certificate: NONCANONICAL_PRIVATE_KEY_PEMS[0] });
+  });
+
   it("rejects nested private key material", async () => {
     await assertRejected({
       import: {
         notes: "nested payload",
         certificate: { pem: fakePem("EC PRIVATE KEY") },
+      },
+    });
+  });
+
+  it("rejects nested noncanonical private key material", async () => {
+    await assertRejected({
+      import: {
+        notes: "nested payload",
+        certificate: { pem: NONCANONICAL_PRIVATE_KEY_PEMS[1] },
       },
     });
   });
@@ -118,12 +145,30 @@ describe("rejectKeyMaterial middleware", () => {
     });
   });
 
+  it("rejects array-contained noncanonical private key material", async () => {
+    await assertRejected({
+      certificates: [PUBLIC_CERTIFICATE_PEM, NONCANONICAL_PRIVATE_KEY_PEMS[2]],
+    });
+  });
+
   it("rejects base64-wrapped private key PEM", async () => {
     const wrapped = Buffer.from(fakePem("ENCRYPTED PRIVATE KEY")).toString(
       "base64",
     );
 
     await assertRejected({ attachment: wrapped });
+  });
+
+  it("rejects base64-wrapped noncanonical private key PEM", async () => {
+    const wrapped = Buffer.from(NONCANONICAL_PRIVATE_KEY_PEMS[2]).toString(
+      "base64",
+    );
+
+    await assertRejected({ attachment: wrapped });
+  });
+
+  it("rejects buffer request bodies carrying noncanonical private key PEM", async () => {
+    await assertRejected(Buffer.from(NONCANONICAL_PRIVATE_KEY_PEMS[1]));
   });
 
   it("rejects PKCS#12/PFX-like binary request bodies", async () => {
@@ -146,6 +191,16 @@ describe("rejectKeyMaterial middleware", () => {
     await assertAllowed({
       certificatePem: "not a certificate and not private key material",
     });
+  });
+
+  it("rejects over-depth request bodies without echoing nested content", async () => {
+    const nestedPayload = "harmless but too deeply nested";
+    const result = await assertRejected(deeplyNested(nestedPayload));
+
+    assert.equal(
+      JSON.stringify(result.responseBody).includes(nestedPayload),
+      false,
+    );
   });
 
   it("records a synchronous audit event without alert_queue dependency", async () => {
@@ -228,6 +283,15 @@ describe("rejectKeyMaterial middleware", () => {
 
   it("does not echo private key material in the response", async () => {
     const privateKey = fakePem("RSA PRIVATE KEY");
+    const result = await assertRejected({ payload: privateKey });
+    const serialized = JSON.stringify(result.responseBody);
+
+    assert.equal(serialized.includes(privateKey), false);
+    assert.equal(serialized.includes(FAKE_PRIVATE_BODY), false);
+  });
+
+  it("does not echo noncanonical private key material in the response", async () => {
+    const privateKey = NONCANONICAL_PRIVATE_KEY_PEMS[0];
     const result = await assertRejected({ payload: privateKey });
     const serialized = JSON.stringify(result.responseBody);
 

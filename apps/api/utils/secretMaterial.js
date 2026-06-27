@@ -29,11 +29,17 @@ const GENERIC_SECRET_REDACTION_PLACEHOLDER = "[REDACTED]";
 // PKCS#1 (BEGIN RSA PRIVATE KEY), SEC1 (BEGIN EC PRIVATE KEY), DSA, OpenSSH,
 // and encrypted variants (BEGIN ENCRYPTED PRIVATE KEY / BEGIN RSA ENCRYPTED ...).
 // It must NOT match PUBLIC KEY, CERTIFICATE, or CERTIFICATE REQUEST blocks.
-const PRIVATE_KEY_PEM_PATTERN = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+const PRIVATE_KEY_PEM_LABEL_PATTERN = String.raw`(?:[A-Z0-9]+\s+)*PRIVATE\s+KEY`;
+const PRIVATE_KEY_PEM_PATTERN = new RegExp(
+  String.raw`-----\s*BEGIN\s+${PRIVATE_KEY_PEM_LABEL_PATTERN}\s*-----`,
+  "i",
+);
 
 // Whole private-key PEM block (header to footer), used for redaction.
-const PRIVATE_KEY_PEM_BLOCK_PATTERN =
-  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/g;
+const PRIVATE_KEY_PEM_BLOCK_PATTERN = new RegExp(
+  String.raw`-----\s*BEGIN\s+${PRIVATE_KEY_PEM_LABEL_PATTERN}\s*-----[\s\S]*?-----\s*END\s+${PRIVATE_KEY_PEM_LABEL_PATTERN}\s*-----`,
+  "gi",
+);
 
 // Conservative Authorization-header / bearer-token redaction for generic
 // secret scrubbing (extended in M2 evidence redaction work).
@@ -132,7 +138,7 @@ function stringContainsPrivateKey(value) {
  */
 function containsPrivateKeyMaterial(value, depth = 0) {
   if (value === null || value === undefined) return false;
-  if (depth > MAX_SCAN_DEPTH) return false;
+  if (depth > MAX_SCAN_DEPTH) return true;
 
   if (typeof value === "string") return stringContainsPrivateKey(value);
 

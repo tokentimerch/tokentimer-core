@@ -200,7 +200,11 @@ describe("CertOps inventory routes", function () {
     const response = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
       .set("Cookie", ownerSession.cookie)
-      .send({ certificatePem: `\n\n${PUBLIC_LEAF_CERT}\n` })
+      .send({
+        certificatePem: `\n\n${PUBLIC_LEAF_CERT}\n`,
+        keyMode: "external-unknown",
+        keyReference: "  vault://pki/web/example  ",
+      })
       .expect(202);
 
     expect(response.body.count).to.equal(1);
@@ -214,6 +218,8 @@ describe("CertOps inventory routes", function () {
     expect(leafCertificate.spkiFingerprintSha256).to.match(/^[a-f0-9]{64}$/);
     expect(leafCertificate.notBefore).to.match(/^\d{4}-\d{2}-\d{2}T/);
     expect(leafCertificate.notAfter).to.match(/^\d{4}-\d{2}-\d{2}T/);
+    expect(leafCertificate.keyMode).to.equal("external-unknown");
+    expect(leafCertificate.keyReference).to.equal("vault://pki/web/example");
     expect(leafCertificate.certificatePem).to.include("BEGIN CERTIFICATE");
     expectNoPrivateKeyFields(leafCertificate);
   });
@@ -253,6 +259,17 @@ describe("CertOps inventory routes", function () {
     expect(response.text).to.not.include("key_mode");
     expect(response.text).to.not.include("PUBLIC_LEAF_CERT");
     expectNoPrivateKeyFields(response.body);
+  });
+
+  it("normalizes an empty key reference to null", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_CA_CERT, keyReference: "   " })
+      .expect(202);
+
+    expect(response.body.count).to.equal(1);
+    expect(response.body.items[0].keyReference).to.equal(null);
   });
 
   it("deduplicates by workspace and SHA-256 fingerprint", async () => {
@@ -472,6 +489,44 @@ describe("CertOps inventory routes", function () {
     expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
     expect(response.text).to.not.include("RSA PRIVATE KEY");
     expect(response.text).to.not.include("RkFLRS1OT1QtQS1SRUFMLUtFWQ");
+  });
+
+  it("rejects an overlong key reference without echoing it", async () => {
+    const keyReference = `hsm://${"a".repeat(260)}`;
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_LEAF_CERT, keyReference });
+
+    expect(response.status).to.equal(400);
+    expect(response.body.code).to.equal("CERTOPS_KEY_REFERENCE_INVALID");
+    expect(response.text).to.not.include(keyReference);
+  });
+
+  it("rejects obvious secret-like key references without echoing them", async () => {
+    const keyReference = "external-unknown://legacy-ref?password=swordfish";
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_LEAF_CERT, keyReference });
+
+    expect(response.status).to.equal(400);
+    expect(response.body.code).to.equal("CERTOPS_KEY_REFERENCE_INVALID");
+    expect(response.text).to.not.include(keyReference);
+  });
+
+  it("rejects private key material in keyReference at the request boundary", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({
+        certificatePem: PUBLIC_LEAF_CERT,
+        keyReference: PRIVATE_KEY_PEM,
+      });
+
+    expect(response.status).to.equal(422);
+    expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+    expect(response.text).to.not.include("RSA PRIVATE KEY");
   });
 
   it("rejects malformed certificate input with a stable code", async () => {
