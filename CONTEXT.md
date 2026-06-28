@@ -61,6 +61,21 @@ routes and UI are hidden, so milestone code can ship dark, Cloud can run staged
 per-workspace previews, and Enterprise enables it deliberately. Edition, plan,
 and license gating apply on top once the flag is on.
 
+M1 Core is dark-launched and env-gated: `CERTOPS_ENABLED` is the authoritative
+Core rollout control for M1. The optional
+`system_settings.certops_settings.enabled` read path is forward-compatible only;
+the JSONB column and admin settings persistence are deferred. The resolver must
+continue to fall back safely when that column is absent.
+
+## M1 follow-ups
+
+- Certificate instance history needs a public, workspace-scoped read endpoint
+  after the monitor bridge writes `certificate_instances`, preferably in #46 or
+  a focused follow-up. It should return public observation fields only, such as
+  `observedAt`, `status`, `deploymentReference`, `observedSubject`,
+  `observedIssuer`, `observedSerialNumber`, `observedFingerprintSha256`, and
+  `source`; it must never expose private key material or secret fields.
+
 ## Editions
 
 - **Core** - source-available (BUSL-1.1), generous free base.

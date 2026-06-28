@@ -196,6 +196,43 @@ describe("CertOps inventory routes", function () {
     expectNoPrivateKeyFields(leafCertificate);
   });
 
+  it("accepts a valid external key mode", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({
+        certificatePem: PUBLIC_CA_CERT,
+        keyMode: " external-unknown ",
+      })
+      .expect(202);
+
+    expect(response.body.count).to.equal(1);
+    expect(response.body.items[0].keyMode).to.equal("external-unknown");
+    expectNoPrivateKeyFields(response.body.items[0]);
+  });
+
+  it("rejects invalid keyMode with a controlled validation error", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({
+        certificatePem: PUBLIC_LEAF_CERT,
+        keyMode: "invalid-mode",
+      });
+
+    expect(response.status).to.equal(400);
+    expect(response.body).to.deep.equal({
+      error: "Invalid CertOps key mode",
+      code: "CERTOPS_KEY_MODE_INVALID",
+    });
+    expect(Object.keys(response.body).sort()).to.deep.equal(["code", "error"]);
+    expect(response.text).to.not.include("violates check constraint");
+    expect(response.text).to.not.include("managed_certificates");
+    expect(response.text).to.not.include("key_mode");
+    expect(response.text).to.not.include("PUBLIC_LEAF_CERT");
+    expectNoPrivateKeyFields(response.body);
+  });
+
   it("deduplicates by workspace and SHA-256 fingerprint", async () => {
     const duplicate = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/certops/certificates`)

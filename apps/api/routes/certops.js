@@ -13,6 +13,7 @@ const {
 const { hasAtLeastRole } = require("../services/rbac");
 const {
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_KEY_MODE_INVALID,
   getManagedCertificate,
   importPublicCertificates,
   listManagedCertificates,
@@ -86,6 +87,13 @@ function handleCertOpsError(res, err) {
     return res.status(400).json({
       error: "Certificate input could not be parsed",
       code: CERTOPS_CERTIFICATE_PARSE_FAILED,
+    });
+  }
+
+  if (err?.code === CERTOPS_KEY_MODE_INVALID) {
+    return res.status(400).json({
+      error: "Invalid CertOps key mode",
+      code: CERTOPS_KEY_MODE_INVALID,
     });
   }
 
