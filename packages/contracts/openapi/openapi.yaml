@@ -2746,6 +2746,21 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                      required: [tokenId]
+                      properties:
+                        certificateId:
+                          type: string
+                          nullable: true
+                          description: Source certificate identifier from the domain checker payload when available.
+                        tokenId:
+                          type: integer
+                          minimum: 1
+                          description: Actual non-secret tokens.id value created or linked for the imported certificate.
+                        name:
+                          type: string
+                        expiration:
+                          type: string
+                          format: date
                   skipped:
                     type: array
                     description: |-

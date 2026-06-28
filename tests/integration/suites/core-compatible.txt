@@ -69,6 +69,10 @@ tests/integration/endpoint-health-alerts.test.js
 tests/integration/endpoint-check-worker.integration.test.js
 tests/integration/domain-checker.integration.test.js
 
+# CertOps M1
+tests/integration/certops-migration.test.js
+tests/integration/certops-inventory.test.js
+
 # Integrations
 tests/integration/github.integration.test.js
 tests/integration/gitlab.integration.test.js
@@ -86,8 +90,6 @@ tests/integration/audit-system-admin-org-scope.test.js
 
 # Schema and utilities
 tests/integration/database-schema.test.js
-tests/integration/certops-migration.test.js
-tests/integration/certops-inventory.test.js
 tests/integration/frontend-integration.test.js
 tests/integration/email-content-formatting.test.js
 tests/integration/vault.parsing.unit.test.js

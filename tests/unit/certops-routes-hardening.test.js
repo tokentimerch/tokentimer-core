@@ -9,6 +9,53 @@ const routesSource = fs.readFileSync(
   path.resolve(__dirname, "../../apps/api/routes/certops.js"),
   "utf8",
 );
+const routeCompatContract = require("../../packages/contracts/api/certops-route-compat.contract.json");
+const openApiSource = fs.readFileSync(
+  path.resolve(__dirname, "../../packages/contracts/openapi/openapi.yaml"),
+  "utf8",
+);
+
+function parseOpenApiPathMethods(source) {
+  const paths = new Map();
+  let inPaths = false;
+  let currentPath = null;
+
+  for (const line of source.split(/\r?\n/)) {
+    if (line === "paths:") {
+      inPaths = true;
+      continue;
+    }
+
+    if (inPaths && /^[A-Za-z][^:]*:\s*$/.test(line)) break;
+
+    const pathMatch = line.match(/^  (\/[^:]+):\s*$/);
+    if (pathMatch) {
+      currentPath = pathMatch[1];
+      paths.set(currentPath, new Set());
+      continue;
+    }
+
+    const methodMatch = line.match(
+      /^    (get|post|put|patch|delete|options|head|trace):\s*$/,
+    );
+    if (currentPath && methodMatch) {
+      paths.get(currentPath).add(methodMatch[1].toUpperCase());
+    }
+  }
+
+  return paths;
+}
+
+const openApiPathMethods = parseOpenApiPathMethods(openApiSource);
+
+function assertOpenApiRoute(routePath, method) {
+  const methods = openApiPathMethods.get(routePath);
+  assert.ok(methods, `${routePath} missing from OpenAPI paths`);
+  assert.ok(
+    methods.has(method.toUpperCase()),
+    `${method.toUpperCase()} ${routePath} missing from OpenAPI paths`,
+  );
+}
 
 function routeBlock(method, routePath) {
   const start = routesSource.indexOf(`router.${method}(\n  "${routePath}"`);
@@ -93,5 +140,53 @@ describe("CertOps M1 route hardening", () => {
         `${routePath} must check the rollout gate before write authorization`,
       );
     }
+  });
+
+  it("keeps the route-compat contract and OpenAPI path skeletons aligned", () => {
+    const { namespacePolicy, routeAuth, guarantees } = routeCompatContract;
+    const stableRoutes = guarantees.stableRoutes;
+    const stableRouteByPath = new Map(
+      stableRoutes.map((route) => [route.path, route]),
+    );
+
+    for (const route of stableRoutes) {
+      assertOpenApiRoute(route.path, route.method);
+
+      if (route.path.startsWith("/api/v1/workspaces/")) {
+        assert.ok(
+          route.path.startsWith(namespacePolicy.workspaceScoped.prefix),
+          `${route.path} is outside the workspace CertOps namespace`,
+        );
+      }
+
+      if (route.path.startsWith("/api/v1/certops/executor")) {
+        assert.ok(
+          route.path.startsWith(namespacePolicy.executor.prefix),
+          `${route.path} is outside the executor CertOps namespace`,
+        );
+      }
+
+      if (route.path.startsWith("/api/v1/certops/agent")) {
+        assert.ok(
+          route.path.startsWith(namespacePolicy.agent.prefix),
+          `${route.path} is outside the agent CertOps namespace`,
+        );
+      }
+    }
+
+    for (const [routePath, authScheme] of Object.entries(routeAuth)) {
+      const route = stableRouteByPath.get(routePath);
+      assert.ok(route, `${routePath} routeAuth entry is not a stable route`);
+      assertOpenApiRoute(routePath, route.method);
+      assert.ok(
+        openApiSource.includes(`${authScheme}:`),
+        `${authScheme} missing from OpenAPI security schemes or route security`,
+      );
+    }
+
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/certificates/{certId}/instances",
+      "GET",
+    );
   });
 });

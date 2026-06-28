@@ -18,6 +18,10 @@ policy toggle. It is enforced in depth:
 - schema design (no inventory field is meant to hold key material),
 - the API rejection boundary (HTTP 422 `PRIVATE_KEY_MATERIAL_REJECTED`).
 
+Field-name redaction and explicit sanitized logging are wired for the current
+M1 boundary paths. A broader logger content-scrub layer for arbitrary log
+message content is a follow-up, not something M1 assumes globally.
+
 The one private key the platform does hold is the platform operational signing
 key (Ed25519) used to sign jobs. It is never used for certificate issuance and
 never holds customer key material. See ADR-0003.
