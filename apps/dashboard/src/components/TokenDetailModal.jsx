@@ -29,6 +29,7 @@ import {
   DashboardModalFrame,
   useDashboardModalProps,
 } from './DashboardModalFrame.jsx';
+import TokenCertOpsPanel from './certops/TokenCertOpsPanel.jsx';
 
 function createTokenEditData(token) {
   return {
@@ -759,6 +760,7 @@ function TokenDetailModal({
                       }
                     )
                   ))}
+                <TokenCertOpsPanel tokenId={token.id} />
               </>
             )}
 

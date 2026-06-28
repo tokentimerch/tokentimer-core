@@ -796,7 +796,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const needsAttention = statsData?.needsAttention || EMPTY_LIST;
   const neverExpires = statsData?.neverExpires || EMPTY_LIST;
   const privilegeHighlights = statsData?.privilegeHighlights || EMPTY_LIST;
-  const autoSyncRows = statsData?.autoSync || EMPTY_LIST;
+  const autoSyncRows = Array.isArray(statsData?.autoSync)
+    ? statsData.autoSync
+    : EMPTY_LIST;
   const [privilegeSortDesc, setPrivilegeSortDesc] = useState(true);
 
   const sortedPrivilegeHighlights = useMemo(() => {
