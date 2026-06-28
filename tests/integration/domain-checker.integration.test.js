@@ -419,7 +419,7 @@ describe("Domain checker API import integration", function () {
     expect(certopsRows.rows).to.have.length(0);
   });
 
-  it("imports discovered SSL tokens, creates monitors, reports skipped reasons, and writes audit metadata", async () => {
+  it("imports discovered SSL tokens and populates CertOps on monitor observations", async () => {
     const certificates = [
       {
         id: "disc-www",
@@ -498,7 +498,16 @@ describe("Domain checker API import integration", function () {
       "no_matching_domains_and_missing_expiration",
     ]);
 
+    expect(
+      response.body.imported.every(
+        (entry) => Number.isInteger(entry.tokenId) && entry.tokenId > 0,
+      ),
+    ).to.equal(true);
     const tokenIds = response.body.imported.map((entry) => entry.tokenId);
+    expect(new Set(tokenIds).size).to.equal(tokenIds.length);
+    const importedTokenByName = Object.fromEntries(
+      response.body.imported.map((entry) => [entry.name, entry.tokenId]),
+    );
     const tokenRows = await TestUtils.execQuery(
       `SELECT id, name, type, category, issuer, subject, domains, notes
          FROM tokens
@@ -554,6 +563,18 @@ describe("Domain checker API import integration", function () {
     expect(monitors.rows.every((row) => tokenIds.includes(row.token_id))).to.equal(
       true,
     );
+    const monitorByUrl = Object.fromEntries(
+      monitors.rows.map((row) => [row.url, row]),
+    );
+    expect(monitorByUrl["https://api.example.com"].token_id).to.equal(
+      importedTokenByName["api.example.com"],
+    );
+    expect(monitorByUrl["https://sha1.example.com"].token_id).to.equal(
+      importedTokenByName["sha1.example.com"],
+    );
+    expect(monitorByUrl["https://www.example.com"].token_id).to.equal(
+      importedTokenByName["www.example.com"],
+    );
 
     const certopsRows = await TestUtils.execQuery(
       `SELECT
@@ -597,9 +618,6 @@ describe("Domain checker API import integration", function () {
     );
     expect(certopsRows.rows).to.have.length(3);
 
-    const importedTokenByName = Object.fromEntries(
-      response.body.imported.map((entry) => [entry.name, entry.tokenId]),
-    );
     const certopsByUrl = Object.fromEntries(
       certopsRows.rows.map((row) => [row.url, row]),
     );
@@ -638,6 +656,8 @@ describe("Domain checker API import integration", function () {
     }
 
     const wwwRow = certopsByUrl["https://www.example.com"];
+    // Existing monitor rechecks enter the same bridge; repeated observations
+    // update the existing instance instead of creating backfill duplicates.
     const repeatedObservation = await bridgeEndpointCertificateObservation({
       dbPool: pool,
       env: { CERTOPS_ENABLED: "true" },

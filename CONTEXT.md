@@ -18,6 +18,10 @@ policy toggle. It is enforced in depth:
 - schema design (no inventory field is meant to hold key material),
 - the API rejection boundary (HTTP 422 `PRIVATE_KEY_MATERIAL_REJECTED`).
 
+Field-name redaction and explicit sanitized logging are wired for the current
+M1 boundary paths. A broader logger content-scrub layer for arbitrary log
+message content is a follow-up, not something M1 assumes globally.
+
 The one private key the platform does hold is the platform operational signing
 key (Ed25519) used to sign jobs. It is never used for certificate issuance and
 never holds customer key material. See ADR-0003.
@@ -60,6 +64,26 @@ gating: `certops.enabled`, stored in a `certops_settings` JSONB column, with
 routes and UI are hidden, so milestone code can ship dark, Cloud can run staged
 per-workspace previews, and Enterprise enables it deliberately. Edition, plan,
 and license gating apply on top once the flag is on.
+
+M1 Core is dark-launched and env-gated: `CERTOPS_ENABLED` is the authoritative
+Core rollout control for M1. The optional
+`system_settings.certops_settings.enabled` read path is forward-compatible only;
+the JSONB column and admin settings persistence are deferred. The resolver must
+continue to fall back safely when that column is absent.
+
+## M1 monitor bridge and instance history
+
+- Existing endpoint/domain monitors populate CertOps inventory on their next
+  public certificate observation/check cycle. M1 does not add a historical
+  backfill job or admin UI; existing monitor recheck flows, where present, use
+  the same bridge path.
+- Certificate instance history is available at
+  `GET /api/v1/workspaces/:id/certops/certificates/:certId/instances`. It is
+  workspace-scoped, gated by `certops.enabled`, and returns public observation
+  fields only, such as `observedAt`, `status`, `deploymentReference`,
+  `observedSubject`, `observedIssuer`, `observedSerialNumber`,
+  `observedFingerprintSha256`, and `source`. It must never expose private key
+  material, evidence, or secret fields.
 
 ## Editions
 

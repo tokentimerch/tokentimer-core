@@ -10,7 +10,15 @@
     "tables": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["users", "workspaces", "workspace_memberships"],
+      "required": [
+        "users",
+        "workspaces",
+        "workspace_memberships",
+        "certificate_profiles",
+        "managed_certificates",
+        "certificate_targets",
+        "certificate_instances"
+      ],
       "properties": {
         "users": {
           "$ref": "#/definitions/tableUsers"
@@ -20,6 +28,18 @@
         },
         "workspace_memberships": {
           "$ref": "#/definitions/tableMemberships"
+        },
+        "certificate_profiles": {
+          "$ref": "#/definitions/tableCertificateProfiles"
+        },
+        "managed_certificates": {
+          "$ref": "#/definitions/tableManagedCertificates"
+        },
+        "certificate_targets": {
+          "$ref": "#/definitions/tableCertificateTargets"
+        },
+        "certificate_instances": {
+          "$ref": "#/definitions/tableCertificateInstances"
         }
       }
     }
@@ -61,6 +81,152 @@
           "items": { "type": "string" },
           "contains": { "const": "workspace_id" },
           "minItems": 3
+        }
+      }
+    },
+    "certOpsSafeRequiredColumns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "not": {
+        "contains": {
+          "enum": [
+            "privateKey",
+            "private_key",
+            "privateKeyPem",
+            "private_key_pem",
+            "key_pem",
+            "key_der",
+            "key_material",
+            "raw_key",
+            "pkcs12",
+            "pfx",
+            "backup",
+            "secret",
+            "credential",
+            "password"
+          ]
+        }
+      }
+    },
+    "tableCertificateProfiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 8,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "name" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "source" } },
+            { "contains": { "const": "public_metadata" } },
+            { "contains": { "const": "created_at" } },
+            { "contains": { "const": "updated_at" } }
+          ]
+        }
+      }
+    },
+    "tableManagedCertificates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 16,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "token_id" } },
+            { "contains": { "const": "profile_id" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "source" } },
+            { "contains": { "const": "common_name" } },
+            { "contains": { "const": "subject_alt_names" } },
+            { "contains": { "const": "fingerprint_sha256" } },
+            { "contains": { "const": "spki_fingerprint_sha256" } },
+            { "contains": { "const": "certificate_pem" } },
+            { "contains": { "const": "key_mode" } },
+            { "contains": { "const": "key_reference" } },
+            { "contains": { "const": "public_metadata" } },
+            { "contains": { "const": "created_at" } },
+            { "contains": { "const": "updated_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateTargets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 15,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "profile_id" } },
+            { "contains": { "const": "domain_monitor_id" } },
+            { "contains": { "const": "token_id" } },
+            { "contains": { "const": "name" } },
+            { "contains": { "const": "target_type" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "source" } },
+            { "contains": { "const": "hostname" } },
+            { "contains": { "const": "url" } },
+            { "contains": { "const": "deployment_reference" } },
+            { "contains": { "const": "public_metadata" } },
+            { "contains": { "const": "created_at" } },
+            { "contains": { "const": "updated_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateInstances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 18,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "managed_certificate_id" } },
+            { "contains": { "const": "target_id" } },
+            { "contains": { "const": "domain_monitor_id" } },
+            { "contains": { "const": "token_id" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "source" } },
+            { "contains": { "const": "observed_fingerprint_sha256" } },
+            { "contains": { "const": "observed_serial_number" } },
+            { "contains": { "const": "observed_subject" } },
+            { "contains": { "const": "observed_issuer" } },
+            { "contains": { "const": "observed_not_after" } },
+            { "contains": { "const": "deployment_reference" } },
+            { "contains": { "const": "observed_at" } },
+            { "contains": { "const": "public_metadata" } },
+            { "contains": { "const": "created_at" } },
+            { "contains": { "const": "updated_at" } }
+          ]
         }
       }
     }

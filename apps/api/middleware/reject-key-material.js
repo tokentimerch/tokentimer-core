@@ -8,10 +8,17 @@ const { logger } = require("../utils/logger");
 
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 const CERTOPS_KEY_MATERIAL_REJECTED = "CERTOPS_KEY_MATERIAL_REJECTED";
+const CERTOPS_SECURITY_AUDIT_UNAVAILABLE =
+  "CERTOPS_SECURITY_AUDIT_UNAVAILABLE";
 
 const REJECTION_RESPONSE = Object.freeze({
   error: "Private key material is not accepted in CertOps requests",
   code: PRIVATE_KEY_MATERIAL_REJECTED,
+});
+
+const AUDIT_UNAVAILABLE_RESPONSE = Object.freeze({
+  error: "Security audit unavailable",
+  code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
 });
 
 const UUID_PATTERN =
@@ -66,11 +73,12 @@ function createRejectKeyMaterialMiddleware({ auditWriter = writeAudit } = {}) {
       await recordKeyMaterialRejection(req, auditWriter);
     } catch (err) {
       logger.warn("Failed to record CertOps key-material rejection audit", {
-        error: err.message,
         code: err.code || null,
+        error_name: err.name || null,
         path: safeRequestPath(req),
         method: req.method || null,
       });
+      return res.status(503).json(AUDIT_UNAVAILABLE_RESPONSE);
     }
 
     return res.status(422).json(REJECTION_RESPONSE);
@@ -82,6 +90,7 @@ const rejectKeyMaterial = createRejectKeyMaterialMiddleware();
 module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   CERTOPS_KEY_MATERIAL_REJECTED,
+  CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
   buildAuditEvent,
   createRejectKeyMaterialMiddleware,
   recordKeyMaterialRejection,

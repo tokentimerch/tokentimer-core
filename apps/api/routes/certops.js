@@ -13,9 +13,11 @@ const {
 const { hasAtLeastRole } = require("../services/rbac");
 const {
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   getManagedCertificate,
   importPublicCertificates,
+  listCertificateInstances,
   listManagedCertificates,
 } = require("../services/certops/inventory");
 const { writeAudit } = require("../services/audit");
@@ -87,6 +89,13 @@ function handleCertOpsError(res, err) {
     return res.status(400).json({
       error: "Certificate input could not be parsed",
       code: CERTOPS_CERTIFICATE_PARSE_FAILED,
+    });
+  }
+
+  if (err?.code === CERTOPS_KEY_MODE_INVALID) {
+    return res.status(400).json({
+      error: "Invalid CertOps key mode",
+      code: CERTOPS_KEY_MODE_INVALID,
     });
   }
 
@@ -190,6 +199,50 @@ router.post(
   requireCertOpsEnabled,
   requireCertOpsWriteRole,
   (req, res) => importCertificatesHandler(req, res, "api", 201),
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
+    }
+
+    try {
+      const result = await listCertificateInstances({
+        workspaceId: req.workspace.id,
+        certId: req.params.certId,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+
+      if (!result) {
+        return res.status(404).json({
+          error: "Certificate not found",
+          code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+        });
+      }
+
+      return res.json(result);
+    } catch (err) {
+      logger.error("CertOps certificate instances list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        certId: req.params?.certId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate instances",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
 );
 
 router.get(

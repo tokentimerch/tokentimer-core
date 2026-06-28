@@ -9,6 +9,18 @@ const {
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
+const CERTOPS_KEY_MODE_INVALID = "CERTOPS_KEY_MODE_INVALID";
+
+const ALLOWED_KEY_MODES = new Set([
+  "agent-local",
+  "proxy-agent-local",
+  "cert-manager-managed",
+  "appliance-managed",
+  "hsm-managed",
+  "vault-managed",
+  "os-store-managed",
+  "external-unknown",
+]);
 const CERTOPS_KEY_REFERENCE_INVALID = "CERTOPS_KEY_REFERENCE_INVALID";
 const KEY_REFERENCE_MAX_LENGTH = 256;
 const PEM_MARKER_PATTERN = /-----\s*(?:BEGIN|END)\b/i;
@@ -95,6 +107,32 @@ function toInventoryRecord(row) {
   };
 }
 
+function toInstanceRecord(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    managedCertificateId: row.managed_certificate_id,
+    targetId: row.target_id,
+    domainMonitorId: row.domain_monitor_id,
+    tokenId: row.token_id,
+    status: row.status,
+    source: row.source,
+    sourceRef: row.source_ref,
+    observedFingerprintSha256: row.observed_fingerprint_sha256,
+    observedSerialNumber: row.observed_serial_number,
+    observedSubject: row.observed_subject,
+    observedIssuer: row.observed_issuer,
+    observedNotBefore: dateToIso(row.observed_not_before),
+    observedNotAfter: dateToIso(row.observed_not_after),
+    deploymentReference: row.deployment_reference,
+    observedAt: dateToIso(row.observed_at),
+    createdAt: dateToIso(row.created_at),
+    updatedAt: dateToIso(row.updated_at),
+  };
+}
+
 function normalizeLimit(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 50;
@@ -105,6 +143,31 @@ function normalizeOffset(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, parsed);
+}
+
+function certOpsValidationError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function normalizeKeyMode(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw certOpsValidationError(
+      "Invalid CertOps key mode",
+      CERTOPS_KEY_MODE_INVALID,
+    );
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (ALLOWED_KEY_MODES.has(trimmed)) return trimmed;
+
+  throw certOpsValidationError(
+    "Invalid CertOps key mode",
+    CERTOPS_KEY_MODE_INVALID,
+  );
 }
 
 function publicMetadataFor(certificate, options, chainIndex) {
@@ -209,6 +272,10 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
 
 async function importPublicCertificates(options) {
   const certificates = parsePublicCertificateMaterial(options.certificatePem);
+  const normalizedOptions = {
+    ...options,
+    keyMode: normalizeKeyMode(options.keyMode),
+  };
   const client = await pool.connect();
 
   try {
@@ -216,7 +283,12 @@ async function importPublicCertificates(options) {
     const items = [];
     for (let index = 0; index < certificates.length; index += 1) {
       items.push(
-        await upsertManagedCertificate(client, certificates[index], options, index),
+        await upsertManagedCertificate(
+          client,
+          certificates[index],
+          normalizedOptions,
+          index,
+        ),
       );
     }
     await client.query("COMMIT");
@@ -263,17 +335,49 @@ async function getManagedCertificate({ workspaceId, certId }) {
   return toInventoryRecord(result.rows[0] || null);
 }
 
+async function listCertificateInstances({ workspaceId, certId, limit, offset }) {
+  const certificate = await getManagedCertificate({ workspaceId, certId });
+  if (!certificate) return null;
+
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const result = await pool.query(
+    `SELECT *
+       FROM certificate_instances
+      WHERE workspace_id = $1
+        AND managed_certificate_id = $2
+      ORDER BY observed_at DESC NULLS LAST,
+               updated_at DESC,
+               created_at DESC,
+               id ASC
+      LIMIT $3 OFFSET $4`,
+    [workspaceId, certId, normalizedLimit, normalizedOffset],
+  );
+
+  return {
+    items: result.rows.map(toInstanceRecord),
+    pagination: {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+  };
+}
+
 module.exports = {
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   getManagedCertificate,
   importPublicCertificates,
+  listCertificateInstances,
   listManagedCertificates,
+  normalizeKeyMode,
   normalizeKeyReference,
   normalizeLimit,
   normalizeOffset,
+  toInstanceRecord,
   toInventoryRecord,
   upsertManagedCertificate,
 };

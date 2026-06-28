@@ -615,7 +615,7 @@ const migrations = [
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
-        profile_id UUID NULL REFERENCES certificate_profiles(id) ON DELETE SET NULL,
+        profile_id UUID NULL,
         status TEXT NOT NULL DEFAULT 'discovered'
           CHECK (status IN ('discovered', 'active', 'renewing', 'expiring', 'expired', 'revoked', 'decommissioned')),
         source TEXT NOT NULL DEFAULT 'manual'
@@ -652,6 +652,10 @@ const migrations = [
         created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_managed_certificates_profile
+          FOREIGN KEY (workspace_id, profile_id)
+          REFERENCES certificate_profiles(workspace_id, id)
+          ON DELETE SET NULL (profile_id),
         CONSTRAINT uq_managed_certificates_workspace_id UNIQUE (workspace_id, id)
       );
       CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace
@@ -678,7 +682,7 @@ const migrations = [
       CREATE TABLE IF NOT EXISTS certificate_targets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        profile_id UUID NULL REFERENCES certificate_profiles(id) ON DELETE SET NULL,
+        profile_id UUID NULL,
         domain_monitor_id UUID NULL REFERENCES domain_monitors(id) ON DELETE SET NULL,
         token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
         name TEXT NOT NULL,
@@ -697,6 +701,10 @@ const migrations = [
         created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certificate_targets_profile
+          FOREIGN KEY (workspace_id, profile_id)
+          REFERENCES certificate_profiles(workspace_id, id)
+          ON DELETE SET NULL (profile_id),
         CONSTRAINT uq_certificate_targets_workspace_id UNIQUE (workspace_id, id)
       );
       CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace

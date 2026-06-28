@@ -111,6 +111,28 @@ function expectNoPrivateKeyFields(value) {
   expect(JSON.stringify(value)).to.not.include("PRIVATE KEY");
 }
 
+const CERTIFICATE_INSTANCE_FIELDS = [
+  "createdAt",
+  "deploymentReference",
+  "domainMonitorId",
+  "id",
+  "managedCertificateId",
+  "observedAt",
+  "observedFingerprintSha256",
+  "observedIssuer",
+  "observedNotAfter",
+  "observedNotBefore",
+  "observedSerialNumber",
+  "observedSubject",
+  "source",
+  "sourceRef",
+  "status",
+  "targetId",
+  "tokenId",
+  "updatedAt",
+  "workspaceId",
+].sort();
+
 describe("CertOps inventory routes", function () {
   this.timeout(90000);
 
@@ -202,6 +224,43 @@ describe("CertOps inventory routes", function () {
     expectNoPrivateKeyFields(leafCertificate);
   });
 
+  it("accepts a valid external key mode", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({
+        certificatePem: PUBLIC_CA_CERT,
+        keyMode: " external-unknown ",
+      })
+      .expect(202);
+
+    expect(response.body.count).to.equal(1);
+    expect(response.body.items[0].keyMode).to.equal("external-unknown");
+    expectNoPrivateKeyFields(response.body.items[0]);
+  });
+
+  it("rejects invalid keyMode with a controlled validation error", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({
+        certificatePem: PUBLIC_LEAF_CERT,
+        keyMode: "invalid-mode",
+      });
+
+    expect(response.status).to.equal(400);
+    expect(response.body).to.deep.equal({
+      error: "Invalid CertOps key mode",
+      code: "CERTOPS_KEY_MODE_INVALID",
+    });
+    expect(Object.keys(response.body).sort()).to.deep.equal(["code", "error"]);
+    expect(response.text).to.not.include("violates check constraint");
+    expect(response.text).to.not.include("managed_certificates");
+    expect(response.text).to.not.include("key_mode");
+    expect(response.text).to.not.include("PUBLIC_LEAF_CERT");
+    expectNoPrivateKeyFields(response.body);
+  });
+
   it("normalizes an empty key reference to null", async () => {
     const response = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
@@ -268,6 +327,107 @@ describe("CertOps inventory routes", function () {
     expectNoPrivateKeyFields(detail.body.certificate);
   });
 
+  it("allows viewers to list public certificate instance history", async () => {
+    const sourceRef = `certops-inventory-route-${Date.now()}`;
+    const target = await TestUtils.execQuery(
+      `INSERT INTO certificate_targets (
+         workspace_id,
+         name,
+         target_type,
+         status,
+         source,
+         source_ref,
+         hostname,
+         url,
+         deployment_reference
+       )
+       VALUES ($1, $2, 'endpoint', 'active', 'endpoint_monitor', $3, $4, $5, $5)
+       RETURNING id`,
+      [
+        workspaceId,
+        "certops.example endpoint",
+        sourceRef,
+        "certops.example",
+        "https://certops.example",
+      ],
+    );
+    const targetId = target.rows[0].id;
+
+    const instance = await TestUtils.execQuery(
+      `INSERT INTO certificate_instances (
+         workspace_id,
+         managed_certificate_id,
+         target_id,
+         status,
+         source,
+         source_ref,
+         observed_fingerprint_sha256,
+         observed_serial_number,
+         observed_subject,
+         observed_issuer,
+         observed_not_before,
+         observed_not_after,
+         deployment_reference,
+         observed_at
+       )
+       VALUES (
+         $1, $2, $3, 'active', 'endpoint_monitor', $4, $5, $6, $7, $8,
+         $9, $10, $11, $12
+       )
+       RETURNING id`,
+      [
+        workspaceId,
+        leafCertificate.id,
+        targetId,
+        sourceRef,
+        leafCertificate.fingerprintSha256,
+        leafCertificate.serialNumber,
+        leafCertificate.commonName,
+        leafCertificate.issuer,
+        leafCertificate.notBefore,
+        leafCertificate.notAfter,
+        "https://certops.example",
+        "2026-06-27T12:00:00.000Z",
+      ],
+    );
+
+    const response = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${workspaceId}/certops/certificates/${leafCertificate.id}/instances?limit=10&offset=0`,
+      )
+      .set("Cookie", viewerSession.cookie)
+      .expect(200);
+
+    const item = response.body.items.find(
+      (entry) => entry.id === instance.rows[0].id,
+    );
+    expect(item).to.exist;
+    expect(Object.keys(item).sort()).to.deep.equal(CERTIFICATE_INSTANCE_FIELDS);
+    expect(item.workspaceId).to.equal(workspaceId);
+    expect(item.managedCertificateId).to.equal(leafCertificate.id);
+    expect(item.targetId).to.equal(targetId);
+    expect(item.domainMonitorId).to.equal(null);
+    expect(item.tokenId).to.equal(null);
+    expect(item.status).to.equal("active");
+    expect(item.source).to.equal("endpoint_monitor");
+    expect(item.sourceRef).to.equal(sourceRef);
+    expect(item.observedFingerprintSha256).to.equal(
+      leafCertificate.fingerprintSha256,
+    );
+    expect(item.observedSerialNumber).to.equal(leafCertificate.serialNumber);
+    expect(item.observedSubject).to.equal(leafCertificate.commonName);
+    expect(item.observedIssuer).to.equal(leafCertificate.issuer);
+    expect(item.observedNotBefore).to.equal(leafCertificate.notBefore);
+    expect(item.observedNotAfter).to.equal(leafCertificate.notAfter);
+    expect(item.deploymentReference).to.equal("https://certops.example");
+    expect(item.observedAt).to.equal("2026-06-27T12:00:00.000Z");
+    expect(response.body.pagination).to.deep.equal({ limit: 10, offset: 0 });
+    expectNoPrivateKeyFields(response.body);
+    expect(JSON.stringify(response.body)).to.not.include("public_metadata");
+    expect(JSON.stringify(response.body)).to.not.include("publicMetadata");
+    expect(JSON.stringify(response.body)).to.not.include("evidence");
+  });
+
   it("denies viewer writes", async () => {
     const response = await request(BASE)
       .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
@@ -295,6 +455,28 @@ describe("CertOps inventory routes", function () {
       .set("Cookie", outsiderSession.cookie)
       .expect(200);
     expect(outsiderList.body.items).to.deep.equal([]);
+  });
+
+  it("keeps certificate instance history isolated by workspace", async () => {
+    const response = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${outsiderWorkspaceId}/certops/certificates/${leafCertificate.id}/instances`,
+      )
+      .set("Cookie", outsiderSession.cookie);
+
+    expect(response.status).to.equal(404);
+    expect(response.body.code).to.equal("CERTOPS_CERTIFICATE_NOT_FOUND");
+  });
+
+  it("returns safe 404 for malformed certificate ids on instance history", async () => {
+    const response = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${workspaceId}/certops/certificates/not-a-uuid/instances`,
+      )
+      .set("Cookie", ownerSession.cookie);
+
+    expect(response.status).to.equal(404);
+    expect(response.body.code).to.equal("CERTOPS_CERTIFICATE_NOT_FOUND");
   });
 
   it("rejects private key material without echoing raw input", async () => {

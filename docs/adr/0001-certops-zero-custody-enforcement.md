@@ -29,6 +29,13 @@ Enterprise. Enforce it in multiple layers:
 3. **API rejection boundary**: requests whose body contains private key material
    are rejected with HTTP 422 `PRIVATE_KEY_MATERIAL_REJECTED` (see
    `packages/contracts/api/certops-route-compat.contract.json`).
+   In M1 this guard is intentionally mounted on CertOps write routes rather
+   than globally, to avoid changing unrelated non-CertOps request behavior
+   during observe-only work. Domain-checker import keeps its own inline
+   `containsPrivateKeyMaterial` guard. Future CertOps write surfaces must attach
+   `rejectKeyMaterial` after `express.json()` and before feature gates, RBAC,
+   parsing, persistence, or other business logic. Global/content-wide
+   enforcement can be revisited later with logger content-scrub work.
 4. **Schema design**: no inventory field is intended to hold key material;
    inventory stores public material and opaque, non-secret references
    (`certops-inventory.schema.json`). Flexible JSONB fields are protected by the

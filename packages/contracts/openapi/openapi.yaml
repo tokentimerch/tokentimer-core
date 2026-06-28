@@ -2746,6 +2746,21 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                      required: [tokenId]
+                      properties:
+                        certificateId:
+                          type: string
+                          nullable: true
+                          description: Source certificate identifier from the domain checker payload when available.
+                        tokenId:
+                          type: integer
+                          minimum: 1
+                          description: Actual non-secret tokens.id value created or linked for the imported certificate.
+                        name:
+                          type: string
+                        expiration:
+                          type: string
+                          format: date
                   skipped:
                     type: array
                     description: |-
@@ -3061,6 +3076,125 @@ paths:
                   value:
                     error: Certificate not found
                     code: CERTOPS_CERTIFICATE_NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/instances:
+    get:
+      tags: [CertOps]
+      summary: List managed certificate instances
+      operationId: listCertOpsCertificateInstances
+      description: Returns public, workspace-scoped certificate observation history for one managed certificate. Private key material, evidence, raw output, and secret fields are never returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Managed certificate identifier.
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Managed certificate instance history
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - workspaceId
+                        - managedCertificateId
+                        - targetId
+                        - status
+                        - source
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        workspaceId:
+                          type: string
+                          format: uuid
+                        managedCertificateId:
+                          type: string
+                          format: uuid
+                        targetId:
+                          type: string
+                          format: uuid
+                        domainMonitorId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        tokenId:
+                          type: integer
+                          nullable: true
+                        status:
+                          type: string
+                        source:
+                          type: string
+                        sourceRef:
+                          type: string
+                          nullable: true
+                        observedFingerprintSha256:
+                          type: string
+                          pattern: "^[a-f0-9]{64}$"
+                          nullable: true
+                        observedSerialNumber:
+                          type: string
+                          nullable: true
+                        observedSubject:
+                          type: string
+                          nullable: true
+                        observedIssuer:
+                          type: string
+                          nullable: true
+                        observedNotBefore:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        observedNotAfter:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        deploymentReference:
+                          type: string
+                          nullable: true
+                        observedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Managed certificate not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Certificate not found
+                code: CERTOPS_CERTIFICATE_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/imports:
