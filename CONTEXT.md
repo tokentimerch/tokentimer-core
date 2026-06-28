@@ -67,14 +67,19 @@ Core rollout control for M1. The optional
 the JSONB column and admin settings persistence are deferred. The resolver must
 continue to fall back safely when that column is absent.
 
-## M1 follow-ups
+## M1 monitor bridge and instance history
 
-- Certificate instance history needs a public, workspace-scoped read endpoint
-  after the monitor bridge writes `certificate_instances`, preferably in #46 or
-  a focused follow-up. It should return public observation fields only, such as
-  `observedAt`, `status`, `deploymentReference`, `observedSubject`,
-  `observedIssuer`, `observedSerialNumber`, `observedFingerprintSha256`, and
-  `source`; it must never expose private key material or secret fields.
+- Existing endpoint/domain monitors populate CertOps inventory on their next
+  public certificate observation/check cycle. M1 does not add a historical
+  backfill job or admin UI; existing monitor recheck flows, where present, use
+  the same bridge path.
+- Certificate instance history is available at
+  `GET /api/v1/workspaces/:id/certops/certificates/:certId/instances`. It is
+  workspace-scoped, gated by `certops.enabled`, and returns public observation
+  fields only, such as `observedAt`, `status`, `deploymentReference`,
+  `observedSubject`, `observedIssuer`, `observedSerialNumber`,
+  `observedFingerprintSha256`, and `source`. It must never expose private key
+  material, evidence, or secret fields.
 
 ## Editions
 

@@ -365,7 +365,7 @@ describe("Domain checker API import integration", function () {
     expect(JSON.stringify(privateKey.body)).to.not.include("RkFLRS1LRVk");
   });
 
-  it("imports discovered SSL tokens, creates monitors, reports skipped reasons, and writes audit metadata", async () => {
+  it("imports discovered SSL tokens and populates CertOps on monitor observations", async () => {
     const certificates = [
       {
         id: "disc-www",
@@ -584,6 +584,8 @@ describe("Domain checker API import integration", function () {
     }
 
     const wwwRow = certopsByUrl["https://www.example.com"];
+    // Existing monitor rechecks enter the same bridge; repeated observations
+    // update the existing instance instead of creating backfill duplicates.
     const repeatedObservation = await bridgeEndpointCertificateObservation({
       dbPool: pool,
       env: { CERTOPS_ENABLED: "true" },

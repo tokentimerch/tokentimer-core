@@ -79,6 +79,32 @@ function toInventoryRecord(row) {
   };
 }
 
+function toInstanceRecord(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    managedCertificateId: row.managed_certificate_id,
+    targetId: row.target_id,
+    domainMonitorId: row.domain_monitor_id,
+    tokenId: row.token_id,
+    status: row.status,
+    source: row.source,
+    sourceRef: row.source_ref,
+    observedFingerprintSha256: row.observed_fingerprint_sha256,
+    observedSerialNumber: row.observed_serial_number,
+    observedSubject: row.observed_subject,
+    observedIssuer: row.observed_issuer,
+    observedNotBefore: dateToIso(row.observed_not_before),
+    observedNotAfter: dateToIso(row.observed_not_after),
+    deploymentReference: row.deployment_reference,
+    observedAt: dateToIso(row.observed_at),
+    createdAt: dateToIso(row.created_at),
+    updatedAt: dateToIso(row.updated_at),
+  };
+}
+
 function normalizeLimit(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 50;
@@ -280,6 +306,34 @@ async function getManagedCertificate({ workspaceId, certId }) {
   return toInventoryRecord(result.rows[0] || null);
 }
 
+async function listCertificateInstances({ workspaceId, certId, limit, offset }) {
+  const certificate = await getManagedCertificate({ workspaceId, certId });
+  if (!certificate) return null;
+
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const result = await pool.query(
+    `SELECT *
+       FROM certificate_instances
+      WHERE workspace_id = $1
+        AND managed_certificate_id = $2
+      ORDER BY observed_at DESC NULLS LAST,
+               updated_at DESC,
+               created_at DESC,
+               id ASC
+      LIMIT $3 OFFSET $4`,
+    [workspaceId, certId, normalizedLimit, normalizedOffset],
+  );
+
+  return {
+    items: result.rows.map(toInstanceRecord),
+    pagination: {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+  };
+}
+
 module.exports = {
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
@@ -287,10 +341,12 @@ module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   getManagedCertificate,
   importPublicCertificates,
+  listCertificateInstances,
   listManagedCertificates,
   normalizeKeyMode,
   normalizeLimit,
   normalizeOffset,
+  toInstanceRecord,
   toInventoryRecord,
   upsertManagedCertificate,
 };
