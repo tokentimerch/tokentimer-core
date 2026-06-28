@@ -6,10 +6,14 @@ const path = require("node:path");
 
 const {
   CERTOPS_KEY_MATERIAL_REJECTED,
+  CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
   PRIVATE_KEY_MATERIAL_REJECTED,
   createRejectKeyMaterialMiddleware,
 } = require(
   path.resolve(__dirname, "../../apps/api/middleware/reject-key-material.js"),
+);
+const { logger } = require(
+  path.resolve(__dirname, "../../apps/api/utils/logger.js"),
 );
 
 const FAKE_PRIVATE_BODY = "RkFLRS1OT1QtQS1SRUFMLUtFWQ==";
@@ -177,18 +181,49 @@ describe("rejectKeyMaterial middleware", () => {
     assert.equal(JSON.stringify(auditEvent).includes("alert_queue"), false);
   });
 
-  it("still rejects when audit recording fails", async () => {
-    const result = await assertRejected(
-      { payload: fakePem("RSA PRIVATE KEY") },
-      {
-        auditWriter: async () => {
-          throw new Error("audit unavailable");
-        },
-        expectAuditEvent: false,
-      },
-    );
+  it("fails closed when audit recording fails", async () => {
+    const privateKey = fakePem("RSA PRIVATE KEY");
+    const warnings = [];
+    const originalWarn = logger.warn;
+    logger.warn = (message, meta) => {
+      warnings.push({ message, meta });
+    };
 
-    assert.equal(result.statusCode, 422);
+    try {
+      const result = await runMiddleware(
+        { payload: privateKey },
+        {
+          auditWriter: async () => {
+            throw new Error(`audit unavailable ${privateKey}`);
+          },
+        },
+      );
+
+      assert.equal(result.nextCalled, false);
+      assert.equal(result.statusCode, 503);
+      assert.deepEqual(result.responseBody, {
+        error: "Security audit unavailable",
+        code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
+      });
+      assert.deepEqual(Object.keys(result.responseBody).sort(), [
+        "code",
+        "error",
+      ]);
+      assert.equal(JSON.stringify(result.responseBody).includes(privateKey), false);
+      assert.equal(JSON.stringify(result.responseBody).includes(FAKE_PRIVATE_BODY), false);
+
+      assert.equal(warnings.length, 1);
+      assert.equal(
+        warnings[0].message,
+        "Failed to record CertOps key-material rejection audit",
+      );
+      assert.equal(JSON.stringify(warnings).includes(privateKey), false);
+      assert.equal(JSON.stringify(warnings).includes(FAKE_PRIVATE_BODY), false);
+      assert.equal(warnings[0].meta.method, "POST");
+      assert.equal(warnings[0].meta.path, "/api/v1/workspaces/:id/certops/imports");
+    } finally {
+      logger.warn = originalWarn;
+    }
   });
 
   it("does not echo private key material in the response", async () => {
