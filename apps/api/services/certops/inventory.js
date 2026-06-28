@@ -187,6 +187,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
   const keyReference = normalizeKeyReference(options.keyReference);
   const params = [
     options.workspaceId,
+    options.tokenId || null,
     options.status || "discovered",
     options.source || "import",
     options.sourceRef || null,
@@ -213,6 +214,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
   const result = await client.query(
     `INSERT INTO managed_certificates (
        workspace_id,
+       token_id,
        status,
        source,
        source_ref,
@@ -236,12 +238,13 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
        created_by
      )
      VALUES (
-       $1, $2, $3, $4, $5, $6, $7::text[], $8, $9, $10, $11, $12,
-       $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22
+       $1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12,
+       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23
      )
      ON CONFLICT (workspace_id, fingerprint_sha256)
        WHERE fingerprint_sha256 IS NOT NULL
      DO UPDATE SET
+       token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = EXCLUDED.status,
        source = EXCLUDED.source,
        source_ref = EXCLUDED.source_ref,

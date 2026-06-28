@@ -253,6 +253,7 @@ async function upsertObservedManagedCertificate(client, certificate, options) {
       source: bridgeSource(options),
       sourceRef: bridgeSourceRef(options),
       name: options.name || options.hostname,
+      tokenId: options.tokenId || null,
       createdBy: options.createdBy || null,
     },
     0,

@@ -633,21 +633,22 @@ describe("Domain checker API import integration", function () {
     expect(
       certopsByUrl["https://sha1.example.com"].observed_fingerprint_sha256,
     ).to.equal(null);
-    expect(certopsByUrl["https://api.example.com"].token_id).to.equal(
-      importedTokenByName["api.example.com"],
-    );
-    expect(certopsByUrl["https://sha1.example.com"].token_id).to.equal(
-      importedTokenByName["sha1.example.com"],
-    );
-    expect(certopsByUrl["https://www.example.com"].token_id).to.equal(
-      importedTokenByName["www.example.com"],
-    );
+    const expectedTokenNameByUrl = {
+      "https://api.example.com": "api.example.com",
+      "https://sha1.example.com": "sha1.example.com",
+      "https://www.example.com": "www.example.com",
+    };
+    for (const [url, tokenName] of Object.entries(expectedTokenNameByUrl)) {
+      const expectedTokenId = importedTokenByName[tokenName];
+      expect(certopsByUrl[url].token_id).to.equal(expectedTokenId);
+      expect(certopsByUrl[url].target_token_id).to.equal(expectedTokenId);
+      expect(certopsByUrl[url].managed_token_id).to.equal(expectedTokenId);
+      expect(certopsByUrl[url].managed_token_id).to.not.equal(null);
+    }
     for (const row of certopsRows.rows) {
       expect(row.workspace_id).to.equal(workspaceId);
       expect(row.target_workspace_id).to.equal(workspaceId);
       expect(row.certificate_workspace_id).to.equal(workspaceId);
-      expect(row.target_token_id).to.equal(row.token_id);
-      expect(row.managed_token_id).to.equal(row.token_id);
       expect(row.certificate_pem).to.equal(null);
       expect(row.observed_not_after).to.not.equal(null);
       expectNoPrivateKeyFields(normalizeMetadata(row.instance_metadata));
@@ -686,6 +687,31 @@ describe("Domain checker API import integration", function () {
       [workspaceId, wwwRow.target_id, wwwRow.managed_certificate_id],
     );
     expect(repeatedCount.rows[0].count).to.equal(1);
+    const repeatedTokenLinks = await TestUtils.execQuery(
+      `SELECT ci.token_id,
+              ct.token_id AS target_token_id,
+              mc.token_id AS managed_token_id
+         FROM certificate_instances ci
+         JOIN certificate_targets ct
+           ON ct.workspace_id = ci.workspace_id AND ct.id = ci.target_id
+         JOIN managed_certificates mc
+           ON mc.workspace_id = ci.workspace_id
+          AND mc.id = ci.managed_certificate_id
+        WHERE ci.workspace_id = $1
+          AND ci.id = $2`,
+      [workspaceId, wwwRow.id],
+    );
+    expect(repeatedTokenLinks.rows).to.have.length(1);
+    expect(repeatedTokenLinks.rows[0].token_id).to.equal(
+      importedTokenByName["www.example.com"],
+    );
+    expect(repeatedTokenLinks.rows[0].target_token_id).to.equal(
+      importedTokenByName["www.example.com"],
+    );
+    expect(repeatedTokenLinks.rows[0].managed_token_id).to.equal(
+      importedTokenByName["www.example.com"],
+    );
+    expect(repeatedTokenLinks.rows[0].managed_token_id).to.not.equal(null);
 
     const disabledFingerprint = "c".repeat(64);
     const disabledObservation = await bridgeEndpointCertificateObservation({
