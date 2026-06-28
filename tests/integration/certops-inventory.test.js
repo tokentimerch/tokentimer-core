@@ -111,6 +111,84 @@ function expectNoPrivateKeyFields(value) {
   expect(JSON.stringify(value)).to.not.include("PRIVATE KEY");
 }
 
+function formatDateYmd(value) {
+  if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+async function expectLinkedSslToken(certificate, expectedWorkspaceId) {
+  expect(Number.isInteger(certificate.tokenId)).to.equal(true);
+  expect(certificate.tokenId).to.be.greaterThan(0);
+
+  const tokenRows = await TestUtils.execQuery(
+    `SELECT id,
+            workspace_id,
+            user_id,
+            created_by,
+            name,
+            expiration,
+            type,
+            category,
+            issuer,
+            serial_number,
+            subject,
+            domains,
+            notes,
+            imported_at
+       FROM tokens
+      WHERE id = $1`,
+    [certificate.tokenId],
+  );
+  expect(tokenRows.rows).to.have.length(1);
+  const token = tokenRows.rows[0];
+  expect(token.workspace_id).to.equal(expectedWorkspaceId);
+  expect(token.type).to.equal("ssl_cert");
+  expect(token.category).to.equal("cert");
+  expect(token.name).to.be.a("string");
+  expect(token.name.length).to.be.greaterThan(2);
+  expect(formatDateYmd(token.expiration)).to.equal(
+    formatDateYmd(certificate.notAfter),
+  );
+  expect(token.issuer).to.equal(certificate.issuer);
+  expect(token.serial_number).to.equal(certificate.serialNumber);
+  expect(token.subject).to.be.a("string");
+  expect(token.subject).to.include(certificate.commonName);
+  expect(token.domains).to.include(certificate.commonName);
+  for (const san of certificate.subjectAltNames || []) {
+    expect(token.domains).to.include(san);
+  }
+  expect(token.notes).to.include("Imported by CertOps public PEM import.");
+  expect(token.notes).to.include(
+    `Fingerprint: ${certificate.fingerprintSha256}.`,
+  );
+  expect(token.imported_at).to.not.equal(null);
+  expectNoPrivateKeyFields(token);
+
+  const managedRows = await TestUtils.execQuery(
+    `SELECT token_id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND id = $2`,
+    [expectedWorkspaceId, certificate.id],
+  );
+  expect(managedRows.rows).to.have.length(1);
+  expect(managedRows.rows[0].token_id).to.equal(certificate.tokenId);
+  expect(managedRows.rows[0].token_id).to.not.equal(null);
+
+  return token;
+}
+
 const CERTIFICATE_INSTANCE_FIELDS = [
   "createdAt",
   "deploymentReference",
@@ -218,10 +296,33 @@ describe("CertOps inventory routes", function () {
     expect(leafCertificate.spkiFingerprintSha256).to.match(/^[a-f0-9]{64}$/);
     expect(leafCertificate.notBefore).to.match(/^\d{4}-\d{2}-\d{2}T/);
     expect(leafCertificate.notAfter).to.match(/^\d{4}-\d{2}-\d{2}T/);
+    await expectLinkedSslToken(leafCertificate, workspaceId);
     expect(leafCertificate.keyMode).to.equal("external-unknown");
     expect(leafCertificate.keyReference).to.equal("vault://pki/web/example");
     expect(leafCertificate.certificatePem).to.include("BEGIN CERTIFICATE");
     expectNoPrivateKeyFields(leafCertificate);
+  });
+
+  it("register endpoint creates and reuses the linked token", async () => {
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/certificates`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_CA_CERT })
+      .expect(201);
+
+    expect(response.body.count).to.equal(1);
+    const registered = response.body.items[0];
+    expect(registered.tokenId).to.not.equal(null);
+    await expectLinkedSslToken(registered, workspaceId);
+
+    const duplicate = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/certificates`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_CA_CERT })
+      .expect(201);
+
+    expect(duplicate.body.items[0].id).to.equal(registered.id);
+    expect(duplicate.body.items[0].tokenId).to.equal(registered.tokenId);
   });
 
   it("accepts a valid external key mode", async () => {
@@ -281,6 +382,37 @@ describe("CertOps inventory routes", function () {
 
     expect(duplicate.body.count).to.equal(1);
     expect(duplicate.body.items[0].id).to.equal(leafCertificate.id);
+    expect(duplicate.body.items[0].tokenId).to.equal(leafCertificate.tokenId);
+    await expectLinkedSslToken(duplicate.body.items[0], workspaceId);
+
+    await TestUtils.execQuery(
+      `UPDATE managed_certificates
+          SET token_id = NULL
+        WHERE workspace_id = $1
+          AND id = $2`,
+      [workspaceId, leafCertificate.id],
+    );
+    const relink = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/imports`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_LEAF_CERT })
+      .expect(202);
+    expect(relink.body.items[0].id).to.equal(leafCertificate.id);
+    expect(relink.body.items[0].tokenId).to.equal(leafCertificate.tokenId);
+    await expectLinkedSslToken(relink.body.items[0], workspaceId);
+
+    const linkedTokens = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS count
+         FROM tokens
+        WHERE workspace_id = $1
+          AND type = 'ssl_cert'
+          AND notes ILIKE $2`,
+      [
+        workspaceId,
+        `%Imported by CertOps public PEM import. Fingerprint: ${leafCertificate.fingerprintSha256}.%`,
+      ],
+    );
+    expect(linkedTokens.rows[0].count).to.equal(1);
 
     const list = await request(BASE)
       .get(`/api/v1/workspaces/${workspaceId}/certops/certificates`)
