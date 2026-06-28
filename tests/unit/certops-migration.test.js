@@ -93,6 +93,14 @@ const BASELINE_CERTOPS_COLUMNS = {
   ],
 };
 
+const BASELINE_TOKEN_COLUMNS = [
+  "id",
+  "workspace_id",
+  "type",
+  "category",
+  "cert_lifecycle_status",
+];
+
 const FORBIDDEN_CUSTODY_COLUMNS = [
   "privateKey",
   "private_key",
@@ -112,6 +120,9 @@ const FORBIDDEN_CUSTODY_COLUMNS = [
 
 const certOpsMigration = migrations.find(
   (migration) => migration.name === "certops_inventory_schema",
+);
+const certOpsTokenLifecycleMigration = migrations.find(
+  (migration) => migration.name === "certops_token_lifecycle_status",
 );
 
 function getTableBlock(tableName) {
@@ -158,6 +169,38 @@ describe("CertOps inventory migration", () => {
   it("defines the M1 inventory migration", () => {
     assert.ok(certOpsMigration, "expected certops_inventory_schema migration");
     assert.equal(certOpsMigration.version, 10);
+  });
+
+  it("defines the token lifecycle migration after the inventory migration", () => {
+    assert.ok(
+      certOpsTokenLifecycleMigration,
+      "expected certops_token_lifecycle_status migration",
+    );
+    assert.equal(certOpsTokenLifecycleMigration.version, 11);
+    assert.deepEqual(
+      migrations.slice(-3).map((migration) => migration.version),
+      [9, 10, 11],
+    );
+    assert.match(
+      certOpsTokenLifecycleMigration.sql,
+      /ALTER TABLE tokens\s+ADD COLUMN IF NOT EXISTS cert_lifecycle_status TEXT NULL/,
+    );
+    assert.match(
+      certOpsTokenLifecycleMigration.sql,
+      /tokens_cert_lifecycle_status_check/,
+    );
+    assert.match(
+      certOpsTokenLifecycleMigration.sql,
+      /'revoked'/,
+    );
+    assert.match(
+      certOpsTokenLifecycleMigration.sql,
+      /'decommissioned'/,
+    );
+    assert.match(
+      certOpsTokenLifecycleMigration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_tokens_workspace_cert_lifecycle_status/,
+    );
   });
 
   it("creates every CertOps table idempotently", () => {
@@ -257,6 +300,38 @@ describe("CertOps inventory migration", () => {
         `${tableName} baseline contract allows ${forbiddenHit}`,
       );
     }
+  });
+
+  it("requires the token certificate lifecycle column in the baseline DB contract", () => {
+    const tableSchema = baselineMinimumSchema.properties.tables.properties;
+    const requiredTables = baselineMinimumSchema.properties.tables.required;
+
+    assert.ok(
+      requiredTables.includes("tokens"),
+      "tokens must be required by the baseline contract",
+    );
+    assert.ok(tableSchema.tokens, "tokens schema is missing");
+
+    const resolvedTableSchema = resolveBaselineSchema(tableSchema.tokens);
+    const requiredColumns = resolvedTableSchema.properties.requiredColumns;
+    for (const columnName of BASELINE_TOKEN_COLUMNS) {
+      assert.match(
+        JSON.stringify(requiredColumns),
+        new RegExp(`"const":"${columnName}"`),
+        `tokens must require ${columnName}`,
+      );
+    }
+
+    const forbiddenHit = FORBIDDEN_CUSTODY_COLUMNS.find((columnName) =>
+      JSON.stringify(requiredColumns)
+        .toLowerCase()
+        .includes(`"${columnName.toLowerCase()}"`),
+    );
+    assert.equal(
+      forbiddenHit,
+      undefined,
+      `tokens baseline contract allows ${forbiddenHit}`,
+    );
   });
 
   it("links certificates to existing tokens without making tokens depend on CertOps", () => {

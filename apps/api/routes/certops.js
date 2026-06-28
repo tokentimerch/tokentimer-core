@@ -12,13 +12,17 @@ const {
 } = require("../middleware/require-certops-enabled");
 const { hasAtLeastRole } = require("../services/rbac");
 const {
+  CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
+  CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   getManagedCertificate,
   importPublicCertificates,
   listCertificateInstances,
   listManagedCertificates,
+  retireManagedCertificate,
 } = require("../services/certops/inventory");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
@@ -92,6 +96,27 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_CERTIFICATE_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Certificate not found",
+      code: CERTOPS_CERTIFICATE_NOT_FOUND,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID) {
+    return res.status(400).json({
+      error: "Invalid certificate retire status",
+      code: CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID) {
+    return res.status(400).json({
+      error: "Invalid certificate retire reason",
+      code: CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
+    });
+  }
+
   if (err?.code === CERTOPS_KEY_MODE_INVALID) {
     return res.status(400).json({
       error: "Invalid CertOps key mode",
@@ -130,6 +155,43 @@ async function recordInventoryAudit(req, source, certificates) {
       ),
     },
   });
+}
+
+async function retireCertificateHandler(req, res) {
+  if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+    return res.status(404).json({
+      error: "Certificate not found",
+      code: CERTOPS_CERTIFICATE_NOT_FOUND,
+    });
+  }
+
+  try {
+    const certificate = await retireManagedCertificate({
+      workspaceId: req.workspace.id,
+      certificateId: req.params.certId,
+      status: req.body?.status,
+      reason: req.body?.reason,
+      actorUserId: req.user?.id || null,
+      createdBy: req.user?.id || null,
+    });
+
+    return res.json({ certificate });
+  } catch (err) {
+    const handled = handleCertOpsError(res, err);
+    if (handled) return handled;
+
+    logger.error("CertOps certificate retire failed", {
+      error: err.message,
+      code: err.code || null,
+      workspaceId: req.workspace?.id,
+      certId: req.params?.certId,
+      userId: req.user?.id,
+    });
+    return res.status(500).json({
+      error: "Failed to retire certificate",
+      code: "INTERNAL_ERROR",
+    });
+  }
 }
 
 async function importCertificatesHandler(req, res, source, statusCode) {
@@ -243,6 +305,15 @@ router.get(
       });
     }
   },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  retireCertificateHandler,
 );
 
 router.get(

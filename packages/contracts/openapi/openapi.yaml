@@ -3197,6 +3197,86 @@ paths:
                 code: CERTOPS_CERTIFICATE_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/retire:
+    post:
+      tags: [CertOps]
+      summary: Retire a managed certificate
+      operationId: retireCertOpsCertificate
+      description: Soft-retires a managed certificate by moving public lifecycle status to revoked or decommissioned. The managed certificate, linked token, and instance history are preserved; request bodies containing private key material are rejected before feature gating.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Managed certificate identifier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsCertificateRetireRequest"
+      responses:
+        "200":
+          description: Managed certificate retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsManagedCertificateDetailResponse"
+        "400":
+          description: Invalid retire request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidStatus:
+                  value:
+                    error: Invalid certificate retire status
+                    code: CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID
+                invalidReason:
+                  value:
+                    error: Invalid certificate retire reason
+                    code: CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Authenticated user lacks the workspace manager/admin role required for CertOps writes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Forbidden: insufficient role"
+                code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled or the certificate was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                certificateNotFound:
+                  value:
+                    error: Certificate not found
+                    code: CERTOPS_CERTIFICATE_NOT_FOUND
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/imports:
     post:
       tags: [CertOps]
@@ -3800,6 +3880,22 @@ components:
       properties:
         certificate:
           $ref: "#/components/schemas/CertOpsManagedCertificate"
+    CertOpsCertificateRetireRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum:
+            - revoked
+            - decommissioned
+          description: Soft-retire lifecycle status to apply to the managed certificate and linked token.
+        reason:
+          type: string
+          nullable: true
+          maxLength: 512
+          description: Optional non-secret retirement reason. Private-key material, PEM markers, and secret-looking assignments are rejected.
     CertOpsCertificateWriteResponse:
       type: object
       additionalProperties: false

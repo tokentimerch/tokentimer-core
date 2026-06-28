@@ -20,6 +20,9 @@ const CERTOPS_TABLES = [
 const CERTOPS_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_inventory_schema",
 );
+const CERTOPS_TOKEN_LIFECYCLE_MIGRATION = migrations.find(
+  (migration) => migration.name === "certops_token_lifecycle_status",
+);
 
 function quoteIdentifier(identifier) {
   return `"${String(identifier).replace(/"/g, '""')}"`;
@@ -123,6 +126,41 @@ describe("CertOps inventory migration", function () {
       [CERTOPS_MIGRATION.version],
     );
     expect(res.rows[0].count).to.equal(1);
+  });
+
+  it("adds the nullable token certificate lifecycle status idempotently", async () => {
+    expect(CERTOPS_TOKEN_LIFECYCLE_MIGRATION).to.exist;
+    expect(CERTOPS_TOKEN_LIFECYCLE_MIGRATION.version).to.equal(11);
+
+    await TestUtils.execQuery(CERTOPS_TOKEN_LIFECYCLE_MIGRATION.sql);
+    await TestUtils.execQuery(CERTOPS_TOKEN_LIFECYCLE_MIGRATION.sql);
+
+    const column = await TestUtils.execQuery(
+      `SELECT is_nullable, data_type
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'tokens'
+          AND column_name = 'cert_lifecycle_status'`,
+    );
+    expect(column.rows).to.have.length(1);
+    expect(column.rows[0].is_nullable).to.equal("YES");
+    expect(column.rows[0].data_type).to.equal("text");
+
+    const constraint = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS count
+         FROM pg_constraint
+        WHERE conname = 'tokens_cert_lifecycle_status_check'`,
+    );
+    expect(constraint.rows[0].count).to.equal(1);
+
+    const index = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS count
+         FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'tokens'
+          AND indexname = 'idx_tokens_workspace_cert_lifecycle_status'`,
+    );
+    expect(index.rows[0].count).to.equal(1);
   });
 
   it("does not create private-key custody columns", async () => {

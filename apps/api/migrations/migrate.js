@@ -773,6 +773,46 @@ const migrations = [
         ON certificate_instances(workspace_id, target_id, managed_certificate_id);
     `,
   },
+  {
+    version: 11,
+    name: "certops_token_lifecycle_status",
+    sql: `
+      ALTER TABLE tokens
+        ADD COLUMN IF NOT EXISTS cert_lifecycle_status TEXT NULL;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.conname = 'tokens_cert_lifecycle_status_check'
+             AND t.relname = 'tokens'
+             AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE tokens
+            ADD CONSTRAINT tokens_cert_lifecycle_status_check
+            CHECK (
+              cert_lifecycle_status IS NULL OR
+              cert_lifecycle_status IN (
+                'discovered',
+                'active',
+                'renewing',
+                'expiring',
+                'expired',
+                'revoked',
+                'decommissioned'
+              )
+            );
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_tokens_workspace_cert_lifecycle_status
+        ON tokens(workspace_id, cert_lifecycle_status)
+        WHERE cert_lifecycle_status IS NOT NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

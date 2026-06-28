@@ -189,6 +189,62 @@ async function expectLinkedSslToken(certificate, expectedWorkspaceId) {
   return token;
 }
 
+async function managedCertificateRow(workspaceId, certificateId) {
+  const rows = await TestUtils.execQuery(
+    `SELECT id, workspace_id, token_id, status, fingerprint_sha256
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND id = $2`,
+    [workspaceId, certificateId],
+  );
+  expect(rows.rows).to.have.length(1);
+  return rows.rows[0];
+}
+
+async function tokenRow(tokenId) {
+  const rows = await TestUtils.execQuery(
+    `SELECT id, workspace_id, type, category, cert_lifecycle_status
+       FROM tokens
+      WHERE id = $1`,
+    [tokenId],
+  );
+  expect(rows.rows).to.have.length(1);
+  return rows.rows[0];
+}
+
+async function certificateInstanceCount(workspaceId, certificateId) {
+  const rows = await TestUtils.execQuery(
+    `SELECT COUNT(*)::int AS count
+       FROM certificate_instances
+      WHERE workspace_id = $1
+        AND managed_certificate_id = $2`,
+    [workspaceId, certificateId],
+  );
+  return rows.rows[0].count;
+}
+
+async function createWorkspaceToken(session, workspaceId, overrides = {}) {
+  const tokenName = `${overrides.name || "CertOps token"} ${Date.now()} ${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  const response = await request(BASE)
+    .post("/api/tokens")
+    .set("Cookie", session.cookie)
+    .send({
+      name: tokenName,
+      type: "api_key",
+      category: "key_secret",
+      expiresAt: "2099-12-31",
+      workspace_id: workspaceId,
+      location: `certops-test-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+      ...overrides,
+    })
+    .expect(201);
+  return response.body;
+}
+
 const CERTIFICATE_INSTANCE_FIELDS = [
   "createdAt",
   "deploymentReference",
@@ -225,6 +281,7 @@ describe("CertOps inventory routes", function () {
   let workspaceId;
   let outsiderWorkspaceId;
   let leafCertificate;
+  let caCertificate;
 
   before(async () => {
     await runMigrations();
@@ -312,6 +369,7 @@ describe("CertOps inventory routes", function () {
 
     expect(response.body.count).to.equal(1);
     const registered = response.body.items[0];
+    caCertificate = registered;
     expect(registered.tokenId).to.not.equal(null);
     await expectLinkedSslToken(registered, workspaceId);
 
@@ -558,6 +616,206 @@ describe("CertOps inventory routes", function () {
     expect(JSON.stringify(response.body)).to.not.include("public_metadata");
     expect(JSON.stringify(response.body)).to.not.include("publicMetadata");
     expect(JSON.stringify(response.body)).to.not.include("evidence");
+  });
+
+  it("retires a managed certificate as decommissioned without deleting rows", async () => {
+    const instanceCountBefore = await certificateInstanceCount(
+      workspaceId,
+      leafCertificate.id,
+    );
+
+    const response = await request(BASE)
+      .post(
+        `/api/v1/workspaces/${workspaceId}/certops/certificates/${leafCertificate.id}/retire`,
+      )
+      .set("Cookie", ownerSession.cookie)
+      .send({ status: "decommissioned", reason: "rotation completed" })
+      .expect(200);
+
+    expect(response.body.certificate.id).to.equal(leafCertificate.id);
+    expect(response.body.certificate.status).to.equal("decommissioned");
+    expect(response.body.certificate.tokenId).to.equal(leafCertificate.tokenId);
+    expectNoPrivateKeyFields(response.body);
+
+    const managed = await managedCertificateRow(workspaceId, leafCertificate.id);
+    expect(managed.status).to.equal("decommissioned");
+    expect(managed.token_id).to.equal(leafCertificate.tokenId);
+
+    const linkedToken = await tokenRow(leafCertificate.tokenId);
+    expect(linkedToken.cert_lifecycle_status).to.equal("decommissioned");
+
+    const instanceCountAfter = await certificateInstanceCount(
+      workspaceId,
+      leafCertificate.id,
+    );
+    expect(instanceCountAfter).to.equal(instanceCountBefore);
+
+    const audit = await TestUtils.execQuery(
+      `SELECT metadata
+         FROM audit_events
+        WHERE workspace_id = $1
+          AND action = 'CERTOPS_CERTIFICATE_RETIRED'
+          AND metadata->>'managedCertificateId' = $2
+        ORDER BY id DESC
+        LIMIT 1`,
+      [workspaceId, leafCertificate.id],
+    );
+    expect(audit.rows).to.have.length(1);
+    expect(audit.rows[0].metadata).to.include({
+      managedCertificateId: leafCertificate.id,
+      tokenId: leafCertificate.tokenId,
+      status: "decommissioned",
+      reason: "rotation completed",
+      fingerprintSha256: leafCertificate.fingerprintSha256,
+    });
+    expectNoPrivateKeyFields(audit.rows[0].metadata);
+  });
+
+  it("retires a managed certificate as revoked and mirrors token lifecycle", async () => {
+    expect(caCertificate).to.exist;
+
+    const response = await request(BASE)
+      .post(
+        `/api/v1/workspaces/${workspaceId}/certops/certificates/${caCertificate.id}/retire`,
+      )
+      .set("Cookie", managerSession.cookie)
+      .send({ status: "revoked", reason: "issuer revoked certificate" })
+      .expect(200);
+
+    expect(response.body.certificate.id).to.equal(caCertificate.id);
+    expect(response.body.certificate.status).to.equal("revoked");
+    expectNoPrivateKeyFields(response.body);
+
+    const managed = await managedCertificateRow(workspaceId, caCertificate.id);
+    expect(managed.status).to.equal("revoked");
+    expect(managed.token_id).to.equal(caCertificate.tokenId);
+
+    const linkedToken = await tokenRow(caCertificate.tokenId);
+    expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
+  });
+
+  it("rejects invalid retire status without changing database state", async () => {
+    const before = await managedCertificateRow(workspaceId, caCertificate.id);
+
+    const response = await request(BASE)
+      .post(
+        `/api/v1/workspaces/${workspaceId}/certops/certificates/${caCertificate.id}/retire`,
+      )
+      .set("Cookie", ownerSession.cookie)
+      .send({ status: "deleted", reason: "operator requested deletion" });
+
+    expect(response.status).to.equal(400);
+    expect(response.body).to.deep.equal({
+      error: "Invalid certificate retire status",
+      code: "CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID",
+    });
+
+    const after = await managedCertificateRow(workspaceId, caCertificate.id);
+    expect(after.status).to.equal(before.status);
+    const linkedToken = await tokenRow(caCertificate.tokenId);
+    expect(linkedToken.cert_lifecycle_status).to.equal(before.status);
+  });
+
+  it("rejects private-key material in retire reason without echoing it", async () => {
+    const before = await managedCertificateRow(workspaceId, leafCertificate.id);
+
+    const response = await request(BASE)
+      .post(
+        `/api/v1/workspaces/${workspaceId}/certops/certificates/${leafCertificate.id}/retire`,
+      )
+      .set("Cookie", ownerSession.cookie)
+      .send({ status: "revoked", reason: PRIVATE_KEY_PEM });
+
+    expect(response.status).to.equal(422);
+    expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+    expect(response.text).to.not.include("RSA PRIVATE KEY");
+    expect(response.text).to.not.include("RkFLRS1OT1QtQS1SRUFMLUtFWQ");
+
+    const after = await managedCertificateRow(workspaceId, leafCertificate.id);
+    expect(after.status).to.equal(before.status);
+    const linkedToken = await tokenRow(leafCertificate.tokenId);
+    expect(linkedToken.cert_lifecycle_status).to.equal(before.status);
+  });
+
+  it("keeps retire operations isolated by workspace", async () => {
+    const before = await managedCertificateRow(workspaceId, leafCertificate.id);
+
+    const response = await request(BASE)
+      .post(
+        `/api/v1/workspaces/${outsiderWorkspaceId}/certops/certificates/${leafCertificate.id}/retire`,
+      )
+      .set("Cookie", outsiderSession.cookie)
+      .send({ status: "revoked", reason: "wrong workspace" });
+
+    expect(response.status).to.equal(404);
+    expect(response.body.code).to.equal("CERTOPS_CERTIFICATE_NOT_FOUND");
+
+    const after = await managedCertificateRow(workspaceId, leafCertificate.id);
+    expect(after.status).to.equal(before.status);
+  });
+
+  it("blocks hard delete of managed-backed certificate tokens", async () => {
+    const instanceCountBefore = await certificateInstanceCount(
+      workspaceId,
+      leafCertificate.id,
+    );
+
+    const response = await request(BASE)
+      .delete(`/api/tokens/${leafCertificate.tokenId}`)
+      .set("Cookie", ownerSession.cookie);
+
+    expect(response.status).to.equal(409);
+    expect(response.body).to.deep.equal({
+      error: "Managed certificates must be retired before removal",
+      code: "CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED",
+    });
+
+    await tokenRow(leafCertificate.tokenId);
+    await managedCertificateRow(workspaceId, leafCertificate.id);
+    const instanceCountAfter = await certificateInstanceCount(
+      workspaceId,
+      leafCertificate.id,
+    );
+    expect(instanceCountAfter).to.equal(instanceCountBefore);
+  });
+
+  it("allows hard delete of manual cert tokens not backed by managed certificates", async () => {
+    const token = await createWorkspaceToken(ownerSession, workspaceId, {
+      name: "Manual Cert Token",
+      type: "tls_cert",
+      category: "cert",
+      domains: ["manual-delete.certops.example"],
+    });
+
+    const response = await request(BASE)
+      .delete(`/api/tokens/${token.id}`)
+      .set("Cookie", ownerSession.cookie)
+      .expect(200);
+
+    expect(response.body.message).to.include("deleted");
+    const rows = await TestUtils.execQuery("SELECT 1 FROM tokens WHERE id = $1", [
+      token.id,
+    ]);
+    expect(rows.rows).to.have.length(0);
+  });
+
+  it("allows hard delete of non-cert tokens", async () => {
+    const token = await createWorkspaceToken(ownerSession, workspaceId, {
+      name: "Manual API Token",
+      type: "api_key",
+      category: "key_secret",
+    });
+
+    const response = await request(BASE)
+      .delete(`/api/tokens/${token.id}`)
+      .set("Cookie", ownerSession.cookie)
+      .expect(200);
+
+    expect(response.body.message).to.include("deleted");
+    const rows = await TestUtils.execQuery("SELECT 1 FROM tokens WHERE id = $1", [
+      token.id,
+    ]);
+    expect(rows.rows).to.have.length(0);
   });
 
   it("denies viewer writes", async () => {

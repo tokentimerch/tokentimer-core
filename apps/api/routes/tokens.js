@@ -14,6 +14,14 @@ const { sanitizeForLogging } = require("../utils/sanitize");
 const router = require("express").Router();
 
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/;
+const CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED =
+  "CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED";
+const CERTIFICATE_TOKEN_TYPES = new Set([
+  "ssl_cert",
+  "tls_cert",
+  "code_signing",
+  "client_cert",
+]);
 
 const padDatePart = (value) => String(value).padStart(2, "0");
 
@@ -53,6 +61,26 @@ const normalizeDateOnlyInput = (value) => {
   if (Number.isNaN(date.getTime())) return null;
   return formatUtcDateOnly(date);
 };
+
+function isCertificateToken(token) {
+  const category = String(token?.category || "").toLowerCase();
+  const type = String(token?.type || "").toLowerCase();
+  return category === "cert" || CERTIFICATE_TOKEN_TYPES.has(type);
+}
+
+async function isManagedBackedCertificateToken(token) {
+  if (!token?.workspace_id || !isCertificateToken(token)) return false;
+
+  const result = await pool.query(
+    `SELECT 1
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND token_id = $2
+      LIMIT 1`,
+    [token.workspace_id, token.id],
+  );
+  return result.rowCount > 0;
+}
 
 // --- TOKEN MANAGEMENT ROUTES ---
 
@@ -1311,7 +1339,7 @@ router.delete(
 
       // 1. Fetch all requested tokens to check ownership/workspace permissions in one go
       const tokensRes = await pool.query(
-        "SELECT id, name, workspace_id, user_id FROM tokens WHERE id = ANY($1::int[])",
+        "SELECT id, name, workspace_id, user_id, type, category FROM tokens WHERE id = ANY($1::int[])",
         [ids],
       );
       const existingTokens = tokensRes.rows;
@@ -1330,7 +1358,7 @@ router.delete(
       }
 
       // 2. Filter tokens by permission
-      const authorizedTokens = [];
+      let authorizedTokens = [];
       const workspaceIds = [
         ...new Set(
           existingTokens
@@ -1362,6 +1390,33 @@ router.delete(
           authorizedTokens.push(token);
         } else {
           results.failed.push({ id: token.id, reason: "Forbidden" });
+        }
+      }
+
+      const authorizedCertTokenIds = authorizedTokens
+        .filter((token) => token.workspace_id && isCertificateToken(token))
+        .map((token) => token.id);
+      if (authorizedCertTokenIds.length > 0) {
+        const managedBacked = await pool.query(
+          `SELECT DISTINCT token_id
+             FROM managed_certificates
+            WHERE token_id = ANY($1::int[])`,
+          [authorizedCertTokenIds],
+        );
+        const blockedTokenIds = new Set(
+          managedBacked.rows.map((row) => row.token_id),
+        );
+
+        if (blockedTokenIds.size > 0) {
+          authorizedTokens = authorizedTokens.filter((token) => {
+            if (!blockedTokenIds.has(token.id)) return true;
+            results.failed.push({
+              id: token.id,
+              reason: "Managed certificate retire required",
+              code: CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED,
+            });
+            return false;
+          });
         }
       }
 
@@ -1450,6 +1505,14 @@ router.delete(
         : existing.user_id === req.user.id;
       if (!canDelete)
         return res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
+
+      if (await isManagedBackedCertificateToken(existing)) {
+        return res.status(409).json({
+          error: "Managed certificates must be retired before removal",
+          code: CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED,
+        });
+      }
+
       await pool.query("DELETE FROM alert_queue WHERE token_id = $1", [
         parseInt(id, 10),
       ]);

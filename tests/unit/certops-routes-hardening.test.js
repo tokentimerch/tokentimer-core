@@ -85,6 +85,7 @@ describe("CertOps M1 route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
       "POST /api/v1/workspaces/:id/certops/certificates",
+      "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
     ].sort());
 
@@ -100,6 +101,10 @@ describe("CertOps M1 route hardening", () => {
         "get",
         "/api/v1/workspaces/:id/certops/certificates/:certId/instances",
       ],
+      [
+        "post",
+        "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
+      ],
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
     ]) {
@@ -107,25 +112,34 @@ describe("CertOps M1 route hardening", () => {
     }
   });
 
-  it("declares certificate instance history before generic certificate detail", () => {
+  it("declares specific certificate child routes before generic certificate detail", () => {
     const instancesIndex = routesSource.indexOf(
       '"/api/v1/workspaces/:id/certops/certificates/:certId/instances"',
+    );
+    const retireIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/certificates/:certId/retire"',
     );
     const detailIndex = routesSource.indexOf(
       '"/api/v1/workspaces/:id/certops/certificates/:certId"',
     );
 
     assert.notEqual(instancesIndex, -1);
+    assert.notEqual(retireIndex, -1);
     assert.notEqual(detailIndex, -1);
     assert.ok(
       instancesIndex < detailIndex,
       "instance history route must be declared before generic certificate detail",
+    );
+    assert.ok(
+      retireIndex < detailIndex,
+      "retire route must be declared before generic certificate detail",
     );
   });
 
   it("runs private-key rejection before feature gating on write routes", () => {
     for (const routePath of [
       "/api/v1/workspaces/:id/certops/certificates",
+      "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "/api/v1/workspaces/:id/certops/imports",
     ]) {
       const block = routeBlock("post", routePath);
@@ -187,6 +201,10 @@ describe("CertOps M1 route hardening", () => {
     assertOpenApiRoute(
       "/api/v1/workspaces/{id}/certops/certificates/{certId}/instances",
       "GET",
+    );
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire",
+      "POST",
     );
   });
 });

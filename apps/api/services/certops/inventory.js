@@ -9,6 +9,10 @@ const {
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
+const CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID =
+  "CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID";
+const CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID =
+  "CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID";
 const CERTOPS_KEY_MODE_INVALID = "CERTOPS_KEY_MODE_INVALID";
 
 const ALLOWED_KEY_MODES = new Set([
@@ -23,10 +27,12 @@ const ALLOWED_KEY_MODES = new Set([
 ]);
 const CERTOPS_KEY_REFERENCE_INVALID = "CERTOPS_KEY_REFERENCE_INVALID";
 const KEY_REFERENCE_MAX_LENGTH = 256;
+const RETIRE_REASON_MAX_LENGTH = 512;
 const PEM_MARKER_PATTERN = /-----\s*(?:BEGIN|END)\b/i;
 const SECRET_ASSIGNMENT_PATTERN =
   /\b(?:password|secret|token|credential|private_key|privatekey|key_material)\s*=/i;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+const RETIRE_STATUSES = new Set(["revoked", "decommissioned"]);
 
 function dateToIso(value) {
   if (!value) return null;
@@ -185,6 +191,52 @@ function certOpsValidationError(message, code) {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+function privateKeyMaterialError() {
+  return certOpsValidationError(
+    "Private key material is not accepted in CertOps requests",
+    PRIVATE_KEY_MATERIAL_REJECTED,
+  );
+}
+
+function normalizeRetireStatus(value) {
+  if (typeof value !== "string") {
+    throw certOpsValidationError(
+      "Invalid certificate retire status",
+      CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+    );
+  }
+
+  const trimmed = value.trim();
+  if (RETIRE_STATUSES.has(trimmed)) return trimmed;
+
+  throw certOpsValidationError(
+    "Invalid certificate retire status",
+    CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+  );
+}
+
+function retireReasonError() {
+  return certOpsValidationError(
+    "Invalid certificate retire reason",
+    CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
+  );
+}
+
+function normalizeRetireReason(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw retireReasonError();
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > RETIRE_REASON_MAX_LENGTH) throw retireReasonError();
+  if (containsPrivateKeyMaterial(trimmed)) throw privateKeyMaterialError();
+  if (PEM_MARKER_PATTERN.test(trimmed)) throw retireReasonError();
+  if (SECRET_ASSIGNMENT_PATTERN.test(trimmed)) throw retireReasonError();
+  if (CONTROL_CHARACTER_PATTERN.test(trimmed)) throw retireReasonError();
+
+  return trimmed;
 }
 
 function normalizeKeyMode(value) {
@@ -518,9 +570,129 @@ async function listCertificateInstances({ workspaceId, certId, limit, offset }) 
   };
 }
 
+function resolveRetireArgs(clientOrPool, options) {
+  if (options === undefined) {
+    return { db: pool, options: clientOrPool || {} };
+  }
+  return { db: clientOrPool || pool, options: options || {} };
+}
+
+async function writeRetireAudit(client, options, certificate, status, reason) {
+  await client.query(
+    `INSERT INTO audit_events (
+       actor_user_id,
+       subject_user_id,
+       action,
+       target_type,
+       target_id,
+       channel,
+       metadata,
+       workspace_id
+     )
+     VALUES ($1, $2, 'CERTOPS_CERTIFICATE_RETIRED', 'managed_certificate',
+             NULL, NULL, $3::jsonb, $4)`,
+    [
+      options.actorUserId || options.createdBy || null,
+      options.actorUserId || options.createdBy || null,
+      JSON.stringify(
+        compactObject({
+          managedCertificateId: certificate.id,
+          tokenId: certificate.token_id,
+          status,
+          reason,
+          fingerprintSha256: certificate.fingerprint_sha256,
+        }),
+      ),
+      options.workspaceId,
+    ],
+  );
+}
+
+async function retireManagedCertificate(clientOrPool, options) {
+  const resolved = resolveRetireArgs(clientOrPool, options);
+  const normalizedStatus = normalizeRetireStatus(resolved.options.status);
+  const normalizedReason = normalizeRetireReason(resolved.options.reason);
+  const db = resolved.db;
+  const client =
+    db && typeof db.connect === "function" ? await db.connect() : db;
+  const shouldRelease = db && typeof db.connect === "function";
+
+  if (!client || typeof client.query !== "function") {
+    throw new Error("retireManagedCertificate requires a pg client or pool");
+  }
+
+  try {
+    await client.query("BEGIN");
+
+    const existing = await client.query(
+      `SELECT *
+         FROM managed_certificates
+        WHERE workspace_id = $1
+          AND id = $2
+        FOR UPDATE`,
+      [resolved.options.workspaceId, resolved.options.certificateId],
+    );
+
+    const certificate = existing.rows[0];
+    if (!certificate) {
+      throw certOpsValidationError(
+        "Certificate not found",
+        CERTOPS_CERTIFICATE_NOT_FOUND,
+      );
+    }
+
+    const updated = await client.query(
+      `UPDATE managed_certificates
+          SET status = $1,
+              updated_at = NOW()
+        WHERE workspace_id = $2
+          AND id = $3
+        RETURNING *`,
+      [
+        normalizedStatus,
+        resolved.options.workspaceId,
+        resolved.options.certificateId,
+      ],
+    );
+
+    if (certificate.token_id) {
+      await client.query(
+        `UPDATE tokens
+            SET cert_lifecycle_status = $1,
+                updated_at = NOW()
+          WHERE workspace_id = $2
+            AND id = $3`,
+        [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
+      );
+    }
+
+    await writeRetireAudit(
+      client,
+      resolved.options,
+      updated.rows[0],
+      normalizedStatus,
+      normalizedReason,
+    );
+
+    await client.query("COMMIT");
+    return toInventoryRecord(updated.rows[0]);
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackError) {
+      /* Preserve the original error. */
+    }
+    throw err;
+  } finally {
+    if (shouldRelease) client.release();
+  }
+}
+
 module.exports = {
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
+  CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -532,6 +704,7 @@ module.exports = {
   normalizeKeyReference,
   normalizeLimit,
   normalizeOffset,
+  retireManagedCertificate,
   toInstanceRecord,
   toInventoryRecord,
   upsertManagedCertificate,
