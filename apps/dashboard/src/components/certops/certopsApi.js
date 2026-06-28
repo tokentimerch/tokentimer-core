@@ -107,6 +107,31 @@ export async function importCertificateMaterial(
 }
 
 /**
+ * Retire a managed certificate (soft lifecycle transition, not a row delete).
+ *
+ * Maps to POST /certops/certificates/:id/retire with `{ status, reason }` where
+ * status is `revoked` or `decommissioned` (plan D7 / section 10.1). The backend
+ * keeps the certificate row and its evidence and mirrors the status onto the
+ * linked token; nothing is purged. The endpoint may not exist yet in the current
+ * core build (Dev A / PR #47), so callers should handle a 404 gracefully.
+ * @returns {Promise<{ certificate: object }>}
+ */
+export async function retireCertificate(
+  workspaceId,
+  certificateId,
+  { status, reason } = {}
+) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(
+      certificateId
+    )}/retire`,
+    { status, reason }
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
+/**
  * Lightweight availability probe used to gate CertOps UI behind the
  * `certops.enabled` rollout flag. The backend hides the routes with a 404 when
  * the flag is off, so a successful list call means CertOps is available to this

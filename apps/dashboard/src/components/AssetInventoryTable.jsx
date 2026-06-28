@@ -21,6 +21,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import {
+  Archive,
   BadgeCheck,
   CalendarClock,
   Database,
@@ -32,9 +33,45 @@ import {
 import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
+import { isRetiredStatus } from './certops/certopsFormat';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
+
+/**
+ * Display metadata for retired (revoked/decommissioned) managed certificates.
+ * Mirrors the StatusPill shape; light-mode styles live in LIGHT_STATUS_STYLES.
+ */
+const RETIRED_STATUS_META = {
+  revoked: {
+    key: 'revoked',
+    label: 'Revoked',
+    color: '#f87171',
+    bg: 'rgba(239, 68, 68, 0.14)',
+  },
+  decommissioned: {
+    key: 'decommissioned',
+    label: 'Decommissioned',
+    color: '#94a3b8',
+    bg: 'rgba(148, 163, 184, 0.14)',
+  },
+};
+
+/**
+ * Resolves the badge a row should show: a retired managed-certificate state
+ * (revoked/decommissioned) wins over the expiry-derived status, so retired
+ * certs read as retired rather than "expired/healthy" (plan D7).
+ */
+function effectiveStatusMeta(token, getStatusMeta) {
+  const managed = token.__managedCert;
+  if (managed && isRetiredStatus(managed.status)) {
+    return (
+      RETIRED_STATUS_META[String(managed.status).toLowerCase()] ||
+      RETIRED_STATUS_META.decommissioned
+    );
+  }
+  return getStatusMeta(token.expiresAt);
+}
 
 const CATEGORY_ICON_META = {
   cert: { icon: BadgeCheck, scheme: 'blue' },
@@ -348,6 +385,18 @@ const LIGHT_STATUS_STYLES = {
     dot: '#16a34a',
     border: '#bbf7d0',
   },
+  revoked: {
+    bg: '#fef2f2',
+    color: '#b91c1c',
+    dot: '#dc2626',
+    border: '#fecaca',
+  },
+  decommissioned: {
+    bg: '#f1f5f9',
+    color: '#475569',
+    dot: '#64748b',
+    border: '#cbd5e1',
+  },
 };
 
 function resolveStatusBadgeStyles(status, isLight) {
@@ -429,7 +478,7 @@ function MobileMetaItem({ label, value, children }) {
 
 function StatusBadge({ token, getStatusMeta }) {
   const { colorMode } = useColorMode();
-  const status = getStatusMeta(token.expiresAt);
+  const status = effectiveStatusMeta(token, getStatusMeta);
   const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
 
   return (
@@ -605,14 +654,25 @@ function InventoryRowActions({
               onClick={() => onOpenRenew(token)}
             />
           </Tooltip>
-          <Tooltip label='Delete'>
-            <IconButton
-              {...actionButtonProps}
-              aria-label={`Delete token ${token.name}`}
-              icon={<Trash2 size={16} />}
-              onClick={() => onDeleteToken(token.id)}
-            />
-          </Tooltip>
+          {token.__managedCert ? (
+            <Tooltip label='Retire (revoke / decommission)'>
+              <IconButton
+                {...actionButtonProps}
+                aria-label={`Retire certificate ${token.name}`}
+                icon={<Archive size={16} />}
+                onClick={() => onDeleteToken(token.id)}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip label='Delete'>
+              <IconButton
+                {...actionButtonProps}
+                aria-label={`Delete token ${token.name}`}
+                icon={<Trash2 size={16} />}
+                onClick={() => onDeleteToken(token.id)}
+              />
+            </Tooltip>
+          )}
         </>
       )}
     </HStack>
@@ -740,7 +800,7 @@ function AssetInventoryMobileCard({
   helpers,
 }) {
   const { colorMode } = useColorMode();
-  const status = helpers.getStatusMeta(token.expiresAt);
+  const status = effectiveStatusMeta(token, helpers.getStatusMeta);
   const statusStyles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const cardTitleColor = useColorModeValue('gray.900', 'white');
   const cardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.96)');
@@ -915,13 +975,23 @@ function AssetInventoryMobileCard({
               >
                 Renew
               </Button>
-              <Button
-                {...mobileActionButtonProps}
-                leftIcon={<Trash2 size={14} />}
-                onClick={() => helpers.onDeleteToken(token.id)}
-              >
-                Delete
-              </Button>
+              {token.__managedCert ? (
+                <Button
+                  {...mobileActionButtonProps}
+                  leftIcon={<Archive size={14} />}
+                  onClick={() => helpers.onDeleteToken(token.id)}
+                >
+                  Retire
+                </Button>
+              ) : (
+                <Button
+                  {...mobileActionButtonProps}
+                  leftIcon={<Trash2 size={14} />}
+                  onClick={() => helpers.onDeleteToken(token.id)}
+                >
+                  Delete
+                </Button>
+              )}
             </>
           )}
         </HStack>

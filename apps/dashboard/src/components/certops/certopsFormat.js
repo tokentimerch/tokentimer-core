@@ -49,6 +49,32 @@ export function statusScheme(status) {
   return STATUS_SCHEMES[String(status || '').toLowerCase()] || 'gray';
 }
 
+const STATUS_LABELS = {
+  active: 'Active',
+  discovered: 'Discovered',
+  renewing: 'Renewing',
+  expiring: 'Expiring',
+  expired: 'Expired',
+  revoked: 'Revoked',
+  decommissioned: 'Decommissioned',
+};
+
+export function statusLabel(status) {
+  const key = String(status || '').toLowerCase();
+  return STATUS_LABELS[key] || (status ? String(status) : 'Unknown');
+}
+
+/**
+ * Retired lifecycle states (plan D7 / section 10.1). A managed certificate in
+ * one of these states is hidden from the dashboard by default and its linked
+ * token can no longer be hard-deleted, only revoked/decommissioned.
+ */
+export const RETIRE_STATUSES = ['revoked', 'decommissioned'];
+
+export function isRetiredStatus(status) {
+  return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
+}
+
 const KEY_MODE_LABELS = {
   'agent-local': 'Agent-local',
   'proxy-agent-local': 'Proxy agent-local',

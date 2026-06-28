@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import {
   getCertificateInstances,
   getManagedCertificateForToken,
+  invalidateCertOpsInventoryCache,
+  loadCertOpsInventoryIndex,
   probeCertOpsEnabled,
 } from './certopsApi';
 
@@ -81,6 +83,58 @@ export function useCertOpsCanManage() {
   }, [workspaceId]);
 
   return canManage;
+}
+
+/**
+ * Loads the whole workspace CertOps inventory once and exposes a tokenId ->
+ * managed certificate lookup, so the asset list can tell which token rows are
+ * backed by a managed certificate (delete gating + retired filtering, plan D7).
+ *
+ * Returns a stable `byTokenId` Map (empty when CertOps is disabled/resolving),
+ * the enabled flag, a loading flag, and a `refresh()` that re-fetches after a
+ * retire so the list reflects the new lifecycle status.
+ */
+export function useWorkspaceCertOps() {
+  const { workspaceId } = useWorkspace();
+  const enabled = useCertOpsEnabled();
+  const [byTokenId, setByTokenId] = useState(() => new Map());
+  const [loading, setLoading] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const refresh = useCallback(() => {
+    if (workspaceId) invalidateCertOpsInventoryCache(workspaceId);
+    setReloadTick(tick => tick + 1);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || enabled !== true) {
+      setByTokenId(new Map());
+      setLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+
+    loadCertOpsInventoryIndex(workspaceId, { signal: controller.signal })
+      .then(index => {
+        if (!cancelled) setByTokenId(new Map(index.byTokenId));
+      })
+      .catch(() => {
+        if (!cancelled) setByTokenId(new Map());
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [workspaceId, enabled, reloadTick]);
+
+  return { enabled, byTokenId, loading, refresh };
 }
 
 /**

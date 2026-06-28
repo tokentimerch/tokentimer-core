@@ -79,6 +79,10 @@ import { AccessibleSpinner } from './components/Accessibility';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
+import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
+import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
+import { retireCertificate } from './components/certops/certopsApi.js';
+import { isRetiredStatus } from './components/certops/certopsFormat.js';
 import {
   DashboardModalFrame,
   DashboardModalDescription,
@@ -3608,6 +3612,62 @@ function DashboardView({
     navigate('/account');
   }, [navigate]);
   const { workspaceId, selectWorkspace } = useWorkspace();
+
+  // CertOps: workspace-wide managed-certificate index (tokenId -> cert), used to
+  // gate deletion of managed cert tokens and to hide retired certs by default
+  // (plan D7). Empty/no-op when CertOps is disabled for the workspace.
+  const { byTokenId: managedByTokenId, refresh: refreshCertOps } =
+    useWorkspaceCertOps();
+  const getManagedCertForToken = useCallback(
+    id => managedByTokenId.get(Number(id)) || null,
+    [managedByTokenId]
+  );
+  const [showRetired, setShowRetired] = useState(false);
+  const {
+    isOpen: isRetireModalOpen,
+    onOpen: onRetireModalOpen,
+    onClose: onRetireModalClose,
+  } = useDisclosure();
+  const [retireTarget, setRetireTarget] = useState(null);
+
+  // Managed cert tokens cannot be hard-deleted; the row delete action routes to
+  // the retire (revoke/decommission) flow instead (plan D7).
+  const handleRowDeleteOrRetire = useCallback(
+    id => {
+      const cert = getManagedCertForToken(id);
+      if (cert) {
+        const token =
+          (Array.isArray(tokens) ? tokens.find(t => t.id === id) : null) || {
+            id,
+          };
+        setRetireTarget({ token, certificate: cert });
+        onRetireModalOpen();
+        return;
+      }
+      onDeleteToken(id);
+    },
+    [getManagedCertForToken, onDeleteToken, onRetireModalOpen, tokens]
+  );
+
+  const handleRetireConfirm = useCallback(
+    async ({ status, reason }) => {
+      const cert = retireTarget?.certificate;
+      if (!cert?.id) return;
+      await retireCertificate(workspaceId, cert.id, { status, reason });
+      refreshCertOps();
+      onRetireModalClose();
+      setRetireTarget(null);
+      try {
+        showSuccessMessage(
+          status === 'revoked'
+            ? 'Certificate revoked.'
+            : 'Certificate decommissioned.'
+        );
+      } catch (_) {}
+    },
+    [retireTarget, workspaceId, refreshCertOps, onRetireModalClose]
+  );
+
   const {
     pageBg,
     surface,
@@ -4253,11 +4313,29 @@ function DashboardView({
 
   const handleBulkDelete = async () => {
     if (isViewer) return;
-    const bulkDeleteIds = selectedVisibleTokenIds;
-    if (bulkDeleteIds.length === 0) return;
+    const selectedIds = selectedVisibleTokenIds;
+    if (selectedIds.length === 0) return;
+    // Managed cert tokens cannot be hard-deleted; exclude them from bulk delete
+    // (they must be revoked/decommissioned individually) (plan D7).
+    const managedSelected = selectedIds.filter(id =>
+      getManagedCertForToken(id)
+    );
+    const bulkDeleteIds = selectedIds.filter(id => !getManagedCertForToken(id));
+    if (bulkDeleteIds.length === 0) {
+      try {
+        showSuccessMessage(
+          'Selected certificates are managed and cannot be deleted. Revoke or decommission them individually.'
+        );
+      } catch (_) {}
+      return;
+    }
+    const managedNote =
+      managedSelected.length > 0
+        ? ` ${managedSelected.length} managed certificate(s) will be skipped (revoke/decommission those individually).`
+        : '';
     if (
       !window.confirm(
-        `Delete ${bulkDeleteIds.length} selected on this page? Any linked endpoint monitors will also be deleted.`
+        `Delete ${bulkDeleteIds.length} selected on this page? Any linked endpoint monitors will also be deleted.${managedNote}`
       )
     ) {
       return;
@@ -4649,7 +4727,30 @@ function DashboardView({
     return Array.from(dedupe.values());
   }, [tokens]);
 
-  const loadedAssetMetrics = useLoadedAssetMetrics(allLoadedTokens, {
+  const isTokenRetired = useCallback(
+    token => {
+      const cert = managedByTokenId.get(Number(token?.id));
+      return Boolean(cert && isRetiredStatus(cert.status));
+    },
+    [managedByTokenId]
+  );
+
+  const retiredLoadedCount = useMemo(
+    () => allLoadedTokens.filter(isTokenRetired).length,
+    [allLoadedTokens, isTokenRetired]
+  );
+
+  // Tokens in scope for the status chips/metrics: retired managed certs are
+  // hidden unless the "Retired" toggle is on, matching the visible list (D7).
+  const scopedLoadedTokens = useMemo(
+    () =>
+      showRetired
+        ? allLoadedTokens
+        : allLoadedTokens.filter(token => !isTokenRetired(token)),
+    [allLoadedTokens, isTokenRetired, showRetired]
+  );
+
+  const loadedAssetMetrics = useLoadedAssetMetrics(scopedLoadedTokens, {
     categoryCounts,
     categoryHasMore,
     categoryLoading,
@@ -4674,6 +4775,11 @@ function DashboardView({
         sectionParam
       );
       for (const token of categoryTokens) {
+        const managedCert = managedByTokenId.get(Number(token.id)) || null;
+        const retired = Boolean(
+          managedCert && isRetiredStatus(managedCert.status)
+        );
+        if (retired && !showRetired) continue;
         const status = getDashboardStatusMeta(token.expiresAt).key;
         const matchesStatus =
           statusFilter === 'all' ||
@@ -4682,7 +4788,12 @@ function DashboardView({
           (statusFilter === 'critical' &&
             (status === 'critical' || status === 'expired')) ||
           (statusFilter === 'healthy' && status === 'healthy');
-        if (matchesStatus) dedupe.set(String(token.id), token);
+        if (matchesStatus) {
+          dedupe.set(
+            String(token.id),
+            managedCert ? { ...token, __managedCert: managedCert } : token
+          );
+        }
       }
     }
 
@@ -4696,8 +4807,10 @@ function DashboardView({
     TOKEN_CATEGORIES,
     categoryByValue,
     getFilteredAndSortedTokens,
+    managedByTokenId,
     panelQueries,
     selectedCategoryValues,
+    showRetired,
     statusFilter,
     tokens,
   ]);
@@ -4749,14 +4862,14 @@ function DashboardView({
 
     return computeInventoryStatusMetrics(
       filterTokensForInventoryCounts(
-        allLoadedTokens,
+        scopedLoadedTokens,
         inventoryFilterContext,
         'status',
         getInventoryStatusKey
       )
     );
   }, [
-    allLoadedTokens,
+    scopedLoadedTokens,
     getInventoryStatusKey,
     inventoryFilterContext,
     loadedAssetMetrics,
@@ -5194,6 +5307,9 @@ function DashboardView({
           onFilterReset={handleFilterReset}
           onClearAllFilters={handleClearAllFilters}
           onSectionNavigate={inventoryUrl.setSection}
+          showRetired={showRetired}
+          onToggleShowRetired={setShowRetired}
+          retiredCount={retiredLoadedCount}
         />
       </DashboardPanel>
 
@@ -5228,7 +5344,7 @@ function DashboardView({
           categoryLoading={categoryLoading}
           onOpenTokenModal={onOpenTokenModal}
           onOpenRenew={onOpenRenew}
-          onDeleteToken={onDeleteToken}
+          onDeleteToken={handleRowDeleteOrRetire}
           getAssetTypeLabel={getAssetTypeLabel}
           getCategoryLabel={getCategoryLabel}
           getStatusMeta={getDashboardStatusMeta}
@@ -6172,6 +6288,14 @@ function DashboardView({
         TOKEN_CATEGORIES={TOKEN_CATEGORIES}
         fetchGlobalFacets={fetchGlobalFacets}
         fetchTokensForCategoryReset={fetchTokensForCategoryReset}
+      />
+
+      <RetireCertificateModal
+        isOpen={isRetireModalOpen}
+        onClose={onRetireModalClose}
+        token={retireTarget?.token}
+        certificate={retireTarget?.certificate}
+        onRetire={handleRetireConfirm}
       />
     </Box>
   );
