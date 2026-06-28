@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 
 const { loadRootEnv } = require("../../scripts/load-root-env");
 
@@ -19,6 +20,75 @@ const CERTOPS_TABLES = [
 const CERTOPS_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_inventory_schema",
 );
+
+function quoteIdentifier(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
+async function createWorkspacePair(label) {
+  const ownerEmail = `${label}-${Date.now()}-${crypto.randomUUID()}@example.com`;
+  const owner = await TestUtils.execQuery(
+    `INSERT INTO users (email, email_original, display_name, password_hash, auth_method, email_verified)
+     VALUES ($1, $2, $3, $4, 'local', TRUE)
+     RETURNING id`,
+    [
+      ownerEmail.toLowerCase(),
+      ownerEmail,
+      label,
+      "not-used-in-migration-test",
+    ],
+  );
+  const ownerId = owner.rows[0].id;
+  const workspaceA = crypto.randomUUID();
+  const workspaceB = crypto.randomUUID();
+
+  await TestUtils.execQuery(
+    `INSERT INTO workspaces (id, name, created_by, plan)
+     VALUES ($1, $2, $3, 'oss'), ($4, $5, $3, 'oss')`,
+    [
+      workspaceA,
+      `${label} A`,
+      ownerId,
+      workspaceB,
+      `${label} B`,
+    ],
+  );
+
+  return { ownerId, workspaceA, workspaceB };
+}
+
+async function cleanupWorkspacePair(ownerId, workspaceIds) {
+  await TestUtils.execQuery("DELETE FROM workspaces WHERE id = ANY($1::uuid[])", [
+    workspaceIds,
+  ]);
+  await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
+}
+
+async function withScratchCertOpsSchema(callback) {
+  const schemaName = `certops_migration_${crypto
+    .randomUUID()
+    .replace(/-/g, "")}`;
+  const quotedSchema = quoteIdentifier(schemaName);
+
+  await TestUtils.execQuery(`CREATE SCHEMA ${quotedSchema}`);
+  try {
+    await TestUtils.execQuery(
+      `SET search_path TO ${quotedSchema}, public; ${CERTOPS_MIGRATION.sql}; RESET search_path;`,
+    );
+    return await callback(quotedSchema);
+  } finally {
+    await TestUtils.execQuery(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`);
+  }
+}
+
+async function expectForeignKeyViolation(query, params) {
+  try {
+    await TestUtils.execQuery(query, params);
+    throw new Error("Expected foreign key violation");
+  } catch (error) {
+    expect(error.code).to.equal("23503");
+  }
+}
 
 describe("CertOps inventory migration", function () {
   this.timeout(60000);
@@ -151,6 +221,117 @@ describe("CertOps inventory migration", function () {
       "fk_certificate_instances_managed_certificate",
       "fk_certificate_instances_target",
     ]);
+  });
+
+  it("enforces profile links within the same workspace", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-profile-fk",
+    );
+
+    try {
+      await withScratchCertOpsSchema(async (schema) => {
+        const profileA = crypto.randomUUID();
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_profiles (id, workspace_id, name)
+           VALUES ($1, $2, $3)`,
+          [profileA, workspaceA, "Workspace A profile"],
+        );
+
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.managed_certificates (workspace_id, profile_id)
+           VALUES ($1, $2)`,
+          [workspaceA, profileA],
+        );
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_targets (workspace_id, profile_id, name, target_type)
+           VALUES ($1, $2, $3, 'endpoint')`,
+          [workspaceA, profileA, "Workspace A target"],
+        );
+
+        await expectForeignKeyViolation(
+          `INSERT INTO ${schema}.managed_certificates (workspace_id, profile_id)
+           VALUES ($1, $2)`,
+          [workspaceB, profileA],
+        );
+        await expectForeignKeyViolation(
+          `INSERT INTO ${schema}.certificate_targets (workspace_id, profile_id, name, target_type)
+           VALUES ($1, $2, $3, 'endpoint')`,
+          [workspaceB, profileA, "Cross-workspace target"],
+        );
+      });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("allows null profile links and preserves workspace ownership when profiles are deleted", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-profile-delete",
+    );
+
+    try {
+      await withScratchCertOpsSchema(async (schema) => {
+        const profileA = crypto.randomUUID();
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_profiles (id, workspace_id, name)
+           VALUES ($1, $2, $3)`,
+          [profileA, workspaceA, "Delete profile"],
+        );
+
+        const managed = await TestUtils.execQuery(
+          `INSERT INTO ${schema}.managed_certificates (workspace_id, profile_id)
+           VALUES ($1, $2)
+           RETURNING id`,
+          [workspaceA, profileA],
+        );
+        const target = await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_targets (workspace_id, profile_id, name, target_type)
+           VALUES ($1, $2, $3, 'endpoint')
+           RETURNING id`,
+          [workspaceA, profileA, "Delete profile target"],
+        );
+
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.managed_certificates (workspace_id, profile_id)
+           VALUES ($1, NULL)`,
+          [workspaceB],
+        );
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_targets (workspace_id, profile_id, name, target_type)
+           VALUES ($1, NULL, $2, 'endpoint')`,
+          [workspaceB, "Null profile target"],
+        );
+
+        await TestUtils.execQuery(
+          `DELETE FROM ${schema}.certificate_profiles WHERE id = $1`,
+          [profileA],
+        );
+
+        const managedAfterDelete = await TestUtils.execQuery(
+          `SELECT workspace_id::text AS workspace_id, profile_id
+             FROM ${schema}.managed_certificates
+            WHERE id = $1`,
+          [managed.rows[0].id],
+        );
+        const targetAfterDelete = await TestUtils.execQuery(
+          `SELECT workspace_id::text AS workspace_id, profile_id
+             FROM ${schema}.certificate_targets
+            WHERE id = $1`,
+          [target.rows[0].id],
+        );
+
+        expect(managedAfterDelete.rows[0]).to.deep.equal({
+          workspace_id: workspaceA,
+          profile_id: null,
+        });
+        expect(targetAfterDelete.rows[0]).to.deep.equal({
+          workspace_id: workspaceA,
+          profile_id: null,
+        });
+      });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
   });
 
   it("adds useful workspace and fingerprint indexes", async () => {
