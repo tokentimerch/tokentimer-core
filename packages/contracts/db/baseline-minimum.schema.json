@@ -14,6 +14,7 @@
         "users",
         "workspaces",
         "workspace_memberships",
+        "tokens",
         "certificate_profiles",
         "managed_certificates",
         "certificate_targets",
@@ -28,6 +29,9 @@
         },
         "workspace_memberships": {
           "$ref": "#/definitions/tableMemberships"
+        },
+        "tokens": {
+          "$ref": "#/definitions/tableTokens"
         },
         "certificate_profiles": {
           "$ref": "#/definitions/tableCertificateProfiles"
@@ -105,6 +109,27 @@
             "secret",
             "credential",
             "password"
+          ]
+        }
+      }
+    },
+    "tableTokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 5,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "type" } },
+            { "contains": { "const": "category" } },
+            { "contains": { "const": "cert_lifecycle_status" } }
           ]
         }
       }

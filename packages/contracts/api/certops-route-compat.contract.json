@@ -46,6 +46,7 @@
       { "path": "/api/v1/workspaces/{id}/certops/certificates", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/instances", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/imports", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "GET" },
