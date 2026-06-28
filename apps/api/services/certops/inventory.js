@@ -53,6 +53,42 @@ function chooseCertificateName(certificate, fallbackName) {
   );
 }
 
+function formatDateYmd(value) {
+  const iso = dateToIso(value);
+  return iso ? iso.slice(0, 10) : null;
+}
+
+function tokenNameFor(certificate, fallbackName) {
+  const name = String(chooseCertificateName(certificate, fallbackName) || "Certificate")
+    .trim()
+    .slice(0, 100);
+  return name.length >= 3 ? name : "Certificate";
+}
+
+function certificateDomainsFor(certificate) {
+  const domains = [];
+  if (Array.isArray(certificate.subjectAltNames)) {
+    for (const value of certificate.subjectAltNames) {
+      const domain = typeof value === "string" ? value.trim() : "";
+      if (domain) domains.push(domain);
+    }
+  }
+  const commonName =
+    typeof certificate.commonName === "string" ? certificate.commonName.trim() : "";
+  if (commonName) domains.push(commonName);
+  return Array.from(new Set(domains));
+}
+
+function fingerprintSha256For(certificate) {
+  return certificate.fingerprintSha256 || certificate.fingerprint256 || null;
+}
+
+function certOpsTokenNotes(certificate, domains) {
+  const fingerprint = fingerprintSha256For(certificate) || "unknown";
+  const domainText = domains.length ? ` Domains: ${domains.join(", ")}.` : "";
+  return `Imported by CertOps public PEM import. Fingerprint: ${fingerprint}.${domainText}`;
+}
+
 function keyReferenceError() {
   const err = new Error("CertOps keyReference must be a non-secret reference");
   err.code = CERTOPS_KEY_REFERENCE_INVALID;
@@ -183,6 +219,110 @@ function publicMetadataFor(certificate, options, chainIndex) {
   });
 }
 
+async function existingManagedCertificateForToken(client, certificate, options) {
+  const fingerprintSha256 = fingerprintSha256For(certificate);
+  if (!fingerprintSha256) return null;
+  const result = await client.query(
+    `SELECT id, token_id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND fingerprint_sha256 = $2
+      LIMIT 1`,
+    [options.workspaceId, fingerprintSha256],
+  );
+  return result.rows[0] || null;
+}
+
+async function existingCertOpsToken(client, certificate, options, domains) {
+  const fingerprintSha256 = fingerprintSha256For(certificate);
+  if (fingerprintSha256) {
+    const byFingerprint = await client.query(
+      `SELECT id
+         FROM tokens
+        WHERE workspace_id = $1
+          AND type = 'ssl_cert'
+          AND notes ILIKE $2
+        ORDER BY imported_at DESC NULLS LAST, created_at DESC, id DESC
+        LIMIT 1`,
+      [
+        options.workspaceId,
+        `%Imported by CertOps public PEM import. Fingerprint: ${fingerprintSha256}.%`,
+      ],
+    );
+    if (byFingerprint.rows[0]) return byFingerprint.rows[0];
+  }
+
+  const expiration = formatDateYmd(certificate.notAfter || certificate.validTo);
+  if (!expiration || domains.length === 0) return null;
+  const byShape = await client.query(
+    `SELECT id
+       FROM tokens
+      WHERE workspace_id = $1
+        AND type = 'ssl_cert'
+        AND expiration = $2
+        AND COALESCE(issuer, '') = COALESCE($3, '')
+        AND domains && $4::text[]
+      ORDER BY imported_at DESC NULLS LAST, created_at DESC, id DESC
+      LIMIT 1`,
+    [options.workspaceId, expiration, certificate.issuer || null, domains],
+  );
+  return byShape.rows[0] || null;
+}
+
+async function ensureManagedCertificateToken(
+  client,
+  certificate,
+  options,
+  existingManagedCertificate = null,
+) {
+  if (options.tokenId) return options.tokenId;
+
+  const existing =
+    existingManagedCertificate ||
+    (await existingManagedCertificateForToken(client, certificate, options));
+  if (existing?.token_id) return existing.token_id;
+
+  const domains = certificateDomainsFor(certificate);
+  const existingToken = await existingCertOpsToken(
+    client,
+    certificate,
+    options,
+    domains,
+  );
+  if (existingToken?.id) return existingToken.id;
+
+  const expiration = formatDateYmd(certificate.notAfter || certificate.validTo);
+  if (!expiration) {
+    throw certOpsValidationError(
+      "Certificate expiration is required",
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  }
+
+  const token = await client.query(
+    `INSERT INTO tokens
+       (user_id, workspace_id, created_by, name, expiration, type, category,
+        issuer, serial_number, subject, domains, location, notes, imported_at)
+     VALUES ($1, $2, $3, $4, $5, 'ssl_cert', 'cert',
+             $6, $7, $8, $9::text[], $10, $11, NOW())
+     RETURNING id`,
+    [
+      options.createdBy || null,
+      options.workspaceId,
+      options.createdBy || null,
+      tokenNameFor(certificate, options.name),
+      expiration,
+      certificate.issuer || null,
+      certificate.serialNumber || null,
+      certificate.subject || null,
+      domains,
+      domains[0] || null,
+      certOpsTokenNotes(certificate, domains),
+    ],
+  );
+  return token.rows[0].id;
+}
+
 async function upsertManagedCertificate(client, certificate, options, chainIndex) {
   const keyReference = normalizeKeyReference(options.keyReference);
   const params = [
@@ -285,11 +425,23 @@ async function importPublicCertificates(options) {
     await client.query("BEGIN");
     const items = [];
     for (let index = 0; index < certificates.length; index += 1) {
+      const certificate = certificates[index];
+      const existingManagedCertificate = await existingManagedCertificateForToken(
+        client,
+        certificate,
+        normalizedOptions,
+      );
+      const tokenId = await ensureManagedCertificateToken(
+        client,
+        certificate,
+        normalizedOptions,
+        existingManagedCertificate,
+      );
       items.push(
         await upsertManagedCertificate(
           client,
-          certificates[index],
-          normalizedOptions,
+          certificate,
+          { ...normalizedOptions, tokenId },
           index,
         ),
       );
