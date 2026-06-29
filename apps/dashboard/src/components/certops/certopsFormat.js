@@ -2,6 +2,20 @@
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+const CERT_TOKEN_TYPES = new Set([
+  'ssl_cert',
+  'tls_cert',
+  'code_signing',
+  'client_cert',
+]);
+
+/** Whether a token row is a certificate asset (category or type). */
+export function isCertToken(token) {
+  if (!token) return false;
+  if (token.category === 'cert') return true;
+  return CERT_TOKEN_TYPES.has(String(token.type || '').toLowerCase());
+}
+
 export function formatDate(value) {
   if (!value) return '--';
   const date = new Date(value);
@@ -73,6 +87,58 @@ export const RETIRE_STATUSES = ['revoked', 'decommissioned'];
 
 export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
+}
+
+/** Matches apps/api/services/certops/inventory.js KEY_REFERENCE_MAX_LENGTH. */
+export const KEY_REFERENCE_MAX_LENGTH = 256;
+
+/** Separator between location block and shared technical reference in keyReference. */
+const KEY_REFERENCE_TECH_SEP = ' — ';
+
+/**
+ * Split user-entered location text into distinct labels (one per line or comma).
+ */
+export function parseKeyLocationInput(text) {
+  if (!text || typeof text !== 'string') return [];
+  return text
+    .split(/[\n,]+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Build the keyReference string stored by the API from location labels and an
+ * optional shared technical pointer (same key mode for all locations).
+ */
+export function buildKeyReferenceFromLocations(locations, technicalReference) {
+  const labels = Array.isArray(locations)
+    ? locations.map(part => String(part || '').trim()).filter(Boolean)
+    : parseKeyLocationInput(locations);
+  const tech = String(technicalReference || '').trim();
+  if (labels.length === 0) return tech || null;
+  const block = labels.join('\n');
+  if (!tech) return block;
+  return `${block}${KEY_REFERENCE_TECH_SEP}${tech}`;
+}
+
+/**
+ * Parse a stored keyReference back into location labels and optional technical ref.
+ */
+export function parseStoredKeyReference(keyReference) {
+  const raw = String(keyReference || '').trim();
+  if (!raw) return { locations: [], technicalReference: null };
+
+  const sepIndex = raw.lastIndexOf(KEY_REFERENCE_TECH_SEP);
+  if (sepIndex !== -1) {
+    const locPart = raw.slice(0, sepIndex).trim();
+    const tech = raw.slice(sepIndex + KEY_REFERENCE_TECH_SEP.length).trim();
+    return {
+      locations: parseKeyLocationInput(locPart),
+      technicalReference: tech || null,
+    };
+  }
+
+  return { locations: parseKeyLocationInput(raw), technicalReference: null };
 }
 
 const KEY_MODE_LABELS = {

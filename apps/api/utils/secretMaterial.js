@@ -4,7 +4,7 @@
  * CertOps shared secret-material detector.
  *
  * Zero private-key custody is a structural rule for every TokenTimer control
- * plane (see CONTEXT.md and docs/adr/0001-certops-zero-custody-enforcement.md).
+ * plane (see docs/certops/CONTEXT.md and docs/adr/0001-certops-zero-custody-enforcement.md).
  * This module is the single source of truth for *content-based* detection of
  * private key material. The existing logger (apps/api/utils/logger.js) already
  * redacts by field name; this detector closes the gap where key material

@@ -76,8 +76,8 @@ import ImportCertificateForm from './certops/ImportCertificateForm.jsx';
 import { invalidateCertOpsInventoryCache } from './certops/certopsApi.js';
 import { describeCertificateImportOutcome } from './certops/certopsFormat.js';
 import {
+  useCertOpsAvailability,
   useCertOpsCanManage,
-  useCertOpsEnabled,
 } from './certops/useCertOps.js';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
 import {
@@ -770,7 +770,11 @@ export default function ImportTokensModal({
   onOpenRequestHandled,
 }) {
   const { workspaceId } = useWorkspace();
-  const certOpsEnabled = useCertOpsEnabled();
+  const {
+    ready: certOpsReady,
+    enabled: certOpsEnabled,
+    error: certOpsAvailabilityError,
+  } = useCertOpsAvailability();
   const certOpsCanManage = useCertOpsCanManage();
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
@@ -2151,16 +2155,20 @@ export default function ImportTokensModal({
                       integrationQuota.remaining === null ||
                       integrationQuota.remaining > 0;
                     const isLocked = isCertPemCard
-                      ? isViewer || certOpsEnabled !== true
+                      ? isViewer ||
+                        !certOpsReady ||
+                        certOpsEnabled !== true
                       : isIntegration && (isViewer || !hasQuotaRemaining);
                     const lockReason = isCertPemCard
                       ? isViewer
                         ? 'Viewers cannot import certificates'
-                        : certOpsEnabled === null
+                        : !certOpsReady
                           ? 'Checking certificate operations availability...'
-                          : certOpsEnabled === false
-                            ? 'Certificate operations is not enabled for this workspace'
-                            : ''
+                          : certOpsAvailabilityError
+                            ? certOpsAvailabilityError
+                            : certOpsEnabled === false
+                              ? 'Certificate operations is not enabled for this workspace'
+                              : ''
                       : isIntegration
                         ? isViewer
                           ? 'Viewers cannot use integrations'
@@ -2510,10 +2518,15 @@ export default function ImportTokensModal({
 
               {source === 'cert-pem' ? (
                 <>
-                  {certOpsEnabled === null ? (
+                  {!certOpsReady ? (
                     <Text fontSize='sm' color={muted}>
                       Checking certificate operations availability...
                     </Text>
+                  ) : certOpsAvailabilityError ? (
+                    <Alert status='error' borderRadius='md'>
+                      <AlertIcon />
+                      <Text fontSize='sm'>{certOpsAvailabilityError}</Text>
+                    </Alert>
                   ) : certOpsEnabled === false ? (
                     <Alert status='info' borderRadius='md'>
                       <AlertIcon />

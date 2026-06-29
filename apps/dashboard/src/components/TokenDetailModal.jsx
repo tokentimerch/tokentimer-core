@@ -760,7 +760,7 @@ function TokenDetailModal({
                       }
                     )
                   ))}
-                <TokenCertOpsPanel tokenId={token.id} />
+                <TokenCertOpsPanel token={token} tokenId={token.id} />
               </>
             )}
 

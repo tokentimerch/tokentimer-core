@@ -1,11 +1,10 @@
-# CONTEXT
+# CertOps domain context
 
-Domain language and core invariants for tokentimer-core. Decisions that shape
-the code live in `docs/adr/`. This file is the shared vocabulary; when a term
-here and the code disagree, that is a bug in one of them.
-
-This bootstrap is scoped to the CertOps program (the first feature to require a
-written domain model). It will grow to cover the rest of core over time.
+Program-scoped domain language for the CertOps milestone track. This file lives
+under `docs/certops/` so the whole CertOps doc bundle can be removed or folded
+into core-wide docs when the program graduates. Decisions that shape the code
+live in `docs/adr/`. When a term here and the code disagree, that is a bug in
+one of them.
 
 ## Product invariant: zero private-key custody
 
@@ -56,7 +55,31 @@ never opens connections to agents.
   zones/providers) the agent enforces locally. Local policy wins over
   control-plane intent; rejections are reported as evidence. See ADR-0002.
 
-## Rollout flag (frozen Phase 0)
+## Dashboard certificate visibility (D6)
+
+Certificate inventory stays on existing token surfaces; CertOps enriches them
+rather than adding a parallel M1 inventory page. See ADR-0006.
+
+- **Tokens list / Control Center** - cert rows show key locality, managed status,
+  and retired filtering when CertOps is enabled.
+- **Token detail** - CertOps panel for managed fields and deployment history.
+- **Import tokens** - public PEM import card when `certops.enabled` is on.
+- **CertOps section (M2+)** - orchestration only (agents, jobs, evidence,
+  approvals), not a second certificate list.
+
+## Certificate removal (D7)
+
+Removing a tracked certificate is retire-first, not row delete. See ADR-0007 and
+plan section 10.1.
+
+- **Retire** - `POST .../certops/certificates/:certId/retire` with
+  `revoked` or `decommissioned`; rows, instances, and evidence preserved;
+  linked token lifecycle status mirrors the certificate.
+- **Hard purge** - only for manually created cert tokens not backed by a
+  `managed_certificate`; managed-backed certs route to Retire from the token
+  surface.
+
+## Rollout flag
 
 CertOps ships behind a rollout switch that is separate from edition/plan/license
 gating: `certops.enabled`, stored in a `certops_settings` JSONB column, with
@@ -93,6 +116,7 @@ continue to fall back safely when that column is absent.
 
 ## Where things live
 
+- Program docs: `docs/certops/` (this file; purgeable when CertOps graduates).
+- ADRs: `docs/adr/` (CertOps ADRs 0001-0007 today).
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
 - Contracts: `packages/contracts/` (registered in `contracts.manifest.json`).
-- ADRs: `docs/adr/`.

@@ -10,35 +10,46 @@ import {
 } from './certopsApi';
 
 /**
- * Resolves whether the CertOps surface is available for the active workspace.
+ * Resolves CertOps availability for the active workspace.
  *
  * CertOps ships behind the `certops.enabled` rollout flag. The backend hides
- * its routes (404) while the flag is off, so the dashboard derives availability
- * by probing the workspace-scoped list endpoint. State is one of:
- *   null    -> still resolving
- *   true    -> CertOps API available (enrich cert tokens / PEM import)
- *   false   -> hidden (rollout flag off)
+ * its routes (404) while the flag is off. Only 404 means disabled; other
+ * failures are surfaced as `error` so plan-gating and outages are not mistaken
+ * for "feature off".
+ *
+ * @returns {{ ready: boolean, enabled: boolean|null, error: string|null }}
  */
-export function useCertOpsEnabled() {
+export function useCertOpsAvailability() {
   const { workspaceId } = useWorkspace();
-  const [enabled, setEnabled] = useState(null);
+  const [state, setState] = useState({
+    ready: false,
+    enabled: null,
+    error: null,
+  });
 
   useEffect(() => {
     if (!workspaceId) {
-      setEnabled(null);
+      setState({ ready: false, enabled: null, error: null });
       return undefined;
     }
 
     let cancelled = false;
     const controller = new AbortController();
-    setEnabled(null);
+    setState({ ready: false, enabled: null, error: null });
 
     probeCertOpsEnabled(workspaceId, { signal: controller.signal })
       .then(result => {
-        if (!cancelled) setEnabled(result);
+        if (!cancelled) {
+          setState({ ready: true, enabled: result, error: null });
+        }
       })
-      .catch(() => {
-        if (!cancelled) setEnabled(false);
+      .catch(err => {
+        if (cancelled) return;
+        const message =
+          err?.response?.data?.error ||
+          err?.message ||
+          'Could not check certificate operations availability.';
+        setState({ ready: true, enabled: null, error: message });
       });
 
     return () => {
@@ -47,6 +58,19 @@ export function useCertOpsEnabled() {
     };
   }, [workspaceId]);
 
+  return state;
+}
+
+/**
+ * Resolves whether the CertOps surface is available for the active workspace.
+ *
+ * Returns null while resolving or when availability could not be determined
+ * (use `useCertOpsAvailability` for explicit error vs disabled).
+ * @returns {boolean|null}
+ */
+export function useCertOpsEnabled() {
+  const { ready, enabled } = useCertOpsAvailability();
+  if (!ready) return null;
   return enabled;
 }
 

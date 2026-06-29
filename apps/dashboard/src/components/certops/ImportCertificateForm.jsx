@@ -6,15 +6,17 @@ import {
   FormControl,
   FormHelperText,
   FormLabel,
-  Input,
   Select,
   Textarea,
   VStack,
 } from '@chakra-ui/react';
 import { importCertificateMaterial } from './certopsApi';
 import {
+  buildKeyReferenceFromLocations,
   KEY_MODE_CUSTOM,
   KEY_MODE_SELECT_OPTIONS,
+  KEY_REFERENCE_MAX_LENGTH,
+  parseKeyLocationInput,
 } from './certopsFormat';
 import {
   containsPrivateKeyMaterial,
@@ -27,7 +29,7 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
 ) {
   const [pem, setPem] = useState('');
   const [keyModeSelection, setKeyModeSelection] = useState('');
-  const [customKeyLocation, setCustomKeyLocation] = useState('');
+  const [keyLocations, setKeyLocations] = useState('');
   const [keyReference, setKeyReference] = useState('');
   const [scanError, setScanError] = useState('');
   const [serverError, setServerError] = useState('');
@@ -50,34 +52,58 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
     if (
       containsPrivateKeyMaterial(trimmed) ||
       containsPrivateKeyMaterial(keyReference) ||
-      containsPrivateKeyMaterial(customKeyLocation)
+      containsPrivateKeyMaterial(keyLocations)
     ) {
       setScanError(PRIVATE_KEY_REFUSAL_MESSAGE);
       return false;
     }
     setScanError('');
 
-    const customLocation = customKeyLocation.trim();
+    const locationLabels = parseKeyLocationInput(keyLocations);
     const technicalReference = keyReference.trim();
     let resolvedKeyMode = null;
     let resolvedKeyReference = null;
 
     if (keyModeSelection === KEY_MODE_CUSTOM) {
-      if (!customLocation) {
+      if (locationLabels.length === 0) {
         setScanError(
-          'Describe where the private key lives, or choose another option.'
+          'Enter at least one location, or choose another key locality option.'
         );
         return false;
       }
       resolvedKeyMode = 'external-unknown';
-      resolvedKeyReference = technicalReference
-        ? `${customLocation} — ${technicalReference}`
-        : customLocation;
+      resolvedKeyReference = buildKeyReferenceFromLocations(
+        locationLabels,
+        technicalReference
+      );
     } else if (keyModeSelection) {
       resolvedKeyMode = keyModeSelection;
-      resolvedKeyReference = technicalReference || null;
+      if (locationLabels.length > 0) {
+        resolvedKeyReference = buildKeyReferenceFromLocations(
+          locationLabels,
+          technicalReference
+        );
+      } else {
+        resolvedKeyReference = technicalReference || null;
+      }
+    } else if (locationLabels.length > 0) {
+      resolvedKeyMode = 'external-unknown';
+      resolvedKeyReference = buildKeyReferenceFromLocations(
+        locationLabels,
+        technicalReference
+      );
     } else if (technicalReference) {
       resolvedKeyReference = technicalReference;
+    }
+
+    if (
+      resolvedKeyReference &&
+      resolvedKeyReference.length > KEY_REFERENCE_MAX_LENGTH
+    ) {
+      setScanError(
+        `Key locality details must be ${KEY_REFERENCE_MAX_LENGTH} characters or less. Shorten the location list or reference.`
+      );
+      return false;
     }
 
     try {
@@ -85,16 +111,18 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
       if (resolvedKeyMode) payload.keyMode = resolvedKeyMode;
       if (resolvedKeyReference) payload.keyReference = resolvedKeyReference;
 
-      const { result, existingCount, newCount } = await importCertificateMaterial(
-        workspaceId,
-        payload
-      );
+      const { result, existingCount, newCount } =
+        await importCertificateMaterial(workspaceId, payload);
       onImported?.(result, { existingCount, newCount });
       return true;
     } catch (err) {
       const code = err?.response?.data?.code;
       if (code === 'PRIVATE_KEY_MATERIAL_REJECTED') {
         setScanError(PRIVATE_KEY_REFUSAL_MESSAGE);
+      } else if (code === 'CERTOPS_KEY_REFERENCE_INVALID') {
+        setScanError(
+          'Key reference or locations were rejected. Use non-secret labels only.'
+        );
       } else {
         setServerError(
           err?.response?.data?.error ||
@@ -108,7 +136,7 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
   useImperativeHandle(ref, () => ({ submit }), [
     pem,
     keyModeSelection,
-    customKeyLocation,
+    keyLocations,
     keyReference,
     workspaceId,
     onImported,
@@ -149,14 +177,11 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
       </FormControl>
 
       <FormControl>
-        <FormLabel>Where does the private key live? (optional)</FormLabel>
+        <FormLabel>Key locality (optional)</FormLabel>
         <Select
           value={keyModeSelection}
           onChange={event => {
             setKeyModeSelection(event.target.value);
-            if (event.target.value !== KEY_MODE_CUSTOM) {
-              setCustomKeyLocation('');
-            }
             if (scanError) setScanError('');
           }}
         >
@@ -166,33 +191,48 @@ const ImportCertificateForm = forwardRef(function ImportCertificateForm(
             </option>
           ))}
         </Select>
-        {keyModeSelection === KEY_MODE_CUSTOM ? (
-          <Input
-            mt={3}
-            value={customKeyLocation}
-            onChange={event => {
-              setCustomKeyLocation(event.target.value);
-              if (scanError) setScanError('');
-            }}
-            placeholder='e.g. Manual upload on F5, team password manager entry'
-            maxLength={256}
-          />
-        ) : null}
-        <FormHelperText>
-          Records where the key is believed to live. Choose Custom to enter your
-          own description. TokenTimer never receives or stores the key itself.
+        <FormHelperText mb={3}>
+          How the private key is custodied (same mode for all locations below).
         </FormHelperText>
-      </FormControl>
 
-      <FormControl>
-        <FormLabel>Key reference (optional)</FormLabel>
-        <Input
-          value={keyReference}
-          onChange={event => setKeyReference(event.target.value)}
-          placeholder='e.g. agent-id:/etc/ssl/private/site.key or pkcs11 URI'
+        <FormLabel fontSize='sm' mt={2}>
+          Locations
+        </FormLabel>
+        <Textarea
+          value={keyLocations}
+          onChange={event => {
+            setKeyLocations(event.target.value);
+            if (scanError) setScanError('');
+          }}
+          placeholder={
+            'One location per line (commas also work)\ne.g. Edge LB Frankfurt\nEdge LB Zurich\nCDN PoP Paris'
+          }
+          rows={4}
+          spellCheck={true}
         />
         <FormHelperText>
-          A non-secret pointer to where the key lives. Do not paste secrets.
+          For wildcard or shared certificates used in several places. Optional
+          unless you chose Custom.
+        </FormHelperText>
+
+        <FormLabel fontSize='sm' mt={3}>
+          Shared key reference (optional)
+        </FormLabel>
+        <Textarea
+          value={keyReference}
+          onChange={event => {
+            setKeyReference(event.target.value);
+            if (scanError) setScanError('');
+          }}
+          placeholder='e.g. agent-id:/etc/ssl/private/wildcard.key or pkcs11 URI'
+          rows={2}
+          fontFamily='mono'
+          fontSize='sm'
+          spellCheck={false}
+        />
+        <FormHelperText>
+          One non-secret pointer when the same key backs every location above.
+          Combined length is limited to {KEY_REFERENCE_MAX_LENGTH} characters.
         </FormHelperText>
       </FormControl>
     </VStack>

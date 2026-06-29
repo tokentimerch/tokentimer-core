@@ -10,12 +10,8 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
-import KeyLocalityBadge from './KeyLocalityBadge.jsx';
-import {
-  expiryDescriptor,
-  formatDate,
-  statusScheme,
-} from './certopsFormat';
+import KeyLocalityList from './KeyLocalityList.jsx';
+import { expiryDescriptor, formatDate, isCertToken, statusScheme } from './certopsFormat';
 import { useCertOpsForToken } from './useCertOps.js';
 
 function Field({ label, children, colSpan = { base: 1, md: 1 } }) {
@@ -42,10 +38,23 @@ function Field({ label, children, colSpan = { base: 1, md: 1 } }) {
  * CertOps enrichment for an existing cert token in TokenDetailModal: key
  * locality, managed status, fingerprint, and deployment history.
  */
-export default function TokenCertOpsPanel({ tokenId }) {
+export default function TokenCertOpsPanel({ token, tokenId }) {
+  // Cheap guard before any hooks: only certificate assets get this panel. The
+  // hooks live in CertOpsPanelBody so they are never called conditionally.
+  if (!isCertToken(token)) return null;
+  return <CertOpsPanelBody tokenId={token?.id ?? tokenId} />;
+}
+
+function CertOpsPanelBody({ tokenId }) {
   const { muted } = useDashboardTheme();
-  const { enabled, certificate, instances, instancesAvailable, loading, error } =
-    useCertOpsForToken(tokenId);
+  const {
+    enabled,
+    certificate,
+    instances,
+    instancesAvailable,
+    loading,
+    error,
+  } = useCertOpsForToken(tokenId);
 
   if (enabled === false || enabled === null) return null;
   if (loading) {
@@ -103,14 +112,16 @@ export default function TokenCertOpsPanel({ tokenId }) {
       </GridItem>
 
       <Field label='Key locality'>
-        <KeyLocalityBadge
+        <KeyLocalityList
           keyMode={certificate.keyMode}
           keyReference={certificate.keyReference}
         />
       </Field>
 
       <Field label='Registration source'>
-        {[certificate.source, certificate.sourceRef].filter(Boolean).join(' / ')}
+        {[certificate.source, certificate.sourceRef]
+          .filter(Boolean)
+          .join(' / ')}
       </Field>
 
       {certificate.serialNumber ? (
