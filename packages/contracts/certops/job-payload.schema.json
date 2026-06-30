@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/job-payload.schema.json",
+  "title": "CertOps Signed Job Payload (STUB)",
+  "description": "STUB frozen in Phase 0. This freezes only the signing and replay-protection envelope so M2 (executor) and M4 (agent) can build against a stable outer shape. The per-job-type body (renew, deploy, reload, revoke) is intentionally left open (additionalProperties: true) and is specified in M2/M4. The signature covers the full payload excluding the signature field itself, using the control-plane Ed25519 platform operational signing key. This key is never used for certificate issuance or customer key custody.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "type",
+    "workspaceId",
+    "issuedAt",
+    "expiresAt",
+    "nonce",
+    "signingKeyId",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "jobId": {
+      "type": "string",
+      "description": "Unique job identifier. Part of the replay-protection tuple."
+    },
+    "attemptId": {
+      "type": "string",
+      "description": "Per-dispatch attempt identifier for idempotent retries."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["renew", "deploy", "reload", "revoke", "noop"],
+      "description": "Job kind. The matching body shape is defined in M2/M4."
+    },
+    "workspaceId": {
+      "type": "string"
+    },
+    "agentId": {
+      "type": ["string", "null"],
+      "description": "Target agent id, or null when dispatched via selector."
+    },
+    "agentSelector": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Optional selector when not targeting a single agent id."
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Hard validity bound. Agents MUST reject jobs outside this window (clock-drift aware)."
+    },
+    "nonce": {
+      "type": "string",
+      "description": "Single-use nonce. Agents maintain a bounded replay cache keyed by nonce + jobId."
+    },
+    "signingKeyId": {
+      "type": "string",
+      "description": "Identifier of the control-plane Ed25519 signing key the agent pins."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Base64 Ed25519 signature over the canonical payload excluding this field. HMAC is not accepted."
+    }
+  }
+}

@@ -22,6 +22,10 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 # node_modules into a second layer. node_modules stays root-owned (read-only).
 COPY --chown=nodejs:nodejs packages ./packages
 COPY --chown=nodejs:nodejs apps/worker ./apps/worker
+COPY --chown=nodejs:nodejs apps/api/services/certops ./apps/api/services/certops
+COPY --chown=nodejs:nodejs apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
+COPY --chown=nodejs:nodejs apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY --chown=nodejs:nodejs apps/api/db/database.js ./apps/api/db/database.js
 
 # Install all dependencies (including dev) using frozen lockfile
 RUN pnpm install --frozen-lockfile --filter @tokentimer/worker...

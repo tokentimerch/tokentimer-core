@@ -94,6 +94,41 @@ pnpm run test:core
 3. **`token-categories.test.js`** - Tests for token category functionality
 4. **`tokens.test.js`** - General token management tests
 
+## CertOps and Domain Checker Local Validation
+
+When running focused integration tests directly from a Windows PowerShell host,
+load the same database/API environment that the repo wrappers expect. The Docker
+test stack exposes PostgreSQL on the host, so use `localhost` from PowerShell.
+Inside Docker, service-to-service traffic uses `DB_HOST=postgres`.
+
+```powershell
+$env:DB_HOST="localhost"
+$env:DB_PORT="5432"
+$env:DB_NAME="tokentimer"
+$env:DB_USER="tokentimer"
+$env:DB_PASSWORD="password"
+$env:TEST_API_URL="http://localhost:4000"
+$env:CERTOPS_ENABLED="true"
+```
+
+Prefer the repository env wrapper for focused Mocha commands; it loads `.env`
+or safe local defaults before invoking the test process:
+
+```powershell
+node scripts/run-with-env.js pnpm exec mocha tests/integration/certops-inventory.test.js --timeout 120000 --exit
+node scripts/run-with-env.js pnpm exec mocha tests/integration/domain-checker.integration.test.js --timeout 120000 --exit
+node scripts/run-with-env.js pnpm exec mocha tests/integration/endpoint-check-worker.integration.test.js --timeout 120000 --exit
+```
+
+Use the Docker test stack helpers when the local database/API stack is not
+already running:
+
+```bash
+pnpm run test:up
+# run the focused commands above
+pnpm run test:down
+```
+
 ### Test Utilities
 
 - **`test-server.js`** - Server connection and utility functions

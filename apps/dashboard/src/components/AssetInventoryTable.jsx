@@ -17,10 +17,12 @@ import {
   Tooltip,
   Tr,
   VStack,
+  Badge,
   useColorMode,
   useColorModeValue,
 } from '@chakra-ui/react';
 import {
+  Archive,
   BadgeCheck,
   CalendarClock,
   Database,
@@ -32,9 +34,46 @@ import {
 import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
+import { isRetiredStatus } from './certops/certopsFormat';
+import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
+
+/**
+ * Display metadata for retired (revoked/decommissioned) managed certificates.
+ * Mirrors the StatusPill shape; light-mode styles live in LIGHT_STATUS_STYLES.
+ */
+const RETIRED_STATUS_META = {
+  revoked: {
+    key: 'revoked',
+    label: 'Revoked',
+    color: '#f87171',
+    bg: 'rgba(239, 68, 68, 0.14)',
+  },
+  decommissioned: {
+    key: 'decommissioned',
+    label: 'Decommissioned',
+    color: '#94a3b8',
+    bg: 'rgba(148, 163, 184, 0.14)',
+  },
+};
+
+/**
+ * Resolves the badge a row should show: a retired managed-certificate state
+ * (revoked/decommissioned) wins over the expiry-derived status, so retired
+ * certs read as retired rather than "expired/healthy" (plan D7).
+ */
+function effectiveStatusMeta(token, getStatusMeta) {
+  const managed = token.__managedCert;
+  if (managed && isRetiredStatus(managed.status)) {
+    return (
+      RETIRED_STATUS_META[String(managed.status).toLowerCase()] ||
+      RETIRED_STATUS_META.decommissioned
+    );
+  }
+  return getStatusMeta(token.expiresAt);
+}
 
 const CATEGORY_ICON_META = {
   cert: { icon: BadgeCheck, scheme: 'blue' },
@@ -75,7 +114,7 @@ const CATEGORY_VISUAL_PALETTES = {
   },
 };
 
-function resolveCategoryVisual(categoryValue, isLight) {
+export function resolveCategoryVisual(categoryValue, isLight) {
   const meta = CATEGORY_ICON_META[categoryValue] || CATEGORY_ICON_META.default;
   const palette = isLight
     ? CATEGORY_VISUAL_PALETTES.light
@@ -348,6 +387,18 @@ const LIGHT_STATUS_STYLES = {
     dot: '#16a34a',
     border: '#bbf7d0',
   },
+  revoked: {
+    bg: '#fef2f2',
+    color: '#b91c1c',
+    dot: '#dc2626',
+    border: '#fecaca',
+  },
+  decommissioned: {
+    bg: '#f1f5f9',
+    color: '#475569',
+    dot: '#64748b',
+    border: '#cbd5e1',
+  },
 };
 
 function resolveStatusBadgeStyles(status, isLight) {
@@ -429,12 +480,25 @@ function MobileMetaItem({ label, value, children }) {
 
 function StatusBadge({ token, getStatusMeta }) {
   const { colorMode } = useColorMode();
-  const status = getStatusMeta(token.expiresAt);
+  const status = effectiveStatusMeta(token, getStatusMeta);
   const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
+  const managed = token.__managedCert;
 
   return (
-    <HStack spacing={2}>
+    <HStack spacing={2} flexWrap='wrap'>
       <StatusPill status={status} styles={styles} />
+      {managed?.status && !isRetiredStatus(managed.status) ? (
+        <Tooltip label='Managed certificate lifecycle status'>
+          <Badge
+            colorScheme='purple'
+            variant='subtle'
+            textTransform='none'
+            fontSize='xs'
+          >
+            {managed.status}
+          </Badge>
+        </Tooltip>
+      ) : null}
       {token.monitor_health_status && (
         <Tooltip
           label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${
@@ -527,6 +591,7 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
   const visual = getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
   const subtitle = getNameSubtitle(token, mode);
+  const managed = token.__managedCert;
 
   return (
     <HStack spacing={3} minW={0}>
@@ -548,6 +613,14 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
           <Text color={mutedTextColor} fontSize='xs' noOfLines={1}>
             {subtitle}
           </Text>
+        ) : null}
+        {managed ? (
+          <Box mt={1}>
+            <KeyLocalityBadge
+              keyMode={managed.keyMode}
+              keyReference={managed.keyReference}
+            />
+          </Box>
         ) : null}
       </Box>
     </HStack>
@@ -605,14 +678,25 @@ function InventoryRowActions({
               onClick={() => onOpenRenew(token)}
             />
           </Tooltip>
-          <Tooltip label='Delete'>
-            <IconButton
-              {...actionButtonProps}
-              aria-label={`Delete token ${token.name}`}
-              icon={<Trash2 size={16} />}
-              onClick={() => onDeleteToken(token.id)}
-            />
-          </Tooltip>
+          {token.__managedCert ? (
+            <Tooltip label='Retire (revoke / decommission)'>
+              <IconButton
+                {...actionButtonProps}
+                aria-label={`Retire certificate ${token.name}`}
+                icon={<Archive size={16} />}
+                onClick={() => onDeleteToken(token.id)}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip label='Delete'>
+              <IconButton
+                {...actionButtonProps}
+                aria-label={`Delete token ${token.name}`}
+                icon={<Trash2 size={16} />}
+                onClick={() => onDeleteToken(token.id)}
+              />
+            </Tooltip>
+          )}
         </>
       )}
     </HStack>
@@ -688,7 +772,11 @@ function renderDataCell({ column, token, mode, helpers }) {
       return <DomainsCell token={token} mutedTextColor={mutedTextColor} />;
     case 'issuer':
       return (
-        <TruncatedText text={token.issuer} maxLines={2} maxWidth='100px' />
+        <TruncatedText
+          text={token.__managedCert?.issuer || token.issuer}
+          maxLines={2}
+          maxWidth='100px'
+        />
       );
     case 'privileges':
       return (
@@ -740,7 +828,7 @@ function AssetInventoryMobileCard({
   helpers,
 }) {
   const { colorMode } = useColorMode();
-  const status = helpers.getStatusMeta(token.expiresAt);
+  const status = effectiveStatusMeta(token, helpers.getStatusMeta);
   const statusStyles = resolveStatusBadgeStyles(status, colorMode === 'light');
   const cardTitleColor = useColorModeValue('gray.900', 'white');
   const cardBg = useColorModeValue('white', 'rgba(13, 19, 26, 0.96)');
@@ -915,13 +1003,23 @@ function AssetInventoryMobileCard({
               >
                 Renew
               </Button>
-              <Button
-                {...mobileActionButtonProps}
-                leftIcon={<Trash2 size={14} />}
-                onClick={() => helpers.onDeleteToken(token.id)}
-              >
-                Delete
-              </Button>
+              {token.__managedCert ? (
+                <Button
+                  {...mobileActionButtonProps}
+                  leftIcon={<Archive size={14} />}
+                  onClick={() => helpers.onDeleteToken(token.id)}
+                >
+                  Retire
+                </Button>
+              ) : (
+                <Button
+                  {...mobileActionButtonProps}
+                  leftIcon={<Trash2 size={14} />}
+                  onClick={() => helpers.onDeleteToken(token.id)}
+                >
+                  Delete
+                </Button>
+              )}
             </>
           )}
         </HStack>

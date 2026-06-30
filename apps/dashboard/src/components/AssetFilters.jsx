@@ -16,7 +16,7 @@ import {
   useColorModeValue,
   VStack,
 } from '@chakra-ui/react';
-import { Search } from 'lucide-react';
+import { Archive, Search } from 'lucide-react';
 import { getColorFromString } from '../styles/colors.js';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
 import {
@@ -228,6 +228,9 @@ export default function AssetFilters({
   onGlobalSearchChange,
   onFilterReset,
   onSectionNavigate,
+  showRetired = false,
+  onToggleShowRetired,
+  retiredCount = 0,
 }) {
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
@@ -261,10 +264,16 @@ export default function AssetFilters({
         justify='space-between'
         direction={{ base: 'column', lg: 'row' }}
       >
-        <InputGroup maxW={{ base: '100%', lg: '360px' }} size='sm'>
-          <InputLeftElement pointerEvents='none' h='32px'>
-            <Search size={16} color={searchIconColor} />
-          </InputLeftElement>
+        <HStack
+          spacing={2}
+          align='center'
+          w={{ base: '100%', lg: 'auto' }}
+          flexShrink={0}
+        >
+          <InputGroup maxW={{ base: '100%', lg: '320px' }} size='sm'>
+            <InputLeftElement pointerEvents='none' h='32px'>
+              <Search size={16} color={searchIconColor} />
+            </InputLeftElement>
           <Input
             value={panelQueries.__global || ''}
             onChange={event => {
@@ -287,7 +296,40 @@ export default function AssetFilters({
             minH={CHIP_MIN_HEIGHT}
             _placeholder={{ color: placeholderColor }}
           />
-        </InputGroup>
+          </InputGroup>
+          {(retiredCount > 0 || showRetired) &&
+          typeof onToggleShowRetired === 'function' ? (
+            <Button
+              size='sm'
+              flexShrink={0}
+              borderRadius='md'
+              minH={CHIP_MIN_HEIGHT}
+              variant={showRetired ? 'solid' : 'outline'}
+              colorScheme='gray'
+              leftIcon={<Archive size={14} />}
+              onClick={() => {
+                onToggleShowRetired(!showRetired);
+                notifyFilterReset();
+              }}
+              aria-pressed={showRetired}
+              title='Show revoked and decommissioned certificates'
+            >
+              Retired
+              <Box
+                as='span'
+                ml={2}
+                px={1.5}
+                borderRadius='sm'
+                bg={showRetired ? 'whiteAlpha.300' : 'blackAlpha.200'}
+                fontSize='xs'
+                fontWeight='semibold'
+                lineHeight='1.5'
+              >
+                {retiredCount}
+              </Box>
+            </Button>
+          ) : null}
+        </HStack>
         <ScrollableChipRow isMobileLayout={isMobileLayout}>
           {statusFilterOptions.map(option => {
             const active = statusFilter === option.value;

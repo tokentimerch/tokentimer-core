@@ -1,5 +1,6 @@
 const http = require("http");
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
+const { startLocalHttpsServer } = require("./helpers/local-https-server");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -339,5 +340,151 @@ describe("Endpoint check worker integration", function () {
       localMonitorId,
     ]);
     await TestUtils.execQuery("DELETE FROM tokens WHERE id = $1", [localTokenId]);
+  });
+
+  it("bridges HTTPS endpoint observations into CertOps inventory when a token is linked", async () => {
+    const httpsServer = await startLocalHttpsServer();
+    let localTokenId;
+    let localMonitorId;
+
+    const runBridgeWorker = () =>
+      TestUtils.runNode(
+        "node",
+        ["src/endpoint-check-worker.js"],
+        "apps/worker",
+        {
+          ...process.env,
+          NODE_ENV: "test",
+          CERTOPS_ENABLED: "true",
+        },
+      );
+
+    const queryBridgeRows = () =>
+      TestUtils.execQuery(
+        `SELECT mc.id AS managed_id,
+                mc.source,
+                mc.source_ref,
+                mc.token_id,
+                mc.fingerprint_sha256 AS managed_fingerprint,
+                mc.serial_number AS managed_serial,
+                ct.id AS target_id,
+                ct.domain_monitor_id,
+                ci.id AS instance_id,
+                ci.observed_fingerprint_sha256 AS instance_fingerprint
+           FROM managed_certificates mc
+           JOIN certificate_targets ct
+             ON ct.workspace_id = mc.workspace_id
+            AND ct.source = mc.source
+            AND ct.source_ref = mc.source_ref
+           JOIN certificate_instances ci
+             ON ci.workspace_id = mc.workspace_id
+            AND ci.managed_certificate_id = mc.id
+            AND ci.target_id = ct.id
+          WHERE mc.workspace_id = $1
+            AND mc.source = 'endpoint_monitor'
+            AND mc.source_ref = $2
+          ORDER BY ci.created_at ASC`,
+        [workspaceId, String(localMonitorId)],
+      );
+
+    const countManagedCertificates = async () => {
+      const res = await TestUtils.execQuery(
+        `SELECT COUNT(*)::int AS n
+           FROM managed_certificates
+          WHERE workspace_id = $1
+            AND source = 'endpoint_monitor'
+            AND source_ref = $2`,
+        [workspaceId, String(localMonitorId)],
+      );
+      return res.rows[0].n;
+    };
+
+    try {
+      const tokenRes = await TestUtils.execQuery(
+        `INSERT INTO tokens (workspace_id, name, expiration, type, category)
+         VALUES ($1, 'endpoint-certops-bridge-token', '2099-12-31', 'ssl_cert', 'cert')
+         RETURNING id`,
+        [workspaceId],
+      );
+      localTokenId = tokenRes.rows[0].id;
+
+      const monitorRes = await TestUtils.execQuery(
+        `INSERT INTO domain_monitors
+          (workspace_id, url, token_id, health_check_enabled, check_interval, created_by)
+         VALUES ($1, $2, $3, FALSE, '1min', $4)
+         RETURNING id`,
+        [workspaceId, httpsServer.url, localTokenId, testUser.id],
+      );
+      localMonitorId = monitorRes.rows[0].id;
+
+      await runBridgeWorker();
+
+      const certopsRows = await queryBridgeRows();
+
+      expect(certopsRows.rows).to.have.length(1);
+      expect(certopsRows.rows[0].domain_monitor_id).to.equal(localMonitorId);
+      expect(String(certopsRows.rows[0].token_id)).to.equal(String(localTokenId));
+      expect(certopsRows.rows[0].instance_id).to.be.a("string");
+      expect(await countManagedCertificates()).to.equal(1);
+
+      const firstManagedId = certopsRows.rows[0].managed_id;
+      const firstFingerprint = certopsRows.rows[0].instance_fingerprint;
+      expect(firstFingerprint).to.be.a("string");
+
+      // Re-observing the SAME certificate refreshes the existing instance row
+      // (last-seen) instead of appending a new one.
+      await runBridgeWorker();
+      const afterRefresh = await queryBridgeRows();
+      expect(afterRefresh.rows).to.have.length(1);
+      expect(afterRefresh.rows[0].instance_id).to.equal(
+        certopsRows.rows[0].instance_id,
+      );
+      expect(afterRefresh.rows[0].instance_fingerprint).to.equal(firstFingerprint);
+      expect(await countManagedCertificates()).to.equal(1);
+
+      // Rotate the served certificate (new fingerprint/serial, same monitor URL).
+      // A new fingerprint at the same monitor APPENDS a second instance row, while
+      // the single managed_certificate row is updated in place.
+      httpsServer.rotateCertificate();
+      await runBridgeWorker();
+      const afterRotation = await queryBridgeRows();
+      expect(afterRotation.rows).to.have.length(2);
+      expect(await countManagedCertificates()).to.equal(1);
+      const rotatedManagedIds = new Set(
+        afterRotation.rows.map((row) => String(row.managed_id)),
+      );
+      expect(rotatedManagedIds.size).to.equal(1);
+      expect(rotatedManagedIds.has(String(firstManagedId))).to.equal(true);
+      const rotatedFingerprints = new Set(
+        afterRotation.rows.map((row) => row.instance_fingerprint),
+      );
+      expect(rotatedFingerprints.size).to.equal(2);
+      expect(rotatedFingerprints.has(firstFingerprint)).to.equal(true);
+      const managedFingerprint = afterRotation.rows[0].managed_fingerprint;
+      expect(managedFingerprint).to.not.equal(firstFingerprint);
+      expect(rotatedFingerprints.has(managedFingerprint)).to.equal(true);
+    } finally {
+      if (localMonitorId) {
+        await TestUtils.execQuery(
+          "DELETE FROM certificate_instances WHERE workspace_id = $1 AND domain_monitor_id = $2",
+          [workspaceId, localMonitorId],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM certificate_targets WHERE workspace_id = $1 AND domain_monitor_id = $2",
+          [workspaceId, localMonitorId],
+        );
+        await TestUtils.execQuery(
+          "DELETE FROM managed_certificates WHERE workspace_id = $1 AND source_ref = $2",
+          [workspaceId, String(localMonitorId)],
+        );
+        await TestUtils.execQuery("DELETE FROM domain_monitors WHERE id = $1", [
+          localMonitorId,
+        ]);
+      }
+      if (localTokenId) {
+        await TestUtils.execQuery("DELETE FROM tokens WHERE id = $1", [localTokenId]);
+      }
+      await httpsServer.close();
+    }
   });
 });

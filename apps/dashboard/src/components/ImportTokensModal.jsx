@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Modal,
   ModalOverlay,
@@ -30,6 +31,7 @@ import {
   Tooltip,
   IconButton,
   useColorMode,
+  Link,
   Link as ChakraLink,
   Code,
   InputGroup,
@@ -54,6 +56,7 @@ import { showWarning } from '../utils/toast.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import {
   FiDownload,
+  FiShield,
   FiKey,
   FiUsers,
   FiAlertTriangle,
@@ -71,6 +74,13 @@ import ImportAWSForm, {
 } from './imports/ImportAWSForm';
 import ImportAzureForm from './imports/ImportAzureForm';
 import ImportGCPForm from './imports/ImportGCPForm';
+import ImportCertificateForm from './certops/ImportCertificateForm.jsx';
+import { invalidateCertOpsInventoryCache } from './certops/certopsApi.js';
+import { describeCertificateImportOutcome } from './certops/certopsFormat.js';
+import {
+  useCertOpsAvailability,
+  useCertOpsCanManage,
+} from './certops/useCertOps.js';
 import { useDashboardTheme } from '../hooks/useDashboardTheme.js';
 import {
   DashboardModalFrame,
@@ -762,6 +772,12 @@ export default function ImportTokensModal({
   onOpenRequestHandled,
 }) {
   const { workspaceId } = useWorkspace();
+  const {
+    ready: certOpsReady,
+    enabled: certOpsEnabled,
+    error: certOpsAvailabilityError,
+  } = useCertOpsAvailability();
+  const certOpsCanManage = useCertOpsCanManage();
   const { colorMode } = useColorMode();
   const isLight = colorMode === 'light';
 
@@ -842,6 +858,7 @@ export default function ImportTokensModal({
   const awsFormRef = React.useRef(null);
   const azureFormRef = React.useRef(null);
   const gcpFormRef = React.useRef(null);
+  const certPemFormRef = React.useRef(null);
   const [fileName, setFileName] = React.useState('');
 
   // Vault integration state
@@ -1035,7 +1052,7 @@ export default function ImportTokensModal({
 
   // Load auto-sync config when source changes and restore form fields from scan_params
   React.useEffect(() => {
-    if (!workspaceId || source === 'file') {
+    if (!workspaceId || source === 'file' || source === 'cert-pem') {
       setAutoSyncConfig(null);
       return;
     }
@@ -1327,7 +1344,7 @@ export default function ImportTokensModal({
   };
 
   const handleEnableAutoSync = () => {
-    if (!workspaceId || source === 'file') return;
+    if (!workspaceId || source === 'file' || source === 'cert-pem') return;
     openEnableAutoSyncModal();
   };
 
@@ -1680,6 +1697,41 @@ export default function ImportTokensModal({
       onClose && onClose();
     }
   };
+
+  const handleCertPemImported = React.useCallback(
+    (result, { existingCount = 0, newCount = 0 } = {}) => {
+      invalidateCertOpsInventoryCache(workspaceId);
+      const imported = Array.isArray(result?.items) ? result.items : [];
+      const tokenRows = imported
+        .filter(item => item?.tokenId != null)
+        .map(item => ({
+          id: item.tokenId,
+          name: item.commonName || 'Certificate',
+          category: 'cert',
+          type: 'ssl_cert',
+        }));
+      if (tokenRows.length > 0) {
+        onImported?.(tokenRows);
+      } else {
+        try {
+          window.dispatchEvent(new CustomEvent('tt:tokens-updated'));
+          window.dispatchEvent(new CustomEvent('tt:tokens-imported'));
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      showSuccess(
+        describeCertificateImportOutcome({
+          existingCount,
+          newCount,
+          totalCount: result?.count || imported.length || 0,
+        })
+      );
+      onCloseInternal();
+    },
+    [workspaceId, onImported, onCloseInternal]
+  );
 
   // Update quota from scan response
   const updateQuotaFromResponse = res => {
@@ -2049,6 +2101,13 @@ export default function ImportTokensModal({
                       type: 'icon',
                     },
                     {
+                      key: 'cert-pem',
+                      label: 'Certificate (PEM)',
+                      alt: 'Public certificate PEM import',
+                      type: 'icon',
+                      icon: 'shield',
+                    },
+                    {
                       key: 'vault',
                       label: 'HashiCorp Vault',
                       alt: 'HashiCorp Vault',
@@ -2091,19 +2150,37 @@ export default function ImportTokensModal({
                       src: '/Branding/vendor-logos/google-cloud-icon.png',
                     },
                   ].map(card => {
-                    const isIntegration = card.key !== 'file';
+                    const isCertPemCard = card.key === 'cert-pem';
+                    const isIntegration =
+                      card.key !== 'file' && !isCertPemCard;
                     const hasQuotaRemaining =
                       integrationQuota.remaining === null ||
                       integrationQuota.remaining > 0;
-                    const isLocked =
-                      isIntegration && (isViewer || !hasQuotaRemaining);
-                    const lockReason = isIntegration
+                    const isCertPemDisabled =
+                      isCertPemCard && certOpsReady && certOpsEnabled === false;
+                    const isLocked = isCertPemCard
+                      ? isViewer ||
+                        !certOpsReady ||
+                        isCertPemDisabled ||
+                        certOpsAvailabilityError
+                      : isIntegration && (isViewer || !hasQuotaRemaining);
+                    const lockReason = isCertPemCard
                       ? isViewer
-                        ? 'Viewers cannot use integrations'
-                        : integrationQuota.remaining === 0
-                          ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
-                          : ''
-                      : '';
+                        ? 'Viewers cannot import certificates'
+                        : !certOpsReady
+                          ? 'Checking certificate operations availability...'
+                          : certOpsAvailabilityError
+                            ? certOpsAvailabilityError
+                            : certOpsEnabled === false
+                              ? 'Certificate operations is not enabled for this workspace'
+                              : ''
+                      : isIntegration
+                        ? isViewer
+                          ? 'Viewers cannot use integrations'
+                          : integrationQuota.remaining === 0
+                            ? `Monthly scan limit reached (${integrationQuota.limit}/month).`
+                            : ''
+                        : '';
                     const selectCard = () => {
                       if (!isLocked) setSource(card.key);
                     };
@@ -2169,16 +2246,20 @@ export default function ImportTokensModal({
                           >
                             {card.label}
                           </Text>
-                          {isLocked && (
-                            <Badge colorScheme='orange' fontSize='2xs'>
-                              {isViewer ? 'ADMIN' : 'LIMIT'}
-                            </Badge>
-                          )}
+                          {isLocked ? (
+                            <Tooltip label={lockReason} fontSize='xs'>
+                              <Badge colorScheme='orange' fontSize='2xs'>
+                                {isViewer ? 'ADMIN' : 'LIMIT'}
+                              </Badge>
+                            </Tooltip>
+                          ) : null}
                         </HStack>
                         {card.type === 'icon' ? (
                           <Box p={2}>
                             <Box
-                              as={FiDownload}
+                              as={
+                                card.icon === 'shield' ? FiShield : FiDownload
+                              }
                               boxSize={{ base: '40px', md: '56px' }}
                               color={
                                 source === card.key
@@ -2262,7 +2343,10 @@ export default function ImportTokensModal({
                 </Box>
               </Box>
 
-              {source !== 'file' && hasAutoSync && !isViewer ? (
+              {source !== 'file' &&
+              source !== 'cert-pem' &&
+              hasAutoSync &&
+              !isViewer ? (
                 <ButtonGroup size='sm' isAttached variant='outline'>
                   <Button
                     colorScheme={
@@ -2436,6 +2520,48 @@ export default function ImportTokensModal({
                       {fileName ? fileName : 'No file chosen'}
                     </Text>
                   </HStack>
+                </>
+              ) : null}
+
+              {source === 'cert-pem' ? (
+                <>
+                  {!certOpsReady ? (
+                    <Text fontSize='sm' color={muted}>
+                      Checking certificate operations availability...
+                    </Text>
+                  ) : certOpsAvailabilityError ? (
+                    <Alert status='error' borderRadius='md'>
+                      <AlertIcon />
+                      <Text fontSize='sm'>{certOpsAvailabilityError}</Text>
+                    </Alert>
+                  ) : certOpsEnabled === false ? (
+                    <Alert status='info' borderRadius='md'>
+                      <AlertIcon />
+                      <Text fontSize='sm'>
+                        Certificate operations is not enabled for this workspace
+                        yet.
+                      </Text>
+                    </Alert>
+                  ) : !certOpsCanManage ? (
+                    <Alert status='info' borderRadius='md'>
+                      <AlertIcon />
+                      <Text fontSize='sm'>
+                        Importing requires a workspace manager or admin role.
+                      </Text>
+                    </Alert>
+                  ) : (
+                    <>
+                      <Text fontSize='sm' color={muted} mb={3}>
+                        Paste PEM public material. TokenTimer rejects private keys
+                        at the boundary and never stores them.
+                      </Text>
+                      <ImportCertificateForm
+                        ref={certPemFormRef}
+                        workspaceId={workspaceId}
+                        onImported={handleCertPemImported}
+                      />
+                    </>
+                  )}
                 </>
               ) : null}
 
@@ -3204,12 +3330,30 @@ export default function ImportTokensModal({
                   >
                     Import selected
                   </Button>
+                ) : source === 'cert-pem' &&
+                  certOpsEnabled === true &&
+                  certOpsCanManage ? (
+                  <Button
+                    onClick={async () => {
+                      setIsImporting(true);
+                      try {
+                        await certPemFormRef.current?.submit();
+                      } finally {
+                        setIsImporting(false);
+                      }
+                    }}
+                    {...primaryButtonProps}
+                    colorScheme='green'
+                    isLoading={isImporting}
+                  >
+                    Import certificate
+                  </Button>
                 ) : null
               ) : null}
               <Button {...outlineButtonProps} onClick={onCloseInternal}>
                 Close
               </Button>
-              {source !== 'file' && !isViewer && !hasAutoSync ? (
+              {source !== 'file' && source !== 'cert-pem' && !isViewer && !hasAutoSync ? (
                 <Tooltip
                   label={
                     !isAutoSyncAllowed

@@ -159,6 +159,35 @@
           "status": "existing"
         }
       ]
+    },
+    {
+      "name": "certops",
+      "entries": [
+        {
+          "id": "certops-inventory-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/certops-inventory.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-job-payload-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/job-payload.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-agent-protocol-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/agent-protocol.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-route-compat-contract",
+          "kind": "spec",
+          "path": "packages/contracts/api/certops-route-compat.contract.json",
+          "status": "existing"
+        }
+      ]
     }
   ]
 }

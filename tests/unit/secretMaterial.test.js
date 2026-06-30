@@ -1,0 +1,280 @@
+"use strict";
+
+const { describe, it } = require("node:test");
+const assert = require("node:assert");
+const path = require("path");
+
+const {
+  PRIVATE_KEY_REDACTION_PLACEHOLDER,
+  containsPrivateKeyMaterial,
+  looksPkcs12Bundle,
+  redactPrivateKeyMaterial,
+  redactGenericSecrets,
+} = require(
+  path.resolve(__dirname, "../../apps/api/utils/secretMaterial.js"),
+);
+
+// Synthetic header/footer fixtures with fake bodies. No real key material is
+// committed: zero private-key custody applies to the test suite too.
+const FAKE_BODY = "RkFLRS1OT1QtQS1SRUFMLUtFWQ==";
+const pem = (label) =>
+  `-----BEGIN ${label}-----\n${FAKE_BODY}\n-----END ${label}-----`;
+
+function fakePkcs12Buffer() {
+  return Buffer.concat([
+    Buffer.from([0x30, 0x5c, 0x02, 0x01, 0x03]),
+    Buffer.alloc(89, 0),
+  ]);
+}
+
+function deeplyNested(value, depth = 14) {
+  let node = value;
+  for (let index = 0; index < depth; index += 1) {
+    node = { child: node };
+  }
+  return node;
+}
+
+const PRIVATE_KEY_LABELS = [
+  "PRIVATE KEY", // PKCS#8
+  "RSA PRIVATE KEY", // PKCS#1
+  "EC PRIVATE KEY", // SEC1
+  "DSA PRIVATE KEY",
+  "OPENSSH PRIVATE KEY",
+  "ENCRYPTED PRIVATE KEY",
+  "RSA ENCRYPTED PRIVATE KEY",
+];
+
+const NONCANONICAL_PRIVATE_KEY_PEMS = [
+  {
+    name: "lowercase PEM armor",
+    value: `-----begin rsa private key-----\n${FAKE_BODY}\n-----end rsa private key-----`,
+  },
+  {
+    name: "extra PEM armor whitespace",
+    value: `-----BEGIN  RSA   PRIVATE   KEY-----\n${FAKE_BODY}\n-----END  RSA   PRIVATE   KEY-----`,
+  },
+  {
+    name: "mixed-case PEM armor",
+    value: `-----BeGiN EnCrYpTeD PrIvAtE KeY-----\n${FAKE_BODY}\n-----eNd EnCrYpTeD PrIvAtE KeY-----`,
+  },
+];
+
+const NON_KEY_VALUES = [
+  pem("CERTIFICATE"),
+  pem("CERTIFICATE REQUEST"),
+  pem("PUBLIC KEY"),
+  "just a normal log line with no secrets",
+  "fingerprint: AA:BB:CC:DD",
+  "",
+  null,
+  undefined,
+  42,
+  true,
+];
+
+describe("secretMaterial.containsPrivateKeyMaterial", () => {
+  for (const label of PRIVATE_KEY_LABELS) {
+    it(`detects a ${label} PEM block`, () => {
+      assert.strictEqual(containsPrivateKeyMaterial(pem(label)), true);
+    });
+  }
+
+  for (const fixture of NONCANONICAL_PRIVATE_KEY_PEMS) {
+    it(`detects ${fixture.name}`, () => {
+      assert.strictEqual(containsPrivateKeyMaterial(fixture.value), true);
+    });
+  }
+
+  it("detects noncanonical private key PEM in objects, arrays, and buffers", () => {
+    const privateKey = NONCANONICAL_PRIVATE_KEY_PEMS[1].value;
+
+    assert.strictEqual(
+      containsPrivateKeyMaterial({ certificate: { pem: privateKey } }),
+      true,
+    );
+    assert.strictEqual(
+      containsPrivateKeyMaterial(["public metadata", privateKey]),
+      true,
+    );
+    assert.strictEqual(containsPrivateKeyMaterial(Buffer.from(privateKey)), true);
+  });
+
+  it("detects base64-wrapped private key PEM", () => {
+    const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
+    assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
+  });
+
+  it("detects base64-wrapped noncanonical private key PEM", () => {
+    const wrapped = Buffer.from(
+      NONCANONICAL_PRIVATE_KEY_PEMS[2].value,
+    ).toString("base64");
+    assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
+  });
+
+  it("detects PKCS#12/PFX-like DER bundles", () => {
+    const pfxLike = fakePkcs12Buffer();
+
+    assert.strictEqual(looksPkcs12Bundle(pfxLike), true);
+    assert.strictEqual(containsPrivateKeyMaterial(pfxLike), true);
+  });
+
+  it("detects base64-wrapped PKCS#12/PFX-like DER bundles", () => {
+    const wrapped = fakePkcs12Buffer().toString("base64");
+
+    assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
+  });
+
+  it("detects key material under an innocent field name", () => {
+    const payload = { note: "harmless", attachment: pem("EC PRIVATE KEY") };
+    assert.strictEqual(containsPrivateKeyMaterial(payload), true);
+  });
+
+  it("detects key material nested in arrays and objects", () => {
+    const payload = {
+      evidence: [{ output: ["line1", pem("PRIVATE KEY")] }],
+    };
+    assert.strictEqual(containsPrivateKeyMaterial(payload), true);
+  });
+
+  it("detects key material inside a Buffer", () => {
+    assert.strictEqual(
+      containsPrivateKeyMaterial(Buffer.from(pem("PRIVATE KEY"))),
+      true,
+    );
+  });
+
+  for (const value of NON_KEY_VALUES) {
+    it(`does not flag non-key value: ${JSON.stringify(value)?.slice(0, 32)}`, () => {
+      assert.strictEqual(containsPrivateKeyMaterial(value), false);
+    });
+  }
+
+  it("does not flag a certificate nested in an object", () => {
+    const payload = { cert: pem("CERTIFICATE"), meta: { issuer: "Test CA" } };
+    assert.strictEqual(containsPrivateKeyMaterial(payload), false);
+  });
+
+  it("fails closed for harmless values nested beyond the scan depth", () => {
+    assert.strictEqual(
+      containsPrivateKeyMaterial(deeplyNested("harmless public metadata")),
+      true,
+    );
+  });
+
+  it("does not infinitely recurse on cyclic objects and fails closed", () => {
+    const a = {};
+    a.self = a;
+    assert.strictEqual(containsPrivateKeyMaterial(a), true);
+  });
+});
+
+describe("secretMaterial.redactPrivateKeyMaterial", () => {
+  it("replaces a private key block with the placeholder", () => {
+    const input = `before\n${pem("RSA PRIVATE KEY")}\nafter`;
+    const out = redactPrivateKeyMaterial(input);
+    assert.ok(out.includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+    assert.ok(!out.includes(FAKE_BODY));
+    assert.ok(out.startsWith("before"));
+    assert.ok(out.endsWith("after"));
+  });
+
+  for (const fixture of NONCANONICAL_PRIVATE_KEY_PEMS) {
+    it(`redacts ${fixture.name}`, () => {
+      const input = `before\n${fixture.value}\nafter`;
+      const out = redactPrivateKeyMaterial(input);
+
+      assert.ok(out.includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+      assert.ok(!out.includes(FAKE_BODY));
+      assert.ok(!/private\s+key/i.test(out));
+      assert.ok(out.startsWith("before"));
+      assert.ok(out.endsWith("after"));
+    });
+  }
+
+  it("redacts a base64-wrapped private key to the placeholder", () => {
+    const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
+    const out = redactPrivateKeyMaterial(wrapped);
+    assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+    assert.ok(!out.includes(wrapped));
+  });
+
+  it("redacts a base64-wrapped noncanonical private key to the placeholder", () => {
+    const wrapped = Buffer.from(
+      NONCANONICAL_PRIVATE_KEY_PEMS[0].value,
+    ).toString("base64");
+    const out = redactPrivateKeyMaterial(wrapped);
+    assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+    assert.ok(!out.includes(wrapped));
+  });
+
+  it("redacts a base64-wrapped PKCS#12/PFX-like bundle to the placeholder", () => {
+    const wrapped = fakePkcs12Buffer().toString("base64");
+    const out = redactPrivateKeyMaterial(wrapped);
+    assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
+  it("leaves non-key strings unchanged", () => {
+    assert.strictEqual(redactPrivateKeyMaterial("plain text"), "plain text");
+  });
+
+  it("returns non-strings unchanged", () => {
+    assert.strictEqual(redactPrivateKeyMaterial(123), 123);
+  });
+});
+
+describe("secretMaterial.redactGenericSecrets", () => {
+  it("redacts private key blocks in nested structures without mutating input", () => {
+    const input = { logs: [pem("PRIVATE KEY")] };
+    const out = redactGenericSecrets(input);
+    assert.ok(out.logs[0].includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+    assert.ok(input.logs[0].includes(FAKE_BODY), "input must not be mutated");
+  });
+
+  it("redacts Authorization bearer header values", () => {
+    const out = redactGenericSecrets("Authorization: Bearer abc123tokenvalue");
+    assert.ok(!out.includes("abc123tokenvalue"));
+    assert.ok(/Bearer \[REDACTED\]/.test(out));
+  });
+
+  it("redacts a base64-wrapped private key nested in a structure", () => {
+    const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
+    const out = redactGenericSecrets({ evidence: { blob: wrapped } });
+    assert.strictEqual(out.evidence.blob, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
+  it("redacts a Buffer carrying private key material", () => {
+    const out = redactGenericSecrets({ raw: Buffer.from(pem("PRIVATE KEY")) });
+    assert.strictEqual(out.raw, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
+  it("redacts a Buffer carrying PKCS#12/PFX-like material", () => {
+    const out = redactGenericSecrets({ raw: fakePkcs12Buffer() });
+    assert.strictEqual(out.raw, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
+  it("leaves ordinary content intact", () => {
+    assert.strictEqual(
+      redactGenericSecrets("renewal succeeded for example.com"),
+      "renewal succeeded for example.com",
+    );
+  });
+
+  it("does not throw or leak the original subtree on cyclic objects", () => {
+    const node = { label: "evidence" };
+    node.self = node;
+    const out = redactGenericSecrets(node);
+    assert.notStrictEqual(out, node, "must return a copy, not the original");
+    assert.notStrictEqual(out.self, node, "must not embed the original cycle");
+    assert.strictEqual(out.self, "[REDACTED:circular]");
+    assert.strictEqual(out.label, "evidence");
+  });
+
+  it("still redacts a key reachable before a cycle closes", () => {
+    const node = { secret: pem("RSA PRIVATE KEY") };
+    node.self = node;
+    const out = redactGenericSecrets(node);
+    assert.ok(out.secret.includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+    assert.strictEqual(out.self, "[REDACTED:circular]");
+  });
+});
