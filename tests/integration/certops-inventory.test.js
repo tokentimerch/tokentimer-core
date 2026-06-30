@@ -5,6 +5,9 @@ loadRootEnv();
 const { expect, request, TestUtils } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations } = requireMigrateModule();
+const {
+  countActiveManagedCertificates,
+} = require("../../apps/api/services/certops/inventory");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -648,7 +651,10 @@ describe("CertOps inventory routes", function () {
     expect(instanceCountAfter).to.equal(instanceCountBefore);
 
     const audit = await TestUtils.execQuery(
-      `SELECT metadata
+      `SELECT action,
+              target_type,
+              actor_user_id,
+              metadata
          FROM audit_events
         WHERE workspace_id = $1
           AND action = 'CERTOPS_CERTIFICATE_RETIRED'
@@ -658,6 +664,9 @@ describe("CertOps inventory routes", function () {
       [workspaceId, leafCertificate.id],
     );
     expect(audit.rows).to.have.length(1);
+    expect(audit.rows[0].action).to.equal("CERTOPS_CERTIFICATE_RETIRED");
+    expect(audit.rows[0].target_type).to.equal("managed_certificate");
+    expect(audit.rows[0].actor_user_id).to.equal(ownerUser.id);
     expect(audit.rows[0].metadata).to.include({
       managedCertificateId: leafCertificate.id,
       tokenId: leafCertificate.tokenId,
@@ -686,6 +695,38 @@ describe("CertOps inventory routes", function () {
     const managed = await managedCertificateRow(workspaceId, caCertificate.id);
     expect(managed.status).to.equal("revoked");
     expect(managed.token_id).to.equal(caCertificate.tokenId);
+
+    const linkedToken = await tokenRow(caCertificate.tokenId);
+    expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
+  });
+
+  it("excludes retired managed certificates from active inventory counts", async () => {
+    const totalRows = await TestUtils.execQuery(
+      `SELECT COUNT(*)::int AS count
+         FROM managed_certificates
+        WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    const activeCount = await countActiveManagedCertificates({ workspaceId });
+
+    expect(activeCount).to.be.lessThan(totalRows.rows[0].count);
+    expect(activeCount).to.be.at.least(0);
+  });
+
+  it("does not reset retired status when a retired certificate is re-imported", async () => {
+    expect(caCertificate).to.exist;
+
+    const response = await request(BASE)
+      .post(`/api/v1/workspaces/${workspaceId}/certops/certificates`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ certificatePem: PUBLIC_CA_CERT })
+      .expect(201);
+
+    expect(response.body.items[0].id).to.equal(caCertificate.id);
+    expect(response.body.items[0].status).to.equal("revoked");
+
+    const managed = await managedCertificateRow(workspaceId, caCertificate.id);
+    expect(managed.status).to.equal("revoked");
 
     const linkedToken = await tokenRow(caCertificate.tokenId);
     expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
@@ -774,6 +815,38 @@ describe("CertOps inventory routes", function () {
       leafCertificate.id,
     );
     expect(instanceCountAfter).to.equal(instanceCountBefore);
+  });
+
+  it("blocks bulk delete of managed-backed certificate tokens", async () => {
+    const disposable = await createWorkspaceToken(ownerSession, workspaceId, {
+      name: "Bulk delete disposable",
+      type: "api_key",
+      category: "key_secret",
+    });
+
+    const response = await request(BASE)
+      .delete("/api/tokens/bulk")
+      .set("Cookie", ownerSession.cookie)
+      .send({ ids: [disposable.id, leafCertificate.tokenId] })
+      .expect(200);
+
+    expect(response.body.successCount).to.equal(1);
+    expect(response.body.failedCount).to.equal(1);
+    expect(response.body.results.success).to.deep.equal([disposable.id]);
+    expect(response.body.results.failed).to.deep.equal([
+      {
+        id: leafCertificate.tokenId,
+        reason: "Managed certificate retire required",
+        code: "CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED",
+      },
+    ]);
+
+    await tokenRow(leafCertificate.tokenId);
+    const deletedRows = await TestUtils.execQuery(
+      "SELECT 1 FROM tokens WHERE id = $1",
+      [disposable.id],
+    );
+    expect(deletedRows.rows).to.have.length(0);
   });
 
   it("allows hard delete of manual cert tokens not backed by managed certificates", async () => {

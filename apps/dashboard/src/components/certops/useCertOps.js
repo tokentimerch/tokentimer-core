@@ -125,6 +125,7 @@ export function useWorkspaceCertOps() {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [byTokenId, setByTokenId] = useState(() => new Map());
+  const [items, setItems] = useState(() => []);
   const [loading, setLoading] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -136,6 +137,7 @@ export function useWorkspaceCertOps() {
   useEffect(() => {
     if (!workspaceId || enabled !== true) {
       setByTokenId(new Map());
+      setItems([]);
       setLoading(false);
       return undefined;
     }
@@ -146,10 +148,16 @@ export function useWorkspaceCertOps() {
 
     loadCertOpsInventoryIndex(workspaceId, { signal: controller.signal })
       .then(index => {
-        if (!cancelled) setByTokenId(new Map(index.byTokenId));
+        if (!cancelled) {
+          setByTokenId(new Map(index.byTokenId));
+          setItems(Array.isArray(index.items) ? index.items : []);
+        }
       })
       .catch(() => {
-        if (!cancelled) setByTokenId(new Map());
+        if (!cancelled) {
+          setByTokenId(new Map());
+          setItems([]);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -161,7 +169,7 @@ export function useWorkspaceCertOps() {
     };
   }, [workspaceId, enabled, reloadTick]);
 
-  return { enabled, byTokenId, loading, refresh };
+  return { enabled, byTokenId, items, loading, refresh };
 }
 
 /**
