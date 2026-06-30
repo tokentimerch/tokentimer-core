@@ -1,0 +1,328 @@
+"use strict";
+
+const { describe, it } = require("node:test");
+const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+const Ajv = require("ajv");
+const addFormats = require("ajv-formats");
+
+const repoRoot = path.resolve(__dirname, "../..");
+
+const routeCompatContract = require("../../packages/contracts/api/certops-route-compat.contract.json");
+const contractsManifest = require("../../contracts.manifest.json");
+const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
+const evidenceSchema = require("../../packages/contracts/certops/evidence.schema.json");
+const executorEventSchema = require("../../packages/contracts/certops/executor-event.schema.json");
+
+const openApiSource = fs.readFileSync(
+  path.join(repoRoot, "packages/contracts/openapi/openapi.yaml"),
+  "utf8",
+);
+const certOpsRoutesSource = fs.readFileSync(
+  path.join(repoRoot, "apps/api/routes/certops.js"),
+  "utf8",
+);
+
+const FORBIDDEN_FIELD_FRAGMENTS = [
+  "privatekey",
+  "privatekeypem",
+  "encryptedprivatekey",
+  "keymaterial",
+  "pfxblob",
+  "jksblob",
+  "tlskey",
+  "caprivatekey",
+  "keystorepassword",
+  "privatekeypassword",
+  "keypassword",
+  "password",
+  "secret",
+  "credential",
+];
+
+const m2Schemas = {
+  "job-payload.schema.json": jobPayloadSchema,
+  "evidence.schema.json": evidenceSchema,
+  "executor-event.schema.json": executorEventSchema,
+};
+
+function manifestPaths() {
+  return new Set(
+    contractsManifest.namespaces.flatMap((namespace) =>
+      namespace.entries.map((entry) => entry.path),
+    ),
+  );
+}
+
+function collectPropertyNames(schema, names = []) {
+  if (Array.isArray(schema)) {
+    for (const item of schema) collectPropertyNames(item, names);
+    return names;
+  }
+
+  if (!schema || typeof schema !== "object") return names;
+
+  if (schema.properties && typeof schema.properties === "object") {
+    for (const [propertyName, propertySchema] of Object.entries(
+      schema.properties,
+    )) {
+      names.push(propertyName);
+      collectPropertyNames(propertySchema, names);
+    }
+  }
+
+  for (const value of Object.values(schema)) {
+    collectPropertyNames(value, names);
+  }
+
+  return names;
+}
+
+function assertNoAdditionalPropertiesTrue(schema, location) {
+  if (Array.isArray(schema)) {
+    schema.forEach((item, index) =>
+      assertNoAdditionalPropertiesTrue(item, `${location}[${index}]`),
+    );
+    return;
+  }
+
+  if (!schema || typeof schema !== "object") return;
+
+  assert.notEqual(
+    schema.additionalProperties,
+    true,
+    `${location} must not allow unconstrained extra fields`,
+  );
+
+  for (const [key, value] of Object.entries(schema)) {
+    assertNoAdditionalPropertiesTrue(value, `${location}.${key}`);
+  }
+}
+
+function normalizeFieldName(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function createAjv() {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  addFormats(ajv);
+
+  for (const schema of Object.values(m2Schemas)) {
+    ajv.addSchema(schema);
+  }
+
+  return ajv;
+}
+
+function validJobPayload() {
+  return {
+    schemaVersion: 1,
+    jobId: "job-1",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    certificateId: "cert-1",
+    action: "renew",
+    target: {
+      type: "domain",
+      reference: "example.com",
+      fingerprintSha256:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    },
+    keyMode: "agent-local",
+    keyReference: "external-ref-1",
+    requestedAt: "2026-06-30T00:00:00.000Z",
+    issuedAt: "2026-06-30T00:00:00.000Z",
+    expiresAt: "2026-06-30T00:10:00.000Z",
+    nonce: "nonce-1234567890123456",
+    signingKeyId: "signing-key-1",
+    signature:
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  };
+}
+
+function validEvidence() {
+  return {
+    schemaVersion: 1,
+    evidenceId: "evidence-1",
+    jobId: "job-1",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    eventType: "certificate.observed",
+    source: "executor",
+    observedAt: "2026-06-30T00:01:00.000Z",
+    fingerprintSha256:
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  };
+}
+
+function validExecutorEvent() {
+  return {
+    schemaVersion: 1,
+    eventId: "event-1",
+    jobId: "job-1",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    status: "running",
+    eventType: "job.progress",
+    occurredAt: "2026-06-30T00:02:00.000Z",
+    evidence: [validEvidence()],
+  };
+}
+
+function parseOpenApiPathMethods(source) {
+  const paths = new Map();
+  let inPaths = false;
+  let currentPath = null;
+
+  for (const line of source.split(/\r?\n/)) {
+    if (line === "paths:") {
+      inPaths = true;
+      continue;
+    }
+
+    if (inPaths && /^[A-Za-z][^:]*:\s*$/.test(line)) break;
+
+    const pathMatch = line.match(/^  (\/[^:]+):\s*$/);
+    if (pathMatch) {
+      currentPath = pathMatch[1];
+      paths.set(currentPath, new Set());
+      continue;
+    }
+
+    const methodMatch = line.match(
+      /^    (get|post|put|patch|delete|options|head|trace):\s*$/,
+    );
+    if (currentPath && methodMatch) {
+      paths.get(currentPath).add(methodMatch[1].toUpperCase());
+    }
+  }
+
+  return paths;
+}
+
+function openApiPathBlock(routePath) {
+  const marker = `  ${routePath}:`;
+  const start = openApiSource.indexOf(marker);
+  assert.notEqual(start, -1, `${routePath} missing from OpenAPI`);
+
+  const nextPath = openApiSource.indexOf("\n  /", start + marker.length);
+  const components = openApiSource.indexOf("\ncomponents:", start);
+  const end =
+    nextPath === -1
+      ? components
+      : components === -1
+        ? nextPath
+        : Math.min(nextPath, components);
+
+  assert.notEqual(end, -1, `${routePath} OpenAPI block end not found`);
+  return openApiSource.slice(start, end);
+}
+
+describe("CertOps M2 contract skeletons", () => {
+  it("includes the M2 job, executor event, and evidence schemas in the manifest", () => {
+    const paths = manifestPaths();
+
+    for (const fileName of Object.keys(m2Schemas)) {
+      assert.ok(
+        paths.has(`packages/contracts/certops/${fileName}`),
+        `${fileName} must be listed in contracts.manifest.json`,
+      );
+    }
+  });
+
+  it("keeps M2 schemas bounded and free of private-key custody-shaped field names", () => {
+    for (const [fileName, schema] of Object.entries(m2Schemas)) {
+      assert.equal(schema.additionalProperties, false);
+      assertNoAdditionalPropertiesTrue(schema, fileName);
+
+      for (const propertyName of collectPropertyNames(schema)) {
+        const normalized = normalizeFieldName(propertyName);
+        const hit = FORBIDDEN_FIELD_FRAGMENTS.find((fragment) =>
+          normalized.includes(fragment),
+        );
+        assert.equal(
+          hit,
+          undefined,
+          `${fileName} defines custody-shaped field ${propertyName}`,
+        );
+      }
+    }
+  });
+
+  it("rejects custody-shaped fields and metadata names in M2 schema examples", () => {
+    const ajv = createAjv();
+    const examples = [
+      [jobPayloadSchema.$id, validJobPayload()],
+      [evidenceSchema.$id, validEvidence()],
+      [executorEventSchema.$id, validExecutorEvent()],
+    ];
+
+    for (const [schemaId, example] of examples) {
+      const validate = ajv.getSchema(schemaId);
+      assert.ok(validate, `${schemaId} validator missing`);
+      assert.equal(validate(example), true, `${schemaId} valid example failed`);
+
+      const withExtraCustodyField = {
+        ...example,
+        privateKey: "not-allowed",
+      };
+      assert.equal(
+        validate(withExtraCustodyField),
+        false,
+        `${schemaId} must reject custody-shaped extra fields`,
+      );
+
+      const withCustodyMetadataName = {
+        ...example,
+        metadata: [{ name: "privateKey", value: "not-allowed" }],
+      };
+      assert.equal(
+        validate(withCustodyMetadataName),
+        false,
+        `${schemaId} must reject custody-shaped metadata names`,
+      );
+    }
+  });
+
+  it("keeps the executor event route aligned between OpenAPI and route compat", () => {
+    const routePath = "/api/v1/certops/executor/events";
+    const method = "POST";
+    const stableRoutes = routeCompatContract.guarantees.stableRoutes;
+    const openApiPathMethods = parseOpenApiPathMethods(openApiSource);
+    const routeBlock = openApiPathBlock(routePath);
+
+    assert.ok(
+      stableRoutes.some(
+        (route) => route.path === routePath && route.method === method,
+      ),
+      "executor event route must stay frozen in route compat",
+    );
+    assert.equal(routeCompatContract.routeAuth[routePath], "certOpsTokenAuth");
+    assert.ok(openApiPathMethods.get(routePath)?.has(method));
+    assert.match(routeBlock, /certOpsTokenAuth:/);
+    assert.match(routeBlock, /operationId: createCertOpsExecutorEvent/);
+    assert.match(
+      routeBlock,
+      /\$ref: "#\/components\/schemas\/CertOpsExecutorEventRequest"/,
+    );
+    assert.match(
+      routeBlock,
+      /\$ref: "#\/components\/schemas\/CertOpsExecutorEventAcceptedResponse"/,
+    );
+  });
+
+  it("does not change apps runtime files or wire executor job/evidence behavior", () => {
+    const appsDiff = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }).trim();
+
+    assert.equal(appsDiff, "");
+    assert.equal(
+      certOpsRoutesSource.includes("/api/v1/certops/executor"),
+      false,
+    );
+    assert.equal(certOpsRoutesSource.includes("certificate_jobs"), false);
+    assert.equal(certOpsRoutesSource.includes("certificate_evidence"), false);
+    assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
+  });
+});
