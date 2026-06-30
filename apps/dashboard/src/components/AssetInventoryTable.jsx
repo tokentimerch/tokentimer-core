@@ -114,7 +114,7 @@ const CATEGORY_VISUAL_PALETTES = {
   },
 };
 
-function resolveCategoryVisual(categoryValue, isLight) {
+export function resolveCategoryVisual(categoryValue, isLight) {
   const meta = CATEGORY_ICON_META[categoryValue] || CATEGORY_ICON_META.default;
   const palette = isLight
     ? CATEGORY_VISUAL_PALETTES.light
