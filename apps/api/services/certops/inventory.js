@@ -153,9 +153,8 @@ async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerpri
       consuming += 1;
       continue;
     }
-    if (isRetiredCertificateStatus(status)) {
-      consuming += 1;
-    }
+    // Active fingerprints are idempotent. Retired fingerprints stay retired on
+    // re-import and do not increase active managed certificate count.
   }
   return consuming;
 }
