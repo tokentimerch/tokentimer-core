@@ -14,8 +14,7 @@ import {
  *
  * CertOps ships behind the `certops.enabled` rollout flag. The backend hides
  * its routes (404) while the flag is off. Only 404 means disabled; other
- * failures are surfaced as `error` so plan-gating and outages are not mistaken
- * for "feature off".
+ * failures are surfaced as `error` so outages are not mistaken for "feature off".
  *
  * @returns {{ ready: boolean, enabled: boolean|null, error: string|null }}
  */
@@ -40,7 +39,11 @@ export function useCertOpsAvailability() {
     probeCertOpsEnabled(workspaceId, { signal: controller.signal })
       .then(result => {
         if (!cancelled) {
-          setState({ ready: true, enabled: result, error: null });
+          setState({
+            ready: true,
+            enabled: result.enabled,
+            error: null,
+          });
         }
       })
       .catch(err => {

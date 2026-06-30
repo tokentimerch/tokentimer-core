@@ -26,6 +26,10 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 # layer. node_modules stays root-owned; the worker only reads it at runtime.
 COPY --chown=nodejs:nodejs packages ./packages
 COPY --chown=nodejs:nodejs apps/worker ./apps/worker
+COPY --chown=nodejs:nodejs apps/api/services/certops ./apps/api/services/certops
+COPY --chown=nodejs:nodejs apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
+COPY --chown=nodejs:nodejs apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY --chown=nodejs:nodejs apps/api/db/database.js ./apps/api/db/database.js
 
 # Install production dependencies using frozen lockfile
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker...

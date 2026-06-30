@@ -135,9 +135,8 @@ export async function retireCertificate(
  * Lightweight availability probe used to gate CertOps UI behind the
  * `certops.enabled` rollout flag. The backend hides the routes with a 404 when
  * the flag is off, so a successful list call means CertOps is available to this
- * workspace. Only HTTP 404 means disabled; other failures propagate so callers
- * can distinguish rollout-off from plan-gating, auth, rate limits, or outages.
- * @returns {Promise<boolean>}
+ * workspace. Only HTTP 404 means disabled; other failures propagate.
+ * @returns {Promise<{ enabled: boolean }>}
  */
 export async function probeCertOpsEnabled(workspaceId, { signal } = {}) {
   try {
@@ -146,9 +145,11 @@ export async function probeCertOpsEnabled(workspaceId, { signal } = {}) {
       signal,
       _suppressLog: true,
     });
-    return true;
+    return { enabled: true };
   } catch (err) {
-    if (err?.response?.status === 404) return false;
+    if (err?.response?.status === 404) {
+      return { enabled: false };
+    }
     throw err;
   }
 }

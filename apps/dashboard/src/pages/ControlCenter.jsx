@@ -33,9 +33,14 @@ import {
   Layers,
   PlugZap,
   RefreshCw,
+  Shield,
   ShieldAlert,
 } from 'lucide-react';
 import DashboardShell from '../components/DashboardShell';
+import {
+  useCertOpsAvailability,
+  useWorkspaceCertOps,
+} from '../components/certops/useCertOps.js';
 import {
   DashboardActionButton,
   DashboardPanel as SharedDashboardPanel,
@@ -820,6 +825,12 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     return { healthy, failed, paused };
   }, [autoSyncRows]);
 
+  const { ready: certOpsReady, enabled: certOpsEnabled } =
+    useCertOpsAvailability();
+  const { byTokenId: managedCertsByTokenId, loading: certOpsLoading } =
+    useWorkspaceCertOps();
+  const managedCertCount = managedCertsByTokenId.size;
+
   const neverExpiresCount = neverExpires.length || buckets.neverExpires || 0;
 
   const healthSegments = useMemo(() => {
@@ -1354,6 +1365,34 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             ))
                           : null}
                       </InsightListShell>
+                    </ControlCenterPanel>
+
+                    <ControlCenterPanel
+                      title='Certificate operations'
+                      description='Managed certificates linked to your token inventory'
+                    >
+                      {!certOpsReady ? (
+                        <Text fontSize='sm' color={muted}>
+                          Checking certificate operations availability...
+                        </Text>
+                      ) : certOpsEnabled ? (
+                        <InsightPanelSummary
+                          icon={Shield}
+                          accent='#6366f1'
+                          label='Managed certificates'
+                          value={managedCertCount}
+                          detail={
+                            certOpsLoading
+                              ? 'Loading inventory...'
+                              : 'Registered in this workspace'
+                          }
+                        />
+                      ) : (
+                        <Text fontSize='sm' color={muted}>
+                          Certificate operations is not enabled for this
+                          workspace yet.
+                        </Text>
+                      )}
                     </ControlCenterPanel>
                   </SimpleGrid>
                 </SectionState>

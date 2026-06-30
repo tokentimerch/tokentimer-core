@@ -181,6 +181,14 @@ the origins users and integrations actually use in the browser.
 | `WORKSPACE_PLAN_LIMITS`                   | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspaces           |
 | `MEMBER_PLAN_LIMITS`                      | JSON plan-to-limit map (core defaults unlimited)                            | `{"oss":Infinity}`                    | Workspace members    |
 
+## CertOps (certificate operations)
+
+| Variable           | Description                                                                                                                                                                                                                                                                                                                                 | Default value | Scope  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ------ |
+| `CERTOPS_ENABLED`  | Enable the certificate operations layer. When enabled, TokenTimer maintains a managed-certificate inventory linked to cert-category tokens, accepts public certificate (PEM) import, and bridges observations from HTTPS endpoint/domain monitors into the inventory (when the monitor has a linked token). When disabled, CertOps API endpoints return 404. | `false`       | CertOps |
+
+TokenTimer stores only public certificate material (fingerprints, serials, issuers, subjects, SANs, validity, chains) and external key references. Requests containing private key material are rejected with HTTP 422.
+
 ## Metrics and observability
 
 | Variable             | Description                                                | Default value | Scope          |

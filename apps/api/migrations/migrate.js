@@ -769,8 +769,18 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace_fingerprint
         ON certificate_instances(workspace_id, observed_fingerprint_sha256)
         WHERE observed_fingerprint_sha256 IS NOT NULL;
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_instances_workspace_target_cert
-        ON certificate_instances(workspace_id, target_id, managed_certificate_id);
+      -- A monitor keeps one managed_certificate row (stable identity by source +
+      -- source_ref). Rotations are recorded as additional certificate_instances rows
+      -- per distinct served fingerprint: re-observing the same fingerprint at the same
+      -- target refreshes the existing row (last-seen), while a new fingerprint appends a
+      -- new row (rotation history). Uniqueness therefore includes the observed fingerprint.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_instances_target_cert_fingerprint
+        ON certificate_instances(
+          workspace_id,
+          target_id,
+          managed_certificate_id,
+          observed_fingerprint_sha256
+        );
     `,
   },
   {

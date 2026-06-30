@@ -1,33 +1,11 @@
-const fs = require("fs");
-const path = require("path");
 const { expect, request, TestEnvironment, TestUtils } = require("./setup");
+const {
+  apiOrSaas,
+  readFirstExisting,
+  requireFirstExisting,
+} = require("./variant-paths");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
-const PROJECT_ROOT = path.resolve(__dirname, "../..");
-
-function requireFirstExisting(candidates) {
-  for (const relativePath of candidates) {
-    const absolutePath = path.join(PROJECT_ROOT, relativePath);
-    if (fs.existsSync(absolutePath) || fs.existsSync(`${absolutePath}.js`)) {
-      return require(absolutePath);
-    }
-  }
-  throw new Error(
-    `Unable to resolve module from candidates: ${candidates.join(", ")}`,
-  );
-}
-
-function readFirstExisting(candidates) {
-  for (const relativePath of candidates) {
-    const absolutePath = path.join(PROJECT_ROOT, relativePath);
-    if (fs.existsSync(absolutePath)) {
-      return fs.readFileSync(absolutePath, "utf8");
-    }
-  }
-  throw new Error(
-    `Unable to resolve source from candidates: ${candidates.join(", ")}`,
-  );
-}
 
 function normalizeMetadata(value) {
   if (!value || typeof value !== "string") return value || {};
@@ -48,15 +26,12 @@ function buildManyCertificates(count) {
 }
 
 const { lookupDomain, normalizeRootDomain, parseDiscoveryLines } =
-  requireFirstExisting([
-    "apps/api/services/domainChecker",
-    "apps/saas/services/domainChecker",
-  ]);
+  requireFirstExisting(apiOrSaas("services/domainChecker"));
 const {
   bridgeEndpointCertificateObservation,
   normalizeFingerprintSha256,
-} = requireFirstExisting(["apps/api/services/certops/monitorBridge"]);
-const { pool } = requireFirstExisting(["apps/api/db/database"]);
+} = requireFirstExisting(apiOrSaas("services/certops/monitorBridge"));
+const { pool } = requireFirstExisting(apiOrSaas("db/database"));
 
 const paidPlanForDomainChecker = "pro";
 const WWW_FINGERPRINT = "a".repeat(64);
@@ -246,10 +221,7 @@ describe("Domain checker discovery service integration", function () {
   });
 
   it("keeps dedicated domain checker lookup rate-limit wiring", () => {
-    const source = readFirstExisting([
-      "apps/api/middleware/rateLimit.js",
-      "apps/saas/middleware/rateLimit.js",
-    ]);
+    const source = readFirstExisting(apiOrSaas("middleware/rateLimit.js"));
 
     expect(source).to.include("DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_WINDOW_MS");
     expect(source).to.include("DOMAIN_CHECKER_LOOKUP_RATE_LIMIT_MAX");

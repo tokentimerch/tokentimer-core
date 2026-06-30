@@ -17,6 +17,7 @@ import {
   Tooltip,
   Tr,
   VStack,
+  Badge,
   useColorMode,
   useColorModeValue,
 } from '@chakra-ui/react';
@@ -34,6 +35,7 @@ import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
 import { isRetiredStatus } from './certops/certopsFormat';
+import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
@@ -480,10 +482,23 @@ function StatusBadge({ token, getStatusMeta }) {
   const { colorMode } = useColorMode();
   const status = effectiveStatusMeta(token, getStatusMeta);
   const styles = resolveStatusBadgeStyles(status, colorMode === 'light');
+  const managed = token.__managedCert;
 
   return (
-    <HStack spacing={2}>
+    <HStack spacing={2} flexWrap='wrap'>
       <StatusPill status={status} styles={styles} />
+      {managed?.status && !isRetiredStatus(managed.status) ? (
+        <Tooltip label='Managed certificate lifecycle status'>
+          <Badge
+            colorScheme='purple'
+            variant='subtle'
+            textTransform='none'
+            fontSize='xs'
+          >
+            {managed.status}
+          </Badge>
+        </Tooltip>
+      ) : null}
       {token.monitor_health_status && (
         <Tooltip
           label={`${token.monitor_url || 'Endpoint'}: ${token.monitor_health_status}${
@@ -576,6 +591,7 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
   const visual = getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
   const subtitle = getNameSubtitle(token, mode);
+  const managed = token.__managedCert;
 
   return (
     <HStack spacing={3} minW={0}>
@@ -597,6 +613,14 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
           <Text color={mutedTextColor} fontSize='xs' noOfLines={1}>
             {subtitle}
           </Text>
+        ) : null}
+        {managed ? (
+          <Box mt={1}>
+            <KeyLocalityBadge
+              keyMode={managed.keyMode}
+              keyReference={managed.keyReference}
+            />
+          </Box>
         ) : null}
       </Box>
     </HStack>
@@ -748,7 +772,11 @@ function renderDataCell({ column, token, mode, helpers }) {
       return <DomainsCell token={token} mutedTextColor={mutedTextColor} />;
     case 'issuer':
       return (
-        <TruncatedText text={token.issuer} maxLines={2} maxWidth='100px' />
+        <TruncatedText
+          text={token.__managedCert?.issuer || token.issuer}
+          maxLines={2}
+          maxWidth='100px'
+        />
       );
     case 'privileges':
       return (

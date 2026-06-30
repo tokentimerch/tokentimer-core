@@ -24,6 +24,11 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 # Copy workspace packages and the worker app
 COPY packages ./packages
 COPY apps/worker ./apps/worker
+# CertOps monitor bridge for endpoint-check-worker (token-linked inventory sync).
+COPY apps/api/services/certops ./apps/api/services/certops
+COPY apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
+COPY apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY apps/api/db/database.js ./apps/api/db/database.js
 
 # Install production dependencies for the worker and its workspace deps
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker... \
