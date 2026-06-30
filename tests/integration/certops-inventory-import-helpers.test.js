@@ -231,7 +231,7 @@ describe("CertOps inventory import transaction helpers", function () {
     }
   });
 
-  it("countQuotaConsumingNewFingerprints treats retired fingerprint re-imports as non-consuming", async () => {
+  it("countQuotaConsumingNewFingerprints counts retired fingerprint re-imports", async () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -240,7 +240,7 @@ describe("CertOps inventory import transaction helpers", function () {
         workspaceId,
         [retiredFingerprint],
       );
-      expect(consuming).to.equal(0);
+      expect(consuming).to.equal(1);
       await client.query("ROLLBACK");
     } finally {
       client.release();
@@ -272,7 +272,7 @@ describe("CertOps inventory import transaction helpers", function () {
         workspaceId,
         [leafFingerprint, retiredFingerprint, caFingerprint],
       );
-      expect(consuming).to.equal(1);
+      expect(consuming).to.equal(2);
       await client.query("ROLLBACK");
     } finally {
       client.release();
