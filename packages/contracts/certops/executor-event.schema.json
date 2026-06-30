@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/executor-event.schema.json",
+  "title": "CertOps Executor Event",
+  "description": "M2 contract skeleton for external executor event ingestion. This envelope is public-metadata-only and does not implement runtime auth, rate limiting, persistence, or redaction enforcement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "jobId",
+    "workspaceId",
+    "status",
+    "eventType",
+    "occurredAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "certificateId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "executorId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "attemptId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "running", "succeeded", "failed", "rejected", "canceled"]
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "job.accepted",
+        "job.started",
+        "job.progress",
+        "job.completed",
+        "job.failed",
+        "job.rejected",
+        "evidence.attached"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "message": {
+      "type": ["string", "null"],
+      "maxLength": 1024
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "evidence.schema.json"
+      }
+    },
+    "metadata": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Public, sanitized metadata entries only.",
+      "items": {
+        "$ref": "#/definitions/publicMetadataEntry"
+      }
+    }
+  },
+  "definitions": {
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

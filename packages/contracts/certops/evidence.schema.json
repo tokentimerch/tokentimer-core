@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/evidence.schema.json",
+  "title": "CertOps Evidence Metadata",
+  "description": "M2 contract skeleton for public, sanitized evidence metadata. This schema excludes raw executor output, private key material, key-bearing bundles, and credentials. Later M2 runtime PRs implement evidence persistence, redaction enforcement, and size limits.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evidenceId",
+    "jobId",
+    "workspaceId",
+    "eventType",
+    "source",
+    "observedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "evidenceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "certificateId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "certificateInstanceId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "targetId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "certificate.observed",
+        "deployment.checked",
+        "deployment.updated",
+        "validation.passed",
+        "validation.failed",
+        "policy.checked"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["executor", "domain-monitor", "endpoint-monitor", "control-plane", "external"]
+    },
+    "status": {
+      "type": ["string", "null"],
+      "enum": ["accepted", "redacted", "rejected", "failed", null]
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "fingerprintSha256": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "summary": {
+      "type": ["string", "null"],
+      "maxLength": 1024
+    },
+    "metadata": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Public, sanitized metadata entries only.",
+      "items": {
+        "$ref": "#/definitions/publicMetadataEntry"
+      }
+    },
+    "artifactRefs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "reference"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["log", "report", "certificate", "deployment", "external"]
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "sha256": {
+            "type": ["string", "null"],
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "redactionApplied": {
+      "type": ["boolean", "null"]
+    }
+  },
+  "definitions": {
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

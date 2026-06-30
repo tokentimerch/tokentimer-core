@@ -176,6 +176,18 @@
           "status": "existing"
         },
         {
+          "id": "certops-evidence-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/evidence.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-executor-event-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/executor-event.schema.json",
+          "status": "existing"
+        },
+        {
           "id": "certops-agent-protocol-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",

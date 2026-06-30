@@ -1,15 +1,19 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/job-payload.schema.json",
-  "title": "CertOps Signed Job Payload (STUB)",
-  "description": "STUB frozen in Phase 0. This freezes only the signing and replay-protection envelope so M2 (executor) and M4 (agent) can build against a stable outer shape. The per-job-type body (renew, deploy, reload, revoke) is intentionally left open (additionalProperties: true) and is specified in M2/M4. The signature covers the full payload excluding the signature field itself, using the control-plane Ed25519 platform operational signing key. This key is never used for certificate issuance or customer key custody.",
+  "title": "CertOps Signed Job Payload",
+  "description": "M2 contract skeleton for future certificate lifecycle jobs. This contract carries only public certificate references, target references, lifecycle intent, and a replay-protected signing envelope. Later M2 runtime PRs implement storage, dispatch, auth, and execution. Customer private key material and key-bearing bundles are outside this contract.",
   "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": false,
   "required": [
     "schemaVersion",
     "jobId",
-    "type",
     "workspaceId",
+    "certificateId",
+    "action",
+    "target",
+    "keyMode",
+    "requestedAt",
     "issuedAt",
     "expiresAt",
     "nonce",
@@ -23,28 +27,111 @@
     },
     "jobId": {
       "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
       "description": "Unique job identifier. Part of the replay-protection tuple."
     },
-    "attemptId": {
+    "workspaceId": {
       "type": "string",
-      "description": "Per-dispatch attempt identifier for idempotent retries."
+      "format": "uuid",
+      "description": "Owning workspace identifier."
     },
-    "type": {
+    "certificateId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Managed certificate identifier."
+    },
+    "tokenId": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Optional link to the existing tokens table."
+    },
+    "action": {
       "type": "string",
       "enum": ["renew", "deploy", "reload", "revoke", "noop"],
-      "description": "Job kind. The matching body shape is defined in M2/M4."
+      "description": "Public certificate lifecycle action requested by the control plane."
     },
-    "workspaceId": {
-      "type": "string"
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time"
     },
-    "agentId": {
-      "type": ["string", "null"],
-      "description": "Target agent id, or null when dispatched via selector."
-    },
-    "agentSelector": {
+    "requestedBy": {
       "type": ["object", "null"],
-      "additionalProperties": true,
-      "description": "Optional selector when not targeting a single agent id."
+      "additionalProperties": false,
+      "required": ["actorType"],
+      "properties": {
+        "actorType": {
+          "type": "string",
+          "enum": ["user", "system", "automation"]
+        },
+        "actorId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": ["string", "null"],
+          "maxLength": 256
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "reference"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["domain", "endpoint", "kubernetes", "appliance", "load-balancer", "external"]
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "Non-secret deployment or observation reference."
+        },
+        "managedCertificateId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "certificateInstanceId": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "fingerprintSha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "keyMode": {
+      "type": "string",
+      "enum": [
+        "agent-local",
+        "proxy-agent-local",
+        "cert-manager-managed",
+        "appliance-managed",
+        "hsm-managed",
+        "vault-managed",
+        "os-store-managed",
+        "external-unknown"
+      ],
+      "description": "Non-secret mode describing where key custody remains outside the control plane."
+    },
+    "keyReference": {
+      "type": ["string", "null"],
+      "maxLength": 512,
+      "description": "Opaque non-secret reference to external execution-plane key custody."
+    },
+    "metadata": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Public, sanitized metadata entries only.",
+      "items": {
+        "$ref": "#/definitions/publicMetadataEntry"
+      }
     },
     "issuedAt": {
       "type": "string",
@@ -53,19 +140,60 @@
     "expiresAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Hard validity bound. Agents MUST reject jobs outside this window (clock-drift aware)."
+      "description": "Hard validity bound. Executors must reject jobs outside this window."
     },
     "nonce": {
       "type": "string",
-      "description": "Single-use nonce. Agents maintain a bounded replay cache keyed by nonce + jobId."
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Single-use nonce for replay protection."
     },
     "signingKeyId": {
       "type": "string",
-      "description": "Identifier of the control-plane Ed25519 signing key the agent pins."
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Identifier of the control-plane operational signing key."
     },
     "signature": {
       "type": "string",
+      "minLength": 64,
+      "maxLength": 1024,
       "description": "Base64 Ed25519 signature over the canonical payload excluding this field. HMAC is not accepted."
+    }
+  },
+  "definitions": {
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     }
   }
 }
