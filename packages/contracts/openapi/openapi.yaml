@@ -3353,7 +3353,7 @@ paths:
       tags: [CertOps]
       summary: List CertOps jobs
       operationId: listCertOpsJobs
-      description: Returns orchestration jobs for the workspace. Skeleton; response schema lands in M2.
+      description: Returns public CertOps job metadata for the workspace. M2-A1 defines the contract skeleton only; runtime job persistence and dispatch land in later M2 PRs.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/limitParam"
@@ -3364,8 +3364,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsJobListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3429,7 +3428,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: Executor reports job progress and evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). Skeleton; body schema lands in M2.
+      description: Executor reports job progress and public evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). M2-A1 defines the contract skeleton only; runtime auth, rate limiting, persistence, and redaction enforcement land in later M2 PRs.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3437,16 +3436,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsExecutorEventRequest"
       responses:
         "202":
           description: Event accepted
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "422":
@@ -3454,8 +3451,10 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/register:
@@ -3963,6 +3962,292 @@ components:
           nullable: true
           maxLength: 256
           description: Opaque non-secret external reference. Invalid references return CERTOPS_KEY_REFERENCE_INVALID; private-key material returns PRIVATE_KEY_MATERIAL_REJECTED.
+    CertOpsMetadataEntry:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          pattern: "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        value:
+          oneOf:
+            - type: string
+              maxLength: 512
+            - type: number
+            - type: integer
+            - type: boolean
+    CertOpsJob:
+      type: object
+      additionalProperties: false
+      description: Public M2 job metadata skeleton. Runtime persistence and state transitions land in later M2 PRs.
+      required:
+        - schemaVersion
+        - id
+        - workspaceId
+        - certificateId
+        - action
+        - status
+        - requestedAt
+        - createdAt
+        - updatedAt
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        workspaceId:
+          type: string
+          format: uuid
+        certificateId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        tokenId:
+          type: integer
+          minimum: 1
+          nullable: true
+        action:
+          type: string
+          enum: [renew, deploy, reload, revoke, noop]
+        status:
+          type: string
+          enum: [queued, dispatched, running, succeeded, failed, canceled, expired]
+        target:
+          type: object
+          additionalProperties: false
+          nullable: true
+          properties:
+            type:
+              type: string
+              enum: [domain, endpoint, kubernetes, appliance, load-balancer, external]
+            reference:
+              type: string
+              maxLength: 512
+        requestedAt:
+          type: string
+          format: date-time
+        requestedBy:
+          type: object
+          additionalProperties: false
+          nullable: true
+          properties:
+            actorType:
+              type: string
+              enum: [user, system, automation]
+            actorId:
+              type: string
+              maxLength: 128
+              nullable: true
+            displayName:
+              type: string
+              maxLength: 256
+              nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CertOpsJobListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsJob"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    CertOpsEvidenceMetadata:
+      type: object
+      additionalProperties: false
+      description: Public, sanitized evidence metadata skeleton. Raw executor output and key-bearing artifacts are intentionally excluded.
+      required:
+        - schemaVersion
+        - evidenceId
+        - jobId
+        - workspaceId
+        - eventType
+        - source
+        - observedAt
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        evidenceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        jobId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        workspaceId:
+          type: string
+          format: uuid
+        certificateId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        certificateInstanceId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        targetId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        eventType:
+          type: string
+          enum:
+            - certificate.observed
+            - deployment.checked
+            - deployment.updated
+            - validation.passed
+            - validation.failed
+            - policy.checked
+        source:
+          type: string
+          enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]
+        status:
+          type: string
+          enum: [accepted, redacted, rejected, failed]
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+        fingerprintSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          nullable: true
+        summary:
+          type: string
+          maxLength: 1024
+          nullable: true
+        metadata:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/CertOpsMetadataEntry"
+        artifactRefs:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, reference]
+            properties:
+              type:
+                type: string
+                enum: [log, report, certificate, deployment, external]
+              reference:
+                type: string
+                minLength: 1
+                maxLength: 512
+              sha256:
+                type: string
+                pattern: "^[a-f0-9]{64}$"
+                nullable: true
+        redactionApplied:
+          type: boolean
+          nullable: true
+    CertOpsExecutorEventRequest:
+      type: object
+      additionalProperties: false
+      description: External executor event envelope. Full auth, rate limiting, persistence, and redaction enforcement land in later M2 runtime PRs.
+      required:
+        - schemaVersion
+        - eventId
+        - jobId
+        - workspaceId
+        - status
+        - eventType
+        - occurredAt
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        jobId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        workspaceId:
+          type: string
+          format: uuid
+        certificateId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        executorId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        attemptId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        status:
+          type: string
+          enum: [accepted, running, succeeded, failed, rejected, canceled]
+        eventType:
+          type: string
+          enum:
+            - job.accepted
+            - job.started
+            - job.progress
+            - job.completed
+            - job.failed
+            - job.rejected
+            - evidence.attached
+        occurredAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+          maxLength: 1024
+          nullable: true
+        evidence:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/CertOpsEvidenceMetadata"
+        metadata:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/CertOpsMetadataEntry"
+    CertOpsExecutorEventAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required: [accepted, code]
+      properties:
+        accepted:
+          type: boolean
+        code:
+          type: string
+          enum: [CERTOPS_EXECUTOR_EVENT_ACCEPTED]
     SessionUser:
       type: object
       required: [id, email]
