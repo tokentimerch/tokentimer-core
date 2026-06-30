@@ -447,6 +447,8 @@ async function upsertCertificateInstance(
 }
 
 async function bridgeEndpointCertificateObservation(options = {}) {
+  rejectPrivateMaterial(options);
+
   if (!options.workspaceId || !options.domainMonitorId) {
     throw new Error("workspaceId and domainMonitorId are required");
   }
@@ -508,5 +510,6 @@ async function bridgeEndpointCertificateObservation(options = {}) {
 module.exports = {
   CERTOPS_MONITOR_BRIDGE_SKIPPED,
   bridgeEndpointCertificateObservation,
+  certificateFromObservation,
   normalizeFingerprintSha256,
 };

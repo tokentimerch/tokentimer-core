@@ -33,6 +33,11 @@ const SECRET_ASSIGNMENT_PATTERN =
   /\b(?:password|secret|token|credential|private_key|privatekey|key_material)\s*=/i;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const RETIRE_STATUSES = new Set(["revoked", "decommissioned"]);
+const RETIRE_STATUS_SQL_LIST = "'revoked', 'decommissioned'";
+
+function isRetiredCertificateStatus(status) {
+  return RETIRE_STATUSES.has(String(status || "").trim().toLowerCase());
+}
 
 function dateToIso(value) {
   if (!value) return null;
@@ -87,6 +92,72 @@ function certificateDomainsFor(certificate) {
 
 function fingerprintSha256For(certificate) {
   return certificate.fingerprintSha256 || certificate.fingerprint256 || null;
+}
+
+function normalizeImportFingerprint(value) {
+  if (!value) return null;
+  const normalized = String(value).replace(/:/g, "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
+function fingerprintsFromCertificates(certificates) {
+  if (!Array.isArray(certificates)) return [];
+  return [
+    ...new Set(
+      certificates
+        .map((certificate) =>
+          normalizeImportFingerprint(fingerprintSha256For(certificate)),
+        )
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function acquireManagedCertificateImportLock(client, workspaceId) {
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext('certops_managed_cert_quota_' || $1::text))`,
+    [workspaceId],
+  );
+}
+
+async function countActiveManagedCertificatesWithClient(client, workspaceId) {
+  const result = await client.query(
+    `SELECT COUNT(*)::int AS c
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND status NOT IN ('revoked', 'decommissioned')`,
+    [workspaceId],
+  );
+  return Number(result.rows[0]?.c || 0);
+}
+
+async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerprints) {
+  const unique = [...new Set(fingerprints.filter(Boolean))];
+  if (unique.length === 0) return 0;
+
+  const result = await client.query(
+    `SELECT fingerprint_sha256, status
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND fingerprint_sha256 = ANY($2::text[])`,
+    [workspaceId, unique],
+  );
+  const byFingerprint = new Map(
+    result.rows.map((row) => [row.fingerprint_sha256, row.status]),
+  );
+
+  let consuming = 0;
+  for (const fingerprint of unique) {
+    const status = byFingerprint.get(fingerprint);
+    if (!status) {
+      consuming += 1;
+      continue;
+    }
+    if (isRetiredCertificateStatus(status)) {
+      consuming += 1;
+    }
+  }
+  return consuming;
 }
 
 function certOpsTokenNotes(certificate, domains) {
@@ -437,7 +508,11 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
        WHERE fingerprint_sha256 IS NOT NULL
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
-       status = EXCLUDED.status,
+       status = CASE
+         WHEN managed_certificates.status IN (${RETIRE_STATUS_SQL_LIST})
+         THEN managed_certificates.status
+         ELSE EXCLUDED.status
+       END,
        source = EXCLUDED.source,
        source_ref = EXCLUDED.source_ref,
        name = COALESCE(EXCLUDED.name, managed_certificates.name),
@@ -471,10 +546,14 @@ async function importPublicCertificates(options) {
     ...options,
     keyMode: normalizeKeyMode(options.keyMode),
   };
-  const client = await pool.connect();
+  const ownsClient = !options.client;
+  const client = options.client || (await pool.connect());
 
   try {
-    await client.query("BEGIN");
+    if (ownsClient) await client.query("BEGIN");
+    if (typeof normalizedOptions.validateImport === "function") {
+      await normalizedOptions.validateImport(client, certificates, normalizedOptions);
+    }
     const items = [];
     for (let index = 0; index < certificates.length; index += 1) {
       const certificate = certificates[index];
@@ -498,14 +577,32 @@ async function importPublicCertificates(options) {
         ),
       );
     }
-    await client.query("COMMIT");
+    if (ownsClient) await client.query("COMMIT");
     return items;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsClient) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        /* Preserve the original error. */
+      }
+    }
     throw err;
   } finally {
-    client.release();
+    if (ownsClient) client.release();
   }
+}
+
+async function countActiveManagedCertificates({ workspaceId }) {
+  const result = await pool.query(
+    `SELECT COUNT(*)::int AS count
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND status NOT IN (${RETIRE_STATUS_SQL_LIST})`,
+    [workspaceId],
+  );
+
+  return result.rows[0].count;
 }
 
 async function listManagedCertificates({ workspaceId, limit, offset }) {
@@ -696,8 +793,15 @@ module.exports = {
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
+  RETIRE_STATUSES,
+  acquireManagedCertificateImportLock,
+  countActiveManagedCertificates,
+  countActiveManagedCertificatesWithClient,
+  countQuotaConsumingNewFingerprints,
+  fingerprintsFromCertificates,
   getManagedCertificate,
   importPublicCertificates,
+  isRetiredCertificateStatus,
   listCertificateInstances,
   listManagedCertificates,
   normalizeKeyMode,
