@@ -96,10 +96,34 @@ continue to fall back safely when that column is absent.
 
 ## M1 monitor bridge and instance history
 
-- Existing endpoint/domain monitors populate CertOps inventory on their next
-  public certificate observation/check cycle. M1 does not add a historical
-  backfill job or admin UI; existing monitor recheck flows, where present, use
-  the same bridge path.
+Endpoint and domain monitors are **observers**, not certificate deployment targets.
+They watch a URL or hostname and record what public certificate is currently served.
+TokenTimer does not push or patch certificates to those endpoints; rotation is
+detected when the next observation shows different public material at the same
+monitor.
+
+Bridge rules (worker rechecks and admin create paths share `monitorBridge.js`):
+
+- **Token first**: bridge runs only when a linked `token_id` exists (including
+  auto-created ssl_cert tokens). No orphan `managed_certificate` rows.
+- **Monitor-stable identity**: observations upsert by `source` + `source_ref`
+  (the monitor id), not fingerprint alone, so each monitor keeps exactly one
+  `managed_certificate` row. A rotation at the same URL updates that one row in
+  place (new fingerprint, serial, expiry). The linked token row is updated in the
+  same worker pass for alerts.
+- **Instance history by fingerprint**: `certificate_instances` are uniquely keyed
+  by `(workspace_id, target_id, managed_certificate_id,
+  observed_fingerprint_sha256)` (index
+  `uq_certificate_instances_target_cert_fingerprint`). Re-observing the same
+  fingerprint refreshes the existing instance row (last-seen); a new fingerprint
+  at the same monitor appends a new instance row, so rotations accumulate as
+  history under the one managed certificate.
+- **PEM import** remains the path for certificates without an endpoint monitor
+  (no URL to observe).
+
+Recurring endpoint SSL checks call the bridge after updating the linked token.
+M1 does not add a historical backfill job or admin UI; existing monitor recheck
+flows use this path when `certops.enabled` is on.
 - Certificate instance history is available at
   `GET /api/v1/workspaces/:id/certops/certificates/:certId/instances`. It is
   workspace-scoped, gated by `certops.enabled`, and returns public observation

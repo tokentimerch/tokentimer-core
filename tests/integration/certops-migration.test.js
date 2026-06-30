@@ -1,4 +1,3 @@
-const path = require("path");
 const crypto = require("crypto");
 
 const { loadRootEnv } = require("../../scripts/load-root-env");
@@ -6,9 +5,8 @@ const { loadRootEnv } = require("../../scripts/load-root-env");
 loadRootEnv();
 
 const { expect, TestUtils } = require("./setup");
-const { runMigrations, migrations } = require(
-  path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
-);
+const { requireMigrateModule } = require("./variant-paths");
+const { runMigrations, migrations } = requireMigrateModule();
 
 const CERTOPS_TABLES = [
   "managed_certificates",

@@ -424,33 +424,35 @@ async function runEndpointChecks() {
                 }
               }
 
-              try {
-                await bridgeEndpointCertificateObservation({
-                  client,
-                  workspaceId: workspace_id,
-                  domainMonitorId: id,
-                  tokenId: currentTokenId,
-                  url,
-                  hostname: parsedUrl.hostname,
-                  source: "endpoint_monitor",
-                  sourceRef: id,
-                  certificate: {
-                    issuer: sslData.ssl_issuer,
-                    subject: sslData.ssl_subject,
-                    serialNumber: sslData.ssl_serial,
-                    fingerprintSha256: sslData.ssl_fingerprint,
-                    notBefore: sslData.ssl_valid_from,
-                    notAfter: sslData.ssl_valid_to,
-                    certificatePem: sslData.public_certificate_pem,
-                  },
-                });
-              } catch (bridgeErr) {
-                logger.warn("CertOps monitor bridge failed", {
-                  workspaceId: workspace_id,
-                  domainMonitorId: id,
-                  code: bridgeErr.code || null,
-                  error: bridgeErr.message,
-                });
+              if (currentTokenId) {
+                try {
+                  await bridgeEndpointCertificateObservation({
+                    client,
+                    workspaceId: workspace_id,
+                    domainMonitorId: id,
+                    tokenId: currentTokenId,
+                    url,
+                    hostname: parsedUrl.hostname,
+                    source: "endpoint_monitor",
+                    sourceRef: id,
+                    certificate: {
+                      issuer: sslData.ssl_issuer,
+                      subject: sslData.ssl_subject,
+                      serialNumber: sslData.ssl_serial,
+                      fingerprintSha256: sslData.ssl_fingerprint,
+                      notBefore: sslData.ssl_valid_from,
+                      notAfter: sslData.ssl_valid_to,
+                      certificatePem: sslData.public_certificate_pem,
+                    },
+                  });
+                } catch (bridgeErr) {
+                  logger.warn("CertOps monitor bridge failed", {
+                    workspaceId: workspace_id,
+                    domainMonitorId: id,
+                    code: bridgeErr.code || null,
+                    error: bridgeErr.message,
+                  });
+                }
               }
             }
           } catch (sslErr) {

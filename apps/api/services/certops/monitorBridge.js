@@ -203,9 +203,11 @@ async function updateManagedCertificateFromObservation(
             subject = COALESCE($8, subject),
             serial_number = COALESCE($9, serial_number),
             certificate_pem = COALESCE($10, certificate_pem),
-            not_before = COALESCE($11, not_before),
-            not_after = COALESCE($12, not_after),
-            public_metadata = public_metadata || $13::jsonb,
+            fingerprint_sha256 = COALESCE($11, fingerprint_sha256),
+            spki_fingerprint_sha256 = COALESCE($12, spki_fingerprint_sha256),
+            not_before = COALESCE($13, not_before),
+            not_after = COALESCE($14, not_after),
+            public_metadata = public_metadata || $15::jsonb,
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
@@ -221,6 +223,8 @@ async function updateManagedCertificateFromObservation(
       certificate.subject,
       certificate.serialNumber,
       certificate.certificatePem,
+      certificate.fingerprintSha256 || null,
+      certificate.spkiFingerprintSha256 || null,
       certificate.notBefore,
       certificate.notAfter,
       JSON.stringify(metadata),
@@ -230,21 +234,20 @@ async function updateManagedCertificateFromObservation(
 }
 
 async function upsertObservedManagedCertificate(client, certificate, options) {
-  let managedCertificate = null;
-
-  if (!certificate.fingerprintSha256) {
-    managedCertificate = await existingManagedCertificate(client, options);
-    if (managedCertificate) {
-      return updateManagedCertificateFromObservation(
-        client,
-        managedCertificate,
-        certificate,
-        options,
-      );
-    }
+  // Monitor observations are keyed by source + source_ref (the monitor id), not
+  // fingerprint alone. That keeps one managed_certificate row per endpoint/domain
+  // monitor when the served certificate rotates (new fingerprint, same URL).
+  const managedByMonitor = await existingManagedCertificate(client, options);
+  if (managedByMonitor) {
+    return updateManagedCertificateFromObservation(
+      client,
+      managedByMonitor,
+      certificate,
+      options,
+    );
   }
 
-  managedCertificate = await upsertManagedCertificate(
+  const managedCertificate = await upsertManagedCertificate(
     client,
     certificate,
     {
@@ -401,14 +404,13 @@ async function upsertCertificateInstance(
        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
        $11, $12, $13, $14, $15, $16, $17::jsonb, $18
      )
-     ON CONFLICT (workspace_id, target_id, managed_certificate_id)
+     ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
      DO UPDATE SET
        domain_monitor_id = EXCLUDED.domain_monitor_id,
        token_id = COALESCE(EXCLUDED.token_id, certificate_instances.token_id),
        status = EXCLUDED.status,
        source = EXCLUDED.source,
        source_ref = COALESCE(EXCLUDED.source_ref, certificate_instances.source_ref),
-       observed_fingerprint_sha256 = EXCLUDED.observed_fingerprint_sha256,
        observed_serial_number = EXCLUDED.observed_serial_number,
        observed_subject = EXCLUDED.observed_subject,
        observed_issuer = EXCLUDED.observed_issuer,
@@ -468,6 +470,14 @@ async function bridgeEndpointCertificateObservation(options = {}) {
       skipped: true,
       code: CERTOPS_MONITOR_BRIDGE_SKIPPED,
       reason: "no_public_certificate_observation",
+    };
+  }
+
+  if (!options.tokenId) {
+    return {
+      skipped: true,
+      code: CERTOPS_MONITOR_BRIDGE_SKIPPED,
+      reason: "no_linked_token",
     };
   }
 

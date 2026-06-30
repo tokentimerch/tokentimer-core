@@ -1,13 +1,10 @@
-const path = require("path");
-
 const { loadRootEnv } = require("../../scripts/load-root-env");
 
 loadRootEnv();
 
 const { expect, request, TestUtils } = require("./setup");
-const { runMigrations } = require(
-  path.resolve(__dirname, "../../apps/api/migrations/migrate.js"),
-);
+const { requireMigrateModule } = require("./variant-paths");
+const { runMigrations } = requireMigrateModule();
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 

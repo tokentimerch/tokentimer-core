@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Modal,
   ModalOverlay,
@@ -30,6 +31,7 @@ import {
   Tooltip,
   IconButton,
   useColorMode,
+  Link,
   Link as ChakraLink,
   Code,
   InputGroup,
@@ -2154,10 +2156,13 @@ export default function ImportTokensModal({
                     const hasQuotaRemaining =
                       integrationQuota.remaining === null ||
                       integrationQuota.remaining > 0;
+                    const isCertPemDisabled =
+                      isCertPemCard && certOpsReady && certOpsEnabled === false;
                     const isLocked = isCertPemCard
                       ? isViewer ||
                         !certOpsReady ||
-                        certOpsEnabled !== true
+                        isCertPemDisabled ||
+                        certOpsAvailabilityError
                       : isIntegration && (isViewer || !hasQuotaRemaining);
                     const lockReason = isCertPemCard
                       ? isViewer
@@ -2241,11 +2246,13 @@ export default function ImportTokensModal({
                           >
                             {card.label}
                           </Text>
-                          {isLocked && (
-                            <Badge colorScheme='orange' fontSize='2xs'>
-                              {isViewer ? 'ADMIN' : 'LIMIT'}
-                            </Badge>
-                          )}
+                          {isLocked ? (
+                            <Tooltip label={lockReason} fontSize='xs'>
+                              <Badge colorScheme='orange' fontSize='2xs'>
+                                {isViewer ? 'ADMIN' : 'LIMIT'}
+                              </Badge>
+                            </Tooltip>
+                          ) : null}
                         </HStack>
                         {card.type === 'icon' ? (
                           <Box p={2}>
