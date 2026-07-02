@@ -27,6 +27,7 @@ function createRequest({
   tokenPrefix = "ttx_abc123",
   agentId,
   executorId,
+  params = {},
   user,
   authorization = `Bearer ${RAW_TOKEN}`,
 } = {}) {
@@ -37,7 +38,7 @@ function createRequest({
     method: "POST",
     path: "/v1/certops/executor/events",
     baseUrl: "/api",
-    params: {},
+    params,
     headers,
     user,
     apiToken:
@@ -46,7 +47,7 @@ function createRequest({
             id: "token-1",
             workspaceId,
             tokenPrefix,
-            scopes: ["certops:executor:events"],
+            scopes: ["certops:events:write"],
             name: "Executor",
             createdBy: 42,
             lastUsedAt: null,
@@ -131,12 +132,46 @@ describe("CertOps machine-token rate limiter", () => {
       `certops-machine:${WORKSPACE_A}:ttx_abc123:agent:one`,
     );
     assert.equal(
+      machineTokenRateLimitKey(
+        createRequest({ executorId: "executor:one" }),
+      ),
+      `certops-machine:${WORKSPACE_A}:ttx_abc123:executor:one`,
+    );
+    assert.equal(
       machineTokenRateLimitKey(createRequest({ workspaceId: null })),
       null,
     );
     assert.equal(
       machineTokenRateLimitKey(createRequest({ tokenPrefix: null })),
       null,
+    );
+  });
+
+  it("ignores route-param machine IDs by default", () => {
+    assert.equal(
+      machineTokenRateLimitKey(
+        createRequest({
+          params: {
+            agentId: "attacker-agent",
+            executorId: "attacker-executor",
+          },
+        }),
+      ),
+      `certops-machine:${WORKSPACE_A}:ttx_abc123`,
+    );
+  });
+
+  it("allows explicit opt-in route-param machine IDs through a custom resolver", () => {
+    assert.equal(
+      machineTokenRateLimitKey(
+        createRequest({
+          params: { agentId: "agent-from-route" },
+        }),
+        {
+          machineIdResolver: (req) => req.params.agentId,
+        },
+      ),
+      `certops-machine:${WORKSPACE_A}:ttx_abc123:agent-from-route`,
     );
   });
 
@@ -199,7 +234,7 @@ describe("CertOps machine-token rate limiter", () => {
     assert.equal(blocked.res.statusCode, 429);
   });
 
-  it("includes optional agent or executor ID in the key when available", async () => {
+  it("uses authenticated apiToken agent IDs for separate buckets", async () => {
     const middleware = createCertOpsMachineTokenRateLimit({
       windowMs: 60_000,
       max: 1,
@@ -220,6 +255,42 @@ describe("CertOps machine-token rate limiter", () => {
       createRequest({ agentId: "agent-a" }),
     );
     assert.equal(blocked.res.statusCode, 429);
+  });
+
+  it("ignores varying route params for bucket identity unless explicitly configured", async () => {
+    const middleware = createCertOpsMachineTokenRateLimit({
+      windowMs: 60_000,
+      max: 1,
+    });
+
+    const first = await runMiddleware(
+      middleware,
+      createRequest({ params: { agentId: "agent-a" } }),
+    );
+    const second = await runMiddleware(
+      middleware,
+      createRequest({ params: { agentId: "agent-b" } }),
+    );
+
+    assert.equal(first.nextCalled, true);
+    assert.equal(second.res.statusCode, 429);
+
+    const optInMiddleware = createCertOpsMachineTokenRateLimit({
+      windowMs: 60_000,
+      max: 1,
+      machineIdResolver: (req) => req.params.agentId,
+    });
+    const optInFirst = await runMiddleware(
+      optInMiddleware,
+      createRequest({ params: { agentId: "agent-a" } }),
+    );
+    const optInSecond = await runMiddleware(
+      optInMiddleware,
+      createRequest({ params: { agentId: "agent-b" } }),
+    );
+
+    assert.equal(optInFirst.nextCalled, true);
+    assert.equal(optInSecond.nextCalled, true);
   });
 
   it("fails closed when req.apiToken is missing", async () => {

@@ -33,8 +33,6 @@ function defaultMachineIdResolver(req) {
   return (
     req.apiToken?.agentId ||
     req.apiToken?.executorId ||
-    req.params?.agentId ||
-    req.params?.executorId ||
     null
   );
 }
@@ -83,6 +81,7 @@ function createCertOpsMachineTokenRateLimit(options = {}) {
     legacyHeaders: options.legacyHeaders ?? false,
     skipSuccessfulRequests: options.skipSuccessfulRequests ?? false,
     skipFailedRequests: options.skipFailedRequests ?? false,
+    ...(options.store ? { store: options.store } : {}),
     keyGenerator: (req) => keyResolver(req, options),
     handler: (req, res) => {
       const retryAfter = retryAfterSeconds(req, windowMs);
