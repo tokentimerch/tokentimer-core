@@ -386,6 +386,30 @@ function prChangedFiles() {
   );
 }
 
+function changedAppFiles() {
+  const diffFiles = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  })
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
+
+  const statusFiles = execFileSync(
+    "git",
+    ["status", "--short", "--untracked-files=all", "--", "apps"],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  )
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => line.slice(3).trim());
+
+  return [...new Set([...diffFiles, ...statusFiles])].sort();
+}
+
 describe("CertOps M2 contract skeletons", () => {
   it("includes the M2 job, executor event, and evidence schemas in the manifest", () => {
     const paths = manifestPaths();
@@ -712,20 +736,30 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("does not change apps runtime files or wire executor job/evidence behavior", () => {
+  it("keeps the committed M2-A1/M2-A2 diff within the stacked contract and token-service scope", () => {
     const { ref, files } = prChangedFiles();
-    const allowed = files.filter(
+    const allowedM2A2Files = new Set([
+      "apps/api/migrations/migrate.js",
+      "apps/api/services/certops/apiTokens.js",
+      "tests/integration/certops-api-tokens.test.js",
+      "tests/integration/suites/core-compatible.txt",
+      "tests/integration/suites/core.txt",
+      "tests/unit/certops-api-tokens.test.js",
+      "tests/unit/certops-migration.test.js",
+    ]);
+    const unexpectedFiles = files.filter(
       (file) =>
         file === "contracts.manifest.json" ||
         file.startsWith("packages/contracts/") ||
         file === "tests/unit/certops-m2-contracts.test.js" ||
-        file === "tests/unit/certops-routes-hardening.test.js",
+        file === "tests/unit/certops-routes-hardening.test.js" ||
+        allowedM2A2Files.has(file),
     );
 
     assert.deepEqual(
-      files.filter((file) => !allowed.includes(file)),
+      files.filter((file) => !unexpectedFiles.includes(file)),
       [],
-      `M2-A1 diff against ${ref} must stay contract/test-only`,
+      `stacked M2-A1/M2-A2 diff against ${ref} must stay within the allowed scope`,
     );
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
@@ -734,5 +768,17 @@ describe("CertOps M2 contract skeletons", () => {
     assert.equal(certOpsRoutesSource.includes("certificate_jobs"), false);
     assert.equal(certOpsRoutesSource.includes("certificate_evidence"), false);
     assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
+  });
+
+  it("keeps local app changes within the M2-A2 token-service scope", () => {
+    const allowedStackedM2A2Files = new Set([
+      "apps/api/migrations/migrate.js",
+      "apps/api/services/certops/apiTokens.js",
+    ]);
+    const unexpectedAppFiles = changedAppFiles().filter(
+      (file) => !allowedStackedM2A2Files.has(file),
+    );
+
+    assert.deepEqual(unexpectedAppFiles, []);
   });
 });
