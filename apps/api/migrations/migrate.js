@@ -823,6 +823,94 @@ const migrations = [
         WHERE cert_lifecycle_status IS NOT NULL;
     `,
   },
+  {
+    version: 12,
+    name: "certops_api_tokens_schema",
+    sql: `
+      -- CertOps API tokens store lookup metadata only. The raw plaintext token
+      -- is returned once by the service and is never persisted.
+      CREATE TABLE IF NOT EXISTS api_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 128),
+        token_prefix TEXT NOT NULL,
+        token_hash TEXT NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+        scopes TEXT[] NOT NULL DEFAULT '{}'
+          CHECK (
+            COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+            scopes <@ ARRAY[
+              'certops:executor:events',
+              'certops:jobs:read',
+              'certops:jobs:write',
+              'certops:evidence:write'
+            ]::text[]
+          ),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'revoked')),
+        expires_at TIMESTAMPTZ NULL,
+        last_used_at TIMESTAMPTZ NULL,
+        revoked_at TIMESTAMPTZ NULL,
+        revoked_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_api_tokens_workspace_id UNIQUE (workspace_id, id)
+      );
+
+      DO $$
+      DECLARE
+        old_constraint_name TEXT;
+      BEGIN
+        FOR old_constraint_name IN
+          SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.contype = 'c'
+             AND t.relname = 'api_tokens'
+             AND n.nspname = current_schema()
+             AND (
+               pg_get_constraintdef(c.oid) LIKE '%left(token_prefix, 5)%' OR
+               pg_get_constraintdef(c.oid) LIKE '%"left"(token_prefix, 5)%'
+             )
+        LOOP
+          EXECUTE format('ALTER TABLE api_tokens DROP CONSTRAINT %I', old_constraint_name);
+        END LOOP;
+
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.conname = 'api_tokens_token_prefix_check'
+             AND t.relname = 'api_tokens'
+             AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE api_tokens
+            ADD CONSTRAINT api_tokens_token_prefix_check
+            CHECK (
+              token_prefix ~ '^ttx_[A-Za-z0-9]+$' AND
+              token_prefix <> 'ttx__'
+            ) NOT VALID;
+        END IF;
+      END $$;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_api_tokens_token_prefix
+        ON api_tokens(token_prefix);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_api_tokens_token_hash
+        ON api_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_workspace
+        ON api_tokens(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_workspace_status
+        ON api_tokens(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_status_expires
+        ON api_tokens(status, expires_at)
+        WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_created_by
+        ON api_tokens(workspace_id, created_by)
+        WHERE created_by IS NOT NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

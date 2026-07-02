@@ -73,6 +73,7 @@ tests/integration/domain-checker.integration.test.js
 tests/integration/certops-migration.test.js
 tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
+tests/integration/certops-api-tokens.test.js
 
 # Integrations
 tests/integration/github.integration.test.js

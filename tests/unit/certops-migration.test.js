@@ -124,6 +124,9 @@ const certOpsMigration = migrations.find(
 const certOpsTokenLifecycleMigration = migrations.find(
   (migration) => migration.name === "certops_token_lifecycle_status",
 );
+const certOpsApiTokensMigration = migrations.find(
+  (migration) => migration.name === "certops_api_tokens_schema",
+);
 
 function getTableBlock(tableName) {
   const marker = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
@@ -179,7 +182,7 @@ describe("CertOps inventory migration", () => {
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
       migrations.slice(-3).map((migration) => migration.version),
-      [9, 10, 11],
+      [10, 11, 12],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -200,6 +203,40 @@ describe("CertOps inventory migration", () => {
     assert.match(
       certOpsTokenLifecycleMigration.sql,
       /CREATE INDEX IF NOT EXISTS idx_tokens_workspace_cert_lifecycle_status/,
+    );
+  });
+
+  it("defines the CertOps API token migration after M1 schema migrations", () => {
+    assert.ok(
+      certOpsApiTokensMigration,
+      "expected certops_api_tokens_schema migration",
+    );
+    assert.equal(certOpsApiTokensMigration.version, 12);
+    assert.match(
+      certOpsApiTokensMigration.sql,
+      /CREATE TABLE IF NOT EXISTS api_tokens \(/,
+    );
+    assert.match(certOpsApiTokensMigration.sql, /workspace_id UUID NOT NULL/);
+    assert.match(certOpsApiTokensMigration.sql, /token_prefix TEXT NOT NULL/);
+    assert.match(certOpsApiTokensMigration.sql, /token_hash TEXT NOT NULL/);
+    assert.match(certOpsApiTokensMigration.sql, /scopes TEXT\[\] NOT NULL/);
+    assert.match(
+      certOpsApiTokensMigration.sql,
+      /api_tokens_token_prefix_check/,
+    );
+    assert.match(
+      certOpsApiTokensMigration.sql,
+      /token_prefix ~ '\^ttx_\[A-Za-z0-9\]\+\$'/,
+    );
+    assert.doesNotMatch(
+      certOpsApiTokensMigration.sql,
+      /left\(token_prefix,\s*5\)\s*=\s*'ttx__'/,
+    );
+    assert.match(certOpsApiTokensMigration.sql, /uq_api_tokens_token_prefix/);
+    assert.match(certOpsApiTokensMigration.sql, /uq_api_tokens_token_hash/);
+    assert.doesNotMatch(
+      certOpsApiTokensMigration.sql,
+      /private_key|privateKey|key_material|pfx|jks|password|credential|secret/i,
     );
   });
 
