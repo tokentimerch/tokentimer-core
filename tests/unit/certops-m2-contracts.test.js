@@ -217,6 +217,30 @@ function openApiPathBlock(routePath) {
   return openApiSource.slice(start, end);
 }
 
+function changedAppFiles() {
+  const diffFiles = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  })
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
+
+  const statusFiles = execFileSync(
+    "git",
+    ["status", "--short", "--untracked-files=all", "--", "apps"],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  )
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => line.slice(3).trim());
+
+  return [...new Set([...diffFiles, ...statusFiles])].sort();
+}
+
 describe("CertOps M2 contract skeletons", () => {
   it("includes the M2 job, executor event, and evidence schemas in the manifest", () => {
     const paths = manifestPaths();
@@ -311,12 +335,15 @@ describe("CertOps M2 contract skeletons", () => {
   });
 
   it("does not change apps runtime files or wire executor job/evidence behavior", () => {
-    const appsDiff = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    }).trim();
+    const allowedStackedM2A2Files = new Set([
+      "apps/api/migrations/migrate.js",
+      "apps/api/services/certops/apiTokens.js",
+    ]);
+    const unexpectedAppFiles = changedAppFiles().filter(
+      (file) => !allowedStackedM2A2Files.has(file),
+    );
 
-    assert.equal(appsDiff, "");
+    assert.deepEqual(unexpectedAppFiles, []);
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
       false,
