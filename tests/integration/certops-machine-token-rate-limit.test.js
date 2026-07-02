@@ -71,7 +71,10 @@ function buildRateLimitHarness({ max = 2, windowMs = 60_000 } = {}) {
 
   app.post(
     "/api/v1/workspaces/:id/certops/machine-rate-limit-test",
-    createCertOpsApiTokenAuth({ scopes: ["certops:executor:events"] }),
+    createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      workspaceIdParam: "id",
+    }),
     createCertOpsMachineTokenRateLimit({ max, windowMs }),
     (req, res) =>
       res.status(200).json({
@@ -116,7 +119,7 @@ describe("CertOps machine-token rate limiter", function () {
       const created = await createApiToken({
         workspaceId: workspaceA,
         name: "Executor",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
@@ -159,21 +162,21 @@ describe("CertOps machine-token rate limiter", function () {
       const tokenA1 = await createApiToken({
         workspaceId: workspaceA,
         name: "Executor A1",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
       const tokenA2 = await createApiToken({
         workspaceId: workspaceA,
         name: "Executor A2",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
       const tokenB = await createApiToken({
         workspaceId: workspaceB,
         name: "Executor B",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
