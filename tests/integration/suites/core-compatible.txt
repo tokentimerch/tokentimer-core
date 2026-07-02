@@ -75,6 +75,7 @@ tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
 tests/integration/certops-api-tokens.test.js
 tests/integration/certops-api-token-auth.test.js
+tests/integration/certops-machine-token-rate-limit.test.js
 
 # Integrations
 tests/integration/github.integration.test.js
