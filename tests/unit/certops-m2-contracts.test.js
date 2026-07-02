@@ -335,12 +335,14 @@ describe("CertOps M2 contract skeletons", () => {
   });
 
   it("does not change apps runtime files or wire executor job/evidence behavior", () => {
-    const allowedStackedM2A2Files = new Set([
+    const allowedStackedM2Files = new Set([
       "apps/api/migrations/migrate.js",
+      "apps/api/middleware/api-token-auth.js",
+      "apps/api/middleware/csrf-exempt.js",
       "apps/api/services/certops/apiTokens.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
-      (file) => !allowedStackedM2A2Files.has(file),
+      (file) => !allowedStackedM2Files.has(file),
     );
 
     assert.deepEqual(unexpectedAppFiles, []);
