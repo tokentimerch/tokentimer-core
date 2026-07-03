@@ -911,6 +911,125 @@ const migrations = [
         WHERE created_by IS NOT NULL;
     `,
   },
+  {
+    version: 13,
+    name: "certops_jobs_evidence_schema",
+    sql: `
+      -- CertOps jobs persist public lifecycle intent and status only. Payloads
+      -- and metadata are sanitized by services before persistence; no private
+      -- key material, credentials, PEM blobs, PFX/JKS bundles, or passwords are
+      -- accepted into these tables.
+      CREATE TABLE IF NOT EXISTS certificate_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        operation TEXT NOT NULL
+          CHECK (operation IN ('renew', 'deploy', 'reload', 'revoke', 'noop')),
+        status TEXT NOT NULL DEFAULT 'queued'
+          CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'canceled')),
+        source TEXT NOT NULL DEFAULT 'api'
+          CHECK (source IN ('api', 'executor', 'system', 'automation', 'domain-monitor', 'endpoint-monitor', 'control-plane', 'external')),
+        requested_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        requested_by_api_token_id UUID NULL,
+        idempotency_key TEXT NULL
+          CHECK (idempotency_key IS NULL OR char_length(btrim(idempotency_key)) BETWEEN 1 AND 128),
+        subject_type TEXT NULL
+          CHECK (subject_type IS NULL OR subject_type IN ('managed_certificate', 'certificate_instance', 'certificate_target', 'token', 'domain', 'endpoint', 'external')),
+        subject_id TEXT NULL
+          CHECK (subject_id IS NULL OR char_length(btrim(subject_id)) BETWEEN 1 AND 128),
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        result_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        error_code TEXT NULL
+          CHECK (error_code IS NULL OR char_length(btrim(error_code)) BETWEEN 1 AND 128),
+        error_message TEXT NULL
+          CHECK (error_message IS NULL OR char_length(error_message) <= 1024),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        queued_at TIMESTAMPTZ NULL,
+        started_at TIMESTAMPTZ NULL,
+        completed_at TIMESTAMPTZ NULL,
+        canceled_at TIMESTAMPTZ NULL,
+        CONSTRAINT uq_certificate_jobs_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT fk_certificate_jobs_api_token
+          FOREIGN KEY (workspace_id, requested_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (requested_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_created
+        ON certificate_jobs(workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_status_created
+        ON certificate_jobs(workspace_id, status, created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_jobs_workspace_idempotency_key
+        ON certificate_jobs(workspace_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_subject
+        ON certificate_jobs(workspace_id, subject_type, subject_id, created_at DESC)
+        WHERE subject_type IS NOT NULL AND subject_id IS NOT NULL;
+
+      -- CertOps job log stores bounded lifecycle events and sanitized metadata.
+      CREATE TABLE IF NOT EXISTS certificate_job_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NOT NULL,
+        event_type TEXT NOT NULL
+          CHECK (event_type IN ('job.created', 'job.accepted', 'job.started', 'job.progress', 'job.completed', 'job.failed', 'job.rejected', 'job.canceled', 'job.status_updated', 'evidence.attached')),
+        status TEXT NULL
+          CHECK (status IS NULL OR status IN ('queued', 'accepted', 'running', 'succeeded', 'failed', 'rejected', 'canceled')),
+        message TEXT NULL
+          CHECK (message IS NULL OR char_length(message) <= 1024),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certificate_job_log_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_certificate_job_log_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_job_log_workspace_job_created
+        ON certificate_job_log(workspace_id, job_id, created_at DESC);
+
+      -- CertOps evidence is public, sanitized lifecycle metadata only. Job
+      -- deletion detaches evidence from the job while preserving workspace
+      -- ownership for later audit/reporting until the workspace is removed.
+      CREATE TABLE IF NOT EXISTS certificate_evidence (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NULL,
+        evidence_type TEXT NOT NULL
+          CHECK (evidence_type IN ('certificate.observed', 'deployment.checked', 'deployment.updated', 'validation.passed', 'validation.failed', 'policy.checked')),
+        subject_type TEXT NULL
+          CHECK (subject_type IS NULL OR subject_type IN ('managed_certificate', 'certificate_instance', 'certificate_target', 'token', 'domain', 'endpoint', 'external')),
+        subject_id TEXT NULL
+          CHECK (subject_id IS NULL OR char_length(btrim(subject_id)) BETWEEN 1 AND 128),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        observed_at TIMESTAMPTZ NULL,
+        created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_evidence_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT fk_certificate_evidence_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE SET NULL (job_id),
+        CONSTRAINT fk_certificate_evidence_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_evidence_workspace_job_created
+        ON certificate_evidence(workspace_id, job_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_certificate_evidence_workspace_subject_created
+        ON certificate_evidence(workspace_id, subject_type, subject_id, created_at DESC)
+        WHERE subject_type IS NOT NULL AND subject_id IS NOT NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

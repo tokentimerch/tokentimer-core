@@ -341,6 +341,8 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
       "apps/api/services/certops/apiTokens.js",
+      "apps/api/services/certops/evidence.js",
+      "apps/api/services/certops/jobs.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),
