@@ -6,6 +6,7 @@ const {
   CERTOPS_JOB_NOT_FOUND,
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
+  assertSafePublicValue,
   dateToIso,
   getCertificateJobById,
   normalizeLimit,
@@ -83,6 +84,7 @@ function normalizeOptionalShortText(value, fieldName) {
   if (trimmed.length > 128) {
     throw serviceError(`${fieldName} is invalid`, CERTOPS_EVIDENCE_INVALID);
   }
+  assertSafePublicValue(trimmed);
   return trimmed;
 }
 
