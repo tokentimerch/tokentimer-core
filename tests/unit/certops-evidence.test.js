@@ -29,6 +29,7 @@ function json(value) {
 function createMemoryClient() {
   const jobs = [];
   const evidence = [];
+  const queryLog = [];
   let nextJob = 1;
   let nextEvidence = 1;
   let tick = 0;
@@ -37,8 +38,10 @@ function createMemoryClient() {
   return {
     jobs,
     evidence,
+    queryLog,
     async query(sql, params = []) {
       const normalizedSql = sql.replace(/\s+/g, " ");
+      queryLog.push({ sql: normalizedSql, params });
 
       if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
         const createdAt = now();
@@ -115,8 +118,17 @@ function createMemoryClient() {
         normalizedSql.includes("ORDER BY created_at DESC")
       ) {
         let rows = evidence.filter((row) => row.workspace_id === params[0]);
-        if (normalizedSql.includes("job_id = $2")) {
-          rows = rows.filter((row) => row.job_id === params[1]);
+        let paramIndex = 1;
+        if (normalizedSql.includes("job_id = $")) {
+          rows = rows.filter((row) => row.job_id === params[paramIndex]);
+          paramIndex += 1;
+        }
+        if (normalizedSql.includes("subject_type = $")) {
+          rows = rows.filter((row) => row.subject_type === params[paramIndex]);
+          paramIndex += 1;
+        }
+        if (normalizedSql.includes("subject_id = $")) {
+          rows = rows.filter((row) => row.subject_id === params[paramIndex]);
         }
         return { rows };
       }
@@ -206,6 +218,13 @@ describe("CertOps evidence service", () => {
     assert.equal(evidence.metadata.issuerCn, "TokenTimer Test CA");
     assert.match(evidence.observedAt, /^2026-06-30T01:00:00/);
     assertNoCustodyKeys(evidence);
+
+    const bySubjectId = await listCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      subjectId: "cert-1",
+    });
+    assert.deepEqual(bySubjectId.items.map((item) => item.id), [evidence.id]);
   });
 
   it("gets and lists evidence scoped by workspace and job", async () => {
@@ -304,6 +323,47 @@ describe("CertOps evidence service", () => {
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
     );
     assert.equal(client.evidence.length, 0);
+  });
+
+  it("rejects secret-looking subject IDs before persistence", async () => {
+    const client = createMemoryClient();
+    const job = await createJob(client);
+
+    for (const subjectId of ["password=swordfish", "credential=abc"]) {
+      await assert.rejects(
+        () =>
+          createCertificateEvidence({
+            client,
+            workspaceId: WORKSPACE_A,
+            jobId: job.id,
+            evidenceType: "certificate.observed",
+            subjectType: "managed_certificate",
+            subjectId,
+            metadata: { fingerprintSha256: "safe-public-fingerprint" },
+          }),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
+
+    assert.equal(client.evidence.length, 0);
+    assert.equal(JSON.stringify(client.evidence).includes("swordfish"), false);
+    assert.equal(JSON.stringify(client.evidence).includes("credential=abc"), false);
+  });
+
+  it("rejects secret-looking subject ID filters before querying", async () => {
+    const client = createMemoryClient();
+
+    await assert.rejects(
+      () =>
+        listCertificateEvidence({
+          client,
+          workspaceId: WORKSPACE_A,
+          subjectId: "password=swordfish",
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+
+    assert.equal(client.queryLog.length, 0);
   });
 
   it("does not return private-key-looking fields", async () => {
