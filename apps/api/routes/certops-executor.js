@@ -44,6 +44,14 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const METADATA_VALUE_TYPES = new Set(["string", "number", "boolean"]);
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const ARTIFACT_REF_TYPES = new Set([
+  "log",
+  "report",
+  "certificate",
+  "deployment",
+  "external",
+]);
 const EXECUTOR_EVENT_TYPES = new Set([
   "job.accepted",
   "job.started",
@@ -136,6 +144,24 @@ function optionalPublicText(value, fieldName, maxLength = 1024) {
   if (!trimmed) return null;
   if (trimmed.length > maxLength) {
     throw executorEventError(`${fieldName} is too long`, CERTOPS_EXECUTOR_EVENT_INVALID);
+  }
+  assertSafePublicValue(trimmed);
+  return trimmed;
+}
+
+function requiredPublicText(value, fieldName, maxLength = 512) {
+  if (typeof value !== "string") {
+    throw executorEventError(
+      `${fieldName} is invalid`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength) {
+    throw executorEventError(
+      `${fieldName} is invalid`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
   }
   assertSafePublicValue(trimmed);
   return trimmed;
@@ -319,6 +345,78 @@ function evidenceSubjectFromItem(item) {
   return { subjectType: null, subjectId: null };
 }
 
+function normalizeArtifactRefs(value) {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw executorEventError(
+      "artifactRefs must be an array",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  if (value.length > 16) {
+    throw executorEventError(
+      "artifactRefs contains too many items",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+
+  return value.map((item) => {
+    if (!isPlainObject(item)) {
+      throw executorEventError(
+        "artifactRefs item is invalid",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+
+    const keys = Object.keys(item);
+    const allowedKeys = new Set(["type", "reference", "sha256"]);
+    if (
+      !keys.includes("type") ||
+      !keys.includes("reference") ||
+      keys.some((key) => !allowedKeys.has(key))
+    ) {
+      throw executorEventError(
+        "artifactRefs item is invalid",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+
+    const type = requiredPublicText(item.type, "artifactRefs.type", 64);
+    if (!ARTIFACT_REF_TYPES.has(type)) {
+      throw executorEventError(
+        "artifactRefs.type is invalid",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+
+    const reference = requiredPublicText(
+      item.reference,
+      "artifactRefs.reference",
+      512,
+    );
+    const normalized = { type, reference };
+
+    if (Object.prototype.hasOwnProperty.call(item, "sha256")) {
+      if (item.sha256 === null) {
+        normalized.sha256 = null;
+      } else if (
+        typeof item.sha256 === "string" &&
+        SHA256_HEX_PATTERN.test(item.sha256)
+      ) {
+        assertSafePublicValue(item.sha256);
+        normalized.sha256 = item.sha256;
+      } else {
+        throw executorEventError(
+          "artifactRefs.sha256 is invalid",
+          CERTOPS_EXECUTOR_EVENT_INVALID,
+        );
+      }
+    }
+
+    return normalized;
+  });
+}
+
 function evidenceMetadataFromItem(item) {
   const metadata = {};
   for (const [targetKey, sourceKey] of [
@@ -346,8 +444,9 @@ function evidenceMetadataFromItem(item) {
   if (typeof item.redactionApplied === "boolean") {
     metadata.redactionApplied = item.redactionApplied;
   }
-  if (Array.isArray(item.artifactRefs) && item.artifactRefs.length > 0) {
-    metadata.artifactRefs = item.artifactRefs;
+  const artifactRefs = normalizeArtifactRefs(item.artifactRefs);
+  if (artifactRefs !== undefined) {
+    metadata.artifactRefs = artifactRefs;
   }
 
   const entries = metadataEntriesToObject(item.metadata, "evidence.metadata");
@@ -368,7 +467,19 @@ function evidenceItemsFromBody(body) {
       CERTOPS_EXECUTOR_EVENT_INVALID,
     );
   }
-  return body.evidence;
+  return body.evidence.map((item) => {
+    if (!isPlainObject(item)) {
+      throw executorEventError(
+        "evidence item is invalid",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+
+    return {
+      ...item,
+      artifactRefs: normalizeArtifactRefs(item.artifactRefs),
+    };
+  });
 }
 
 function normalizeExecutorEventBody(body, apiToken) {

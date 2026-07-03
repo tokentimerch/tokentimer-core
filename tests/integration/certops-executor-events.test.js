@@ -451,6 +451,19 @@ describe("CertOps executor event ingestion", function () {
                 fingerprintSha256:
                   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 summary: "Observed public certificate fingerprint",
+                artifactRefs: [
+                  {
+                    type: "report",
+                    reference: "reports/certops/public-observation.json",
+                    sha256:
+                      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  },
+                  {
+                    type: "log",
+                    reference: "executor-log-1",
+                    sha256: null,
+                  },
+                ],
                 metadata: [{ name: "issuer", value: "TokenTimer Test CA" }],
               },
             ],
@@ -471,6 +484,19 @@ describe("CertOps executor event ingestion", function () {
         createdByApiTokenId: token.token.id,
       });
       expect(evidence.items[0].metadata.issuer).to.equal("TokenTimer Test CA");
+      expect(evidence.items[0].metadata.artifactRefs).to.deep.equal([
+        {
+          type: "report",
+          reference: "reports/certops/public-observation.json",
+          sha256:
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        },
+        {
+          type: "log",
+          reference: "executor-log-1",
+          sha256: null,
+        },
+      ]);
 
       const logs = await listCertificateJobLog({
         workspaceId: workspaceA,
@@ -480,6 +506,113 @@ describe("CertOps executor event ingestion", function () {
         "evidence.attached",
       );
       expectNoSensitiveValues(response.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("rejects malformed evidence artifactRefs before job log or evidence persistence", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-artifact-refs",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      function eventWithArtifactRefs(artifactRefs) {
+        return eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+          evidence: [
+            {
+              schemaVersion: 1,
+              evidenceId: `evidence-${crypto.randomUUID()}`,
+              jobId: job.id,
+              workspaceId: workspaceA,
+              certificateId: "cert-1",
+              eventType: "certificate.observed",
+              source: "executor",
+              observedAt: new Date().toISOString(),
+              artifactRefs,
+            },
+          ],
+        });
+      }
+
+      async function expectArtifactRefsRejected({
+        artifactRefs,
+        status = 400,
+        code = "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden = [],
+      }) {
+        const before = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const response = await supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(eventWithArtifactRefs(artifactRefs));
+        const after = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+
+        expect(response.status).to.equal(status);
+        expect(response.status).to.not.equal(500);
+        expect(response.body.code).to.equal(code);
+        expect(response.body.code).to.not.equal("INTERNAL_ERROR");
+        expect(after).to.deep.equal(before);
+        expectNoSensitiveValues(response.body, token.plaintextToken, forbidden);
+      }
+
+      const validArtifactRef = {
+        type: "report",
+        reference: "reports/certops/public-observation.json",
+        sha256:
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      };
+
+      await expectArtifactRefsRejected({
+        artifactRefs: Array.from({ length: 17 }, () => validArtifactRef),
+      });
+
+      await expectArtifactRefsRejected({
+        artifactRefs: [{ ...validArtifactRef, type: "archive" }],
+      });
+
+      await expectArtifactRefsRejected({
+        artifactRefs: [{ type: "log" }],
+      });
+
+      await expectArtifactRefsRejected({
+        artifactRefs: [{ ...validArtifactRef, reference: "a".repeat(513) }],
+      });
+
+      await expectArtifactRefsRejected({
+        artifactRefs: [{ ...validArtifactRef, sha256: "not-a-sha256" }],
+      });
+
+      await expectArtifactRefsRejected({
+        artifactRefs: [{ ...validArtifactRef, extra: "not-allowed" }],
+      });
+
+      await expectArtifactRefsRejected({
+        artifactRefs: [{ type: "log", reference: "password=swordfish" }],
+        status: 422,
+        code: "PRIVATE_KEY_MATERIAL_REJECTED",
+        forbidden: ["password=swordfish"],
+      });
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
