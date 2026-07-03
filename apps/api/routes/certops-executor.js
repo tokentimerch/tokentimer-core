@@ -19,6 +19,7 @@ const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   assertSafePublicValue,
+  fieldNameLooksForbidden,
   getCertificateJobById,
   normalizePublicObject,
   serviceError,
@@ -38,6 +39,11 @@ const CERTOPS_EXECUTOR_WORKSPACE_MISMATCH =
   "CERTOPS_EXECUTOR_WORKSPACE_MISMATCH";
 
 const EXECUTOR_EVENT_SCOPE = "certops:executor:events";
+const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const METADATA_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+const METADATA_VALUE_TYPES = new Set(["string", "number", "boolean"]);
 const EXECUTOR_EVENT_TYPES = new Set([
   "job.accepted",
   "job.started",
@@ -83,7 +89,45 @@ function requiredTrimmedString(value, fieldName, code) {
   return trimmed;
 }
 
-function optionalTrimmedString(value, fieldName, maxLength = 1024) {
+function requiredPublicId(value, fieldName, code, maxLength = 128) {
+  const trimmed = requiredTrimmedString(value, fieldName, code);
+  if (trimmed.length > maxLength || !PUBLIC_ID_PATTERN.test(trimmed)) {
+    throw executorEventError(`${fieldName} is invalid`, code);
+  }
+  assertSafePublicValue(trimmed);
+  return trimmed;
+}
+
+function requiredUuid(value, fieldName, code) {
+  const trimmed = requiredTrimmedString(value, fieldName, code);
+  if (!UUID_PATTERN.test(trimmed)) {
+    throw executorEventError(`${fieldName} is invalid`, code);
+  }
+  assertSafePublicValue(trimmed);
+  return trimmed;
+}
+
+function optionalPublicId(value, fieldName, maxLength = 128) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") {
+    throw executorEventError(
+      `${fieldName} is invalid`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > maxLength || !PUBLIC_ID_PATTERN.test(trimmed)) {
+    throw executorEventError(
+      `${fieldName} is invalid`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  assertSafePublicValue(trimmed);
+  return trimmed;
+}
+
+function optionalPublicText(value, fieldName, maxLength = 1024) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string") {
     throw executorEventError(`${fieldName} is invalid`, CERTOPS_EXECUTOR_EVENT_INVALID);
@@ -95,6 +139,13 @@ function optionalTrimmedString(value, fieldName, maxLength = 1024) {
   }
   assertSafePublicValue(trimmed);
   return trimmed;
+}
+
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (Buffer.isBuffer(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function normalizeOccurredAt(value) {
@@ -148,26 +199,74 @@ function metadataEntriesToObject(entries, fieldName) {
       CERTOPS_EXECUTOR_EVENT_INVALID,
     );
   }
+  if (entries.length > 32) {
+    throw executorEventError(
+      `${fieldName} contains too many entries`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
 
   const metadata = {};
   for (const entry of entries) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    if (!isPlainObject(entry)) {
       throw executorEventError(
         `${fieldName} entry is invalid`,
         CERTOPS_EXECUTOR_EVENT_INVALID,
       );
     }
-    const name = requiredTrimmedString(
+
+    const keys = Object.keys(entry);
+    if (
+      keys.length !== 2 ||
+      !keys.includes("name") ||
+      !keys.includes("value")
+    ) {
+      throw executorEventError(
+        `${fieldName} entry is invalid`,
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+
+    const name = requiredPublicId(
       entry.name,
       `${fieldName}.name`,
       CERTOPS_EXECUTOR_EVENT_INVALID,
+      64,
     );
+    if (!METADATA_NAME_PATTERN.test(name) || fieldNameLooksForbidden(name)) {
+      throw executorEventError(
+        `${fieldName}.name is invalid`,
+        PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
     if (!Object.prototype.hasOwnProperty.call(entry, "value")) {
       throw executorEventError(
         `${fieldName}.value is required`,
         CERTOPS_EXECUTOR_EVENT_INVALID,
       );
     }
+
+    const value = entry.value;
+    assertSafePublicValue(value);
+    if (value !== null) {
+      const valueType = typeof value;
+      if (
+        !METADATA_VALUE_TYPES.has(valueType) ||
+        (valueType === "number" && !Number.isFinite(value))
+      ) {
+        throw executorEventError(
+          `${fieldName}.value is invalid`,
+          CERTOPS_EXECUTOR_EVENT_INVALID,
+        );
+      }
+      if (valueType === "string" && value.length > 512) {
+        throw executorEventError(
+          `${fieldName}.value is too long`,
+          CERTOPS_EXECUTOR_EVENT_INVALID,
+        );
+      }
+    }
+
     metadata[name] = entry.value;
   }
 
@@ -187,7 +286,7 @@ function eventMetadataFromBody(body, occurredAt) {
     ["executorId", "executorId"],
     ["attemptId", "attemptId"],
   ]) {
-    const value = optionalTrimmedString(body[sourceKey], sourceKey, 128);
+    const value = optionalPublicId(body[sourceKey], sourceKey);
     if (value) metadata[targetKey] = value;
   }
 
@@ -196,15 +295,14 @@ function eventMetadataFromBody(body, occurredAt) {
 }
 
 function evidenceSubjectFromItem(item) {
-  const certificateId = optionalTrimmedString(item.certificateId, "certificateId", 128);
+  const certificateId = optionalPublicId(item.certificateId, "certificateId");
   if (certificateId) {
     return { subjectType: "managed_certificate", subjectId: certificateId };
   }
 
-  const certificateInstanceId = optionalTrimmedString(
+  const certificateInstanceId = optionalPublicId(
     item.certificateInstanceId,
     "certificateInstanceId",
-    128,
   );
   if (certificateInstanceId) {
     return {
@@ -213,7 +311,7 @@ function evidenceSubjectFromItem(item) {
     };
   }
 
-  const targetId = optionalTrimmedString(item.targetId, "targetId", 128);
+  const targetId = optionalPublicId(item.targetId, "targetId");
   if (targetId) {
     return { subjectType: "certificate_target", subjectId: targetId };
   }
@@ -224,16 +322,24 @@ function evidenceSubjectFromItem(item) {
 function evidenceMetadataFromItem(item) {
   const metadata = {};
   for (const [targetKey, sourceKey] of [
-    ["evidenceId", "evidenceId"],
     ["source", "source"],
     ["status", "status"],
     ["fingerprintSha256", "fingerprintSha256"],
     ["summary", "summary"],
+  ]) {
+    const maxLength =
+      sourceKey === "summary" ? 1024 : sourceKey === "fingerprintSha256" ? 64 : 128;
+    const value = optionalPublicText(item[sourceKey], sourceKey, maxLength);
+    if (value) metadata[targetKey] = value;
+  }
+
+  for (const [targetKey, sourceKey] of [
+    ["evidenceId", "evidenceId"],
     ["certificateId", "certificateId"],
     ["certificateInstanceId", "certificateInstanceId"],
     ["targetId", "targetId"],
   ]) {
-    const value = optionalTrimmedString(item[sourceKey], sourceKey, 1024);
+    const value = optionalPublicId(item[sourceKey], sourceKey);
     if (value) metadata[targetKey] = value;
   }
 
@@ -282,7 +388,7 @@ function normalizeExecutorEventBody(body, apiToken) {
     );
   }
 
-  const bodyWorkspaceId = requiredTrimmedString(
+  const bodyWorkspaceId = requiredUuid(
     body.workspaceId,
     "workspaceId",
     CERTOPS_EXECUTOR_EVENT_INVALID,
@@ -297,12 +403,12 @@ function normalizeExecutorEventBody(body, apiToken) {
 
   const eventType = normalizeEventType(body.eventType);
   const status = normalizeStatus(body.status);
-  const jobId = requiredTrimmedString(
+  const jobId = requiredUuid(
     body.jobId,
     "jobId",
     CERTOPS_EXECUTOR_JOB_REQUIRED,
   );
-  const eventId = requiredTrimmedString(
+  const eventId = requiredPublicId(
     body.eventId,
     "eventId",
     CERTOPS_EXECUTOR_EVENT_INVALID,
@@ -313,7 +419,7 @@ function normalizeExecutorEventBody(body, apiToken) {
     eventId,
     eventType,
     jobId,
-    message: optionalTrimmedString(body.message, "message", 1024),
+    message: optionalPublicText(body.message, "message", 1024),
     occurredAt,
     logStatus: LOG_STATUS_BY_EVENT_TYPE[eventType] || status,
     jobStatus: JOB_STATUS_BY_EVENT_TYPE[eventType] || null,
