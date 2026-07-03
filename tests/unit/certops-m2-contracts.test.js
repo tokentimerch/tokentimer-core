@@ -334,12 +334,14 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
-  it("does not change apps runtime files or wire executor job/evidence behavior", () => {
+  it("limits stacked M2 app runtime files and keeps workspace CertOps routes separate", () => {
     const allowedStackedM2Files = new Set([
       "apps/api/migrations/migrate.js",
       "apps/api/middleware/api-token-auth.js",
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
+      "apps/api/index.js",
+      "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/jobs.js",
