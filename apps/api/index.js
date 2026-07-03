@@ -596,6 +596,8 @@ app.use(require("./routes/account"));
 app.use(require("./routes/integrations"));
 // --- CERTOPS (extracted to routes/certops.js) ---
 app.use(require("./routes/certops"));
+// --- CERTOPS EXECUTOR (machine-token routes) ---
+app.use(require("./routes/certops-executor"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 
