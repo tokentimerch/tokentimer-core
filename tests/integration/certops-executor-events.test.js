@@ -164,7 +164,16 @@ function eventPayload({ workspaceId, jobId, eventType = "job.started", status = 
   };
 }
 
-function expectNoSensitiveValues(body, rawToken) {
+async function countJobArtifacts({ workspaceId, jobId }) {
+  const logs = await listCertificateJobLog({ workspaceId, jobId });
+  const evidence = await listCertificateEvidence({ workspaceId, jobId });
+  return {
+    logs: logs.items.length,
+    evidence: evidence.items.length,
+  };
+}
+
+function expectNoSensitiveValues(body, rawToken, extraForbidden = []) {
   const serialized = JSON.stringify(body);
   expect(serialized).to.not.include(rawToken);
   expect(serialized).to.not.include(`Bearer ${rawToken}`);
@@ -172,6 +181,9 @@ function expectNoSensitiveValues(body, rawToken) {
   expect(serialized).to.not.include("token_hash");
   expect(serialized).to.not.include("PRIVATE KEY");
   expect(serialized).to.not.include("password=swordfish");
+  for (const value of extraForbidden) {
+    expect(serialized).to.not.include(value);
+  }
 }
 
 describe("CertOps executor event ingestion", function () {
@@ -524,6 +536,178 @@ describe("CertOps executor event ingestion", function () {
       expect(invalidStatus.status).to.equal(400);
       expect(invalidStatus.body.code).to.equal("CERTOPS_JOB_STATUS_INVALID");
       expectNoSensitiveValues(invalidStatus.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("rejects malformed IDs and metadata at the route boundary", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-boundary",
+    );
+
+    try {
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      async function expectRejectedWithoutPersistence({
+        body,
+        status,
+        statuses,
+        code,
+        forbidden = [],
+      }) {
+        const before = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const response = await supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(body);
+        const after = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+
+        if (statuses) {
+          expect(response.status).to.be.oneOf(statuses);
+        } else {
+          expect(response.status).to.equal(status);
+        }
+        expect(response.status).to.not.equal(500);
+        expect(response.body.code).to.not.equal("INTERNAL_ERROR");
+        if (code) expect(response.body.code).to.equal(code);
+        expect(after).to.deep.equal(before);
+        expectNoSensitiveValues(response.body, token.plaintextToken, forbidden);
+        return response;
+      }
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({ workspaceId: workspaceA, jobId: "not-a-uuid" }),
+        status: 400,
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({ workspaceId: "not-a-uuid", jobId: job.id }),
+        statuses: [400, 401, 403],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventId: "a".repeat(129),
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventId: "event/bad",
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: Array.from({ length: 33 }, (_value, index) => ({
+            name: `m${index}`,
+            value: index,
+          })),
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: [{ name: "a".repeat(65), value: "too-long-name" }],
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+      });
+
+      for (const forbiddenName of ["privateKey", "credential"]) {
+        await expectRejectedWithoutPersistence({
+          body: eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            metadata: [{ name: forbiddenName, value: "not-allowed" }],
+          }),
+          status: 422,
+          code: "PRIVATE_KEY_MATERIAL_REJECTED",
+          forbidden: [forbiddenName],
+        });
+      }
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: [{ name: "longValue", value: "a".repeat(513) }],
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+      });
+
+      for (const value of [{ nested: "object" }, ["array"]]) {
+        await expectRejectedWithoutPersistence({
+          body: eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            metadata: [{ name: "badValue", value }],
+          }),
+          status: 400,
+          code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        });
+      }
+
+      const safe = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "job.progress",
+            status: "running",
+            metadata: [
+              { name: "executor", value: "test-executor" },
+              { name: "attempt", value: 2 },
+              { name: "canary", value: true },
+            ],
+          }),
+        );
+      expect(safe.status).to.equal(202);
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const progressLog = logs.items.find(
+        (item) => item.eventType === "job.progress",
+      );
+      expect(progressLog.metadata).to.include({
+        executor: "test-executor",
+        attempt: 2,
+        canary: true,
+      });
+      expectNoSensitiveValues(safe.body, token.plaintextToken);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
