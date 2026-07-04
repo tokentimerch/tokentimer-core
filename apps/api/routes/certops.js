@@ -24,6 +24,22 @@ const {
   listManagedCertificates,
   retireManagedCertificate,
 } = require("../services/certops/inventory");
+const {
+  CERTOPS_JOB_INVALID,
+  CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+  CERTOPS_JOB_NOT_FOUND,
+  CERTOPS_JOB_OPERATION_INVALID,
+  CERTOPS_JOB_SOURCE_INVALID,
+  CERTOPS_JOB_STATUS_INVALID,
+  getCertificateJobById,
+  listCertificateJobLog,
+  listCertificateJobs,
+} = require("../services/certops/jobs");
+const {
+  CERTOPS_EVIDENCE_INVALID,
+  CERTOPS_EVIDENCE_TYPE_INVALID,
+  listCertificateEvidence,
+} = require("../services/certops/evidence");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
 
@@ -131,7 +147,116 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_JOB_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Certificate job not found",
+      code: CERTOPS_JOB_NOT_FOUND,
+    });
+  }
+
+  const certOpsJobBadRequestCodes = new Set([
+    CERTOPS_JOB_INVALID,
+    CERTOPS_JOB_OPERATION_INVALID,
+    CERTOPS_JOB_SOURCE_INVALID,
+    CERTOPS_JOB_STATUS_INVALID,
+    CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+    CERTOPS_EVIDENCE_INVALID,
+    CERTOPS_EVIDENCE_TYPE_INVALID,
+  ]);
+  if (certOpsJobBadRequestCodes.has(err?.code)) {
+    return res.status(400).json({
+      error: "CertOps job request is invalid",
+      code: err.code,
+    });
+  }
+
   return null;
+}
+
+function jobIdFromParams(req, res) {
+  const jobId = String(req.params.jobId || "");
+  if (!UUID_PATTERN.test(jobId)) {
+    res.status(400).json({
+      error: "CertOps job identifier is invalid",
+      code: CERTOPS_JOB_INVALID,
+    });
+    return null;
+  }
+  return jobId;
+}
+
+function jobListOptionsFromRequest(req) {
+  return {
+    workspaceId: req.workspace.id,
+    limit: req.query.limit,
+    offset: req.query.offset,
+    status: req.query.status,
+    subjectType: req.query.subjectType,
+    subjectId: req.query.subjectId,
+    operation: req.query.operation,
+    source: req.query.source,
+  };
+}
+
+function jobSummary(job) {
+  return {
+    id: job.id,
+    workspaceId: job.workspaceId,
+    operation: job.operation,
+    status: job.status,
+    source: job.source,
+    subjectType: job.subjectType,
+    subjectId: job.subjectId,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    queuedAt: job.queuedAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    canceledAt: job.canceledAt,
+    requestedByUserId: job.requestedByUserId,
+    requestedByApiTokenId: job.requestedByApiTokenId,
+  };
+}
+
+function jobDetail(job) {
+  return {
+    ...jobSummary(job),
+    payload: job.payload || {},
+    resultMetadata: job.resultMetadata || {},
+    errorCode: job.errorCode,
+    errorMessage: job.errorMessage,
+  };
+}
+
+function jobLogEntry(entry) {
+  return {
+    id: entry.id,
+    workspaceId: entry.workspaceId,
+    jobId: entry.jobId,
+    eventType: entry.eventType,
+    status: entry.status,
+    message: entry.message,
+    metadata: entry.metadata || {},
+    createdByUserId: entry.createdByUserId,
+    createdByApiTokenId: entry.createdByApiTokenId,
+    createdAt: entry.createdAt,
+  };
+}
+
+function evidenceItem(item) {
+  return {
+    id: item.id,
+    workspaceId: item.workspaceId,
+    jobId: item.jobId,
+    evidenceType: item.evidenceType,
+    subjectType: item.subjectType,
+    subjectId: item.subjectId,
+    metadata: item.metadata || {},
+    observedAt: item.observedAt,
+    createdByUserId: item.createdByUserId,
+    createdByApiTokenId: item.createdByApiTokenId,
+    createdAt: item.createdAt,
+  };
 }
 
 async function recordInventoryAudit(req, source, certificates) {
@@ -156,6 +281,152 @@ async function recordInventoryAudit(req, source, certificates) {
     },
   });
 }
+
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listCertificateJobs(jobListOptionsFromRequest(req));
+      return res.json({
+        items: result.items.map(jobSummary),
+        pagination: result.pagination,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps job list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps jobs",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/log",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+
+    try {
+      const result = await listCertificateJobLog({
+        workspaceId: req.workspace.id,
+        jobId,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json({
+        items: result.items.map(jobLogEntry),
+        pagination: result.pagination,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps job log list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        jobId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps job log",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+
+    try {
+      const result = await listCertificateEvidence({
+        workspaceId: req.workspace.id,
+        jobId,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json({
+        items: result.items.map(evidenceItem),
+        pagination: result.pagination,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps job evidence list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        jobId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps job evidence",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+
+    try {
+      const job = await getCertificateJobById({
+        workspaceId: req.workspace.id,
+        jobId,
+      });
+
+      if (!job) {
+        return res.status(404).json({
+          error: "Certificate job not found",
+          code: CERTOPS_JOB_NOT_FOUND,
+        });
+      }
+
+      return res.json({ job: jobDetail(job) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps job detail failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        jobId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to load CertOps job",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
 
 async function retireCertificateHandler(req, res) {
   if (!UUID_PATTERN.test(String(req.params.certId || ""))) {

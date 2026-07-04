@@ -374,6 +374,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
       "apps/api/index.js",
+      "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
