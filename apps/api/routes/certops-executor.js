@@ -6,6 +6,7 @@ const {
   createCertOpsApiTokenAuth,
 } = require("../middleware/api-token-auth");
 const {
+  createCertOpsMachineTokenPreAuthRateLimit,
   createCertOpsMachineTokenRateLimit,
 } = require("../middleware/machine-token-rate-limit");
 const { logger } = require("../utils/logger");
@@ -14,6 +15,7 @@ const {
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
+  CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   JOB_LOG_EVENT_TYPES,
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -38,7 +40,7 @@ const CERTOPS_EXECUTOR_JOB_REQUIRED = "CERTOPS_EXECUTOR_JOB_REQUIRED";
 const CERTOPS_EXECUTOR_WORKSPACE_MISMATCH =
   "CERTOPS_EXECUTOR_WORKSPACE_MISMATCH";
 
-const EXECUTOR_EVENT_SCOPE = "certops:executor:events";
+const EXECUTOR_EVENT_SCOPE = "certops:events:write";
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -61,10 +63,20 @@ const EXECUTOR_EVENT_TYPES = new Set([
   "job.rejected",
   "evidence.attached",
 ]);
+const EXECUTOR_EVENT_STATUSES = new Set([
+  "accepted",
+  "claimed",
+  "running",
+  "succeeded",
+  "failed",
+  "rejected",
+  "blocked",
+  "cancelled",
+]);
 const LOG_STATUSES_SET = new Set(LOG_STATUSES);
 
 const LOG_STATUS_BY_EVENT_TYPE = Object.freeze({
-  "job.accepted": "accepted",
+  "job.accepted": "approved",
   "job.started": "running",
   "job.progress": "running",
   "job.completed": "succeeded",
@@ -76,6 +88,7 @@ const JOB_STATUS_BY_EVENT_TYPE = Object.freeze({
   "job.started": "running",
   "job.completed": "succeeded",
   "job.failed": "failed",
+  "job.rejected": "rejected",
 });
 
 function executorEventError(message, code) {
@@ -211,7 +224,7 @@ function normalizeStatus(value) {
     "status",
     CERTOPS_JOB_STATUS_INVALID,
   );
-  if (!LOG_STATUSES_SET.has(status) || status === "queued") {
+  if (!EXECUTOR_EVENT_STATUSES.has(status)) {
     throw executorEventError("Executor event status is invalid", CERTOPS_JOB_STATUS_INVALID);
   }
   return status;
@@ -532,7 +545,9 @@ function normalizeExecutorEventBody(body, apiToken) {
     jobId,
     message: optionalPublicText(body.message, "message", 1024),
     occurredAt,
-    logStatus: LOG_STATUS_BY_EVENT_TYPE[eventType] || status,
+    logStatus:
+      LOG_STATUS_BY_EVENT_TYPE[eventType] ||
+      (LOG_STATUSES_SET.has(status) ? status : null),
     jobStatus: JOB_STATUS_BY_EVENT_TYPE[eventType] || null,
     metadata: eventMetadataFromBody(body, occurredAt),
     evidence: evidenceItemsFromBody(body),
@@ -598,6 +613,7 @@ function handleExecutorEventError(res, error) {
     CERTOPS_EXECUTOR_JOB_REQUIRED,
     CERTOPS_JOB_INVALID,
     CERTOPS_JOB_STATUS_INVALID,
+    CERTOPS_JOB_STATUS_TRANSITION_INVALID,
     CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
     CERTOPS_EVIDENCE_INVALID,
     CERTOPS_EVIDENCE_TYPE_INVALID,
@@ -677,6 +693,11 @@ async function executorEventsHandler(req, res) {
 
 function createCertOpsExecutorRouter(options = {}) {
   const certOpsExecutorRouter = router();
+  const preAuthRateLimitMiddleware =
+    options.preAuthRateLimitMiddleware ||
+    createCertOpsMachineTokenPreAuthRateLimit(
+      options.preAuthRateLimitOptions || options.rateLimitOptions || {},
+    );
   const authMiddleware =
     options.authMiddleware ||
     createCertOpsApiTokenAuth({
@@ -689,6 +710,7 @@ function createCertOpsExecutorRouter(options = {}) {
 
   certOpsExecutorRouter.post(
     "/api/v1/certops/executor/events",
+    preAuthRateLimitMiddleware,
     authMiddleware,
     rateLimitMiddleware,
     executorEventsHandler,
