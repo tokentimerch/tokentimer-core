@@ -4499,13 +4499,27 @@ components:
     CertOpsExecutorEventAcceptedResponse:
       type: object
       additionalProperties: false
-      required: [accepted, code]
+      required: [ok, eventId, jobId, status]
       properties:
-        accepted:
+        ok:
           type: boolean
-        code:
+          enum: [true]
+        eventId:
           type: string
-          enum: [CERTOPS_EXECUTOR_EVENT_ACCEPTED]
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          description: Server-side job log event identifier for the accepted executor event.
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+        evidenceId:
+          type: string
+          format: uuid
+          nullable: true
     SessionUser:
       type: object
       required: [id, email]

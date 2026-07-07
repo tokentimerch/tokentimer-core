@@ -24,6 +24,10 @@ const certOpsRoutesSource = fs.readFileSync(
   path.join(repoRoot, "apps/api/routes/certops.js"),
   "utf8",
 );
+const certOpsExecutorRoutesSource = fs.readFileSync(
+  path.join(repoRoot, "apps/api/routes/certops-executor.js"),
+  "utf8",
+);
 const {
   JOB_STATUSES,
   LOG_STATUSES,
@@ -300,7 +304,6 @@ function openApiComponentBlock(componentName) {
     nextComponent === -1
       ? openApiSource.length
       : start + marker.length + nextComponent;
-
   return openApiSource.slice(start, end);
 }
 
@@ -605,6 +608,27 @@ describe("CertOps M2 contract skeletons", () => {
     assert.equal(validate({ ...validJobPayload(), privateKey: "nope" }), false);
   });
 
+  it("documents the executor event 202 response shape returned by runtime", () => {
+    const schemaBlock = openApiComponentBlock(
+      "CertOpsExecutorEventAcceptedResponse",
+    );
+
+    assert.match(schemaBlock, /required: \[ok, eventId, jobId, status\]/);
+    assert.doesNotMatch(schemaBlock, /required: \[accepted, code\]/);
+    assert.doesNotMatch(schemaBlock, /\n        accepted:/);
+    assert.doesNotMatch(schemaBlock, /\n        code:/);
+    assert.match(schemaBlock, /\n        ok:\r?\n          type: boolean\r?\n          enum: \[true\]/);
+    assert.match(schemaBlock, /\n        eventId:\r?\n          type: string/);
+    assert.match(schemaBlock, /maxLength: 128/);
+    assert.match(schemaBlock, /pattern: "\^\[A-Za-z0-9_\.\:-\]\+\$"/);
+    assert.match(schemaBlock, /\n        jobId:\r?\n          type: string\r?\n          format: uuid/);
+    assert.match(
+      schemaBlock,
+      /\n        status:\r?\n          type: string\r?\n          enum: \[pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled\]/,
+    );
+    assert.match(schemaBlock, /\n        evidenceId:\r?\n          type: string\r?\n          format: uuid\r?\n          nullable: true/);
+  });
+
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
     const routePath = "/api/v1/certops/executor/events";
     const method = "POST";
@@ -629,6 +653,18 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(
       routeBlock,
       /\$ref: "#\/components\/schemas\/CertOpsExecutorEventAcceptedResponse"/,
+    );
+  });
+
+  it("uses the canonical machine event scope and ordered rate-limit guards", () => {
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /const EXECUTOR_EVENT_SCOPE = "certops:events:write"/,
+    );
+    assert.doesNotMatch(certOpsExecutorRoutesSource, /certops:executor:events/);
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*executorEventsHandler,/s,
     );
   });
 

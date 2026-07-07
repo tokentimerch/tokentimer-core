@@ -20,6 +20,7 @@ const {
 } = require("../../apps/api/services/certops/evidence");
 const {
   createCsrfExemptMiddleware,
+  isCertOpsMachineTokenCsrfExemptPath,
 } = require("../../apps/api/middleware/csrf-exempt");
 const {
   createCertOpsExecutorRouter,
@@ -100,6 +101,7 @@ function buildExecutorApp({ rateLimitOptions, csrf = false } = {}) {
           error: "Invalid CSRF token",
           code: "EBADCSRFTOKEN",
         }),
+        { allowPath: isCertOpsMachineTokenCsrfExemptPath },
       ),
     );
   }
@@ -133,7 +135,7 @@ async function createScopedToken({ workspaceId, ownerId, scopes }) {
   });
 }
 
-async function createJob({ workspaceId, ownerId }) {
+async function createJob({ workspaceId, ownerId, status = "pending" }) {
   return createCertificateJob({
     workspaceId,
     operation: "deploy",
@@ -145,6 +147,7 @@ async function createJob({ workspaceId, ownerId }) {
       fingerprintSha256:
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     },
+    status,
     requestedByUserId: ownerId,
   });
 }
@@ -193,7 +196,7 @@ describe("CertOps executor event ingestion", function () {
     await runMigrations();
   });
 
-  it("requires a valid machine token with certops:executor:events scope", async () => {
+  it("requires a valid machine token with certops:events:write scope", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-auth",
     );
@@ -203,7 +206,7 @@ describe("CertOps executor event ingestion", function () {
       const scoped = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const jobsOnly = await createScopedToken({
         workspaceId: workspaceA,
@@ -246,8 +249,12 @@ describe("CertOps executor event ingestion", function () {
         .send(payload);
       expect(ok.status).to.equal(202);
       expect(ok.body.ok).to.equal(true);
+      expect(ok.body.eventId).to.be.a("string").that.is.not.empty;
       expect(ok.body.jobId).to.equal(job.id);
       expect(ok.body.status).to.equal("running");
+      expect(ok.body.evidenceId).to.equal(undefined);
+      expect(ok.body.accepted).to.equal(undefined);
+      expect(ok.body.code).to.equal(undefined);
       expect(ok.body.user).to.equal(undefined);
       expect(ok.body.authenticated).to.equal(undefined);
       expectNoSensitiveValues(ok.body, scoped.plaintextToken);
@@ -266,7 +273,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const app = buildExecutorApp({ rateLimitOptions: { windowMs: 60_000, max: 1 } });
       const route = "/api/v1/certops/executor/events";
@@ -300,7 +307,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const app = buildExecutorApp({ csrf: true });
 
@@ -330,7 +337,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const route = "/api/v1/certops/executor/events";
 
@@ -348,7 +355,11 @@ describe("CertOps executor event ingestion", function () {
         })).status,
       ).to.equal("running");
 
-      const completedJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const completedJob = await createJob({
+        workspaceId: workspaceA,
+        ownerId,
+        status: "running",
+      });
       const completed = await supertest(app)
         .post(route)
         .set("Authorization", `Bearer ${token.plaintextToken}`)
@@ -369,7 +380,11 @@ describe("CertOps executor event ingestion", function () {
         })).status,
       ).to.equal("succeeded");
 
-      const failedJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const failedJob = await createJob({
+        workspaceId: workspaceA,
+        ownerId,
+        status: "running",
+      });
       const failed = await supertest(app)
         .post(route)
         .set("Authorization", `Bearer ${token.plaintextToken}`)
@@ -397,13 +412,13 @@ describe("CertOps executor event ingestion", function () {
           }),
         );
       expect(progress.status).to.equal(202);
-      expect(progress.body.status).to.equal("queued");
+      expect(progress.body.status).to.equal("pending");
       expect(
         (await getCertificateJobById({
           workspaceId: workspaceA,
           jobId: progressJob.id,
         })).status,
-      ).to.equal("queued");
+      ).to.equal("pending");
 
       const logs = await listCertificateJobLog({
         workspaceId: workspaceA,
@@ -427,7 +442,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const response = await supertest(buildExecutorApp())
         .post("/api/v1/certops/executor/events")
@@ -521,7 +536,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const app = buildExecutorApp();
       const route = "/api/v1/certops/executor/events";
@@ -627,7 +642,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const job = await createJob({ workspaceId: workspaceA, ownerId });
       const app = buildExecutorApp();
@@ -683,7 +698,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const job = await createJob({ workspaceId: workspaceA, ownerId });
       const app = buildExecutorApp();
@@ -856,7 +871,7 @@ describe("CertOps executor event ingestion", function () {
       const tokenA = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const response = await supertest(buildExecutorApp())
         .post("/api/v1/certops/executor/events")
@@ -870,7 +885,7 @@ describe("CertOps executor event ingestion", function () {
         workspaceId: workspaceB,
         jobId: jobB.id,
       });
-      expect(jobBStatus.status).to.equal("queued");
+      expect(jobBStatus.status).to.equal("pending");
       expectNoSensitiveValues(response.body, tokenA.plaintextToken);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
@@ -887,7 +902,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
       const app = buildExecutorApp();
       const route = "/api/v1/certops/executor/events";
