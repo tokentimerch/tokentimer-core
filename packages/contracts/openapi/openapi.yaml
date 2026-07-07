@@ -3536,7 +3536,7 @@ paths:
       tags: [CertOps]
       summary: List CertOps API tokens
       operationId: listCertOpsTokens
-      description: Returns scoped CertOps API tokens (metadata only, never secrets). Skeleton; response schema lands in M2.
+      description: Returns scoped CertOps API token metadata only. Plaintext tokens, token hashes, Authorization headers, raw token material, credentials, and private key material are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3545,19 +3545,20 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsApiTokenListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
     post:
       tags: [CertOps]
       summary: Issue a scoped CertOps API token
       operationId: createCertOpsToken
-      description: Issues a scoped API token for executor/agent use. The plaintext token is returned once at creation and never stored in recoverable form. Skeleton; request/response schema lands in M2.
+      description: Issues a scoped CertOps API token. The plaintext token is returned once as plaintextToken and is never stored in recoverable form. Token hashes, raw token material, credentials, and private key material are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -3565,22 +3566,84 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsApiTokenCreateRequest"
       responses:
         "201":
           description: API token issued
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsApiTokenCreateResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke:
+    post:
+      tags: [CertOps]
+      summary: Revoke a scoped CertOps API token
+      operationId: revokeCertOpsToken
+      description: Revokes a scoped CertOps API token within the authorized workspace. The response contains metadata only; plaintext tokens, token hashes, Authorization headers, raw token material, credentials, and private key material are never returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: tokenId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: API token revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsApiTokenRevokeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the API token was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                tokenNotFound:
+                  value:
+                    error: CertOps API token not found
+                    code: CERTOPS_API_TOKEN_NOT_FOUND
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/executor/events:
@@ -3588,7 +3651,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: Executor reports job progress and public evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). M2-A1 defines the contract skeleton only; runtime auth, rate limiting, persistence, and redaction enforcement land in later M2 PRs.
+      description: Executor reports job progress and public evidence metadata through the single M2 executor ingestion endpoint. Scoped-token authenticated. Payloads containing private key material are rejected (422). Per-job executor write routes are intentionally not part of M2 unless a later ADR changes that.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -4122,6 +4185,124 @@ components:
           nullable: true
           maxLength: 256
           description: Opaque non-secret external reference. Invalid references return CERTOPS_KEY_REFERENCE_INVALID; private-key material returns PRIVATE_KEY_MATERIAL_REJECTED.
+    CertOpsApiToken:
+      type: object
+      additionalProperties: false
+      description: Scoped CertOps API token metadata. The plaintext token and token hashes are never returned by metadata/list/revoke responses.
+      required: [id, workspaceId, name, tokenPrefix, scopes, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        tokenPrefix:
+          type: string
+          minLength: 5
+          maxLength: 64
+          pattern: "^ttx_[A-Za-z0-9]+$"
+          description: Public non-secret token lookup prefix containing only the token identifier, not the random token value.
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - certops:executor:events
+              - certops:jobs:read
+              - certops:jobs:write
+              - certops:evidence:write
+        status:
+          type: string
+          enum: [active, revoked]
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedByUserId:
+          type: integer
+          nullable: true
+        createdByUserId:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsApiTokenListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsApiToken"
+    CertOpsApiTokenCreateRequest:
+      type: object
+      additionalProperties: false
+      description: Request to create a scoped CertOps API token. Private key material, raw secrets, credentials, token hashes, and raw token material are not accepted.
+      required: [name, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - certops:executor:events
+              - certops:jobs:read
+              - certops:jobs:write
+              - certops:evidence:write
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsApiTokenCreateResponse:
+      type: object
+      additionalProperties: false
+      description: One-time token creation response. plaintextToken is returned only by create and is never persisted or returned by list/revoke/validate operations.
+      required: [token, plaintextToken]
+      properties:
+        token:
+          $ref: "#/components/schemas/CertOpsApiToken"
+        plaintextToken:
+          type: string
+          minLength: 10
+          maxLength: 256
+          pattern: "^ttx_[A-Za-z0-9]+_[A-Za-z0-9]+$"
+          description: One-time plaintext token in ttx_<id>_<random> format. Store it client-side immediately; TokenTimer cannot recover it later.
+    CertOpsApiTokenRevokeResponse:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          $ref: "#/components/schemas/CertOpsApiToken"
     CertOpsMetadataEntry:
       type: object
       additionalProperties: false

@@ -232,6 +232,15 @@ function openApiSchemaBlock(schemaName) {
   return openApiSource.slice(start, end);
 }
 
+function assertStableRoute(routePath, method) {
+  assert.ok(
+    routeCompatContract.guarantees.stableRoutes.some(
+      (route) => route.path === routePath && route.method === method,
+    ),
+    `${method} ${routePath} must stay frozen in route compat`,
+  );
+}
+
 function changedAppFiles() {
   const diffFiles = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
     cwd: repoRoot,
@@ -365,6 +374,106 @@ describe("CertOps M2 contract skeletons", () => {
       routeBlock,
       /\$ref: "#\/components\/schemas\/CertOpsExecutorEventAcceptedResponse"/,
     );
+
+    for (const forbiddenRoute of [
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/events",
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
+    ]) {
+      assert.equal(
+        stableRoutes.some(
+          (route) => route.path === forbiddenRoute && route.method === "POST",
+        ),
+        false,
+        `POST ${forbiddenRoute} is not a stable M2 executor write route`,
+      );
+      assert.equal(
+        openApiPathMethods.get(forbiddenRoute)?.has("POST") === true,
+        false,
+        `POST ${forbiddenRoute} must not be introduced in OpenAPI for M2`,
+      );
+    }
+    assert.match(
+      routeCompatContract.namespacePolicy.executor.notes.join(" "),
+      /single ingestion endpoint/i,
+    );
+  });
+
+  it("documents token management routes with real metadata-only schemas", () => {
+    const tokenRoutesBlock = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/tokens",
+    );
+    const revokeBlock = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+    );
+    const tokenSchema = openApiSchemaBlock("CertOpsApiToken");
+    const listSchema = openApiSchemaBlock("CertOpsApiTokenListResponse");
+    const createRequestSchema = openApiSchemaBlock(
+      "CertOpsApiTokenCreateRequest",
+    );
+    const createResponseSchema = openApiSchemaBlock(
+      "CertOpsApiTokenCreateResponse",
+    );
+    const revokeResponseSchema = openApiSchemaBlock(
+      "CertOpsApiTokenRevokeResponse",
+    );
+
+    assertStableRoute("/api/v1/workspaces/{id}/certops/tokens", "GET");
+    assertStableRoute("/api/v1/workspaces/{id}/certops/tokens", "POST");
+    assertStableRoute(
+      "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+      "POST",
+    );
+    assertStableRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}",
+      "GET",
+    );
+    assertStableRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log",
+      "GET",
+    );
+    assertStableRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
+      "GET",
+    );
+
+    assert.match(
+      tokenRoutesBlock,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenListResponse"/,
+    );
+    assert.match(
+      tokenRoutesBlock,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenCreateRequest"/,
+    );
+    assert.match(
+      tokenRoutesBlock,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenCreateResponse"/,
+    );
+    assert.match(
+      revokeBlock,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenRevokeResponse"/,
+    );
+    assert.doesNotMatch(tokenRoutesBlock, /additionalProperties: true/);
+    assert.doesNotMatch(revokeBlock, /additionalProperties: true/);
+
+    for (const [schemaName, schemaBlock] of [
+      ["CertOpsApiToken", tokenSchema],
+      ["CertOpsApiTokenListResponse", listSchema],
+      ["CertOpsApiTokenCreateRequest", createRequestSchema],
+      ["CertOpsApiTokenRevokeResponse", revokeResponseSchema],
+    ]) {
+      assert.match(
+        schemaBlock,
+        /additionalProperties: false/,
+        `${schemaName} must not remain an unconstrained skeleton`,
+      );
+      assert.doesNotMatch(schemaBlock, /plaintextToken/);
+      assert.doesNotMatch(schemaBlock, /token_hash|tokenHash|rawSecret|apiSecret|tokenSecret/);
+    }
+
+    assert.match(createResponseSchema, /additionalProperties: false/);
+    assert.match(createResponseSchema, /plaintextToken:/);
+    assert.match(createResponseSchema, /\^ttx_\[A-Za-z0-9\]\+_\[A-Za-z0-9\]\+\$/);
+    assert.doesNotMatch(createResponseSchema, /token_hash|tokenHash|rawSecret|apiSecret|tokenSecret/);
   });
 
   it("limits stacked M2 app runtime files and keeps workspace CertOps routes separate", () => {
