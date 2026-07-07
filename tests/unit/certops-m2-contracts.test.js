@@ -217,6 +217,21 @@ function openApiPathBlock(routePath) {
   return openApiSource.slice(start, end);
 }
 
+function openApiSchemaBlock(schemaName) {
+  const marker = `    ${schemaName}:`;
+  const start = openApiSource.indexOf(marker);
+  assert.notEqual(start, -1, `${schemaName} missing from OpenAPI`);
+
+  const rest = openApiSource.slice(start + marker.length);
+  const nextSchemaMatch = rest.match(/\n    [A-Za-z0-9][A-Za-z0-9_]*:\r?\n/);
+  const end =
+    nextSchemaMatch && typeof nextSchemaMatch.index === "number"
+      ? start + marker.length + nextSchemaMatch.index
+      : openApiSource.length;
+
+  return openApiSource.slice(start, end);
+}
+
 function changedAppFiles() {
   const diffFiles = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
     cwd: repoRoot,
@@ -305,6 +320,24 @@ describe("CertOps M2 contract skeletons", () => {
         `${schemaId} must reject custody-shaped metadata names`,
       );
     }
+  });
+
+  it("documents the executor event 202 response shape returned by runtime", () => {
+    const schemaBlock = openApiSchemaBlock(
+      "CertOpsExecutorEventAcceptedResponse",
+    );
+
+    assert.match(schemaBlock, /required: \[ok, eventId, jobId, status\]/);
+    assert.doesNotMatch(schemaBlock, /required: \[accepted, code\]/);
+    assert.doesNotMatch(schemaBlock, /\n        accepted:/);
+    assert.doesNotMatch(schemaBlock, /\n        code:/);
+    assert.match(schemaBlock, /\n        ok:\r?\n          type: boolean\r?\n          enum: \[true\]/);
+    assert.match(schemaBlock, /\n        eventId:\r?\n          type: string/);
+    assert.match(schemaBlock, /maxLength: 128/);
+    assert.match(schemaBlock, /pattern: "\^\[A-Za-z0-9_\.\:-\]\+\$"/);
+    assert.match(schemaBlock, /\n        jobId:\r?\n          type: string\r?\n          format: uuid/);
+    assert.match(schemaBlock, /\n        status:\r?\n          type: string\r?\n          enum: \[queued, running, succeeded, failed, canceled\]/);
+    assert.match(schemaBlock, /\n        evidenceId:\r?\n          type: string\r?\n          format: uuid\r?\n          nullable: true/);
   });
 
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {

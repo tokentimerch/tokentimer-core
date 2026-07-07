@@ -246,8 +246,12 @@ describe("CertOps executor event ingestion", function () {
         .send(payload);
       expect(ok.status).to.equal(202);
       expect(ok.body.ok).to.equal(true);
+      expect(ok.body.eventId).to.be.a("string").that.is.not.empty;
       expect(ok.body.jobId).to.equal(job.id);
       expect(ok.body.status).to.equal("running");
+      expect(ok.body.evidenceId).to.equal(undefined);
+      expect(ok.body.accepted).to.equal(undefined);
+      expect(ok.body.code).to.equal(undefined);
       expect(ok.body.user).to.equal(undefined);
       expect(ok.body.authenticated).to.equal(undefined);
       expectNoSensitiveValues(ok.body, scoped.plaintextToken);
