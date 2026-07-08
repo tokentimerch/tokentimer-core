@@ -404,6 +404,67 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
+  it("keeps executor evidence metadata closed and runtime evidence-item validation strict", () => {
+    const schemaBlock = openApiSchemaBlock("CertOpsEvidenceMetadata");
+    const allowedFields = [
+      "schemaVersion",
+      "evidenceId",
+      "jobId",
+      "workspaceId",
+      "certificateId",
+      "certificateInstanceId",
+      "targetId",
+      "eventType",
+      "source",
+      "status",
+      "observedAt",
+      "fingerprintSha256",
+      "summary",
+      "metadata",
+      "artifactRefs",
+      "redactionApplied",
+    ];
+
+    assert.match(schemaBlock, /additionalProperties: false/);
+    for (const fieldName of allowedFields) {
+      assert.match(
+        schemaBlock,
+        new RegExp(`\\n        ${fieldName}:`),
+        `${fieldName} must be documented in the evidence metadata schema`,
+      );
+      assert.match(
+        certOpsExecutorRoutesSource,
+        new RegExp(`"${fieldName}"`),
+        `${fieldName} must be allowed by runtime evidence-item validation`,
+      );
+    }
+
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /const EVIDENCE_ITEM_FIELDS = new Set\(\[/,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /function rejectUnknownEvidenceItemFields\(item\)/,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /rejectUnknownEvidenceItemFields\(item\);/,
+    );
+    assert.ok(
+      certOpsExecutorRoutesSource.indexOf("rejectPrivateKeyMaterial(item);") <
+        certOpsExecutorRoutesSource.indexOf(
+          "rejectUnknownEvidenceItemFields(item);",
+        ),
+      "private-key detection must run before evidence unknown-field rejection",
+    );
+    assert.doesNotMatch(
+      certOpsExecutorRoutesSource,
+      /item\.eventType \|\| item\.evidenceType/,
+      "executor event evidence items must use the OpenAPI eventType field",
+    );
+  });
+
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
     const routePath = "/api/v1/certops/executor/events";
     const method = "POST";
