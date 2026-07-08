@@ -344,9 +344,14 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(schemaBlock, /\n        eventId:\r?\n          type: string/);
     assert.match(schemaBlock, /maxLength: 128/);
     assert.match(schemaBlock, /pattern: "\^\[A-Za-z0-9_\.\:-\]\+\$"/);
+    assert.match(schemaBlock, /\n        logId:\r?\n          type: string\r?\n          format: uuid/);
     assert.match(schemaBlock, /\n        jobId:\r?\n          type: string\r?\n          format: uuid/);
     assert.match(schemaBlock, /\n        status:\r?\n          type: string\r?\n          enum: \[queued, running, succeeded, failed, canceled\]/);
     assert.match(schemaBlock, /\n        evidenceId:\r?\n          type: string\r?\n          format: uuid\r?\n          nullable: true/);
+    assert.match(schemaBlock, /\n        evidenceIds:\r?\n          type: array/);
+    assert.match(schemaBlock, /\n        executorEventRecordId:\r?\n          type: string\r?\n          format: uuid/);
+    assert.match(schemaBlock, /\n        duplicate:\r?\n          type: boolean/);
+    assert.match(schemaBlock, /\n        idempotent:\r?\n          type: boolean/);
   });
 
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
@@ -366,6 +371,9 @@ describe("CertOps M2 contract skeletons", () => {
     assert.ok(openApiPathMethods.get(routePath)?.has(method));
     assert.match(routeBlock, /certOpsTokenAuth:/);
     assert.match(routeBlock, /operationId: createCertOpsExecutorEvent/);
+    assert.match(routeBlock, /idempotency key/i);
+    assert.match(routeBlock, /Generic secret material.*redacted/i);
+    assert.match(routeBlock, /CERTOPS_EXECUTOR_EVENT_CONFLICT/);
     assert.match(
       routeBlock,
       /\$ref: "#\/components\/schemas\/CertOpsExecutorEventRequest"/,
@@ -487,7 +495,9 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
+      "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/jobs.js",
+      "apps/api/utils/secretMaterial.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

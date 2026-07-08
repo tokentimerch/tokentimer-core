@@ -67,6 +67,10 @@ async function createWorkspacePair(label) {
 
 async function cleanupWorkspacePair(ownerId, workspaceIds) {
   await TestUtils.execQuery(
+    "DELETE FROM certificate_executor_events WHERE workspace_id = ANY($1::uuid[])",
+    [workspaceIds],
+  );
+  await TestUtils.execQuery(
     "DELETE FROM certificate_evidence WHERE workspace_id = ANY($1::uuid[])",
     [workspaceIds],
   );
@@ -167,9 +171,17 @@ function eventPayload({ workspaceId, jobId, eventType = "job.started", status = 
 async function countJobArtifacts({ workspaceId, jobId }) {
   const logs = await listCertificateJobLog({ workspaceId, jobId });
   const evidence = await listCertificateEvidence({ workspaceId, jobId });
+  const executorEvents = await TestUtils.execQuery(
+    `SELECT COUNT(*)::int AS count
+       FROM certificate_executor_events
+      WHERE workspace_id = $1
+        AND job_id = $2`,
+    [workspaceId, jobId],
+  );
   return {
     logs: logs.items.length,
     evidence: evidence.items.length,
+    executorEvents: executorEvents.rows[0].count,
   };
 }
 
@@ -421,6 +433,161 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("treats duplicate executor event IDs idempotently without duplicating side effects", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-idempotency",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const payload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        eventType: "evidence.attached",
+        status: "accepted",
+        evidence: [
+          {
+            schemaVersion: 1,
+            evidenceId: `evidence-${crypto.randomUUID()}`,
+            jobId: job.id,
+            workspaceId: workspaceA,
+            certificateId: "cert-1",
+            eventType: "certificate.observed",
+            source: "executor",
+            observedAt: new Date().toISOString(),
+            metadata: [{ name: "issuer", value: "TokenTimer Test CA" }],
+          },
+        ],
+      });
+
+      const first = await supertest(app).post(route).set("Authorization", auth).send(payload);
+      const second = await supertest(app).post(route).set("Authorization", auth).send(payload);
+      const artifacts = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+
+      expect(first.status).to.equal(202);
+      expect(second.status).to.equal(202);
+      expect(first.body.duplicate).to.equal(false);
+      expect(first.body.idempotent).to.equal(false);
+      expect(second.body.duplicate).to.equal(true);
+      expect(second.body.idempotent).to.equal(true);
+      expect(second.body.eventId).to.equal(first.body.eventId);
+      expect(second.body.evidenceId).to.equal(first.body.evidenceId);
+      expect(artifacts).to.deep.equal({
+        logs: 1,
+        evidence: 1,
+        executorEvents: 1,
+      });
+      expectNoSensitiveValues(second.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("isolates executor event IDs by job and rejects conflicting retries safely", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-conflict",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const tokenB = await createScopedToken({
+        workspaceId: workspaceB,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const authB = `Bearer ${tokenB.plaintextToken}`;
+      const sharedEventId = `event-${crypto.randomUUID()}`;
+      const jobA = await createJob({ workspaceId: workspaceA, ownerId });
+      const jobB = await createJob({ workspaceId: workspaceA, ownerId });
+      const workspaceBJob = await createJob({ workspaceId: workspaceB, ownerId });
+
+      const firstPayload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: jobA.id,
+        eventId: sharedEventId,
+        message: "first accepted event",
+      });
+      const conflictingPayload = {
+        ...firstPayload,
+        message: "different accepted event",
+      };
+      const otherJobPayload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: jobB.id,
+        eventId: sharedEventId,
+      });
+      const otherWorkspacePayload = eventPayload({
+        workspaceId: workspaceB,
+        jobId: workspaceBJob.id,
+        eventId: sharedEventId,
+      });
+
+      const first = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(firstPayload);
+      const conflict = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(conflictingPayload);
+      const otherJob = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(otherJobPayload);
+      const otherWorkspace = await supertest(app)
+        .post(route)
+        .set("Authorization", authB)
+        .send(otherWorkspacePayload);
+
+      expect(first.status).to.equal(202);
+      expect(conflict.status).to.equal(409);
+      expect(conflict.body.code).to.equal("CERTOPS_EXECUTOR_EVENT_CONFLICT");
+      expect(otherJob.status).to.equal(202);
+      expect(otherWorkspace.status).to.equal(202);
+      expect(await countJobArtifacts({ workspaceId: workspaceA, jobId: jobA.id })).to.deep.equal({
+        logs: 1,
+        evidence: 0,
+        executorEvents: 1,
+      });
+      expect(await countJobArtifacts({ workspaceId: workspaceA, jobId: jobB.id })).to.deep.equal({
+        logs: 1,
+        evidence: 0,
+        executorEvents: 1,
+      });
+      expect(
+        await countJobArtifacts({
+          workspaceId: workspaceB,
+          jobId: workspaceBJob.id,
+        }),
+      ).to.deep.equal({
+        logs: 1,
+        evidence: 0,
+        executorEvents: 1,
+      });
+      expectNoSensitiveValues(conflict.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("creates sanitized evidence and appends evidence.attached logs", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-evidence",
@@ -611,12 +778,37 @@ describe("CertOps executor event ingestion", function () {
         artifactRefs: [{ ...validArtifactRef, extra: "not-allowed" }],
       });
 
-      await expectArtifactRefsRejected({
-        artifactRefs: [{ type: "log", reference: "password=swordfish" }],
-        status: 422,
-        code: "PRIVATE_KEY_MATERIAL_REJECTED",
-        forbidden: ["password=swordfish"],
+      const before = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
       });
+      const redacted = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventWithArtifactRefs([
+            { type: "log", reference: "password=swordfish" },
+          ]),
+        );
+      const after = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(redacted.status).to.equal(202);
+      expect(after.logs).to.equal(before.logs + 1);
+      expect(after.evidence).to.equal(before.evidence + 1);
+      expect(after.executorEvents).to.equal(before.executorEvents + 1);
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidence.items[0].metadata.artifactRefs[0].reference).to.equal(
+        "[REDACTED]",
+      );
+      expect(evidence.items[0].metadata.redactionApplied).to.equal(true);
+      expectNoSensitiveValues(redacted.body, token.plaintextToken, [
+        "password=swordfish",
+      ]);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
@@ -780,18 +972,16 @@ describe("CertOps executor event ingestion", function () {
         code: "CERTOPS_EXECUTOR_EVENT_INVALID",
       });
 
-      for (const forbiddenName of ["privateKey", "credential"]) {
-        await expectRejectedWithoutPersistence({
-          body: eventPayload({
-            workspaceId: workspaceA,
-            jobId: job.id,
-            metadata: [{ name: forbiddenName, value: "not-allowed" }],
-          }),
-          status: 422,
-          code: "PRIVATE_KEY_MATERIAL_REJECTED",
-          forbidden: [forbiddenName],
-        });
-      }
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: [{ name: "privateKey", value: "not-allowed" }],
+        }),
+        status: 422,
+        code: "PRIVATE_KEY_MATERIAL_REJECTED",
+        forbidden: ["privateKey"],
+      });
 
       await expectRejectedWithoutPersistence({
         body: eventPayload({
@@ -881,7 +1071,7 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
-  it("rejects private-key and secret-looking payloads before persistence", async () => {
+  it("rejects private-key payloads before persistence", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-security",
     );
@@ -911,12 +1101,7 @@ describe("CertOps executor event ingestion", function () {
         eventPayload({
           workspaceId: workspaceA,
           jobId: job.id,
-          message: "password=swordfish",
-        }),
-        eventPayload({
-          workspaceId: workspaceA,
-          jobId: job.id,
-          metadata: [{ name: "credential", value: "abc" }],
+          metadata: [{ name: "privateKeyPem", value: "abc" }],
         }),
       ];
 
@@ -939,6 +1124,100 @@ describe("CertOps executor event ingestion", function () {
         expect(afterLogs.items).to.have.length(beforeLogs.items.length);
         expectNoSensitiveValues(response.body, token.plaintextToken);
       }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("redacts generic secrets in log and evidence metadata before persistence", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-redaction",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const response = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            message: "password=swordfish",
+            metadata: [
+              {
+                name: "executorNote",
+                value: "Authorization: Bearer abc123tokenvalue",
+              },
+              { name: "credential", value: "abc" },
+            ],
+            evidence: [
+              {
+                schemaVersion: 1,
+                evidenceId: `evidence-${crypto.randomUUID()}`,
+                jobId: job.id,
+                workspaceId: workspaceA,
+                certificateId: "cert-1",
+                eventType: "certificate.observed",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+                summary: "credential=abc",
+                metadata: [
+                  { name: "note", value: "password=swordfish" },
+                  { name: "secret", value: "abc" },
+                ],
+              },
+            ],
+          }),
+        );
+
+      expect(response.status).to.equal(202);
+      expectNoSensitiveValues(response.body, token.plaintextToken, [
+        "abc123tokenvalue",
+        "credential=abc",
+      ]);
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(logs.items).to.have.length(1);
+      expect(logs.items[0].message).to.equal("[REDACTED]");
+      expect(logs.items[0].metadata.executorNote).to.equal("[REDACTED]");
+      expect(logs.items[0].metadata.redactedMetadata2).to.equal("[REDACTED]");
+      expect(logs.items[0].metadata.redactionApplied).to.equal(true);
+      expect(logs.items[0].metadata.redactionCount).to.be.greaterThan(0);
+
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidence.items).to.have.length(1);
+      expect(evidence.items[0].metadata.summary).to.equal("[REDACTED]");
+      expect(evidence.items[0].metadata.note).to.equal("[REDACTED]");
+      expect(evidence.items[0].metadata.redactedMetadata2).to.equal(
+        "[REDACTED]",
+      );
+      expect(evidence.items[0].metadata.redactionApplied).to.equal(true);
+      const serialized = JSON.stringify({
+        logs: logs.items,
+        evidence: evidence.items,
+      });
+      expect(serialized).to.include("[REDACTED]");
+      expect(serialized).to.not.include("password=swordfish");
+      expect(serialized).to.not.include("credential=abc");
+      expect(serialized).to.not.include("abc123tokenvalue");
+      expect(serialized).to.not.include(token.plaintextToken);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

@@ -7,9 +7,12 @@ const path = require("path");
 const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   containsPrivateKeyMaterial,
+  fieldNameLooksGenericSecret,
+  fieldNameLooksPrivateKeyMaterial,
   looksPkcs12Bundle,
   redactPrivateKeyMaterial,
   redactGenericSecrets,
+  redactGenericSecretsWithReport,
 } = require(
   path.resolve(__dirname, "../../apps/api/utils/secretMaterial.js"),
 );
@@ -234,7 +237,38 @@ describe("secretMaterial.redactGenericSecrets", () => {
   it("redacts Authorization bearer header values", () => {
     const out = redactGenericSecrets("Authorization: Bearer abc123tokenvalue");
     assert.ok(!out.includes("abc123tokenvalue"));
-    assert.ok(/Bearer \[REDACTED\]/.test(out));
+    assert.strictEqual(out, "[REDACTED]");
+  });
+
+  it("redacts generic secret assignment values", () => {
+    const out = redactGenericSecrets("password=swordfish");
+    assert.strictEqual(out, "[REDACTED]");
+  });
+
+  it("returns safe redaction metadata without echoing field names", () => {
+    const out = redactGenericSecretsWithReport({
+      note: "credential=abc",
+      authorization: "Authorization: Bearer abc123tokenvalue",
+    });
+    assert.deepStrictEqual(out.value, {
+      note: "[REDACTED]",
+      authorization: "[REDACTED]",
+    });
+    assert.strictEqual(out.redactionApplied, true);
+    assert.ok(out.redactionCount >= 2);
+    assert.ok(out.redactedFields.includes("generic-secret"));
+    assert.ok(out.redactedFields.includes("authorization"));
+  });
+
+  it("redacts values under generic secret-looking field names", () => {
+    const out = redactGenericSecrets({
+      password: "swordfish",
+      publicStatus: "succeeded",
+    });
+    assert.deepStrictEqual(out, {
+      password: "[REDACTED]",
+      publicStatus: "succeeded",
+    });
   });
 
   it("redacts a base64-wrapped private key nested in a structure", () => {
@@ -274,7 +308,14 @@ describe("secretMaterial.redactGenericSecrets", () => {
     const node = { secret: pem("RSA PRIVATE KEY") };
     node.self = node;
     const out = redactGenericSecrets(node);
-    assert.ok(out.secret.includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+    assert.strictEqual(out.secret, "[REDACTED]");
     assert.strictEqual(out.self, "[REDACTED:circular]");
+  });
+
+  it("classifies private-key and generic secret field names separately", () => {
+    assert.strictEqual(fieldNameLooksPrivateKeyMaterial("privateKeyPem"), true);
+    assert.strictEqual(fieldNameLooksPrivateKeyMaterial("credential"), false);
+    assert.strictEqual(fieldNameLooksGenericSecret("credential"), true);
+    assert.strictEqual(fieldNameLooksGenericSecret("publicMetadata"), false);
   });
 });

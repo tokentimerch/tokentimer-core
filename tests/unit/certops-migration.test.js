@@ -31,6 +31,10 @@ const CERTOPS_JOB_TABLES = [
   "certificate_evidence",
 ];
 
+const CERTOPS_EXECUTOR_EVENT_TABLES = [
+  "certificate_executor_events",
+];
+
 const BASELINE_CERTOPS_COLUMNS = {
   certificate_profiles: [
     "id",
@@ -136,6 +140,9 @@ const certOpsApiTokensMigration = migrations.find(
 const certOpsJobsEvidenceMigration = migrations.find(
   (migration) => migration.name === "certops_jobs_evidence_schema",
 );
+const certOpsExecutorEventsMigration = migrations.find(
+  (migration) => migration.name === "certops_executor_events_schema",
+);
 
 function getTableBlock(tableName, migration = certOpsMigration) {
   const marker = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
@@ -190,8 +197,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-4).map((migration) => migration.version),
-      [10, 11, 12, 13],
+      migrations.slice(-5).map((migration) => migration.version),
+      [10, 11, 12, 13, 14],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -293,6 +300,46 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("defines the CertOps executor event idempotency migration after jobs and evidence", () => {
+    assert.ok(
+      certOpsExecutorEventsMigration,
+      "expected certops_executor_events_schema migration",
+    );
+    assert.equal(certOpsExecutorEventsMigration.version, 14);
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /CREATE TABLE IF NOT EXISTS certificate_executor_events \(/,
+    );
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /executor_event_id TEXT NOT NULL/,
+    );
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /request_hash_sha256 TEXT NOT NULL/,
+    );
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /response_metadata JSONB NOT NULL DEFAULT '\{\}'::jsonb/,
+    );
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /uq_certificate_executor_events_workspace_job_event/,
+    );
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /fk_certificate_executor_events_job/,
+    );
+    assert.match(
+      certOpsExecutorEventsMigration.sql,
+      /fk_certificate_executor_events_api_token/,
+    );
+    assert.doesNotMatch(
+      certOpsExecutorEventsMigration.sql,
+      /request_body|authorization|plaintext|token_secret|raw_secret|private_key|key_material|pfx_blob|jks_blob/i,
+    );
+  });
+
   it("creates every CertOps table idempotently", () => {
     for (const tableName of CERTOPS_TABLES) {
       assert.match(
@@ -327,6 +374,23 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("creates every CertOps executor event idempotency table idempotently", () => {
+    for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
+      assert.match(
+        certOpsExecutorEventsMigration.sql,
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\(`),
+      );
+    }
+    assert.doesNotMatch(
+      certOpsExecutorEventsMigration.sql,
+      /CREATE TABLE (?!IF NOT EXISTS)/,
+    );
+    assert.doesNotMatch(
+      certOpsExecutorEventsMigration.sql,
+      /CREATE (?:UNIQUE )?INDEX (?!IF NOT EXISTS)/,
+    );
+  });
+
   it("keeps every CertOps table workspace-scoped", () => {
     for (const tableName of CERTOPS_TABLES) {
       assert.match(
@@ -352,6 +416,24 @@ describe("CertOps inventory migration", () => {
     assert.match(
       getTableBlock("certificate_evidence", certOpsJobsEvidenceMigration),
       /FOREIGN KEY \(workspace_id, job_id\)\s+REFERENCES certificate_jobs\(workspace_id, id\)\s+ON DELETE SET NULL \(job_id\)/,
+    );
+  });
+
+  it("keeps every CertOps executor event idempotency table workspace-scoped", () => {
+    for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
+      assert.match(
+        getTableBlock(tableName, certOpsExecutorEventsMigration),
+        /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
+        `${tableName} must have a non-null workspace FK`,
+      );
+    }
+    assert.match(
+      getTableBlock("certificate_executor_events", certOpsExecutorEventsMigration),
+      /FOREIGN KEY \(workspace_id, job_id\)\s+REFERENCES certificate_jobs\(workspace_id, id\)\s+ON DELETE CASCADE/,
+    );
+    assert.match(
+      getTableBlock("certificate_executor_events", certOpsExecutorEventsMigration),
+      /FOREIGN KEY \(workspace_id, created_by_api_token_id\)\s+REFERENCES api_tokens\(workspace_id, id\)\s+ON DELETE SET NULL \(created_by_api_token_id\)/,
     );
   });
 
@@ -394,6 +476,24 @@ describe("CertOps inventory migration", () => {
       for (const columnName of getColumnNames(
         tableName,
         certOpsJobsEvidenceMigration,
+      )) {
+        const hit = FORBIDDEN_CUSTODY_COLUMNS.find((fragment) =>
+          columnName.toLowerCase().includes(fragment.toLowerCase()),
+        );
+        assert.equal(
+          hit,
+          undefined,
+          `${tableName}.${columnName} looks like private-key custody`,
+        );
+      }
+    }
+  });
+
+  it("does not define private-key custody columns in executor event idempotency tables", () => {
+    for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
+      for (const columnName of getColumnNames(
+        tableName,
+        certOpsExecutorEventsMigration,
       )) {
         const hit = FORBIDDEN_CUSTODY_COLUMNS.find((fragment) =>
           columnName.toLowerCase().includes(fragment.toLowerCase()),
@@ -517,6 +617,20 @@ describe("CertOps inventory migration", () => {
     ]) {
       assert.match(
         certOpsJobsEvidenceMigration.sql,
+        new RegExp(indexName),
+        `missing ${indexName}`,
+      );
+    }
+  });
+
+  it("adds lookup and idempotency indexes for executor event queries", () => {
+    for (const indexName of [
+      "uq_certificate_executor_events_workspace_job_event",
+      "idx_certificate_executor_events_workspace_job_created",
+      "idx_certificate_executor_events_api_token",
+    ]) {
+      assert.match(
+        certOpsExecutorEventsMigration.sql,
         new RegExp(indexName),
         `missing ${indexName}`,
       );

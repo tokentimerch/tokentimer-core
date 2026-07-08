@@ -3651,7 +3651,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: Executor reports job progress and public evidence metadata through the single M2 executor ingestion endpoint. Scoped-token authenticated. Payloads containing private key material are rejected (422). Per-job executor write routes are intentionally not part of M2 unless a later ADR changes that.
+      description: Executor reports job progress and public evidence metadata through the single M2 executor ingestion endpoint. Scoped-token authenticated. eventId is an idempotency key within workspaceId and jobId; duplicate accepted events do not duplicate logs, evidence, or status side effects. Conflicting retries with a different sanitized payload may return 409. Payloads containing private key material are rejected (422). Generic secret material in log/evidence metadata is redacted to [REDACTED] before persistence. Per-job executor write routes are intentionally not part of M2 unless a later ADR changes that.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3678,6 +3678,15 @@ paths:
               example:
                 error: Private key material is not accepted in CertOps requests
                 code: PRIVATE_KEY_MATERIAL_REJECTED
+        "409":
+          description: Executor event idempotency key conflicts with a different sanitized payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Executor event idempotency key conflicts with a different payload
+                code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/register:
@@ -4664,7 +4673,7 @@ components:
     CertOpsExecutorEventRequest:
       type: object
       additionalProperties: false
-      description: External executor event envelope. Full auth, rate limiting, persistence, and redaction enforcement land in later M2 runtime PRs.
+      description: External executor event envelope. eventId is an idempotency key within workspaceId and jobId. Private key material is rejected; generic secrets in log and evidence metadata are redacted before persistence.
       required:
         - schemaVersion
         - eventId
@@ -4682,6 +4691,7 @@ components:
           minLength: 1
           maxLength: 128
           pattern: "^[A-Za-z0-9_.:-]+$"
+          description: Executor-supplied idempotency key scoped to workspaceId and jobId.
         jobId:
           type: string
           minLength: 1
@@ -4749,6 +4759,11 @@ components:
           maxLength: 128
           pattern: "^[A-Za-z0-9_.:-]+$"
           description: Server-side job log event identifier for the accepted executor event.
+        logId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Server-side job log event identifier; matches eventId for M2 runtime responses.
         jobId:
           type: string
           format: uuid
@@ -4759,6 +4774,23 @@ components:
           type: string
           format: uuid
           nullable: true
+        evidenceIds:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            format: uuid
+        executorEventRecordId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Safe idempotency record identifier for this accepted executor event.
+        duplicate:
+          type: boolean
+          description: True when this response came from an idempotent retry and no new side effects were created.
+        idempotent:
+          type: boolean
+          description: True when the request reused an existing accepted event response.
     SessionUser:
       type: object
       required: [id, email]
