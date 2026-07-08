@@ -1331,6 +1331,39 @@ describe("CertOps executor event ingestion", function () {
         body: eventPayload({
           workspaceId: workspaceA,
           jobId: job.id,
+          unexpectedPublicField: "ignored-before-hardening",
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden: ["ignored-before-hardening"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          credential: "password=swordfish",
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden: ["password=swordfish"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          privateKeyPem: "not-allowed",
+        }),
+        status: 422,
+        code: "PRIVATE_KEY_MATERIAL_REJECTED",
+        forbidden: ["privateKeyPem"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
           metadata: Array.from({ length: 33 }, (_value, index) => ({
             name: `m${index}`,
             value: index,
@@ -1517,7 +1550,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const app = buildExecutorApp();
       const route = "/api/v1/certops/executor/events";
