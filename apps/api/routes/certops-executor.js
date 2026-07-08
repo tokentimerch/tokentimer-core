@@ -105,6 +105,24 @@ const EXECUTOR_EVENT_TOP_LEVEL_FIELDS = new Set([
   "evidence",
   "metadata",
 ]);
+const EVIDENCE_ITEM_FIELDS = new Set([
+  "schemaVersion",
+  "evidenceId",
+  "jobId",
+  "workspaceId",
+  "certificateId",
+  "certificateInstanceId",
+  "targetId",
+  "eventType",
+  "source",
+  "status",
+  "observedAt",
+  "fingerprintSha256",
+  "summary",
+  "metadata",
+  "artifactRefs",
+  "redactionApplied",
+]);
 const LOG_STATUSES_SET = new Set(LOG_STATUSES);
 
 const ALLOWED_STATUSES_BY_EVENT_TYPE = Object.freeze({
@@ -254,6 +272,17 @@ function rejectUnknownTopLevelFields(body) {
     if (!EXECUTOR_EVENT_TOP_LEVEL_FIELDS.has(key)) {
       throw executorEventError(
         "Executor event body contains unsupported fields",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+  }
+}
+
+function rejectUnknownEvidenceItemFields(item) {
+  for (const key of Object.keys(item)) {
+    if (!EVIDENCE_ITEM_FIELDS.has(key)) {
+      throw executorEventError(
+        "Evidence item contains unsupported fields",
         CERTOPS_EXECUTOR_EVENT_INVALID,
       );
     }
@@ -647,8 +676,10 @@ function evidenceItemsFromBody(body) {
       );
     }
 
+    rejectPrivateKeyMaterial(item);
+    rejectUnknownEvidenceItemFields(item);
     const evidenceType = requiredTrimmedString(
-      item.eventType || item.evidenceType,
+      item.eventType,
       "evidence.eventType",
       CERTOPS_EVIDENCE_TYPE_INVALID,
     );
