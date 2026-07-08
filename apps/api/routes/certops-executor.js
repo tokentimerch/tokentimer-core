@@ -26,8 +26,6 @@ const {
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
-  assertSafePublicValue,
-  fieldNameLooksForbidden,
   getCertificateJobById,
   normalizePublicObject,
   serviceError,
@@ -42,6 +40,13 @@ const {
   CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT,
   ingestExecutorEvent,
 } = require("../services/certops/executorEvents");
+const {
+  GENERIC_SECRET_REDACTION_PLACEHOLDER,
+  containsPrivateKeyMaterial,
+  fieldNameLooksGenericSecret,
+  fieldNameLooksPrivateKeyMaterial,
+  redactGenericSecretsWithReport,
+} = require("../utils/secretMaterial");
 
 const CERTOPS_EXECUTOR_EVENT_INVALID = "CERTOPS_EXECUTOR_EVENT_INVALID";
 const CERTOPS_EXECUTOR_EVENT_TYPE_INVALID =
@@ -110,6 +115,13 @@ function executorEventError(message, code) {
   return serviceError(message, code);
 }
 
+function privateKeyMaterialError() {
+  return executorEventError(
+    "Private key material is not accepted in CertOps executor events",
+    PRIVATE_KEY_MATERIAL_REJECTED,
+  );
+}
+
 function workspaceIdHintFromBody(req) {
   return typeof req.body?.workspaceId === "string" ? req.body.workspaceId : null;
 }
@@ -130,7 +142,7 @@ function requiredPublicId(value, fieldName, code, maxLength = 128) {
   if (trimmed.length > maxLength || !PUBLIC_ID_PATTERN.test(trimmed)) {
     throw executorEventError(`${fieldName} is invalid`, code);
   }
-  assertSafePublicValue(trimmed);
+  rejectPrivateKeyMaterial(trimmed);
   return trimmed;
 }
 
@@ -139,7 +151,7 @@ function requiredUuid(value, fieldName, code) {
   if (!UUID_PATTERN.test(trimmed)) {
     throw executorEventError(`${fieldName} is invalid`, code);
   }
-  assertSafePublicValue(trimmed);
+  rejectPrivateKeyMaterial(trimmed);
   return trimmed;
 }
 
@@ -159,11 +171,83 @@ function optionalPublicId(value, fieldName, maxLength = 128) {
       CERTOPS_EXECUTOR_EVENT_INVALID,
     );
   }
-  assertSafePublicValue(trimmed);
+  rejectPrivateKeyMaterial(trimmed);
   return trimmed;
 }
 
-function optionalPublicText(value, fieldName, maxLength = 1024) {
+function createRedactionTracker() {
+  return {
+    count: 0,
+    fields: new Set(),
+  };
+}
+
+function noteRedaction(tracker, fields = []) {
+  if (!tracker) return;
+  tracker.count += 1;
+  for (const field of fields) tracker.fields.add(field);
+  if (fields.length === 0) tracker.fields.add("generic");
+}
+
+function mergeRedactionReport(tracker, report, fallbackField) {
+  if (!tracker || !report?.redactionApplied) return;
+  tracker.count += report.redactionCount || 1;
+  const fields = Array.isArray(report.redactedFields)
+    ? report.redactedFields
+    : [];
+  if (fields.length === 0) {
+    tracker.fields.add(fallbackField || "generic");
+    return;
+  }
+  for (const _field of fields) tracker.fields.add(fallbackField || "generic");
+}
+
+function redactionMetadata(tracker) {
+  if (!tracker || tracker.count <= 0) return {};
+  return {
+    redactionApplied: true,
+    redactionCount: tracker.count,
+    redactedFields: Array.from(tracker.fields).sort(),
+  };
+}
+
+function rejectPrivateKeyMaterial(value, depth = 0, seen = new WeakSet()) {
+  if (depth > 12) throw privateKeyMaterialError();
+  if (containsPrivateKeyMaterial(value)) throw privateKeyMaterialError();
+  if (value === null || value === undefined) return;
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return;
+  }
+  if (Buffer.isBuffer(value)) throw privateKeyMaterialError();
+  if (Array.isArray(value)) {
+    for (const item of value) rejectPrivateKeyMaterial(item, depth + 1, seen);
+    return;
+  }
+  if (typeof value === "object") {
+    if (seen.has(value)) throw privateKeyMaterialError();
+    seen.add(value);
+    for (const [key, item] of Object.entries(value)) {
+      if (fieldNameLooksPrivateKeyMaterial(key)) throw privateKeyMaterialError();
+      rejectPrivateKeyMaterial(item, depth + 1, seen);
+    }
+    seen.delete(value);
+  }
+}
+
+function redactGenericText(value, fieldName, tracker, maxLength = 1024) {
+  const report = redactGenericSecretsWithReport(value);
+  if (typeof report.value !== "string") {
+    throw executorEventError(`${fieldName} is invalid`, CERTOPS_EXECUTOR_EVENT_INVALID);
+  }
+  if (report.value.length > maxLength) {
+    throw executorEventError(`${fieldName} is too long`, CERTOPS_EXECUTOR_EVENT_INVALID);
+  }
+  mergeRedactionReport(tracker, report, fieldName);
+  return report.value;
+}
+
+function optionalPublicText(value, fieldName, maxLength = 1024, tracker = null) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string") {
     throw executorEventError(`${fieldName} is invalid`, CERTOPS_EXECUTOR_EVENT_INVALID);
@@ -173,11 +257,11 @@ function optionalPublicText(value, fieldName, maxLength = 1024) {
   if (trimmed.length > maxLength) {
     throw executorEventError(`${fieldName} is too long`, CERTOPS_EXECUTOR_EVENT_INVALID);
   }
-  assertSafePublicValue(trimmed);
-  return trimmed;
+  rejectPrivateKeyMaterial(trimmed);
+  return redactGenericText(trimmed, fieldName, tracker, maxLength);
 }
 
-function requiredPublicText(value, fieldName, maxLength = 512) {
+function requiredPublicText(value, fieldName, maxLength = 512, tracker = null) {
   if (typeof value !== "string") {
     throw executorEventError(
       `${fieldName} is invalid`,
@@ -191,8 +275,8 @@ function requiredPublicText(value, fieldName, maxLength = 512) {
       CERTOPS_EXECUTOR_EVENT_INVALID,
     );
   }
-  assertSafePublicValue(trimmed);
-  return trimmed;
+  rejectPrivateKeyMaterial(trimmed);
+  return redactGenericText(trimmed, fieldName, tracker, maxLength);
 }
 
 function isPlainObject(value) {
@@ -255,7 +339,7 @@ function assertEventStatusMatch(eventType, status) {
   }
 }
 
-function metadataEntriesToObject(entries, fieldName) {
+function metadataEntriesToObject(entries, fieldName, tracker = null) {
   if (entries === undefined || entries === null) return {};
   if (!Array.isArray(entries)) {
     throw executorEventError(
@@ -271,7 +355,7 @@ function metadataEntriesToObject(entries, fieldName) {
   }
 
   const metadata = {};
-  for (const entry of entries) {
+  entries.forEach((entry, index) => {
     if (!isPlainObject(entry)) {
       throw executorEventError(
         `${fieldName} entry is invalid`,
@@ -297,12 +381,13 @@ function metadataEntriesToObject(entries, fieldName) {
       CERTOPS_EXECUTOR_EVENT_INVALID,
       64,
     );
-    if (!METADATA_NAME_PATTERN.test(name) || fieldNameLooksForbidden(name)) {
+    if (!METADATA_NAME_PATTERN.test(name)) {
       throw executorEventError(
         `${fieldName}.name is invalid`,
-        PRIVATE_KEY_MATERIAL_REJECTED,
+        CERTOPS_EXECUTOR_EVENT_INVALID,
       );
     }
+    if (fieldNameLooksPrivateKeyMaterial(name)) throw privateKeyMaterialError();
     if (!Object.prototype.hasOwnProperty.call(entry, "value")) {
       throw executorEventError(
         `${fieldName}.value is required`,
@@ -311,7 +396,7 @@ function metadataEntriesToObject(entries, fieldName) {
     }
 
     const value = entry.value;
-    assertSafePublicValue(value);
+    rejectPrivateKeyMaterial(value);
     if (value !== null) {
       const valueType = typeof value;
       if (
@@ -331,13 +416,25 @@ function metadataEntriesToObject(entries, fieldName) {
       }
     }
 
-    metadata[name] = entry.value;
-  }
+    if (fieldNameLooksGenericSecret(name)) {
+      metadata[`redactedMetadata${index + 1}`] =
+        GENERIC_SECRET_REDACTION_PLACEHOLDER;
+      noteRedaction(tracker, [fieldName]);
+      return;
+    }
+
+    let normalizedValue = value;
+    if (typeof value === "string") {
+      normalizedValue = redactGenericText(value, `${fieldName}.value`, tracker, 512);
+    }
+
+    metadata[name] = normalizedValue;
+  });
 
   return normalizePublicObject(metadata, fieldName);
 }
 
-function eventMetadataFromBody(body, occurredAt) {
+function eventMetadataFromBody(body, occurredAt, tracker = createRedactionTracker()) {
   const metadata = {
     executorEventId: body.eventId,
     executorEventType: body.eventType,
@@ -354,8 +451,15 @@ function eventMetadataFromBody(body, occurredAt) {
     if (value) metadata[targetKey] = value;
   }
 
-  const entries = metadataEntriesToObject(body.metadata, "metadata");
-  return normalizePublicObject({ ...metadata, ...entries }, "metadata");
+  const entries = metadataEntriesToObject(body.metadata, "metadata", tracker);
+  return normalizePublicObject(
+    {
+      ...metadata,
+      ...entries,
+      ...redactionMetadata(tracker),
+    },
+    "metadata",
+  );
 }
 
 function evidenceSubjectFromItem(item) {
@@ -383,7 +487,7 @@ function evidenceSubjectFromItem(item) {
   return { subjectType: null, subjectId: null };
 }
 
-function normalizeArtifactRefs(value) {
+function normalizeArtifactRefs(value, tracker = null) {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value)) {
     throw executorEventError(
@@ -431,6 +535,7 @@ function normalizeArtifactRefs(value) {
       item.reference,
       "artifactRefs.reference",
       512,
+      tracker,
     );
     const normalized = { type, reference };
 
@@ -441,7 +546,7 @@ function normalizeArtifactRefs(value) {
         typeof item.sha256 === "string" &&
         SHA256_HEX_PATTERN.test(item.sha256)
       ) {
-        assertSafePublicValue(item.sha256);
+        rejectPrivateKeyMaterial(item.sha256);
         normalized.sha256 = item.sha256;
       } else {
         throw executorEventError(
@@ -456,6 +561,7 @@ function normalizeArtifactRefs(value) {
 }
 
 function evidenceMetadataFromItem(item) {
+  const tracker = createRedactionTracker();
   const metadata = {};
   for (const [targetKey, sourceKey] of [
     ["source", "source"],
@@ -465,7 +571,7 @@ function evidenceMetadataFromItem(item) {
   ]) {
     const maxLength =
       sourceKey === "summary" ? 1024 : sourceKey === "fingerprintSha256" ? 64 : 128;
-    const value = optionalPublicText(item[sourceKey], sourceKey, maxLength);
+    const value = optionalPublicText(item[sourceKey], sourceKey, maxLength, tracker);
     if (value) metadata[targetKey] = value;
   }
 
@@ -479,16 +585,20 @@ function evidenceMetadataFromItem(item) {
     if (value) metadata[targetKey] = value;
   }
 
-  if (typeof item.redactionApplied === "boolean") {
-    metadata.redactionApplied = item.redactionApplied;
-  }
-  const artifactRefs = normalizeArtifactRefs(item.artifactRefs);
+  const artifactRefs = normalizeArtifactRefs(item.artifactRefs, tracker);
   if (artifactRefs !== undefined) {
     metadata.artifactRefs = artifactRefs;
   }
 
-  const entries = metadataEntriesToObject(item.metadata, "evidence.metadata");
-  return normalizePublicObject({ ...metadata, ...entries }, "metadata");
+  const entries = metadataEntriesToObject(item.metadata, "evidence.metadata", tracker);
+  return normalizePublicObject(
+    {
+      ...metadata,
+      ...entries,
+      ...redactionMetadata(tracker),
+    },
+    "metadata",
+  );
 }
 
 function evidenceItemsFromBody(body) {
@@ -513,9 +623,19 @@ function evidenceItemsFromBody(body) {
       );
     }
 
+    const evidenceType = requiredTrimmedString(
+      item.eventType || item.evidenceType,
+      "evidence.eventType",
+      CERTOPS_EVIDENCE_TYPE_INVALID,
+    );
+    rejectPrivateKeyMaterial(evidenceType);
+    const subject = evidenceSubjectFromItem(item);
     return {
-      ...item,
-      artifactRefs: normalizeArtifactRefs(item.artifactRefs),
+      evidenceType,
+      subjectType: subject.subjectType,
+      subjectId: subject.subjectId,
+      metadata: evidenceMetadataFromItem(item),
+      observedAt: item.observedAt || body.occurredAt,
     };
   });
 }
@@ -528,7 +648,7 @@ function normalizeExecutorEventBody(body, apiToken) {
     );
   }
 
-  assertSafePublicValue(body);
+  rejectPrivateKeyMaterial(body);
 
   if (body.schemaVersion !== 1) {
     throw executorEventError(
@@ -564,21 +684,22 @@ function normalizeExecutorEventBody(body, apiToken) {
     CERTOPS_EXECUTOR_EVENT_INVALID,
   );
   const occurredAt = normalizeOccurredAt(body.occurredAt);
+  const tracker = createRedactionTracker();
 
   return {
     eventId,
     eventType,
     jobId,
-    message: optionalPublicText(body.message, "message", 1024),
+    message: optionalPublicText(body.message, "message", 1024, tracker),
     occurredAt,
     logStatus: LOG_STATUSES_SET.has(status) ? status : null,
     jobStatus: JOB_STATUS_BY_EVENT_TYPE[eventType] || null,
-    metadata: eventMetadataFromBody(body, occurredAt),
+    metadata: eventMetadataFromBody(body, occurredAt, tracker),
     evidence: evidenceItemsFromBody(body),
   };
 }
 
-async function persistEvidenceItems({ client, body, event, workspaceId, apiToken }) {
+async function persistEvidenceItems({ client, event, workspaceId, apiToken }) {
   const created = [];
   for (const item of event.evidence) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -588,21 +709,15 @@ async function persistEvidenceItems({ client, body, event, workspaceId, apiToken
       );
     }
 
-    const evidenceType = requiredTrimmedString(
-      item.eventType || item.evidenceType,
-      "evidence.eventType",
-      CERTOPS_EVIDENCE_TYPE_INVALID,
-    );
-    const subject = evidenceSubjectFromItem(item);
     const evidence = await createCertificateEvidence({
       client,
       workspaceId,
       jobId: event.jobId,
-      evidenceType,
-      subjectType: subject.subjectType,
-      subjectId: subject.subjectId,
-      metadata: evidenceMetadataFromItem(item),
-      observedAt: item.observedAt || body.occurredAt,
+      evidenceType: item.evidenceType,
+      subjectType: item.subjectType,
+      subjectId: item.subjectId,
+      metadata: item.metadata,
+      observedAt: item.observedAt,
       createdByApiTokenId: apiToken.id,
     });
     created.push(evidence);
@@ -676,7 +791,7 @@ async function executorEventsHandler(req, res) {
       eventId: event.eventId,
       request: event,
       apiTokenId: req.apiToken.id,
-      process: async (client) => {
+      process: async (client, executorEventRecord) => {
         const job = await getCertificateJobById({
           client,
           workspaceId,
@@ -712,7 +827,6 @@ async function executorEventsHandler(req, res) {
 
         const evidence = await persistEvidenceItems({
           client,
-          body: req.body,
           event,
           workspaceId,
           apiToken: req.apiToken,
@@ -721,17 +835,21 @@ async function executorEventsHandler(req, res) {
         const response = {
           ok: true,
           eventId: log.id,
+          logId: log.id,
           jobId: event.jobId,
           status: updatedJob.status,
+          evidenceId: evidence[0]?.id || null,
+          evidenceIds: evidence.map((item) => item.id),
+          executorEventRecordId: executorEventRecord?.id || null,
         };
-        if (evidence[0]?.id) response.evidenceId = evidence[0].id;
         return response;
       },
     });
 
     return res.status(202).json({
       ...result.response,
-      ...(result.duplicate ? { duplicate: true } : {}),
+      duplicate: result.duplicate,
+      idempotent: result.duplicate,
     });
   } catch (error) {
     const handled = handleExecutorEventError(res, error);

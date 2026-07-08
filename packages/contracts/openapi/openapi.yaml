@@ -3659,7 +3659,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: M2 external executor reporting envelope for normalized job and evidence events. Lifecycle events require `certops:events:write`; evidence-bearing events additionally require `certops:evidence:write`. The route is hidden with 404 when `certops.enabled` is disabled. `eventId` is idempotent within a workspace and job: exact retries return 202 without repeating side effects, while a different accepted envelope using the same key returns 409. Payloads containing private key material are rejected with 422. Older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as normalized job/evidence events. Richer agent-executed job protocol and job signing are deferred to M4.
+      description: M2 external executor reporting envelope for normalized job and public evidence events through the single executor ingestion endpoint. Lifecycle events require `certops:events:write`; evidence-bearing events additionally require `certops:evidence:write`. The route is hidden with 404 when `certops.enabled` is disabled. `eventId` is idempotent within a workspace and job: exact retries return 202 without repeating logs, evidence, or status side effects, while a different sanitized envelope using the same key returns 409. Payloads containing private key material are rejected with 422; generic secrets in log and evidence metadata are redacted to `[REDACTED]` before persistence. Older operational lifecycle names are represented in M2 as normalized job/evidence events. Per-job executor write routes, richer agent-executed protocol, and job signing are deferred unless a later ADR changes that.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3698,6 +3698,15 @@ paths:
               example:
                 error: Private key material is not accepted in CertOps requests
                 code: PRIVATE_KEY_MATERIAL_REJECTED
+        "409":
+          description: Executor event idempotency key conflicts with a different sanitized payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Executor event idempotency key conflicts with a different payload
+                code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/register:
@@ -4830,7 +4839,7 @@ components:
     CertOpsExecutorEventRequest:
       type: object
       additionalProperties: false
-      description: M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. The M2 envelope uses job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected, and evidence.attached. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed job protocol and job signing are deferred to M4.
+      description: M2 external executor event envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. eventId is an idempotency key within workspaceId and jobId. Private key material is rejected; generic secrets in log and evidence metadata are redacted before persistence. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed protocol and job signing are deferred to M4.
       required:
         - schemaVersion
         - eventId
@@ -4848,6 +4857,7 @@ components:
           minLength: 1
           maxLength: 128
           pattern: "^[A-Za-z0-9_.:-]+$"
+          description: Executor-supplied idempotency key scoped to workspaceId and jobId.
         jobId:
           type: string
           minLength: 1
@@ -4918,6 +4928,11 @@ components:
           maxLength: 128
           pattern: "^[A-Za-z0-9_.:-]+$"
           description: Server-side job log event identifier for the accepted executor event.
+        logId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Server-side job log event identifier; matches eventId for M2 runtime responses.
         jobId:
           type: string
           format: uuid
@@ -4928,10 +4943,24 @@ components:
           type: string
           format: uuid
           nullable: true
+        evidenceIds:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            format: uuid
+        executorEventRecordId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Safe idempotency record identifier for this accepted executor event.
         duplicate:
           type: boolean
           default: false
-          description: True only when this response is an exact idempotent replay; no lifecycle, evidence, or audit side effects were repeated.
+          description: True when this response came from an idempotent retry and no new side effects were created.
+        idempotent:
+          type: boolean
+          description: True when the request reused an existing accepted event response.
     SessionUser:
       type: object
       required: [id, email]
