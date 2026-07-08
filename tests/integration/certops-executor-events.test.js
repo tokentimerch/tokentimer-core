@@ -494,6 +494,111 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("uses the sanitized executor event payload for idempotency hashes", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-sanitized-idempotency",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:executor:events"],
+      });
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const eventId = `event-${crypto.randomUUID()}`;
+      const evidenceId = `evidence-${crypto.randomUUID()}`;
+      const payload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        eventId,
+        eventType: "evidence.attached",
+        status: "accepted",
+        message: "password=first-secret",
+        evidence: [
+          {
+            schemaVersion: 1,
+            evidenceId,
+            jobId: job.id,
+            workspaceId: workspaceA,
+            certificateId: "cert-1",
+            eventType: "certificate.observed",
+            source: "executor",
+            observedAt: new Date().toISOString(),
+            summary: "credential=first-secret",
+          },
+        ],
+      });
+      const retriedPayload = {
+        ...payload,
+        message: "password=second-secret",
+        evidence: [
+          {
+            ...payload.evidence[0],
+            summary: "credential=second-secret",
+          },
+        ],
+      };
+
+      const first = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(payload);
+      const second = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(retriedPayload);
+      const artifacts = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+
+      expect(first.status).to.equal(202);
+      expect(second.status).to.equal(202);
+      expect(first.body.duplicate).to.equal(false);
+      expect(first.body.idempotent).to.equal(false);
+      expect(second.body.duplicate).to.equal(true);
+      expect(second.body.idempotent).to.equal(true);
+      expect(artifacts).to.deep.equal({
+        logs: 1,
+        evidence: 1,
+        executorEvents: 1,
+      });
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(logs.items[0].message).to.equal("[REDACTED]");
+      expect(logs.items[0].metadata.redactionApplied).to.equal(true);
+      expect(evidence.items[0].metadata.summary).to.equal("[REDACTED]");
+      expect(evidence.items[0].metadata.redactionApplied).to.equal(true);
+
+      const serialized = JSON.stringify({
+        first: first.body,
+        second: second.body,
+        logs: logs.items,
+        evidence: evidence.items,
+      });
+      expect(serialized).to.include("[REDACTED]");
+      expect(serialized).to.not.include("first-secret");
+      expect(serialized).to.not.include("second-secret");
+      expectNoSensitiveValues(second.body, token.plaintextToken, [
+        "first-secret",
+        "second-secret",
+      ]);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("isolates executor event IDs by job and rejects conflicting retries safely", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-conflict",
@@ -947,6 +1052,39 @@ describe("CertOps executor event ingestion", function () {
         }),
         status: 400,
         code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          unexpectedPublicField: "ignored-before-hardening",
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden: ["ignored-before-hardening"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          credential: "password=swordfish",
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden: ["password=swordfish"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          privateKeyPem: "not-allowed",
+        }),
+        status: 422,
+        code: "PRIVATE_KEY_MATERIAL_REJECTED",
+        forbidden: ["privateKeyPem"],
       });
 
       await expectRejectedWithoutPersistence({
