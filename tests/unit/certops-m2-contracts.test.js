@@ -658,6 +658,56 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(schemaBlock, /\n        idempotent:\r?\n          type: boolean/);
   });
 
+  it("keeps executor event requests closed and runtime top-level validation strict", () => {
+    const schemaBlock = openApiSchemaBlock("CertOpsExecutorEventRequest");
+
+    assert.match(schemaBlock, /additionalProperties: false/);
+    for (const fieldName of [
+      "schemaVersion",
+      "eventId",
+      "jobId",
+      "workspaceId",
+      "certificateId",
+      "executorId",
+      "status",
+      "eventType",
+      "occurredAt",
+      "message",
+      "evidence",
+      "metadata",
+    ]) {
+      assert.match(
+        schemaBlock,
+        new RegExp(`\\n        ${fieldName}:`),
+        `${fieldName} must be documented in the executor event request schema`,
+      );
+      assert.match(
+        certOpsExecutorRoutesSource,
+        new RegExp(`"${fieldName}"`),
+        `${fieldName} must be allowed by runtime top-level validation`,
+      );
+    }
+    assert.doesNotMatch(schemaBlock, /\n        attemptId:/);
+    assert.doesNotMatch(
+      certOpsExecutorRoutesSource,
+      /EXECUTOR_EVENT_TOP_LEVEL_FIELDS[\s\S]*?"attemptId"/,
+    );
+
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /function rejectUnknownTopLevelFields\(body\)/,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /rejectUnknownTopLevelFields\(body\);/,
+    );
+    assert.ok(
+      certOpsExecutorRoutesSource.indexOf("rejectPrivateKeyMaterial(body);") <
+        certOpsExecutorRoutesSource.indexOf("rejectUnknownTopLevelFields(body);"),
+      "private-key detection must run before unknown-field rejection",
+    );
+  });
+
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
     const routePath = "/api/v1/certops/executor/events";
     const method = "POST";

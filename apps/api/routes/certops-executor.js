@@ -91,6 +91,20 @@ const EXECUTOR_EVENT_STATUSES = new Set([
   "blocked",
   "cancelled",
 ]);
+const EXECUTOR_EVENT_TOP_LEVEL_FIELDS = new Set([
+  "schemaVersion",
+  "eventId",
+  "jobId",
+  "workspaceId",
+  "certificateId",
+  "executorId",
+  "status",
+  "eventType",
+  "occurredAt",
+  "message",
+  "evidence",
+  "metadata",
+]);
 const LOG_STATUSES_SET = new Set(LOG_STATUSES);
 
 const ALLOWED_STATUSES_BY_EVENT_TYPE = Object.freeze({
@@ -232,6 +246,17 @@ function rejectPrivateKeyMaterial(value, depth = 0, seen = new WeakSet()) {
       rejectPrivateKeyMaterial(item, depth + 1, seen);
     }
     seen.delete(value);
+  }
+}
+
+function rejectUnknownTopLevelFields(body) {
+  for (const key of Object.keys(body)) {
+    if (!EXECUTOR_EVENT_TOP_LEVEL_FIELDS.has(key)) {
+      throw executorEventError(
+        "Executor event body contains unsupported fields",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
   }
 }
 
@@ -445,7 +470,6 @@ function eventMetadataFromBody(body, occurredAt, tracker = createRedactionTracke
   for (const [targetKey, sourceKey] of [
     ["certificateId", "certificateId"],
     ["executorId", "executorId"],
-    ["attemptId", "attemptId"],
   ]) {
     const value = optionalPublicId(body[sourceKey], sourceKey);
     if (value) metadata[targetKey] = value;
@@ -649,6 +673,7 @@ function normalizeExecutorEventBody(body, apiToken) {
   }
 
   rejectPrivateKeyMaterial(body);
+  rejectUnknownTopLevelFields(body);
 
   if (body.schemaVersion !== 1) {
     throw executorEventError(
