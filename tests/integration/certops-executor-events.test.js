@@ -1297,6 +1297,20 @@ describe("CertOps executor event ingestion", function () {
         return response;
       }
 
+      function validEvidenceItem(overrides = {}) {
+        return {
+          schemaVersion: 1,
+          evidenceId: `evidence-${crypto.randomUUID()}`,
+          jobId: job.id,
+          workspaceId: workspaceA,
+          certificateId: "cert-1",
+          eventType: "certificate.observed",
+          source: "executor",
+          observedAt: new Date().toISOString(),
+          ...overrides,
+        };
+      }
+
       await expectRejectedWithoutPersistence({
         body: eventPayload({ workspaceId: workspaceA, jobId: "not-a-uuid" }),
         status: 400,
@@ -1358,6 +1372,40 @@ describe("CertOps executor event ingestion", function () {
         status: 422,
         code: "PRIVATE_KEY_MATERIAL_REJECTED",
         forbidden: ["privateKeyPem"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+          evidence: [
+            validEvidenceItem({
+              unexpectedPublicField: "ignored-before-hardening",
+            }),
+          ],
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden: ["ignored-before-hardening"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+          evidence: [
+            validEvidenceItem({
+              privateKeyPem: "not-allowed",
+            }),
+          ],
+        }),
+        status: 422,
+        code: "PRIVATE_KEY_MATERIAL_REJECTED",
+        forbidden: ["privateKeyPem", "not-allowed"],
       });
 
       await expectRejectedWithoutPersistence({
