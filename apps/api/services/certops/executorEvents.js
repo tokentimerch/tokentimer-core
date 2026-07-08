@@ -145,7 +145,7 @@ async function ingestExecutorEvent({
       return { response: parseResponse(replay.response), duplicate: true };
     }
 
-    const response = await process(client);
+    const response = await process(client, { id: inserted.id });
     await storeExecutorEventResponse(client, inserted.id, response);
     await client.query("COMMIT");
     return { response, duplicate: false };

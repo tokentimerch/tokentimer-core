@@ -45,8 +45,63 @@ const PRIVATE_KEY_PEM_BLOCK_PATTERN = new RegExp(
 // secret scrubbing (extended in M2 evidence redaction work).
 const AUTHORIZATION_VALUE_PATTERN =
   /\b(Authorization\s*[:=]\s*)(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]+/gi;
+const GENERIC_SECRET_ASSIGNMENT_PATTERN =
+  /\b(?:password|passwd|credential|secret|api[_-]?key|api[_-]?secret|token[_-]?secret|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+
+const PRIVATE_KEY_FIELD_FRAGMENTS = Object.freeze([
+  "privatekey",
+  "privatekeypem",
+  "encryptedprivatekey",
+  "keymaterial",
+  "pfxblob",
+  "jksblob",
+  "tlskey",
+  "caprivatekey",
+  "rawprivatekey",
+  "rawkey",
+  "pemprivatekey",
+  "privatepem",
+  "keypem",
+  "pfx",
+  "jks",
+  "keystore",
+]);
+
+const GENERIC_SECRET_FIELD_FRAGMENTS = Object.freeze([
+  "password",
+  "passwd",
+  "credential",
+  "secret",
+  "tokensecret",
+  "apisecret",
+  "apikey",
+  "authorization",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+]);
 
 const MAX_SCAN_DEPTH = 12;
+
+function normalizeFieldName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function fieldNameLooksPrivateKeyMaterial(fieldName) {
+  const normalized = normalizeFieldName(fieldName);
+  return PRIVATE_KEY_FIELD_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
+
+function fieldNameLooksGenericSecret(fieldName) {
+  const normalized = normalizeFieldName(fieldName);
+  return GENERIC_SECRET_FIELD_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
 
 /**
  * Returns true if the string looks like base64 (and is long enough to plausibly
@@ -242,38 +297,97 @@ function redactPrivateKeyMaterial(value) {
  * @param {*} value
  * @returns {*} redacted copy
  */
-function redactGenericSecrets(value, depth = 0, seen = new WeakSet()) {
+function createRedactionReport() {
+  return {
+    redactionApplied: false,
+    redactionCount: 0,
+    redactedFields: new Set(),
+  };
+}
+
+function noteRedaction(report, category = "generic") {
+  report.redactionApplied = true;
+  report.redactionCount += 1;
+  report.redactedFields.add(category);
+}
+
+function finalizeRedactionReport(report, value) {
+  return {
+    value,
+    redactionApplied: report.redactionApplied,
+    redactionCount: report.redactionCount,
+    redactedFields: Array.from(report.redactedFields).sort(),
+  };
+}
+
+function redactGenericString(value, report) {
+  let result = redactPrivateKeyMaterial(value);
+  if (result !== value) noteRedaction(report, "private-key");
+
+  result = result.replace(AUTHORIZATION_VALUE_PATTERN, () => {
+    noteRedaction(report, "authorization");
+    return GENERIC_SECRET_REDACTION_PLACEHOLDER;
+  });
+
+  result = result.replace(GENERIC_SECRET_ASSIGNMENT_PATTERN, () => {
+    noteRedaction(report, "generic-secret");
+    return GENERIC_SECRET_REDACTION_PLACEHOLDER;
+  });
+
+  return result;
+}
+
+function redactGenericSecretsInternal(value, report, depth = 0, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
   // Bail with a marker (never the original subtree) so a hostile or accidental
   // deep nesting cannot defeat redaction by sitting below the scan floor.
-  if (depth > MAX_SCAN_DEPTH) return "[REDACTED:max-depth]";
+  if (depth > MAX_SCAN_DEPTH) {
+    noteRedaction(report, "max-depth");
+    return "[REDACTED:max-depth]";
+  }
 
   if (typeof value === "string") {
-    return redactPrivateKeyMaterial(value).replace(
-      AUTHORIZATION_VALUE_PATTERN,
-      (_match, prefix, scheme) =>
-        `${prefix}${scheme} ${GENERIC_SECRET_REDACTION_PLACEHOLDER}`,
-    );
+    return redactGenericString(value, report);
   }
 
   if (Buffer.isBuffer(value)) {
-    return bufferContainsPrivateKey(value)
-      ? PRIVATE_KEY_REDACTION_PLACEHOLDER
-      : value;
+    if (bufferContainsPrivateKey(value)) {
+      noteRedaction(report, "private-key");
+      return PRIVATE_KEY_REDACTION_PLACEHOLDER;
+    }
+    return value;
   }
 
   if (typeof value === "object") {
     // Path-based cycle guard: a cyclic reference returns a marker, never the
     // original (which could leak unredacted children of an evidence object).
-    if (seen.has(value)) return "[REDACTED:circular]";
+    if (seen.has(value)) {
+      noteRedaction(report, "circular");
+      return "[REDACTED:circular]";
+    }
     seen.add(value);
     let result;
     if (Array.isArray(value)) {
-      result = value.map((item) => redactGenericSecrets(item, depth + 1, seen));
+      result = value.map((item) =>
+        redactGenericSecretsInternal(item, report, depth + 1, seen),
+      );
     } else {
       result = {};
       for (const [key, item] of Object.entries(value)) {
-        result[key] = redactGenericSecrets(item, depth + 1, seen);
+        if (fieldNameLooksGenericSecret(key)) {
+          const category = normalizeFieldName(key).includes("authorization")
+            ? "authorization"
+            : "generic-secret";
+          noteRedaction(report, category);
+          result[key] = GENERIC_SECRET_REDACTION_PLACEHOLDER;
+          continue;
+        }
+        result[key] = redactGenericSecretsInternal(
+          item,
+          report,
+          depth + 1,
+          seen,
+        );
       }
     }
     seen.delete(value);
@@ -283,13 +397,28 @@ function redactGenericSecrets(value, depth = 0, seen = new WeakSet()) {
   return value;
 }
 
+function redactGenericSecretsWithReport(value) {
+  const report = createRedactionReport();
+  return finalizeRedactionReport(
+    report,
+    redactGenericSecretsInternal(value, report),
+  );
+}
+
+function redactGenericSecrets(value) {
+  return redactGenericSecretsWithReport(value).value;
+}
+
 module.exports = {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   PRIVATE_KEY_PEM_PATTERN,
   containsPrivateKeyMaterial,
   looksPrivateKeyDer,
+  fieldNameLooksGenericSecret,
+  fieldNameLooksPrivateKeyMaterial,
   looksPkcs12Bundle,
   redactPrivateKeyMaterial,
   redactGenericSecrets,
+  redactGenericSecretsWithReport,
 };

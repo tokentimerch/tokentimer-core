@@ -1100,6 +1100,9 @@ const migrations = [
         ON certificate_executor_events(workspace_id, job_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_workspace_event
         ON certificate_executor_events(workspace_id, executor_event_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_api_token
+        ON certificate_executor_events(workspace_id, created_by_api_token_id)
+        WHERE created_by_api_token_id IS NOT NULL;
     `,
   },
 ];

@@ -15,6 +15,10 @@ const CERTOPS_TABLES = [
   "certificate_targets",
 ];
 
+const CERTOPS_EXECUTOR_EVENT_TABLES = [
+  "certificate_executor_events",
+];
+
 const CERTOPS_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_inventory_schema",
 );
@@ -113,6 +117,21 @@ describe("CertOps inventory migration", function () {
     );
   });
 
+  it("creates the CertOps executor event idempotency table", async () => {
+    const res = await TestUtils.execQuery(
+      `SELECT table_name
+         FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = ANY($1::text[])
+        ORDER BY table_name`,
+      [CERTOPS_EXECUTOR_EVENT_TABLES],
+    );
+
+    expect(res.rows.map((row) => row.table_name).sort()).to.deep.equal(
+      CERTOPS_EXECUTOR_EVENT_TABLES.slice().sort(),
+    );
+  });
+
   it("can run the migration body repeatedly", async () => {
     expect(CERTOPS_MIGRATION).to.exist;
 
@@ -168,7 +187,7 @@ describe("CertOps inventory migration", function () {
         WHERE table_schema = 'public'
           AND table_name = ANY($1::text[])
         ORDER BY table_name, ordinal_position`,
-      [CERTOPS_TABLES],
+      [[...CERTOPS_TABLES, ...CERTOPS_EXECUTOR_EVENT_TABLES]],
     );
 
     const forbiddenFragments = [
@@ -203,13 +222,13 @@ describe("CertOps inventory migration", function () {
         WHERE table_schema = 'public'
           AND table_name = ANY($1::text[])
           AND column_name = 'workspace_id'`,
-      [CERTOPS_TABLES],
+      [[...CERTOPS_TABLES, ...CERTOPS_EXECUTOR_EVENT_TABLES]],
     );
 
     const byTable = new Map(
       columns.rows.map((row) => [row.table_name, row.is_nullable]),
     );
-    for (const tableName of CERTOPS_TABLES) {
+    for (const tableName of [...CERTOPS_TABLES, ...CERTOPS_EXECUTOR_EVENT_TABLES]) {
       expect(byTable.get(tableName), `${tableName}.workspace_id`).to.equal(
         "NO",
       );
@@ -231,11 +250,11 @@ describe("CertOps inventory migration", function () {
           AND kcu.column_name = 'workspace_id'
           AND ccu.table_name = 'workspaces'
           AND ccu.column_name = 'id'`,
-      [CERTOPS_TABLES],
+      [[...CERTOPS_TABLES, ...CERTOPS_EXECUTOR_EVENT_TABLES]],
     );
 
     expect(workspaceFks.rows.map((row) => row.table_name).sort()).to.deep.equal(
-      CERTOPS_TABLES.slice().sort(),
+      [...CERTOPS_TABLES, ...CERTOPS_EXECUTOR_EVENT_TABLES].sort(),
     );
 
     const instanceFks = await TestUtils.execQuery(
