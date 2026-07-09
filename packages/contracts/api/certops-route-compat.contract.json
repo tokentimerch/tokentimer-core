@@ -1,8 +1,8 @@
 {
   "contractName": "api.certops-route-compat",
   "version": "0.8.1",
-  "status": "frozen-skeleton",
-  "description": "Frozen CertOps route namespaces and stable routes for M1/M2. Routes are skeletons in Phase 0 (documented in OpenAPI, not yet implemented). This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn. Per-route request/response schemas are added in M1/M2.",
+  "status": "m2-runtime-stable",
+  "description": "Frozen CertOps route namespaces and stable routes for M1/M2. M1/M2 Core workspace, machine-token executor, job read, evidence, and token-management routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
   "namespacePolicy": {
     "workspaceScoped": {
       "prefix": "/api/v1/workspaces/{id}/certops",

@@ -35,6 +35,9 @@ const {
   runExecutorEventIdempotently,
 } = require("../services/certops/executorEvents");
 const {
+  CERTOPS_API_TOKEN_SCOPE_DENIED,
+} = require("../services/certops/apiTokens");
+const {
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   containsPrivateKeyMaterial,
   fieldNameLooksGenericSecret,
@@ -204,6 +207,24 @@ function safeAuditHintsFromRequest(req) {
 
 function workspaceIdHintFromBody(req) {
   return typeof req.body?.workspaceId === "string" ? req.body.workspaceId : null;
+}
+
+function requestCarriesEvidence(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  if (body.eventType === "evidence.attached") return true;
+  return Object.prototype.hasOwnProperty.call(body, "evidence")
+    && body.evidence !== undefined
+    && body.evidence !== null;
+}
+
+function requireEvidenceWriteScopeForEvidencePayload(req, body) {
+  if (!requestCarriesEvidence(body)) return;
+  const scopes = Array.isArray(req.apiToken?.scopes) ? req.apiToken.scopes : [];
+  if (scopes.includes(EVIDENCE_WRITE_SCOPE)) return;
+  throw executorEventError(
+    "CertOps evidence write scope is required",
+    CERTOPS_API_TOKEN_SCOPE_DENIED,
+  );
 }
 
 function bodyWithPathJobContext(req, mode) {
@@ -929,6 +950,13 @@ function handleExecutorEventError(res, error) {
     });
   }
 
+  if (error?.code === CERTOPS_API_TOKEN_SCOPE_DENIED) {
+    return res.status(403).json({
+      error: "CertOps API token scope denied",
+      code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+    });
+  }
+
   if (error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT) {
     return res.status(409).json({
       error: "Executor event idempotency key conflicts with a different payload",
@@ -1010,6 +1038,7 @@ async function executorEventsHandler(req, res, options = {}) {
     const workspaceId = req.apiToken.workspaceId;
     const eventBody = bodyWithPathJobContext(req, options.mode);
     const event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
     const requestHashSha256 = hashExecutorEventPayload({
       workspaceId,
       jobId: event.jobId,
@@ -1222,4 +1251,5 @@ module.exports._test = {
   handleExecutorEventError,
   metadataEntriesToObject,
   normalizeExecutorEventBody,
+  requestCarriesEvidence,
 };
