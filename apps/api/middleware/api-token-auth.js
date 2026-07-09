@@ -215,7 +215,11 @@ function createCertOpsApiTokenAuth(options = {}) {
 
     const workspaceResolution = workspaceResolutionFromRequest(req, options);
     const workspaceId = workspaceResolution.workspaceId;
-    if (!workspaceId) {
+    if (
+      !workspaceId &&
+      (workspaceResolution.code === CERTOPS_API_TOKEN_WORKSPACE_MISMATCH ||
+        options.allowTokenWorkspace !== true)
+    ) {
       return res
         .status(401)
         .json(
@@ -232,6 +236,7 @@ function createCertOpsApiTokenAuth(options = {}) {
         rawToken: bearer.rawToken,
         workspaceId,
         requiredScopes,
+        allowTokenWorkspace: options.allowTokenWorkspace === true,
       });
     } catch (error) {
       if (error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID) {

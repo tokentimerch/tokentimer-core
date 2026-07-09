@@ -309,6 +309,54 @@ describe("CertOps API token auth middleware", () => {
     assert.equal(matchingResolverResult.req.apiToken.workspaceId, WORKSPACE_A);
   });
 
+  it("can derive workspace from a validated token for path-job machine routes", async () => {
+    const calls = [];
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:evidence:write"],
+      allowTokenWorkspace: true,
+      validateApiToken: async (options) => {
+        calls.push(options);
+        return successfulValidation({
+          workspaceId: WORKSPACE_A,
+          scopes: ["certops:evidence:write"],
+        });
+      },
+    });
+
+    const req = createRequest({
+      authorization: `Bearer ${RAW_TOKEN}`,
+      params: { jobId: "job-1" },
+      body: {},
+    });
+    const result = await runMiddleware(middleware, req);
+
+    assert.equal(result.nextCalled, true);
+    assert.equal(calls[0].workspaceId, null);
+    assert.equal(calls[0].allowTokenWorkspace, true);
+    assert.equal(req.apiToken.workspaceId, WORKSPACE_A);
+  });
+
+  it("does not let certops:read satisfy write scopes", async () => {
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      validateApiToken: async () => ({
+        valid: false,
+        code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+      }),
+    });
+
+    const result = await runMiddleware(
+      middleware,
+      createRequest({
+        authorization: `Bearer ${RAW_TOKEN}`,
+        params: { workspaceId: WORKSPACE_A },
+      }),
+    );
+
+    assert.equal(result.res.statusCode, 403);
+    assert.equal(result.res.body.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
+  });
+
   it("rejects missing, non-Bearer, and empty Authorization headers with 401", async () => {
     const middleware = createCertOpsApiTokenAuth({
       scopes: ["certops:events:write"],
@@ -487,6 +535,8 @@ describe("CertOps machine-token CSRF exemption", () => {
     for (const requestPath of [
       "/v1/certops/executor/events",
       "/api/v1/certops/executor/events",
+      "/v1/certops/jobs/1/events",
+      "/api/v1/certops/jobs/1/evidence",
     ]) {
       assert.equal(isCertOpsMachineTokenCsrfExemptPath(requestPath), true);
     }
@@ -495,6 +545,9 @@ describe("CertOps machine-token CSRF exemption", () => {
       "/api/v1/certops/executor/jobs",
       "/api/v1/certops/executor/anything",
       "/v1/certops/executor/jobs",
+      "/v1/certops/executor/jobs/1/events",
+      "/v1/certops/jobs/1/events/extra",
+      "/v1/certops/jobs//events",
       "/v1/workspaces/111/certops/certificates",
       "/v1/certops/agent/register",
     ]) {

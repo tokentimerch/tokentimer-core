@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/executor-event.schema.json",
   "title": "CertOps Executor Event",
-  "description": "M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. The envelope reports normalized public job/evidence events only: older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as job.* events plus normalized evidence items. The richer agent-executed job protocol, job signing, attemptId semantics, agent identity/selector, nonce replay cache, signingKeyId, and signature are deferred to M4. Runtime implementations reject private-key material before persistence and redact generic secrets where evidence/log policy applies.",
+  "description": "M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. It carries normalized public job/evidence events only; runtime enforces machine-token auth, rate limiting, idempotency, private-key rejection, generic-secret redaction, and safe persistence. Richer agent-executed protocol and job signing are deferred to M4.",
   "type": "object",
   "additionalProperties": false,
   "required": [

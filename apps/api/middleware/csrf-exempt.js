@@ -6,8 +6,18 @@ const CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS = new Set([
   "/api/v1/certops/executor/events",
 ]);
 
+const CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATTERNS = [
+  /^\/v1\/certops\/jobs\/[^/]+\/(?:events|evidence)$/,
+  /^\/api\/v1\/certops\/jobs\/[^/]+\/(?:events|evidence)$/,
+];
+
 function isCertOpsMachineTokenCsrfExemptPath(requestPath) {
-  return CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS.has(requestPath);
+  return (
+    CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS.has(requestPath) ||
+    CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATTERNS.some((pattern) =>
+      pattern.test(requestPath),
+    )
+  );
 }
 
 function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
@@ -34,6 +44,7 @@ function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
 
 module.exports = {
   CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS,
+  CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATTERNS,
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
 };

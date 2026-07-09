@@ -19,9 +19,8 @@
         "Machine surface for the M2 executor. Scoped API-token (bearer) auth.",
         "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
-        "M2-A8 token management continues to use POST /api/v1/certops/executor/events as the current general executor ingestion endpoint.",
-        "Per-job event and evidence write routes are not implemented by M2-A8. They are staged for M2-A10 / PR #59; their absence here is not a permanent exclusion from M2.",
-        "M2-A10 owns the final route-compat extension and implementation for any per-job executor write routes."
+        "M2 keeps POST /api/v1/certops/executor/events as the aggregate executor ingestion endpoint.",
+        "POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable Dev A machine-token aliases scoped by path jobId; they reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior."
       ]
     },
     "agent": {
@@ -38,6 +37,8 @@
   },
   "routeAuth": {
     "/api/v1/certops/executor/events": "certOpsTokenAuth",
+    "/api/v1/certops/jobs/{jobId}/events": "certOpsTokenAuth",
+    "/api/v1/certops/jobs/{jobId}/evidence": "certOpsTokenAuth",
     "/api/v1/certops/agent/register": "agentBootstrapTokenAuth",
     "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
@@ -59,6 +60,8 @@
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke", "method": "POST" },
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
+      { "path": "/api/v1/certops/jobs/{jobId}/events", "method": "POST" },
+      { "path": "/api/v1/certops/jobs/{jobId}/evidence", "method": "POST" },
       { "path": "/api/v1/certops/agent/register", "method": "POST" },
       { "path": "/api/v1/certops/agent/heartbeat", "method": "POST" },
       { "path": "/api/v1/certops/agent/jobs/claim", "method": "POST" },

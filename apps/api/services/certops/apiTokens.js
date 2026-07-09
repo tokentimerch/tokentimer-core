@@ -469,10 +469,14 @@ async function markApiTokenUsed(options) {
 }
 
 async function validateApiToken(options) {
-  let workspaceId;
+  let workspaceId = null;
   let requiredScopes;
   try {
-    workspaceId = normalizeWorkspaceId(options.workspaceId);
+    if (options.workspaceId !== undefined && options.workspaceId !== null) {
+      workspaceId = normalizeWorkspaceId(options.workspaceId);
+    } else if (options.allowTokenWorkspace !== true) {
+      workspaceId = normalizeWorkspaceId(options.workspaceId);
+    }
     requiredScopes = normalizeRequiredScopes(options.requiredScopes);
   } catch (error) {
     if (error.code === CERTOPS_API_TOKEN_WORKSPACE_REQUIRED) {
@@ -514,9 +518,10 @@ async function validateApiToken(options) {
   if (!safeCompareSha256Hex(candidateHash, row.token_hash)) {
     return invalidValidation();
   }
-  if (String(row.workspace_id) !== workspaceId) {
+  if (workspaceId && String(row.workspace_id) !== workspaceId) {
     return invalidValidation();
   }
+  const effectiveWorkspaceId = workspaceId || String(row.workspace_id);
   if (row.status !== "active") {
     return invalidValidation();
   }
@@ -533,7 +538,7 @@ async function validateApiToken(options) {
   const token = await markApiTokenUsed({
     client: options.client,
     tokenId: row.id,
-    workspaceId,
+    workspaceId: effectiveWorkspaceId,
     tokenHash: candidateHash,
     requiredScopes,
   });

@@ -44,6 +44,10 @@ const {
   },
 } = require("../../apps/api/routes/certops-executor.js");
 const { migrations } = require("../../apps/api/migrations/migrate.js");
+const certOpsApiTokensSource = fs.readFileSync(
+  path.join(repoRoot, "apps/api/services/certops/apiTokens.js"),
+  "utf8",
+);
 
 const FORBIDDEN_FIELD_FRAGMENTS = [
   "privatekey",
@@ -770,6 +774,7 @@ describe("CertOps M2 contract skeletons", () => {
       "summary",
       "metadata",
       "artifactRefs",
+      "output",
       "redactionApplied",
     ];
 
@@ -811,10 +816,10 @@ describe("CertOps M2 contract skeletons", () => {
       /item\.eventType \|\| item\.evidenceType/,
       "executor event evidence items must use the OpenAPI eventType field",
     );
-    assert.doesNotMatch(
+    assert.match(
       certOpsExecutorRoutesSource,
       /EVIDENCE_ITEM_FIELDS[\s\S]*?"output"/,
-      "M2-A9 runtime must reject executor output until M2-A10 owns storage",
+      "M2-A10 runtime must allow bounded executor output for redaction and separate storage",
     );
   });
 
@@ -924,7 +929,7 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
-  it("keeps the executor event route aligned between OpenAPI and route compat", () => {
+  it("keeps the executor event routes aligned between OpenAPI and route compat", () => {
     const routePath = "/api/v1/certops/executor/events";
     const method = "POST";
     const stableRoutes = routeCompatContract.guarantees.stableRoutes;
@@ -1071,7 +1076,64 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("closes token OpenAPI skeletons around canonical M2 scopes", () => {
+  it("keeps per-job executor aliases in route-compat and OpenAPI", () => {
+    const stableRoutes = routeCompatContract.guarantees.stableRoutes;
+    const openApiPathMethods = parseOpenApiPathMethods(openApiSource);
+    for (const perJobRoute of [
+      [
+        "/api/v1/certops/jobs/{jobId}/events",
+        "CertOpsPerJobExecutorEventRequest",
+        "certops:events:write",
+      ],
+      [
+        "/api/v1/certops/jobs/{jobId}/evidence",
+        "CertOpsPerJobEvidenceRequest",
+        "certops:evidence:write",
+      ],
+    ]) {
+      const [perJobPath, schemaName, scope] = perJobRoute;
+      const perJobBlock = openApiPathBlock(perJobPath);
+      assert.ok(
+        stableRoutes.some(
+          (route) => route.path === perJobPath && route.method === "POST",
+        ),
+        `POST ${perJobPath} must stay frozen in route compat`,
+      );
+      assert.equal(routeCompatContract.routeAuth[perJobPath], "certOpsTokenAuth");
+      assert.ok(openApiPathMethods.get(perJobPath)?.has("POST"));
+      assert.match(perJobBlock, /certOpsTokenAuth:/);
+      assert.match(perJobBlock, new RegExp(scope.replace(/:/g, ":")));
+      assert.match(
+        perJobBlock,
+        new RegExp(`\\$ref: "#/components/schemas/${schemaName}"`),
+      );
+    }
+    assert.match(
+      routeCompatContract.namespacePolicy.executor.notes.join(" "),
+      /reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior/i,
+    );
+  });
+
+  it("uses only plan-defined M2 scopes outside migration compatibility code", () => {
+    const canonicalScopes = [
+      "certops:read",
+      "certops:events:write",
+      "certops:jobs:read",
+      "certops:evidence:write",
+    ];
+
+    for (const scope of canonicalScopes) {
+      assert.match(certOpsApiTokensSource, new RegExp(`"${scope}"`));
+      assert.match(openApiSource, new RegExp(`- ${scope}`));
+    }
+
+    assert.doesNotMatch(certOpsApiTokensSource, /certops:executor:events/);
+    assert.doesNotMatch(certOpsApiTokensSource, /certops:jobs:write/);
+    assert.doesNotMatch(openApiSource, /certops:executor:events/);
+    assert.doesNotMatch(openApiSource, /certops:jobs:write/);
+  });
+
+  it("documents token management routes with real metadata-only schemas", () => {
     const tokenListPath = openApiPathBlock(
       "/api/v1/workspaces/{id}/certops/tokens",
     );
@@ -1196,7 +1258,7 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("documents M2-A8 token management without permanently excluding M2-A10 routes", () => {
+  it("documents M2-A8 token management alongside stable M2-A10 aliases", () => {
     const tokenPath = openApiPathBlock(
       "/api/v1/workspaces/{id}/certops/tokens",
     );
@@ -1243,10 +1305,9 @@ describe("CertOps M2 contract skeletons", () => {
     );
     assert.match(createResponse, /minLength: 85/);
     assert.match(createResponse, /maxLength: 85/);
-    assert.match(executorNotes, /M2-A10 \/ PR #59/);
-    assert.match(executorNotes, /not a permanent exclusion from M2/i);
+    assert.match(executorNotes, /aggregate executor ingestion endpoint/i);
+    assert.match(executorNotes, /stable Dev A machine-token aliases/i);
     assert.doesNotMatch(executorNotes, /not part of M2/i);
-    assert.doesNotMatch(executorNotes, /only M2 executor ingestion endpoint/i);
   });
 
   it("keeps the committed M2-A1 through M2-A9 diff within the stacked scope", () => {

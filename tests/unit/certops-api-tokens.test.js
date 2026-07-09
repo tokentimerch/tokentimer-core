@@ -243,16 +243,18 @@ describe("CertOps API token service", () => {
   });
 
   it("rejects invalid scopes at creation time", async () => {
-    await assert.rejects(
-      () =>
-        createApiToken({
-          client: createMemoryClient(),
-          workspaceId: WORKSPACE_A,
-          name: "Bad scope",
-          scopes: ["certops:admin"],
-        }),
-      (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
-    );
+    for (const scope of ["certops:admin", "certops:executor:events"]) {
+      await assert.rejects(
+        () =>
+          createApiToken({
+            client: createMemoryClient(),
+            workspaceId: WORKSPACE_A,
+            name: "Bad scope",
+            scopes: [scope],
+          }),
+        (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
+      );
+    }
   });
 
   it("uses canonical M2 scopes and keeps jobs claim deferred to M4", async () => {
@@ -408,6 +410,33 @@ describe("CertOps API token service", () => {
     assert.equal(validatedAgain.valid, true);
     assert.equal(client.rows[0].last_used_at, firstLastUsedAt);
     assert.equal(client.usageUpdateCount, firstUsageUpdateCount);
+  });
+
+  it("allows certops:read to satisfy read scopes without granting writes", async () => {
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Read only",
+      scopes: ["certops:read"],
+    });
+
+    const read = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:jobs:read"],
+    });
+    assert.equal(read.valid, true);
+
+    const write = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:events:write"],
+    });
+    assert.equal(write.valid, false);
+    assert.equal(write.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
   });
 
   it("rejects malformed tokens and wrong prefixes", async () => {

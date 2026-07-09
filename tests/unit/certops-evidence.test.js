@@ -8,6 +8,7 @@ const { createCertificateJob } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
 const {
+  CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
   CERTOPS_EVIDENCE_TYPE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   createCertificateEvidence,
@@ -97,9 +98,13 @@ function createMemoryClient() {
           subject_type: params[3],
           subject_id: params[4],
           metadata: json(params[5]),
-          observed_at: params[6],
-          created_by_user_id: params[7],
-          created_by_api_token_id: params[8],
+          redacted_output: params[6],
+          output_truncated: params[7],
+          output_sha256: params[8],
+          output_size_bytes: params[9],
+          observed_at: params[10],
+          created_by_user_id: params[11],
+          created_by_api_token_id: params[12],
           created_at: now(),
         };
         evidence.push(row);
@@ -373,7 +378,66 @@ describe("CertOps evidence service", () => {
     }
     assert.equal(client.evidence.length, 0);
     assert.equal(JSON.stringify(client.evidence).includes("not-allowed"), false);
+  });
 
+  it("stores bounded redacted output separately from normalized metadata", async () => {
+    const client = createMemoryClient();
+    const job = await createJob(client);
+    const evidence = await createCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      evidenceType: "deployment.checked",
+      metadata: { target: "endpoint/api.example.com" },
+      output: "deployment ok password=swordfish",
+    });
+
+    assert.equal(evidence.metadata.target, "endpoint/api.example.com");
+    assert.equal(
+      evidence.redactedOutput,
+      "deployment ok password=[REDACTED]",
+    );
+    assert.equal(evidence.outputTruncated, false);
+    assert.equal(evidence.outputSizeBytes, Buffer.byteLength("deployment ok password=swordfish"));
+    assert.match(evidence.outputSha256, /^[a-f0-9]{64}$/);
+    assert.equal(evidence.outputRedactionApplied, true);
+    assert.equal(JSON.stringify(evidence).includes("swordfish"), false);
+  });
+
+  it("rejects private-key and oversized evidence output before persistence", async () => {
+    const client = createMemoryClient();
+    const job = await createJob(client);
+    await assert.rejects(
+      () =>
+        createCertificateEvidence({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          evidenceType: "deployment.checked",
+          metadata: { target: "endpoint/api.example.com" },
+          output: PRIVATE_KEY_PEM,
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+
+    await assert.rejects(
+      () =>
+        createCertificateEvidence({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          evidenceType: "deployment.checked",
+          metadata: { target: "endpoint/api.example.com" },
+          output: "a".repeat(65537),
+        }),
+      (error) => error?.code === CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
+    );
+    assert.equal(client.evidence.length, 0);
+  });
+
+  it("rejects encoded key-bearing metadata before persistence", async () => {
+    const client = createMemoryClient();
+    const job = await createJob(client);
     await assert.rejects(
       () =>
         createCertificateEvidence({

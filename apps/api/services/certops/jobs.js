@@ -657,7 +657,7 @@ async function createCertificateJob(options) {
          queued_at,
          started_at,
          completed_at,
-         canceled_at
+        canceled_at
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9,

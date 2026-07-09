@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/evidence.schema.json",
   "title": "CertOps Evidence Metadata",
-  "description": "Strict standalone M2 normalized/persisted evidence metadata schema reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. Evidence event types remain public normalized kinds such as certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, and policy.checked. Older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as job/evidence events, not as raw lifecycle enums here. This schema excludes raw executor output, private key material, key-bearing bundles, and credentials. M2-A10 introduces separately stored output after private-key rejection, generic-secret redaction, and byte limits.",
+  "description": "Strict standalone M2 normalized/persisted public evidence metadata reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. M2-A10 separately stores bounded executor output after private-key rejection and generic-secret redaction. Private key material, key-bearing bundles, credentials, and raw output are never part of this metadata schema.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -114,6 +114,11 @@
           }
         }
       }
+    },
+    "output": {
+      "type": ["string", "null"],
+      "maxLength": 65536,
+      "description": "Optional executor output. Runtime rejects private key material, redacts generic secrets, and stores only redacted output separately from normalized metadata."
     },
     "redactionApplied": {
       "type": ["boolean", "null"]
