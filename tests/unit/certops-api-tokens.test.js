@@ -172,7 +172,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: date(60_000),
       createdBy: 123,
     });
@@ -195,16 +195,18 @@ describe("CertOps API token service", () => {
   });
 
   it("rejects invalid scopes at creation time", async () => {
-    await assert.rejects(
-      () =>
-        createApiToken({
-          client: createMemoryClient(),
-          workspaceId: WORKSPACE_A,
-          name: "Bad scope",
-          scopes: ["certops:admin"],
-        }),
-      (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
-    );
+    for (const scope of ["certops:admin", "certops:executor:events"]) {
+      await assert.rejects(
+        () =>
+          createApiToken({
+            client: createMemoryClient(),
+            workspaceId: WORKSPACE_A,
+            name: "Bad scope",
+            scopes: [scope],
+          }),
+        (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
+      );
+    }
   });
 
   it("rejects private key material in persisted token metadata", async () => {
@@ -214,7 +216,7 @@ describe("CertOps API token service", () => {
           client: createMemoryClient(),
           workspaceId: WORKSPACE_A,
           name: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
-          scopes: ["certops:executor:events"],
+          scopes: ["certops:events:write"],
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
     );
@@ -226,7 +228,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events", "certops:jobs:read"],
+      scopes: ["certops:events:write", "certops:jobs:read"],
     });
 
     const failed = await validateApiToken({
@@ -243,11 +245,38 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(validated.valid, true);
     assert.equal(validated.token.id, created.token.id);
     assert.match(validated.token.lastUsedAt, /^2026-06-30T00:02:00/);
+  });
+
+  it("allows certops:read to satisfy read scopes without granting writes", async () => {
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Read only",
+      scopes: ["certops:read"],
+    });
+
+    const read = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:jobs:read"],
+    });
+    assert.equal(read.valid, true);
+
+    const write = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:events:write"],
+    });
+    assert.equal(write.valid, false);
+    assert.equal(write.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
   });
 
   it("rejects malformed tokens and wrong prefixes", async () => {
@@ -280,7 +309,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
 
     await revokeApiToken({
@@ -294,7 +323,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
   });
@@ -305,7 +334,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Expired",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: date(-60_000),
     });
 
@@ -313,7 +342,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
     assert.equal(client.rows[0].last_used_at, null);
@@ -325,14 +354,14 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Workspace A",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
 
     const result = await validateApiToken({
       client,
       workspaceId: WORKSPACE_B,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
     assert.equal(client.rows[0].last_used_at, null);
@@ -344,7 +373,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
 
     const list = await listApiTokens({ client, workspaceId: WORKSPACE_A });
@@ -374,7 +403,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Safe metadata",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
     const listed = await listApiTokens({ client, workspaceId: WORKSPACE_A });
 

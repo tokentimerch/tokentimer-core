@@ -137,7 +137,7 @@ function createCertOpsApiTokenAuth(options = {}) {
     }
 
     const workspaceId = workspaceIdFromRequest(req, options);
-    if (!workspaceId) {
+    if (!workspaceId && options.allowTokenWorkspace !== true) {
       return res
         .status(401)
         .json(responseForUnauthorized(CERTOPS_API_TOKEN_WORKSPACE_REQUIRED));
@@ -150,6 +150,7 @@ function createCertOpsApiTokenAuth(options = {}) {
         rawToken: bearer.rawToken,
         workspaceId,
         requiredScopes,
+        allowTokenWorkspace: options.allowTokenWorkspace === true,
       });
     } catch (error) {
       if (error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID) {

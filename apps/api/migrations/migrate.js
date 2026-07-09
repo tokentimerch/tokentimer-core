@@ -1067,6 +1067,270 @@ const migrations = [
         WHERE created_by_api_token_id IS NOT NULL;
     `,
   },
+  {
+    version: 15,
+    name: "certops_m2_plan_alignment",
+    sql: `
+      -- Align M2 API-token scopes and job lifecycle values with the CertOps
+      -- execution plan. This migration also adds separately stored redacted
+      -- evidence output columns; raw executor output is never persisted.
+      UPDATE api_tokens
+         SET scopes = ARRAY(
+               SELECT DISTINCT mapped_scope
+                 FROM unnest(scopes) AS existing_scope(scope_value),
+                      LATERAL (
+                        SELECT CASE scope_value
+                          WHEN 'certops:executor:events' THEN 'certops:events:write'
+                          WHEN 'certops:jobs:write' THEN 'certops:read'
+                          ELSE scope_value
+                        END AS mapped_scope
+                      ) AS mapped
+                WHERE mapped_scope IN (
+                  'certops:read',
+                  'certops:events:write',
+                  'certops:jobs:read',
+                  'certops:evidence:write'
+                )
+                ORDER BY mapped_scope
+             )
+       WHERE scopes && ARRAY['certops:executor:events', 'certops:jobs:write']::text[];
+
+      UPDATE certificate_jobs
+         SET status = CASE status
+           WHEN 'queued' THEN 'pending'
+           WHEN 'canceled' THEN 'cancelled'
+           ELSE status
+         END
+       WHERE status IN ('queued', 'canceled');
+
+      ALTER TABLE certificate_jobs
+        ALTER COLUMN status SET DEFAULT 'pending';
+
+      UPDATE certificate_job_log
+         SET event_type = CASE event_type
+               WHEN 'job.canceled' THEN 'job.cancelled'
+               ELSE event_type
+             END,
+             status = CASE status
+               WHEN 'queued' THEN 'pending'
+               WHEN 'canceled' THEN 'cancelled'
+               ELSE status
+             END
+       WHERE event_type = 'job.canceled'
+          OR status IN ('queued', 'canceled');
+
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS redacted_output TEXT NULL,
+        ADD COLUMN IF NOT EXISTS output_truncated BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS output_sha256 TEXT NULL,
+        ADD COLUMN IF NOT EXISTS output_size_bytes INTEGER NULL;
+
+      DO $$
+      DECLARE
+        constraint_name TEXT;
+      BEGIN
+        FOR constraint_name IN
+          SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.contype = 'c'
+             AND t.relname = 'api_tokens'
+             AND n.nspname = current_schema()
+             AND pg_get_constraintdef(c.oid) LIKE '%certops:%'
+        LOOP
+          EXECUTE format('ALTER TABLE api_tokens DROP CONSTRAINT %I', constraint_name);
+        END LOOP;
+
+        FOR constraint_name IN
+          SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.contype = 'c'
+             AND t.relname = 'certificate_jobs'
+             AND n.nspname = current_schema()
+             AND pg_get_constraintdef(c.oid) LIKE '%status%'
+             AND (
+               pg_get_constraintdef(c.oid) LIKE '%queued%' OR
+               pg_get_constraintdef(c.oid) LIKE '%canceled%' OR
+               pg_get_constraintdef(c.oid) LIKE '%pending_approval%'
+             )
+        LOOP
+          EXECUTE format('ALTER TABLE certificate_jobs DROP CONSTRAINT %I', constraint_name);
+        END LOOP;
+
+        FOR constraint_name IN
+          SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.contype = 'c'
+             AND t.relname = 'certificate_job_log'
+             AND n.nspname = current_schema()
+             AND (
+               pg_get_constraintdef(c.oid) LIKE '%job.canceled%' OR
+               pg_get_constraintdef(c.oid) LIKE '%job.cancelled%' OR
+               pg_get_constraintdef(c.oid) LIKE '%queued%' OR
+               pg_get_constraintdef(c.oid) LIKE '%canceled%'
+             )
+        LOOP
+          EXECUTE format('ALTER TABLE certificate_job_log DROP CONSTRAINT %I', constraint_name);
+        END LOOP;
+
+        FOR constraint_name IN
+          SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.contype = 'c'
+             AND t.relname = 'certificate_evidence'
+             AND n.nspname = current_schema()
+             AND (
+               pg_get_constraintdef(c.oid) LIKE '%redacted_output%' OR
+               pg_get_constraintdef(c.oid) LIKE '%output_sha256%' OR
+               pg_get_constraintdef(c.oid) LIKE '%output_size_bytes%'
+             )
+        LOOP
+          EXECUTE format('ALTER TABLE certificate_evidence DROP CONSTRAINT %I', constraint_name);
+        END LOOP;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'api_tokens_scopes_plan_check'
+            AND t.relname = 'api_tokens'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE api_tokens
+            ADD CONSTRAINT api_tokens_scopes_plan_check
+            CHECK (
+              COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+              scopes <@ ARRAY[
+                'certops:read',
+                'certops:events:write',
+                'certops:jobs:read',
+                'certops:evidence:write'
+              ]::text[]
+            );
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'certificate_jobs_status_plan_check'
+            AND t.relname = 'certificate_jobs'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE certificate_jobs
+            ADD CONSTRAINT certificate_jobs_status_plan_check
+            CHECK (status IN (
+              'pending_approval',
+              'approved',
+              'rejected',
+              'pending',
+              'claimed',
+              'running',
+              'succeeded',
+              'failed',
+              'blocked',
+              'cancelled'
+            ));
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'certificate_job_log_event_type_plan_check'
+            AND t.relname = 'certificate_job_log'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE certificate_job_log
+            ADD CONSTRAINT certificate_job_log_event_type_plan_check
+            CHECK (event_type IN (
+              'job.created',
+              'job.accepted',
+              'job.started',
+              'job.progress',
+              'job.completed',
+              'job.failed',
+              'job.rejected',
+              'job.cancelled',
+              'job.status_updated',
+              'evidence.attached'
+            ));
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'certificate_job_log_status_plan_check'
+            AND t.relname = 'certificate_job_log'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE certificate_job_log
+            ADD CONSTRAINT certificate_job_log_status_plan_check
+            CHECK (status IS NULL OR status IN (
+              'pending_approval',
+              'approved',
+              'pending',
+              'claimed',
+              'accepted',
+              'redacted',
+              'running',
+              'succeeded',
+              'failed',
+              'rejected',
+              'blocked',
+              'cancelled'
+            ));
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'certificate_evidence_redacted_output_check'
+            AND t.relname = 'certificate_evidence'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE certificate_evidence
+            ADD CONSTRAINT certificate_evidence_redacted_output_check
+            CHECK (redacted_output IS NULL OR octet_length(redacted_output) <= 65536);
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'certificate_evidence_output_sha256_check'
+            AND t.relname = 'certificate_evidence'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE certificate_evidence
+            ADD CONSTRAINT certificate_evidence_output_sha256_check
+            CHECK (output_sha256 IS NULL OR output_sha256 ~ '^[a-f0-9]{64}$');
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE c.conname = 'certificate_evidence_output_size_bytes_check'
+            AND t.relname = 'certificate_evidence'
+            AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE certificate_evidence
+            ADD CONSTRAINT certificate_evidence_output_size_bytes_check
+            CHECK (output_size_bytes IS NULL OR output_size_bytes BETWEEN 0 AND 65536);
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 async function runMigrations() {

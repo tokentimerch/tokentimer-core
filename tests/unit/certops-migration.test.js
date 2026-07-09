@@ -143,6 +143,9 @@ const certOpsJobsEvidenceMigration = migrations.find(
 const certOpsExecutorEventsMigration = migrations.find(
   (migration) => migration.name === "certops_executor_events_schema",
 );
+const certOpsM2PlanAlignmentMigration = migrations.find(
+  (migration) => migration.name === "certops_m2_plan_alignment",
+);
 
 function getTableBlock(tableName, migration = certOpsMigration) {
   const marker = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
@@ -197,8 +200,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-5).map((migration) => migration.version),
-      [10, 11, 12, 13, 14],
+      migrations.slice(-6).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -297,6 +300,78 @@ describe("CertOps inventory migration", () => {
     assert.match(
       certOpsJobsEvidenceMigration.sql,
       /fk_certificate_jobs_api_token/,
+    );
+  });
+
+  it("defines the CertOps M2 plan alignment migration after executor idempotency", () => {
+    assert.ok(
+      certOpsM2PlanAlignmentMigration,
+      "expected certops_m2_plan_alignment migration",
+    );
+    assert.equal(certOpsM2PlanAlignmentMigration.version, 15);
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /WHEN 'certops:executor:events' THEN 'certops:events:write'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /WHEN 'certops:jobs:write' THEN 'certops:read'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /api_tokens_scopes_plan_check/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /scopes <@ ARRAY\[\s+'certops:read',\s+'certops:events:write',\s+'certops:jobs:read',\s+'certops:evidence:write'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /WHEN 'queued' THEN 'pending'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /WHEN 'canceled' THEN 'cancelled'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /WHEN 'job.canceled' THEN 'job.cancelled'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /certificate_jobs_status_plan_check/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /ALTER COLUMN status SET DEFAULT 'pending'/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /ADD COLUMN IF NOT EXISTS redacted_output TEXT NULL/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /ADD COLUMN IF NOT EXISTS output_truncated BOOLEAN NOT NULL DEFAULT FALSE/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /ADD COLUMN IF NOT EXISTS output_sha256 TEXT NULL/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /ADD COLUMN IF NOT EXISTS output_size_bytes INTEGER NULL/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /certificate_evidence_redacted_output_check/,
+    );
+    assert.match(
+      certOpsM2PlanAlignmentMigration.sql,
+      /output_size_bytes IS NULL OR output_size_bytes BETWEEN 0 AND 65536/,
+    );
+    assert.doesNotMatch(
+      certOpsM2PlanAlignmentMigration.sql,
+      /request_body|authorization|plaintext|token_secret|raw_secret|private_key|key_material|pfx_blob|jks_blob/i,
     );
   });
 

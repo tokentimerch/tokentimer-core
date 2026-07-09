@@ -9,6 +9,10 @@ const routesSource = fs.readFileSync(
   path.resolve(__dirname, "../../apps/api/routes/certops.js"),
   "utf8",
 );
+const executorRoutesSource = fs.readFileSync(
+  path.resolve(__dirname, "../../apps/api/routes/certops-executor.js"),
+  "utf8",
+);
 const routeCompatContract = require("../../packages/contracts/api/certops-route-compat.contract.json");
 const openApiSource = fs.readFileSync(
   path.resolve(__dirname, "../../packages/contracts/openapi/openapi.yaml"),
@@ -72,6 +76,22 @@ function routeBlock(method, routePath) {
     `${method.toUpperCase()} ${routePath} block end not found`,
   );
   return routesSource.slice(start, end);
+}
+
+function executorRouteBlock(routePath) {
+  const start = executorRoutesSource.indexOf(`"${routePath}"`);
+  assert.notEqual(start, -1, `POST ${routePath} not found`);
+
+  const nextRoute = executorRoutesSource.indexOf(
+    "\n  certOpsExecutorRouter.post(",
+    start + 1,
+  );
+  const end =
+    nextRoute === -1
+      ? executorRoutesSource.indexOf("\n  return certOpsExecutorRouter", start)
+      : nextRoute;
+  assert.notEqual(end, -1, `POST ${routePath} block end not found`);
+  return executorRoutesSource.slice(start, end);
 }
 
 describe("CertOps route hardening", () => {
@@ -259,5 +279,34 @@ describe("CertOps route hardening", () => {
       "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
       "POST",
     );
+    assertOpenApiRoute("/api/v1/certops/executor/events", "POST");
+    assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/events", "POST");
+    assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/evidence", "POST");
+  });
+
+  it("keeps machine-token executor writes in the executor router", () => {
+    const aggregateBlock = executorRouteBlock(
+      "/api/v1/certops/executor/events",
+    );
+    const perJobEventsBlock = executorRouteBlock(
+      "/api/v1/certops/jobs/:jobId/events",
+    );
+    const perJobEvidenceBlock = executorRouteBlock(
+      "/api/v1/certops/jobs/:jobId/evidence",
+    );
+
+    assert.match(aggregateBlock, /authMiddleware/);
+    assert.match(aggregateBlock, /rateLimitMiddleware/);
+    assert.match(perJobEventsBlock, /perJobEventAuthMiddleware/);
+    assert.match(perJobEventsBlock, /rateLimitMiddleware/);
+    assert.match(perJobEventsBlock, /mode: "event"/);
+    assert.match(perJobEvidenceBlock, /perJobEvidenceAuthMiddleware/);
+    assert.match(perJobEvidenceBlock, /rateLimitMiddleware/);
+    assert.match(perJobEvidenceBlock, /mode: "evidence"/);
+    assert.match(executorRoutesSource, /allowTokenWorkspace: true/);
+    assert.match(executorRoutesSource, /certops:events:write/);
+    assert.match(executorRoutesSource, /certops:evidence:write/);
+
+    assert.equal(routesSource.includes("/api/v1/certops/jobs/:jobId"), false);
   });
 });

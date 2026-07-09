@@ -25,6 +25,7 @@ const {
 } = require("../services/certops/jobs");
 const {
   CERTOPS_EVIDENCE_INVALID,
+  CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
   CERTOPS_EVIDENCE_TYPE_INVALID,
   createCertificateEvidence,
 } = require("../services/certops/evidence");
@@ -40,6 +41,7 @@ const {
   fieldNameLooksPrivateKeyMaterial,
   redactGenericSecretsWithReport,
 } = require("../utils/secretMaterial");
+const { writeAudit } = require("../services/audit");
 
 const CERTOPS_EXECUTOR_EVENT_INVALID = "CERTOPS_EXECUTOR_EVENT_INVALID";
 const CERTOPS_EXECUTOR_EVENT_TYPE_INVALID =
@@ -48,7 +50,8 @@ const CERTOPS_EXECUTOR_JOB_REQUIRED = "CERTOPS_EXECUTOR_JOB_REQUIRED";
 const CERTOPS_EXECUTOR_WORKSPACE_MISMATCH =
   "CERTOPS_EXECUTOR_WORKSPACE_MISMATCH";
 
-const EXECUTOR_EVENT_SCOPE = "certops:executor:events";
+const EXECUTOR_EVENT_SCOPE = "certops:events:write";
+const EVIDENCE_WRITE_SCOPE = "certops:evidence:write";
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -102,12 +105,13 @@ const EVIDENCE_ITEM_FIELDS = new Set([
   "summary",
   "metadata",
   "artifactRefs",
+  "output",
   "redactionApplied",
 ]);
 const LOG_STATUSES_SET = new Set(LOG_STATUSES);
 
 const LOG_STATUS_BY_EVENT_TYPE = Object.freeze({
-  "job.accepted": "accepted",
+  "job.accepted": "claimed",
   "job.started": "running",
   "job.progress": "running",
   "job.completed": "succeeded",
@@ -116,9 +120,11 @@ const LOG_STATUS_BY_EVENT_TYPE = Object.freeze({
 });
 
 const JOB_STATUS_BY_EVENT_TYPE = Object.freeze({
+  "job.accepted": "claimed",
   "job.started": "running",
   "job.completed": "succeeded",
   "job.failed": "failed",
+  "job.rejected": "rejected",
 });
 
 function executorEventError(message, code) {
@@ -132,8 +138,138 @@ function privateKeyMaterialError() {
   );
 }
 
+function safeAuditString(value, maxLength = 128) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength || !PUBLIC_ID_PATTERN.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function safeAuditUuid(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return UUID_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+async function writeExecutorAudit({
+  action,
+  workspaceId,
+  apiTokenId,
+  jobId = null,
+  eventId = null,
+  eventType = null,
+  evidenceIds = [],
+  redactionApplied = null,
+  redactionCount = null,
+  rejectionCode = null,
+}) {
+  if (!workspaceId) return;
+  await writeAudit({
+    actorUserId: null,
+    subjectUserId: null,
+    action,
+    targetType: "certops_executor",
+    targetId: null,
+    workspaceId,
+    metadata: {
+      workspaceId,
+      jobId: safeAuditUuid(jobId),
+      eventId: safeAuditString(eventId),
+      eventType: safeAuditString(eventType),
+      evidenceIds: Array.isArray(evidenceIds)
+        ? evidenceIds.map((id) => safeAuditUuid(id)).filter(Boolean)
+        : [],
+      redactionApplied: redactionApplied === null ? undefined : Boolean(redactionApplied),
+      redactionCount:
+        Number.isInteger(redactionCount) && redactionCount >= 0
+          ? redactionCount
+          : undefined,
+      rejectionCode: safeAuditString(rejectionCode),
+      createdByApiTokenId: safeAuditUuid(apiTokenId),
+    },
+  });
+}
+
+function safeAuditHintsFromRequest(req) {
+  return {
+    workspaceId: req.apiToken?.workspaceId || safeAuditUuid(req.body?.workspaceId),
+    apiTokenId: req.apiToken?.id || null,
+    jobId: safeAuditUuid(req.params?.jobId) || safeAuditUuid(req.body?.jobId),
+    eventId: safeAuditString(req.body?.eventId),
+    eventType: safeAuditString(req.body?.eventType),
+  };
+}
+
 function workspaceIdHintFromBody(req) {
   return typeof req.body?.workspaceId === "string" ? req.body.workspaceId : null;
+}
+
+function bodyWithPathJobContext(req, mode) {
+  if (!mode) return req.body;
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+    return req.body;
+  }
+
+  rejectPrivateKeyMaterial(req.body);
+  const workspaceId = req.apiToken?.workspaceId;
+  const jobId = requiredUuid(
+    req.params?.jobId,
+    "jobId",
+    CERTOPS_EXECUTOR_JOB_REQUIRED,
+  );
+
+  if (req.body.workspaceId !== undefined && req.body.workspaceId !== null) {
+    const bodyWorkspaceId = requiredUuid(
+      req.body.workspaceId,
+      "workspaceId",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+    if (!workspaceId || bodyWorkspaceId !== workspaceId) {
+      throw executorEventError(
+        "Executor event workspace mismatch",
+        CERTOPS_EXECUTOR_WORKSPACE_MISMATCH,
+      );
+    }
+  }
+
+  if (req.body.jobId !== undefined && req.body.jobId !== null) {
+    const bodyJobId = requiredUuid(
+      req.body.jobId,
+      "jobId",
+      CERTOPS_EXECUTOR_JOB_REQUIRED,
+    );
+    if (bodyJobId !== jobId) {
+      throw executorEventError(
+        "Executor event job mismatch",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+  }
+
+  const eventBody = {
+    ...req.body,
+    workspaceId,
+    jobId,
+  };
+
+  if (mode === "evidence") {
+    if (
+      req.body.eventType !== undefined &&
+      req.body.eventType !== null &&
+      req.body.eventType !== "evidence.attached"
+    ) {
+      throw executorEventError(
+        "Executor evidence event type is invalid",
+        CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
+      );
+    }
+    eventBody.eventType = "evidence.attached";
+    eventBody.status = req.body.status || "accepted";
+  }
+
+  return eventBody;
 }
 
 function requiredTrimmedString(value, fieldName, code) {
@@ -659,6 +795,7 @@ function evidenceItemsFromBody(body) {
       subjectType: subject.subjectType,
       subjectId: subject.subjectId,
       metadata: evidenceMetadataFromItem(item),
+      output: item.output,
       observedAt: item.observedAt || body.occurredAt,
     };
   });
@@ -741,12 +878,33 @@ async function persistEvidenceItems({ client, event, workspaceId, apiToken }) {
       subjectType: item.subjectType,
       subjectId: item.subjectId,
       metadata: item.metadata,
+      output: item.output,
       observedAt: item.observedAt,
       createdByApiTokenId: apiToken.id,
     });
     created.push(evidence);
   }
   return created;
+}
+
+function redactionSummary(event, evidenceItems) {
+  let applied = Boolean(event.metadata?.redactionApplied);
+  let count = Number.isInteger(event.metadata?.redactionCount)
+    ? event.metadata.redactionCount
+    : 0;
+
+  for (const item of evidenceItems || []) {
+    if (item.metadata?.redactionApplied) applied = true;
+    if (Number.isInteger(item.metadata?.redactionCount)) {
+      count += item.metadata.redactionCount;
+    }
+    if (item.outputRedactionApplied) applied = true;
+    if (Number.isInteger(item.outputRedactionCount)) {
+      count += item.outputRedactionCount;
+    }
+  }
+
+  return { redactionApplied: applied, redactionCount: count };
 }
 
 function handleExecutorEventError(res, error) {
@@ -778,6 +936,13 @@ function handleExecutorEventError(res, error) {
     });
   }
 
+  if (error?.code === CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE) {
+    return res.status(413).json({
+      error: "CertOps evidence output is too large",
+      code: CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
+    });
+  }
+
   const badRequestCodes = new Set([
     CERTOPS_EXECUTOR_EVENT_INVALID,
     CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
@@ -798,10 +963,53 @@ function handleExecutorEventError(res, error) {
   return null;
 }
 
-async function executorEventsHandler(req, res) {
+async function auditExecutorRejection(req, error, mode) {
+  const hints = safeAuditHintsFromRequest(req);
+  if (error?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
+    await writeExecutorAudit({
+      action: "CERTOPS_KEY_MATERIAL_REJECTED",
+      ...hints,
+      rejectionCode: PRIVATE_KEY_MATERIAL_REJECTED,
+    });
+    if (mode === "evidence" || Array.isArray(req.body?.evidence)) {
+      await writeExecutorAudit({
+        action: "CERTOPS_EVIDENCE_REJECTED",
+        ...hints,
+        rejectionCode: PRIVATE_KEY_MATERIAL_REJECTED,
+      });
+    }
+    return;
+  }
+
+  if (error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT) {
+    await writeExecutorAudit({
+      action: "CERTOPS_EXECUTOR_EVENT_CONFLICT",
+      ...hints,
+      rejectionCode: CERTOPS_EXECUTOR_EVENT_CONFLICT,
+    });
+    return;
+  }
+
+  if (
+    mode === "evidence" ||
+    Array.isArray(req.body?.evidence) ||
+    error?.code === CERTOPS_EVIDENCE_INVALID ||
+    error?.code === CERTOPS_EVIDENCE_TYPE_INVALID ||
+    error?.code === CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE
+  ) {
+    await writeExecutorAudit({
+      action: "CERTOPS_EVIDENCE_REJECTED",
+      ...hints,
+      rejectionCode: error?.code || CERTOPS_EXECUTOR_EVENT_INVALID,
+    });
+  }
+}
+
+async function executorEventsHandler(req, res, options = {}) {
   try {
     const workspaceId = req.apiToken.workspaceId;
-    const event = normalizeExecutorEventBody(req.body, req.apiToken);
+    const eventBody = bodyWithPathJobContext(req, options.mode);
+    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
     const requestHashSha256 = hashExecutorEventPayload({
       workspaceId,
       jobId: event.jobId,
@@ -857,6 +1065,7 @@ async function executorEventsHandler(req, res) {
           workspaceId,
           apiToken: req.apiToken,
         });
+        const redaction = redactionSummary(event, evidence);
 
         return {
           eventId: log.id,
@@ -865,11 +1074,50 @@ async function executorEventsHandler(req, res) {
           status: updatedJob?.status || job.status,
           evidenceId: evidence[0]?.id || null,
           evidenceIds: evidence.map((item) => item.id),
+          redactionApplied: redaction.redactionApplied,
+          redactionCount: redaction.redactionCount,
         };
       },
     );
 
     const metadata = result.responseMetadata || {};
+    await writeExecutorAudit({
+      action: "CERTOPS_EXECUTOR_EVENT_ACCEPTED",
+      workspaceId,
+      apiTokenId: req.apiToken.id,
+      jobId: event.jobId,
+      eventId: event.eventId,
+      eventType: event.eventType,
+      evidenceIds: metadata.evidenceIds || [],
+      redactionApplied: metadata.redactionApplied,
+      redactionCount: metadata.redactionCount,
+    });
+    if ((metadata.evidenceIds || []).length > 0) {
+      await writeExecutorAudit({
+        action: "CERTOPS_EVIDENCE_ACCEPTED",
+        workspaceId,
+        apiTokenId: req.apiToken.id,
+        jobId: event.jobId,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        evidenceIds: metadata.evidenceIds || [],
+        redactionApplied: metadata.redactionApplied,
+        redactionCount: metadata.redactionCount,
+      });
+    }
+    if (metadata.redactionApplied) {
+      await writeExecutorAudit({
+        action: "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
+        workspaceId,
+        apiTokenId: req.apiToken.id,
+        jobId: event.jobId,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        evidenceIds: metadata.evidenceIds || [],
+        redactionApplied: true,
+        redactionCount: metadata.redactionCount,
+      });
+    }
 
     return res.status(202).json({
       ok: true,
@@ -884,6 +1132,16 @@ async function executorEventsHandler(req, res) {
       idempotent: result.idempotent,
     });
   } catch (error) {
+    try {
+      await auditExecutorRejection(req, error, options.mode);
+    } catch (auditError) {
+      logger.warn("CertOps executor audit write failed", {
+        error: auditError.message,
+        code: auditError.code || null,
+        workspaceId: req.apiToken?.workspaceId || null,
+        apiTokenId: req.apiToken?.id || null,
+      });
+    }
     const handled = handleExecutorEventError(res, error);
     if (handled) return handled;
 
@@ -908,6 +1166,18 @@ function createCertOpsExecutorRouter(options = {}) {
       scopes: [EXECUTOR_EVENT_SCOPE],
       resolveWorkspaceId: workspaceIdHintFromBody,
     });
+  const perJobEventAuthMiddleware =
+    options.perJobEventAuthMiddleware ||
+    createCertOpsApiTokenAuth({
+      scopes: [EXECUTOR_EVENT_SCOPE],
+      allowTokenWorkspace: true,
+    });
+  const perJobEvidenceAuthMiddleware =
+    options.perJobEvidenceAuthMiddleware ||
+    createCertOpsApiTokenAuth({
+      scopes: [EVIDENCE_WRITE_SCOPE],
+      allowTokenWorkspace: true,
+    });
   const rateLimitMiddleware =
     options.rateLimitMiddleware ||
     createCertOpsMachineTokenRateLimit(options.rateLimitOptions || {});
@@ -917,6 +1187,20 @@ function createCertOpsExecutorRouter(options = {}) {
     authMiddleware,
     rateLimitMiddleware,
     executorEventsHandler,
+  );
+
+  certOpsExecutorRouter.post(
+    "/api/v1/certops/jobs/:jobId/events",
+    perJobEventAuthMiddleware,
+    rateLimitMiddleware,
+    (req, res) => executorEventsHandler(req, res, { mode: "event" }),
+  );
+
+  certOpsExecutorRouter.post(
+    "/api/v1/certops/jobs/:jobId/evidence",
+    perJobEvidenceAuthMiddleware,
+    rateLimitMiddleware,
+    (req, res) => executorEventsHandler(req, res, { mode: "evidence" }),
   );
 
   return certOpsExecutorRouter;
@@ -932,6 +1216,7 @@ module.exports._test = {
   CERTOPS_EXECUTOR_JOB_REQUIRED,
   CERTOPS_EXECUTOR_WORKSPACE_MISMATCH,
   EXECUTOR_EVENT_TYPES,
+  EVIDENCE_ITEM_FIELDS,
   evidenceMetadataFromItem,
   evidenceSubjectFromItem,
   handleExecutorEventError,

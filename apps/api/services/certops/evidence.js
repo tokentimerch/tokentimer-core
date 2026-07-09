@@ -1,6 +1,12 @@
 "use strict";
 
+const crypto = require("crypto");
+
 const { pool } = require("../../db/database");
+const {
+  containsPrivateKeyMaterial,
+  redactGenericSecretsWithReport,
+} = require("../../utils/secretMaterial");
 const {
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_NOT_FOUND,
@@ -19,6 +25,8 @@ const {
 
 const CERTOPS_EVIDENCE_INVALID = "CERTOPS_EVIDENCE_INVALID";
 const CERTOPS_EVIDENCE_NOT_FOUND = "CERTOPS_EVIDENCE_NOT_FOUND";
+const CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE =
+  "CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE";
 const CERTOPS_EVIDENCE_TYPE_INVALID = "CERTOPS_EVIDENCE_TYPE_INVALID";
 
 const EVIDENCE_TYPES = Object.freeze([
@@ -31,6 +39,7 @@ const EVIDENCE_TYPES = Object.freeze([
 ]);
 const EVIDENCE_TYPE_SET = new Set(EVIDENCE_TYPES);
 const SUBJECT_TYPE_SET = new Set(SUBJECT_TYPES);
+const MAX_REDACTED_OUTPUT_BYTES = 64 * 1024;
 
 const SAFE_EVIDENCE_SELECT_FIELDS = `
   id,
@@ -40,6 +49,10 @@ const SAFE_EVIDENCE_SELECT_FIELDS = `
   subject_type,
   subject_id,
   metadata,
+  redacted_output,
+  output_truncated,
+  output_sha256,
+  output_size_bytes,
   observed_at,
   created_by_user_id,
   created_by_api_token_id,
@@ -97,6 +110,55 @@ function normalizeOptionalDate(value, fieldName) {
   return date;
 }
 
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function normalizeRedactedOutput(value) {
+  if (value === undefined || value === null || value === "") {
+    return {
+      redactedOutput: null,
+      outputTruncated: false,
+      outputSha256: null,
+      outputSizeBytes: null,
+      redactionApplied: false,
+      redactionCount: 0,
+    };
+  }
+
+  if (typeof value !== "string") {
+    throw serviceError("evidence output is invalid", CERTOPS_EVIDENCE_INVALID);
+  }
+  if (containsPrivateKeyMaterial(value)) {
+    throw serviceError(
+      "Private key material is not accepted in CertOps evidence output",
+      PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+  }
+
+  const outputSizeBytes = Buffer.byteLength(value, "utf8");
+  if (outputSizeBytes > MAX_REDACTED_OUTPUT_BYTES) {
+    throw serviceError(
+      "CertOps evidence output is too large",
+      CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
+    );
+  }
+
+  const report = redactGenericSecretsWithReport(value);
+  if (typeof report.value !== "string") {
+    throw serviceError("evidence output is invalid", CERTOPS_EVIDENCE_INVALID);
+  }
+
+  return {
+    redactedOutput: report.value,
+    outputTruncated: false,
+    outputSha256: sha256Hex(report.value),
+    outputSizeBytes,
+    redactionApplied: report.redactionApplied,
+    redactionCount: report.redactionCount || 0,
+  };
+}
+
 function normalizeSubject(options) {
   const subjectType = normalizeOptionalEnum(
     options.subjectType,
@@ -130,6 +192,10 @@ function evidenceFromRow(row) {
     subjectType: row.subject_type,
     subjectId: row.subject_id,
     metadata: parseJsonb(row.metadata),
+    redactedOutput: row.redacted_output,
+    outputTruncated: row.output_truncated,
+    outputSha256: row.output_sha256,
+    outputSizeBytes: row.output_size_bytes,
     observedAt: dateToIso(row.observed_at),
     createdByUserId: row.created_by_user_id,
     createdByApiTokenId: row.created_by_api_token_id,
@@ -162,6 +228,7 @@ async function createCertificateEvidence(options) {
   );
   const { subjectType, subjectId } = normalizeSubject(options);
   const metadata = normalizePublicObject(options.metadata, "metadata");
+  const output = normalizeRedactedOutput(options.output);
   const observedAt = normalizeOptionalDate(options.observedAt, "observedAt");
 
   const result = await db.query(
@@ -172,11 +239,15 @@ async function createCertificateEvidence(options) {
        subject_type,
        subject_id,
        metadata,
+       redacted_output,
+       output_truncated,
+       output_sha256,
+       output_size_bytes,
        observed_at,
        created_by_user_id,
        created_by_api_token_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
      RETURNING ${SAFE_EVIDENCE_SELECT_FIELDS}`,
     [
       workspaceId,
@@ -185,13 +256,22 @@ async function createCertificateEvidence(options) {
       subjectType,
       subjectId,
       JSON.stringify(metadata),
+      output.redactedOutput,
+      output.outputTruncated,
+      output.outputSha256,
+      output.outputSizeBytes,
       observedAt,
       options.createdByUserId || null,
       options.createdByApiTokenId || null,
     ],
   );
 
-  return evidenceFromRow(result.rows[0]);
+  const created = evidenceFromRow(result.rows[0]);
+  if (output.redactionApplied) {
+    created.outputRedactionApplied = true;
+    created.outputRedactionCount = output.redactionCount;
+  }
+  return created;
 }
 
 async function getCertificateEvidenceById(options) {
@@ -261,8 +341,10 @@ async function listCertificateEvidence(options) {
 module.exports = {
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_NOT_FOUND,
+  CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
   CERTOPS_EVIDENCE_TYPE_INVALID,
   EVIDENCE_TYPES,
+  MAX_REDACTED_OUTPUT_BYTES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   createCertificateEvidence,
   evidenceFromRow,
@@ -270,6 +352,7 @@ module.exports = {
   listCertificateEvidence,
   _test: {
     evidenceFromRow,
+    normalizeRedactedOutput,
     normalizeSubject,
   },
 };

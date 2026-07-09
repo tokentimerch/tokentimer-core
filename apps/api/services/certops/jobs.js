@@ -15,22 +15,32 @@ const CERTOPS_JOB_WORKSPACE_REQUIRED = "CERTOPS_JOB_WORKSPACE_REQUIRED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 const JOB_STATUSES = Object.freeze([
-  "queued",
+  "pending_approval",
+  "approved",
+  "rejected",
+  "pending",
+  "claimed",
   "running",
   "succeeded",
   "failed",
-  "canceled",
+  "blocked",
+  "cancelled",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
 const LOG_STATUSES = Object.freeze([
-  "queued",
+  "pending_approval",
+  "approved",
+  "pending",
+  "claimed",
   "accepted",
+  "redacted",
   "running",
   "succeeded",
   "failed",
   "rejected",
-  "canceled",
+  "blocked",
+  "cancelled",
 ]);
 const LOG_STATUS_SET = new Set(LOG_STATUSES);
 
@@ -68,7 +78,7 @@ const JOB_LOG_EVENT_TYPES = Object.freeze([
   "job.completed",
   "job.failed",
   "job.rejected",
-  "job.canceled",
+  "job.cancelled",
   "job.status_updated",
   "evidence.attached",
 ]);
@@ -398,7 +408,7 @@ function jobFromRow(row) {
     queuedAt: dateToIso(row.queued_at),
     startedAt: dateToIso(row.started_at),
     completedAt: dateToIso(row.completed_at),
-    canceledAt: dateToIso(row.canceled_at),
+    cancelledAt: dateToIso(row.canceled_at),
   };
 }
 
@@ -470,7 +480,7 @@ async function createCertificateJob(options) {
     JOB_STATUS_SET,
     CERTOPS_JOB_STATUS_INVALID,
     "status",
-    "queued",
+    "pending",
   );
   const source = normalizeEnum(
     options.source,
@@ -496,10 +506,13 @@ async function createCertificateJob(options) {
   );
   const queuedAt =
     normalizeOptionalDate(options.queuedAt, "queuedAt") ||
-    (status === "queued" ? new Date() : null);
+    (status === "pending" ? new Date() : null);
   const startedAt = normalizeOptionalDate(options.startedAt, "startedAt");
   const completedAt = normalizeOptionalDate(options.completedAt, "completedAt");
-  const canceledAt = normalizeOptionalDate(options.canceledAt, "canceledAt");
+  const cancelledAt = normalizeOptionalDate(
+    options.cancelledAt ?? options.canceledAt,
+    "cancelledAt",
+  );
 
   try {
     const result = await db.query(
@@ -520,7 +533,7 @@ async function createCertificateJob(options) {
          queued_at,
          started_at,
          completed_at,
-         canceled_at
+        canceled_at
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9,
@@ -544,7 +557,7 @@ async function createCertificateJob(options) {
         queuedAt,
         startedAt,
         completedAt,
-        canceledAt,
+        cancelledAt,
       ],
     );
 
@@ -686,11 +699,11 @@ async function updateCertificateJobStatus(options) {
               ELSE started_at
             END,
             completed_at = CASE
-              WHEN $3 IN ('succeeded', 'failed') THEN COALESCE(completed_at, NOW())
+              WHEN $3 IN ('succeeded', 'failed', 'rejected', 'blocked') THEN COALESCE(completed_at, NOW())
               ELSE completed_at
             END,
             canceled_at = CASE
-              WHEN $3 = 'canceled' THEN COALESCE(canceled_at, NOW())
+              WHEN $3 = 'cancelled' THEN COALESCE(canceled_at, NOW())
               ELSE canceled_at
             END
       WHERE workspace_id = $1

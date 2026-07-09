@@ -213,14 +213,14 @@ describe("CertOps API token management routes", function () {
     const created = await createApiToken({
       workspaceId: fixture.workspaceId,
       name: "Workspace route list",
-      scopes: ["certops:executor:events", "certops:jobs:read"],
+      scopes: ["certops:events:write", "certops:jobs:read"],
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       createdBy: fixture.ownerUser.id,
     });
     const otherWorkspaceToken = await createApiToken({
       workspaceId: fixture.outsiderWorkspaceId,
       name: "Other workspace",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       createdBy: fixture.outsiderUser.id,
     });
@@ -248,7 +248,7 @@ describe("CertOps API token management routes", function () {
       .set("Cookie", fixture.viewerSession.cookie)
       .send({
         name: "Viewer denied",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
     expect(viewerDenied.status).to.equal(403);
     expectNoTokenLeak(viewerDenied.body);
@@ -269,7 +269,7 @@ describe("CertOps API token management routes", function () {
       .set("Cookie", fixture.managerSession.cookie)
       .send({
         name: "Executor route token",
-        scopes: ["certops:executor:events", "certops:jobs:read"],
+        scopes: ["certops:events:write", "certops:jobs:read"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       })
       .expect(201);
@@ -311,7 +311,7 @@ describe("CertOps API token management routes", function () {
     const created = await createApiToken({
       workspaceId: fixture.workspaceId,
       name: "Route revoke",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       createdBy: fixture.ownerUser.id,
     });
@@ -362,7 +362,7 @@ describe("CertOps API token management routes", function () {
     const afterRevoke = await validateApiToken({
       workspaceId: fixture.workspaceId,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     expect(afterRevoke.valid).to.equal(false);
 
@@ -383,7 +383,7 @@ describe("CertOps API token management routes", function () {
       .set("Cookie", fixture.managerSession.cookie)
       .send({
         name: "bad",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         note: "-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----",
       });
     expect(createRejected.status).to.equal(422);
@@ -393,7 +393,7 @@ describe("CertOps API token management routes", function () {
     const created = await createApiToken({
       workspaceId: fixture.workspaceId,
       name: "Reject revoke body",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       createdBy: fixture.ownerUser.id,
     });
 
@@ -412,7 +412,7 @@ describe("CertOps API token management routes", function () {
     const stillValid = await validateApiToken({
       workspaceId: fixture.workspaceId,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     expect(stillValid.valid).to.equal(true);
   });

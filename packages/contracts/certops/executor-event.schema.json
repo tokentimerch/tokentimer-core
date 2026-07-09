@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/executor-event.schema.json",
   "title": "CertOps Executor Event",
-  "description": "M2 contract skeleton for external executor event ingestion. This envelope is public-metadata-only and does not implement runtime auth, rate limiting, persistence, or redaction enforcement.",
+  "description": "M2 contract for external executor event ingestion. This envelope is public-metadata-only; runtime enforces machine-token auth, rate limiting, idempotency, private-key rejection, generic-secret redaction, and safe persistence.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -52,7 +52,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["accepted", "running", "succeeded", "failed", "rejected", "canceled"]
+      "enum": ["accepted", "claimed", "running", "succeeded", "failed", "rejected", "blocked", "cancelled"]
     },
     "eventType": {
       "type": "string",

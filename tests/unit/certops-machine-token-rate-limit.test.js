@@ -47,7 +47,7 @@ function createRequest({
             id: "token-1",
             workspaceId,
             tokenPrefix,
-            scopes: ["certops:executor:events"],
+            scopes: ["certops:events:write"],
             name: "Executor",
             createdBy: 42,
             lastUsedAt: null,

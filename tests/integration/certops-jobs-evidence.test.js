@@ -270,7 +270,7 @@ describe("CertOps jobs and evidence persistence", function () {
         requestedByUserId: ownerId,
       });
       expect(job.workspaceId).to.equal(workspaceA);
-      expect(job.status).to.equal("queued");
+      expect(job.status).to.equal("pending");
       expect(job.payload.target).to.equal("kubernetes/default/web-cert");
 
       const idempotent = await createCertificateJob({
@@ -465,7 +465,7 @@ describe("CertOps jobs and evidence persistence", function () {
         workspaceId: workspaceA,
         jobId: job.id,
         eventType: "job.created",
-        status: "queued",
+        status: "pending",
         metadata: { reason: "created" },
         createdByUserId: ownerId,
       });

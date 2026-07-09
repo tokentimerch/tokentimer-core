@@ -146,7 +146,7 @@ describe("CertOps API tokens", function () {
       const created = await createApiToken({
         workspaceId: workspaceA,
         name: "Executor",
-        scopes: ["certops:executor:events", "certops:jobs:read"],
+        scopes: ["certops:events:write", "certops:jobs:read"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
@@ -188,7 +188,7 @@ describe("CertOps API tokens", function () {
       const valid = await validateApiToken({
         workspaceId: workspaceA,
         rawToken: created.plaintextToken,
-        requiredScopes: ["certops:executor:events"],
+        requiredScopes: ["certops:events:write"],
       });
       expect(valid.valid).to.equal(true);
       expect(valid.token.id).to.equal(created.token.id);
@@ -197,7 +197,7 @@ describe("CertOps API tokens", function () {
       const wrongWorkspace = await validateApiToken({
         workspaceId: workspaceB,
         rawToken: created.plaintextToken,
-        requiredScopes: ["certops:executor:events"],
+        requiredScopes: ["certops:events:write"],
       });
       expect(wrongWorkspace.valid).to.equal(false);
 
@@ -212,7 +212,7 @@ describe("CertOps API tokens", function () {
       const afterRevoke = await validateApiToken({
         workspaceId: workspaceA,
         rawToken: created.plaintextToken,
-        requiredScopes: ["certops:executor:events"],
+        requiredScopes: ["certops:events:write"],
       });
       expect(afterRevoke.valid).to.equal(false);
     } finally {
@@ -244,7 +244,7 @@ describe("CertOps API tokens", function () {
       const created = await createApiToken({
         workspaceId: workspaceA,
         name: "Expired",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() - 60 * 1000),
         createdBy: ownerId,
       });
@@ -252,7 +252,7 @@ describe("CertOps API tokens", function () {
       const expired = await validateApiToken({
         workspaceId: workspaceA,
         rawToken: created.plaintextToken,
-        requiredScopes: ["certops:executor:events"],
+        requiredScopes: ["certops:events:write"],
       });
       expect(expired.valid).to.equal(false);
 

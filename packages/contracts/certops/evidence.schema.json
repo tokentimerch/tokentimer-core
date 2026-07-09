@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/evidence.schema.json",
   "title": "CertOps Evidence Metadata",
-  "description": "M2 contract skeleton for public, sanitized evidence metadata. This schema excludes raw executor output, private key material, key-bearing bundles, and credentials. Later M2 runtime PRs implement evidence persistence, redaction enforcement, and size limits.",
+  "description": "M2 contract for public, sanitized evidence metadata. Optional executor output is accepted only as bounded input, private-key rejected, generic-secret redacted to [REDACTED], and stored separately as redacted output. Private key material, key-bearing bundles, and credentials are never accepted.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -112,6 +112,11 @@
           }
         }
       }
+    },
+    "output": {
+      "type": ["string", "null"],
+      "maxLength": 65536,
+      "description": "Optional executor output. Runtime rejects private key material, redacts generic secrets, and stores only redacted output separately from normalized metadata."
     },
     "redactionApplied": {
       "type": ["boolean", "null"]

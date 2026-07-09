@@ -21,9 +21,9 @@ const MAX_TOKEN_CREATE_ATTEMPTS = 3;
 const RAW_TOKEN_PATTERN = /^ttx_([A-Za-z0-9]+)_([A-Za-z0-9]+)$/;
 
 const ALLOWED_SCOPES = Object.freeze([
-  "certops:executor:events",
+  "certops:read",
+  "certops:events:write",
   "certops:jobs:read",
-  "certops:jobs:write",
   "certops:evidence:write",
 ]);
 const ALLOWED_SCOPE_SET = new Set(ALLOWED_SCOPES);
@@ -199,7 +199,11 @@ function scopesFromRow(row) {
 
 function hasRequiredScopes(grantedScopes, requiredScopes) {
   const granted = new Set(grantedScopes);
-  return requiredScopes.every((scope) => granted.has(scope));
+  return requiredScopes.every(
+    (scope) =>
+      granted.has(scope) ||
+      (scope.endsWith(":read") && granted.has("certops:read")),
+  );
 }
 
 function tokenMetadataFromRow(row) {
@@ -336,10 +340,14 @@ async function markApiTokenUsed(options) {
 }
 
 async function validateApiToken(options) {
-  let workspaceId;
+  let workspaceId = null;
   let requiredScopes;
   try {
-    workspaceId = normalizeWorkspaceId(options.workspaceId);
+    if (options.workspaceId !== undefined && options.workspaceId !== null) {
+      workspaceId = normalizeWorkspaceId(options.workspaceId);
+    } else if (options.allowTokenWorkspace !== true) {
+      workspaceId = normalizeWorkspaceId(options.workspaceId);
+    }
     requiredScopes = normalizeRequiredScopes(options.requiredScopes);
   } catch (error) {
     if (error.code === CERTOPS_API_TOKEN_WORKSPACE_REQUIRED) {
@@ -381,7 +389,7 @@ async function validateApiToken(options) {
   if (!safeCompareSha256Hex(candidateHash, row.token_hash)) {
     return invalidValidation();
   }
-  if (String(row.workspace_id) !== workspaceId) {
+  if (workspaceId && String(row.workspace_id) !== workspaceId) {
     return invalidValidation();
   }
   if (row.status !== "active") {

@@ -64,7 +64,7 @@ async function cleanupWorkspacePair(ownerId, workspaceIds) {
   await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
 }
 
-function buildAuthHarness(requiredScopes = ["certops:executor:events"]) {
+function buildAuthHarness(requiredScopes = ["certops:events:write"]) {
   const app = express();
   app.use(express.json());
 
@@ -112,7 +112,7 @@ describe("CertOps API token auth middleware", function () {
       const created = await createApiToken({
         workspaceId: workspaceA,
         name: "Executor",
-        scopes: ["certops:executor:events", "certops:jobs:read"],
+        scopes: ["certops:events:write", "certops:jobs:read"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
@@ -131,7 +131,7 @@ describe("CertOps API token auth middleware", function () {
         createdBy: ownerId,
       });
       expect(response.body.apiToken.scopes).to.include(
-        "certops:executor:events",
+        "certops:events:write",
       );
       expect(response.body.apiToken.token_hash).to.equal(undefined);
       expect(response.body.apiToken.plaintextToken).to.equal(undefined);
@@ -179,7 +179,7 @@ describe("CertOps API token auth middleware", function () {
       const validForA = await createApiToken({
         workspaceId: workspaceA,
         name: "Workspace A",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         createdBy: ownerId,
       });
@@ -205,7 +205,7 @@ describe("CertOps API token auth middleware", function () {
       const expired = await createApiToken({
         workspaceId: workspaceA,
         name: "Expired",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         expiresAt: new Date(Date.now() - 60 * 1000),
         createdBy: ownerId,
       });

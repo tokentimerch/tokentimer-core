@@ -131,7 +131,7 @@ function createMemoryClient() {
         if (params[2] === "succeeded" || params[2] === "failed") {
           row.completed_at = row.completed_at || now();
         }
-        if (params[2] === "canceled") row.canceled_at = row.canceled_at || now();
+        if (params[2] === "cancelled") row.canceled_at = row.canceled_at || now();
         return { rows: [row] };
       }
 
@@ -234,7 +234,7 @@ describe("CertOps jobs service", () => {
 
     assert.equal(job.workspaceId, WORKSPACE_A);
     assert.equal(job.operation, "deploy");
-    assert.equal(job.status, "queued");
+    assert.equal(job.status, "pending");
     assert.equal(job.payload.target, "kubernetes/default/web-cert");
     assert.match(job.createdAt, /^2026-06-30T/);
     assertNoCustodyKeys(job);

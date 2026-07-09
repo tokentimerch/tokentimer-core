@@ -4,8 +4,10 @@ function isCertOpsMachineTokenCsrfExemptPath(requestPath) {
   return (
     requestPath === "/v1/certops/executor/events" ||
     requestPath.startsWith("/v1/certops/executor/") ||
+    /^\/v1\/certops\/jobs\/[^/]+\/(?:events|evidence)$/.test(requestPath) ||
     requestPath === "/api/v1/certops/executor/events" ||
-    requestPath.startsWith("/api/v1/certops/executor/")
+    requestPath.startsWith("/api/v1/certops/executor/") ||
+    /^\/api\/v1\/certops\/jobs\/[^/]+\/(?:events|evidence)$/.test(requestPath)
   );
 }
 

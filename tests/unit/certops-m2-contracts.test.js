@@ -28,6 +28,10 @@ const certOpsExecutorRoutesSource = fs.readFileSync(
   path.join(repoRoot, "apps/api/routes/certops-executor.js"),
   "utf8",
 );
+const certOpsApiTokensSource = fs.readFileSync(
+  path.join(repoRoot, "apps/api/services/certops/apiTokens.js"),
+  "utf8",
+);
 
 const FORBIDDEN_FIELD_FRAGMENTS = [
   "privatekey",
@@ -350,7 +354,10 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(schemaBlock, /pattern: "\^\[A-Za-z0-9_\.\:-\]\+\$"/);
     assert.match(schemaBlock, /\n        logId:\r?\n          type: string\r?\n          format: uuid/);
     assert.match(schemaBlock, /\n        jobId:\r?\n          type: string\r?\n          format: uuid/);
-    assert.match(schemaBlock, /\n        status:\r?\n          type: string\r?\n          enum: \[queued, running, succeeded, failed, canceled\]/);
+    assert.match(
+      schemaBlock,
+      /\n        status:\r?\n          type: string\r?\n          enum: \[pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled\]/,
+    );
     assert.match(schemaBlock, /\n        evidenceId:\r?\n          type: string\r?\n          format: uuid\r?\n          nullable: true/);
     assert.match(schemaBlock, /\n        evidenceIds:\r?\n          type: array/);
     assert.match(schemaBlock, /\n        executorEventRecordId:\r?\n          type: string\r?\n          format: uuid/);
@@ -422,6 +429,7 @@ describe("CertOps M2 contract skeletons", () => {
       "summary",
       "metadata",
       "artifactRefs",
+      "output",
       "redactionApplied",
     ];
 
@@ -465,7 +473,7 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
-  it("keeps the executor event route aligned between OpenAPI and route compat", () => {
+  it("keeps the executor event routes aligned between OpenAPI and route compat", () => {
     const routePath = "/api/v1/certops/executor/events";
     const method = "POST";
     const stableRoutes = routeCompatContract.guarantees.stableRoutes;
@@ -494,27 +502,58 @@ describe("CertOps M2 contract skeletons", () => {
       /\$ref: "#\/components\/schemas\/CertOpsExecutorEventAcceptedResponse"/,
     );
 
-    for (const forbiddenRoute of [
-      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/events",
-      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
+    for (const perJobRoute of [
+      [
+        "/api/v1/certops/jobs/{jobId}/events",
+        "CertOpsPerJobExecutorEventRequest",
+        "certops:events:write",
+      ],
+      [
+        "/api/v1/certops/jobs/{jobId}/evidence",
+        "CertOpsPerJobEvidenceRequest",
+        "certops:evidence:write",
+      ],
     ]) {
-      assert.equal(
+      const [perJobPath, schemaName, scope] = perJobRoute;
+      const perJobBlock = openApiPathBlock(perJobPath);
+      assert.ok(
         stableRoutes.some(
-          (route) => route.path === forbiddenRoute && route.method === "POST",
+          (route) => route.path === perJobPath && route.method === "POST",
         ),
-        false,
-        `POST ${forbiddenRoute} is not a stable M2 executor write route`,
+        `POST ${perJobPath} must stay frozen in route compat`,
       );
-      assert.equal(
-        openApiPathMethods.get(forbiddenRoute)?.has("POST") === true,
-        false,
-        `POST ${forbiddenRoute} must not be introduced in OpenAPI for M2`,
+      assert.equal(routeCompatContract.routeAuth[perJobPath], "certOpsTokenAuth");
+      assert.ok(openApiPathMethods.get(perJobPath)?.has("POST"));
+      assert.match(perJobBlock, /certOpsTokenAuth:/);
+      assert.match(perJobBlock, new RegExp(scope.replace(/:/g, ":")));
+      assert.match(
+        perJobBlock,
+        new RegExp(`\\$ref: "#/components/schemas/${schemaName}"`),
       );
     }
     assert.match(
       routeCompatContract.namespacePolicy.executor.notes.join(" "),
-      /single ingestion endpoint/i,
+      /reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior/i,
     );
+  });
+
+  it("uses only plan-defined M2 scopes outside migration compatibility code", () => {
+    const canonicalScopes = [
+      "certops:read",
+      "certops:events:write",
+      "certops:jobs:read",
+      "certops:evidence:write",
+    ];
+
+    for (const scope of canonicalScopes) {
+      assert.match(certOpsApiTokensSource, new RegExp(`"${scope}"`));
+      assert.match(openApiSource, new RegExp(`- ${scope}`));
+    }
+
+    assert.doesNotMatch(certOpsApiTokensSource, /certops:executor:events/);
+    assert.doesNotMatch(certOpsApiTokensSource, /certops:jobs:write/);
+    assert.doesNotMatch(openApiSource, /certops:executor:events/);
+    assert.doesNotMatch(openApiSource, /certops:jobs:write/);
   });
 
   it("documents token management routes with real metadata-only schemas", () => {

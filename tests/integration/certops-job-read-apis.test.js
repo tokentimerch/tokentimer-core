@@ -168,7 +168,7 @@ async function createJobFixture({ ownerUser, workspaceId, outsiderWorkspaceId })
   const deployJob = await createCertificateJob({
     workspaceId,
     operation: "deploy",
-    status: "queued",
+    status: "pending",
     source: "api",
     subjectType: "managed_certificate",
     subjectId: "cert-1",
@@ -199,7 +199,7 @@ async function createJobFixture({ ownerUser, workspaceId, outsiderWorkspaceId })
   const otherWorkspaceJob = await createCertificateJob({
     workspaceId: outsiderWorkspaceId,
     operation: "deploy",
-    status: "queued",
+    status: "pending",
     source: "api",
     subjectType: "managed_certificate",
     subjectId: "cert-other",
@@ -211,9 +211,9 @@ async function createJobFixture({ ownerUser, workspaceId, outsiderWorkspaceId })
     workspaceId,
     jobId: deployJob.id,
     eventType: "job.created",
-    status: "queued",
-    message: "Job queued for dashboard timeline",
-    metadata: { stage: "queued", target: "web-cert" },
+    status: "pending",
+    message: "Job pending for dashboard timeline",
+    metadata: { stage: "pending", target: "web-cert" },
     createdByUserId: ownerUser.id,
   });
   await appendCertificateJobLog({
@@ -329,7 +329,7 @@ describe("CertOps job read APIs", function () {
     expect(firstPage.body.pagination).to.deep.equal({ limit: 1, offset: 0 });
 
     const statusFiltered = await request(BASE)
-      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?status=queued`)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?status=pending`)
       .set("Cookie", fixture.viewerSession.cookie)
       .expect(200);
     expect(statusFiltered.body.items.map((item) => item.id)).to.include(
@@ -375,7 +375,7 @@ describe("CertOps job read APIs", function () {
       id: jobs.deployJob.id,
       workspaceId: fixture.workspaceId,
       operation: "deploy",
-      status: "queued",
+      status: "pending",
       source: "api",
       subjectType: "managed_certificate",
       subjectId: "cert-1",

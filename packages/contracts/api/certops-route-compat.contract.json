@@ -19,8 +19,8 @@
         "Machine surface for the M2 executor. Scoped API-token (bearer) auth.",
         "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
-        "M2 executor writes are intentionally collapsed into the single ingestion endpoint: POST /api/v1/certops/executor/events.",
-        "Do not add POST /certops/jobs/{jobId}/events or POST /certops/jobs/{jobId}/evidence in M2. Per-job write routes are not part of M2 unless a later ADR changes that."
+        "M2 keeps POST /api/v1/certops/executor/events as the aggregate executor ingestion endpoint.",
+        "POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable Dev A machine-token aliases scoped by path jobId; they reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior."
       ]
     },
     "agent": {
@@ -37,6 +37,8 @@
   },
   "routeAuth": {
     "/api/v1/certops/executor/events": "certOpsTokenAuth",
+    "/api/v1/certops/jobs/{jobId}/events": "certOpsTokenAuth",
+    "/api/v1/certops/jobs/{jobId}/evidence": "certOpsTokenAuth",
     "/api/v1/certops/agent/register": "agentBootstrapTokenAuth",
     "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
@@ -58,6 +60,8 @@
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke", "method": "POST" },
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
+      { "path": "/api/v1/certops/jobs/{jobId}/events", "method": "POST" },
+      { "path": "/api/v1/certops/jobs/{jobId}/evidence", "method": "POST" },
       { "path": "/api/v1/certops/agent/register", "method": "POST" },
       { "path": "/api/v1/certops/agent/heartbeat", "method": "POST" },
       { "path": "/api/v1/certops/agent/jobs/claim", "method": "POST" },

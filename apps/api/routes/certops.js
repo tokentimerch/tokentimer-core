@@ -252,7 +252,7 @@ function jobSummary(job) {
     queuedAt: job.queuedAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
-    canceledAt: job.canceledAt,
+    cancelledAt: job.cancelledAt,
     requestedByUserId: job.requestedByUserId,
     requestedByApiTokenId: job.requestedByApiTokenId,
   };

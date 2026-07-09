@@ -92,7 +92,7 @@ function successfulValidation(overrides = {}) {
       id: "token-1",
       workspaceId: WORKSPACE_A,
       tokenPrefix: "ttx_abc123",
-      scopes: ["certops:executor:events", "certops:jobs:read"],
+      scopes: ["certops:events:write", "certops:jobs:read"],
       name: "Executor",
       createdBy: 42,
       lastUsedAt: "2026-07-02T00:00:00.000Z",
@@ -151,7 +151,7 @@ describe("CertOps API token auth middleware", () => {
   it("authenticates valid Bearer tokens and attaches safe machine identity", async () => {
     const calls = [];
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       validateApiToken: async (options) => {
         calls.push(options);
         return successfulValidation();
@@ -169,12 +169,12 @@ describe("CertOps API token auth middleware", () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].rawToken, RAW_TOKEN);
     assert.equal(calls[0].workspaceId, WORKSPACE_A);
-    assert.deepEqual(calls[0].requiredScopes, ["certops:executor:events"]);
+    assert.deepEqual(calls[0].requiredScopes, ["certops:events:write"]);
     assert.deepEqual(req.apiToken, {
       id: "token-1",
       workspaceId: WORKSPACE_A,
       tokenPrefix: "ttx_abc123",
-      scopes: ["certops:executor:events", "certops:jobs:read"],
+      scopes: ["certops:events:write", "certops:jobs:read"],
       name: "Executor",
       createdBy: 42,
       lastUsedAt: "2026-07-02T00:00:00.000Z",
@@ -189,7 +189,7 @@ describe("CertOps API token auth middleware", () => {
   it("prefers URL workspace params over body workspaceId", async () => {
     let workspaceId;
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       validateApiToken: async (options) => {
         workspaceId = options.workspaceId;
         return successfulValidation();
@@ -208,7 +208,7 @@ describe("CertOps API token auth middleware", () => {
 
   it("can use an explicit workspace resolver for future machine routes", async () => {
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       resolveWorkspaceId: (req) => req.body.workspaceId,
       validateApiToken: async (options) =>
         successfulValidation({ workspaceId: options.workspaceId }),
@@ -225,9 +225,57 @@ describe("CertOps API token auth middleware", () => {
     assert.equal(req.apiToken.workspaceId, WORKSPACE_A);
   });
 
+  it("can derive workspace from a validated token for path-job machine routes", async () => {
+    const calls = [];
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:evidence:write"],
+      allowTokenWorkspace: true,
+      validateApiToken: async (options) => {
+        calls.push(options);
+        return successfulValidation({
+          workspaceId: WORKSPACE_A,
+          scopes: ["certops:evidence:write"],
+        });
+      },
+    });
+
+    const req = createRequest({
+      authorization: `Bearer ${RAW_TOKEN}`,
+      params: { jobId: "job-1" },
+      body: {},
+    });
+    const result = await runMiddleware(middleware, req);
+
+    assert.equal(result.nextCalled, true);
+    assert.equal(calls[0].workspaceId, null);
+    assert.equal(calls[0].allowTokenWorkspace, true);
+    assert.equal(req.apiToken.workspaceId, WORKSPACE_A);
+  });
+
+  it("does not let certops:read satisfy write scopes", async () => {
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      validateApiToken: async () => ({
+        valid: false,
+        code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+      }),
+    });
+
+    const result = await runMiddleware(
+      middleware,
+      createRequest({
+        authorization: `Bearer ${RAW_TOKEN}`,
+        params: { id: WORKSPACE_A },
+      }),
+    );
+
+    assert.equal(result.res.statusCode, 403);
+    assert.equal(result.res.body.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
+  });
+
   it("rejects missing, non-Bearer, and empty Authorization headers with 401", async () => {
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       validateApiToken: async () => {
         throw new Error("validator must not be called");
       },
@@ -247,7 +295,7 @@ describe("CertOps API token auth middleware", () => {
 
   it("rejects malformed, revoked, expired, and wrong-workspace tokens with generic 401", async () => {
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       validateApiToken: async () => ({ valid: false, code: "ANY_REASON" }),
     });
     const result = await runMiddleware(
@@ -286,7 +334,7 @@ describe("CertOps API token auth middleware", () => {
 
   it("fails safely when workspace context is missing", async () => {
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       validateApiToken: async () => {
         throw new Error("validator must not be called without workspace");
       },
@@ -312,7 +360,7 @@ describe("CertOps API token auth middleware", () => {
 
   it("does not expose custody-looking fields in req.apiToken or responses", async () => {
     const middleware = createCertOpsApiTokenAuth({
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       validateApiToken: async () => successfulValidation(),
     });
     const result = await runMiddleware(
@@ -344,7 +392,7 @@ describe("CertOps API token auth middleware", () => {
         id: "token-1",
         workspaceId: WORKSPACE_A,
         tokenPrefix: "ttx_abc123",
-        scopes: ["certops:executor:events", "certops:jobs:read"],
+        scopes: ["certops:events:write", "certops:jobs:read"],
         name: "Executor",
         createdBy: 42,
         lastUsedAt: "2026-07-02T00:00:00.000Z",
@@ -354,13 +402,21 @@ describe("CertOps API token auth middleware", () => {
 });
 
 describe("CertOps machine-token CSRF exemption", () => {
-  it("exempts only the future executor machine-token namespace", () => {
+  it("exempts only the future executor machine-token namespaces", () => {
     assert.equal(
       isCertOpsMachineTokenCsrfExemptPath("/v1/certops/executor/events"),
       true,
     );
     assert.equal(
       isCertOpsMachineTokenCsrfExemptPath("/v1/certops/executor/jobs/1/events"),
+      true,
+    );
+    assert.equal(
+      isCertOpsMachineTokenCsrfExemptPath("/v1/certops/jobs/1/events"),
+      true,
+    );
+    assert.equal(
+      isCertOpsMachineTokenCsrfExemptPath("/api/v1/certops/jobs/1/evidence"),
       true,
     );
     assert.equal(
