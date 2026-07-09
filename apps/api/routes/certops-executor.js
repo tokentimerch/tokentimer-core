@@ -301,6 +301,24 @@ function workspaceIdHintFromBody(req) {
   return typeof req.body?.workspaceId === "string" ? req.body.workspaceId : null;
 }
 
+function requestCarriesEvidence(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  if (body.eventType === "evidence.attached") return true;
+  return Object.prototype.hasOwnProperty.call(body, "evidence")
+    && body.evidence !== undefined
+    && body.evidence !== null;
+}
+
+function requireEvidenceWriteScopeForEvidencePayload(req, body) {
+  if (!requestCarriesEvidence(body)) return;
+  const scopes = Array.isArray(req.apiToken?.scopes) ? req.apiToken.scopes : [];
+  if (scopes.includes(EXECUTOR_EVIDENCE_SCOPE)) return;
+  throw executorEventError(
+    "CertOps evidence write scope is required",
+    CERTOPS_API_TOKEN_SCOPE_DENIED,
+  );
+}
+
 function bodyWithPathJobContext(req, mode) {
   if (!mode) return req.body;
   if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
@@ -1362,6 +1380,13 @@ function handleExecutorEventError(res, error) {
     });
   }
 
+  if (error?.code === CERTOPS_API_TOKEN_SCOPE_DENIED) {
+    return res.status(403).json({
+      error: "CertOps API token scope denied",
+      code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+    });
+  }
+
   if (
     error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID ||
     error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT
@@ -1416,18 +1441,7 @@ async function auditExecutorRejection(req, error, mode) {
     return;
   }
 
-  if (error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT) {
-    await writeExecutorRejectionAudit({
-      action: "CERTOPS_EXECUTOR_EVENT_CONFLICT",
-      ...hints,
-      rejectionCode: CERTOPS_EXECUTOR_EVENT_CONFLICT,
-    });
-    return;
-  }
-
   if (
-    mode === "evidence" ||
-    Array.isArray(req.body?.evidence) ||
     error?.code === CERTOPS_EVIDENCE_INVALID ||
     error?.code === CERTOPS_EVIDENCE_TYPE_INVALID ||
     error?.code === CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE
@@ -1445,6 +1459,7 @@ async function executorEventsHandler(req, res, options = {}) {
     const workspaceId = req.apiToken.workspaceId;
     const eventBody = bodyWithPathJobContext(req, options.mode);
     const event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
     const result = await ingestExecutorEvent({
       workspaceId,
       jobId: event.jobId,
@@ -1604,28 +1619,28 @@ async function executorEventsHandler(req, res, options = {}) {
   }
 }
 
-function requestCarriesEvidence(req) {
-  const body = req.body;
-  return Boolean(
-    body &&
-      typeof body === "object" &&
-      (body.eventType === "evidence.attached" ||
-        (Array.isArray(body.evidence) && body.evidence.length > 0)),
-  );
-}
-
 function requireExecutorEvidenceScope(req, res, next) {
-  if (
-    !requestCarriesEvidence(req) ||
-    req.apiToken?.scopes?.includes(EXECUTOR_EVIDENCE_SCOPE)
-  ) {
-    return next();
+  if (!requestCarriesEvidence(req.body)) return next();
+
+  try {
+    // Preserve the fail-closed private-key boundary: the handler converts this
+    // class of input into the canonical 422 response and synchronous audit.
+    rejectPrivateKeyMaterial(req.body);
+  } catch (error) {
+    if (error?.code === PRIVATE_KEY_MATERIAL_REJECTED) return next();
+    return next(error);
   }
 
-  return res.status(403).json({
-    error: "CertOps API token scope denied",
-    code: CERTOPS_API_TOKEN_SCOPE_DENIED,
-  });
+  try {
+    requireEvidenceWriteScopeForEvidencePayload(req, req.body);
+    return next();
+  } catch (error) {
+    if (error?.code !== CERTOPS_API_TOKEN_SCOPE_DENIED) return next(error);
+    return res.status(403).json({
+      error: "CertOps API token scope denied",
+      code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+    });
+  }
 }
 
 function createCertOpsExecutorRouter(options = {}) {
@@ -1731,4 +1746,5 @@ module.exports._test = {
   normalizeRfc3339Timestamp,
   normalizeEvidenceEventType,
   requestCarriesEvidence,
+  requireExecutorEvidenceScope,
 };

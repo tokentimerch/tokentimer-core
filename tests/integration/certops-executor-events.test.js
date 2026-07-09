@@ -478,6 +478,190 @@ describe("CertOps executor event ingestion", function () {
       ).to.equal(0);
       expect(persistedToken.lastUsedAt).to.equal(null);
       expectNoSensitiveValues(response.body, token.plaintextToken);
+
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("requires evidence write scope for aggregate executor evidence payloads", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-evidence-scope",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const eventsOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const evidenceOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:evidence:write"],
+      });
+      const combined = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+
+      const started = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${eventsOnly.plaintextToken}`)
+        .send(eventPayload({ workspaceId: workspaceA, jobId: job.id }));
+      expect(started.status).to.equal(202);
+
+      const evidenceEventBefore = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const evidenceEventDenied = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${eventsOnly.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [],
+          }),
+        );
+      const evidenceEventAfter = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidenceEventDenied.status).to.equal(403);
+      expect(evidenceEventDenied.body.code).to.equal(
+        "CERTOPS_API_TOKEN_SCOPE_DENIED",
+      );
+      expect(evidenceEventAfter).to.deep.equal(evidenceEventBefore);
+      expectNoSensitiveValues(evidenceEventDenied.body, eventsOnly.plaintextToken);
+
+      const evidenceArrayDenied = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${eventsOnly.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "job.progress",
+            status: "running",
+            evidence: [
+              {
+                schemaVersion: 1,
+                evidenceId: `evidence-${crypto.randomUUID()}`,
+                jobId: job.id,
+                workspaceId: workspaceA,
+                certificateId: "cert-1",
+                eventType: "certificate.observed",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        );
+      const evidenceArrayAfter = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidenceArrayDenied.status).to.equal(403);
+      expect(evidenceArrayDenied.body.code).to.equal(
+        "CERTOPS_API_TOKEN_SCOPE_DENIED",
+      );
+      expect(evidenceArrayAfter).to.deep.equal(evidenceEventBefore);
+      expectNoSensitiveValues(evidenceArrayDenied.body, eventsOnly.plaintextToken);
+
+      const privateKeyBefore = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const privateKeyRejected = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${eventsOnly.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [
+              {
+                schemaVersion: 1,
+                eventType: "certificate.observed",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+                output: PRIVATE_KEY_PEM,
+              },
+            ],
+          }),
+        );
+      const privateKeyAfter = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(privateKeyRejected.status).to.equal(422);
+      expect(privateKeyRejected.body.code).to.equal(
+        "PRIVATE_KEY_MATERIAL_REJECTED",
+      );
+      expect(privateKeyAfter).to.deep.equal(privateKeyBefore);
+      expectNoSensitiveValues(privateKeyRejected.body, eventsOnly.plaintextToken);
+
+      const attached = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${combined.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [
+              {
+                schemaVersion: 1,
+                evidenceId: `evidence-${crypto.randomUUID()}`,
+                jobId: job.id,
+                workspaceId: workspaceA,
+                certificateId: "cert-1",
+                eventType: "certificate.observed",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        );
+      expect(attached.status).to.equal(202);
+      expect(attached.body.evidenceIds).to.have.length(1);
+      expectNoSensitiveValues(attached.body, combined.plaintextToken);
+
+      const evidenceOnlyAggregateDenied = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${evidenceOnly.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "job.started",
+            status: "running",
+          }),
+        );
+      expect(evidenceOnlyAggregateDenied.status).to.equal(403);
+      expect(evidenceOnlyAggregateDenied.body.code).to.equal(
+        "CERTOPS_API_TOKEN_SCOPE_DENIED",
+      );
+      expectNoSensitiveValues(
+        evidenceOnlyAggregateDenied.body,
+        evidenceOnly.plaintextToken,
+      );
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
@@ -853,7 +1037,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:events:write"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const app = buildExecutorApp();
 
@@ -944,27 +1128,39 @@ describe("CertOps executor event ingestion", function () {
         .send(eventPayload({ workspaceId: workspaceA, jobId: lifecycleJob.id }));
       expect(lifecycle.status).to.equal(202);
 
-      for (const body of [
-        eventPayload({
-          workspaceId: workspaceA,
-          jobId: evidenceJob.id,
-          eventType: "evidence.attached",
-          status: "accepted",
-        }),
-        eventPayload({
-          workspaceId: workspaceA,
-          jobId: evidenceJob.id,
-          eventType: "job.progress",
-          status: "running",
-          evidence: [validEvidence],
-        }),
-        eventPayload({
-          workspaceId: workspaceA,
-          jobId: evidenceJob.id,
-          eventType: "job.progress",
-          status: "running",
-          evidence: [{ ...validEvidence, privateKey: PRIVATE_KEY_PEM }],
-        }),
+      for (const [body, expectedStatus, expectedCode] of [
+        [
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: evidenceJob.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+          }),
+          403,
+          "CERTOPS_API_TOKEN_SCOPE_DENIED",
+        ],
+        [
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: evidenceJob.id,
+            eventType: "job.progress",
+            status: "running",
+            evidence: [validEvidence],
+          }),
+          403,
+          "CERTOPS_API_TOKEN_SCOPE_DENIED",
+        ],
+        [
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: evidenceJob.id,
+            eventType: "job.progress",
+            status: "running",
+            evidence: [{ ...validEvidence, privateKey: PRIVATE_KEY_PEM }],
+          }),
+          422,
+          "PRIVATE_KEY_MATERIAL_REJECTED",
+        ],
       ]) {
         const before = await countJobArtifacts({
           workspaceId: workspaceA,
@@ -979,8 +1175,8 @@ describe("CertOps executor event ingestion", function () {
           jobId: evidenceJob.id,
         });
 
-        expect(response.status).to.equal(403);
-        expect(response.body.code).to.equal("CERTOPS_API_TOKEN_SCOPE_DENIED");
+        expect(response.status).to.equal(expectedStatus);
+        expect(response.body.code).to.equal(expectedCode);
         expect(after).to.deep.equal(before);
         expect(
           await countExecutorEventRecords({
@@ -1631,7 +1827,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:events:write"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const job = await createJob({
         workspaceId: workspaceA,
@@ -2131,21 +2327,6 @@ describe("CertOps executor event ingestion", function () {
         status: 400,
         code: "CERTOPS_EXECUTOR_EVENT_INVALID",
         forbidden: ["ignored-before-hardening"],
-      });
-
-      await expectRejectedWithoutPersistence({
-        body: eventPayload({
-          workspaceId: workspaceA,
-          jobId: job.id,
-          eventType: "evidence.attached",
-          status: "accepted",
-          evidence: [
-            validEvidenceItem({ output: "deferred-to-m2-a10" }),
-          ],
-        }),
-        status: 400,
-        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
-        forbidden: ["deferred-to-m2-a10"],
       });
 
       await expectRejectedWithoutPersistence({
@@ -2907,7 +3088,6 @@ describe("CertOps executor event ingestion", function () {
         "CERTOPS_EXECUTOR_EVENT_ACCEPTED",
         "CERTOPS_EVIDENCE_ACCEPTED",
         "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
-        "CERTOPS_EXECUTOR_EVENT_CONFLICT",
         "CERTOPS_KEY_MATERIAL_REJECTED",
         "CERTOPS_EVIDENCE_REJECTED",
       ]) {
