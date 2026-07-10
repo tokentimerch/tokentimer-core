@@ -648,6 +648,21 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
+      // Phase 2 Dev B dashboard (timeline UI + machine token panel)
+      "apps/dashboard/src/App.jsx",
+      "apps/dashboard/src/components/AssetFilters.jsx",
+      "apps/dashboard/src/components/ImportTokensModal.jsx",
+      "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertificateTimeline.jsx",
+      "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
+      "apps/dashboard/src/components/certops/JobStatusBadge.jsx",
+      "apps/dashboard/src/components/certops/TokenCertOpsPanel.jsx",
+      "apps/dashboard/src/components/certops/certopsJobsApi.js",
+      "apps/dashboard/src/components/certops/certopsJobsFormat.js",
+      "apps/dashboard/src/components/certops/certopsTokensApi.js",
+      "apps/dashboard/src/components/certops/useCertOpsJobs.js",
+      "apps/dashboard/src/pages/Audit.jsx",
+      "apps/dashboard/src/pages/ControlCenter.jsx",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

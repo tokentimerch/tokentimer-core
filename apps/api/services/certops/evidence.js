@@ -227,9 +227,26 @@ async function createCertificateEvidence(options) {
     "evidenceType",
   );
   const { subjectType, subjectId } = normalizeSubject(options);
-  const metadata = normalizePublicObject(options.metadata, "metadata");
+  let metadata = normalizePublicObject(options.metadata, "metadata");
   const output = normalizeRedactedOutput(options.output);
   const observedAt = normalizeOptionalDate(options.observedAt, "observedAt");
+
+  // Persist redaction markers in metadata so list/read APIs can surface them
+  // without returning the redacted output body (OpenAPI keeps output out of list).
+  if (output.redactionApplied) {
+    metadata = {
+      ...metadata,
+      redactionApplied: true,
+      redactionCount:
+        (Number.isInteger(metadata.redactionCount)
+          ? metadata.redactionCount
+          : 0) + (output.redactionCount || 0),
+      status:
+        metadata.status === "rejected" || metadata.status === "failed"
+          ? metadata.status
+          : "redacted",
+    };
+  }
 
   const result = await db.query(
     `INSERT INTO certificate_evidence (

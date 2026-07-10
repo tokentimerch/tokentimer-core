@@ -3636,10 +3636,11 @@ function DashboardView({
     id => {
       const cert = getManagedCertForToken(id);
       if (cert) {
-        const token =
-          (Array.isArray(tokens) ? tokens.find(t => t.id === id) : null) || {
-            id,
-          };
+        const token = (Array.isArray(tokens)
+          ? tokens.find(t => t.id === id)
+          : null) || {
+          id,
+        };
         setRetireTarget({ token, certificate: cert });
         onRetireModalOpen();
         return;

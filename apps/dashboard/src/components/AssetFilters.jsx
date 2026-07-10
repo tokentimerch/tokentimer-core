@@ -274,28 +274,28 @@ export default function AssetFilters({
             <InputLeftElement pointerEvents='none' h='32px'>
               <Search size={16} color={searchIconColor} />
             </InputLeftElement>
-          <Input
-            value={panelQueries.__global || ''}
-            onChange={event => {
-              const nextValue = event.target.value;
-              setPanelQueries(prev => ({
-                ...prev,
-                __global: nextValue,
-              }));
-              if (typeof onGlobalSearchChange === 'function') {
-                onGlobalSearchChange(nextValue);
-              }
-              notifyFilterReset();
-            }}
-            placeholder='Search assets, domains, owners...'
-            size='sm'
-            bg={inputBg}
-            borderColor={inputBorder}
-            borderRadius='md'
-            pl='36px'
-            minH={CHIP_MIN_HEIGHT}
-            _placeholder={{ color: placeholderColor }}
-          />
+            <Input
+              value={panelQueries.__global || ''}
+              onChange={event => {
+                const nextValue = event.target.value;
+                setPanelQueries(prev => ({
+                  ...prev,
+                  __global: nextValue,
+                }));
+                if (typeof onGlobalSearchChange === 'function') {
+                  onGlobalSearchChange(nextValue);
+                }
+                notifyFilterReset();
+              }}
+              placeholder='Search assets, domains, owners...'
+              size='sm'
+              bg={inputBg}
+              borderColor={inputBorder}
+              borderRadius='md'
+              pl='36px'
+              minH={CHIP_MIN_HEIGHT}
+              _placeholder={{ color: placeholderColor }}
+            />
           </InputGroup>
           {(retiredCount > 0 || showRetired) &&
           typeof onToggleShowRetired === 'function' ? (

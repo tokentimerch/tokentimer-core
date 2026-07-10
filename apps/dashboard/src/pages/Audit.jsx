@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   Text,
@@ -190,6 +190,7 @@ function getAuditEventKey(ev) {
 
 export default function Audit({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const theme = useDashboardTheme();
   const { pageBg, surface, text, muted, border, inputBg, dashboard } = theme;
   const strongBorder = dashboard.border.strong;
@@ -247,7 +248,13 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => {
+    try {
+      return new URLSearchParams(location.search).get('q') || '';
+    } catch (_) {
+      return '';
+    }
+  });
   const [actionFilter, setActionFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
