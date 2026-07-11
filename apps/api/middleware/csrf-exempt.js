@@ -1,16 +1,18 @@
 const { isInternalWorkerRequest } = require("./internal-worker-auth");
 
+// Add a route here only when its machine-token middleware is explicitly mounted.
+const CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS = new Set([
+  "/v1/certops/executor/events",
+  "/api/v1/certops/executor/events",
+]);
+
 function isCertOpsMachineTokenCsrfExemptPath(requestPath) {
-  return (
-    requestPath === "/v1/certops/executor/events" ||
-    requestPath.startsWith("/v1/certops/executor/") ||
-    requestPath === "/api/v1/certops/executor/events" ||
-    requestPath.startsWith("/api/v1/certops/executor/")
-  );
+  return CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS.has(requestPath);
 }
 
 function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
-  const allowPath = options.allowPath || isCertOpsMachineTokenCsrfExemptPath;
+  const allowPath =
+    typeof options.allowPath === "function" ? options.allowPath : () => false;
 
   return (req, res, next) => {
     if (
@@ -31,6 +33,7 @@ function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
 }
 
 module.exports = {
+  CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS,
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
 };
