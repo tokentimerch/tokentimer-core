@@ -8,8 +8,13 @@ const {
 } = require("../services/certops/apiTokens");
 
 const CERTOPS_API_TOKEN_UNAUTHORIZED = "CERTOPS_API_TOKEN_UNAUTHORIZED";
+const CERTOPS_API_TOKEN_SCOPE_REQUIRED = "CERTOPS_API_TOKEN_SCOPE_REQUIRED";
 const CERTOPS_API_TOKEN_WORKSPACE_REQUIRED =
   "CERTOPS_API_TOKEN_WORKSPACE_REQUIRED";
+const CERTOPS_API_TOKEN_WORKSPACE_MISMATCH =
+  "CERTOPS_API_TOKEN_WORKSPACE_MISMATCH";
+const CERTOPS_API_TOKEN_SESSION_IDENTITY_FORBIDDEN =
+  "CERTOPS_API_TOKEN_SESSION_IDENTITY_FORBIDDEN";
 
 const UNAUTHORIZED_RESPONSE = Object.freeze({
   error: "CertOps API token authentication required",
@@ -28,12 +33,25 @@ function authError(message, code) {
 }
 
 function responseForUnauthorized(code = CERTOPS_API_TOKEN_UNAUTHORIZED) {
-  return code === CERTOPS_API_TOKEN_WORKSPACE_REQUIRED
-    ? {
+  if (code === CERTOPS_API_TOKEN_WORKSPACE_REQUIRED) {
+    return {
         error: "Workspace context is required for CertOps API token authentication",
         code,
-      }
-    : UNAUTHORIZED_RESPONSE;
+    };
+  }
+  if (code === CERTOPS_API_TOKEN_WORKSPACE_MISMATCH) {
+    return {
+      error: "CertOps API token workspace context did not match",
+      code,
+    };
+  }
+  if (code === CERTOPS_API_TOKEN_SESSION_IDENTITY_FORBIDDEN) {
+    return {
+      error: "Session identity is not allowed for CertOps API token authentication",
+      code,
+    };
+  }
+  return UNAUTHORIZED_RESPONSE;
 }
 
 function bearerTokenFromRequest(req) {
@@ -59,6 +77,13 @@ function normalizeRequiredScopes(scopes) {
   const normalized = [];
   const allowed = new Set(ALLOWED_SCOPES);
 
+  if (list.length === 0) {
+    throw authError(
+      "At least one CertOps API token scope is required",
+      CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+    );
+  }
+
   for (const scope of list) {
     if (typeof scope !== "string") {
       throw authError(
@@ -68,6 +93,12 @@ function normalizeRequiredScopes(scopes) {
     }
 
     const trimmed = scope.trim();
+    if (!trimmed) {
+      throw authError(
+        "At least one CertOps API token scope is required",
+        CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+      );
+    }
     if (!allowed.has(trimmed)) {
       throw authError(
         "CertOps API token scope is not allowed",
@@ -78,6 +109,12 @@ function normalizeRequiredScopes(scopes) {
     if (!normalized.includes(trimmed)) normalized.push(trimmed);
   }
 
+  if (normalized.length === 0) {
+    throw authError(
+      "At least one CertOps API token scope is required",
+      CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+    );
+  }
   return normalized;
 }
 
@@ -88,26 +125,60 @@ function firstNonEmptyString(values) {
   return null;
 }
 
-function workspaceIdFromRequest(req, options = {}) {
-  if (typeof options.resolveWorkspaceId === "function") {
-    const resolved = options.resolveWorkspaceId(req);
-    if (typeof resolved === "string" && resolved.trim()) return resolved.trim();
+function workspaceIdFromRouteParams(req, options = {}) {
+  const paramName = options.workspaceIdParam || "workspaceId";
+  return firstNonEmptyString([req.params?.[paramName]]);
+}
+
+function workspaceResolutionFromRequest(req, options = {}) {
+  const routeWorkspaceId = workspaceIdFromRouteParams(req, options);
+  const bodyWorkspaceId = firstNonEmptyString([req.body?.workspaceId]);
+  const resolvedWorkspaceId =
+    typeof options.resolveWorkspaceId === "function"
+      ? firstNonEmptyString([options.resolveWorkspaceId(req)])
+      : null;
+
+  if (routeWorkspaceId) {
+    if (bodyWorkspaceId && bodyWorkspaceId !== routeWorkspaceId) {
+      return { workspaceId: null, code: CERTOPS_API_TOKEN_WORKSPACE_MISMATCH };
+    }
+    if (resolvedWorkspaceId && resolvedWorkspaceId !== routeWorkspaceId) {
+      return { workspaceId: null, code: CERTOPS_API_TOKEN_WORKSPACE_MISMATCH };
+    }
+    return { workspaceId: routeWorkspaceId, code: null };
   }
 
-  const paramNames = [
-    options.workspaceIdParam,
-    "workspaceId",
-    "id",
-  ].filter(Boolean);
-  const paramValues = paramNames.map((name) => req.params?.[name]);
-  const workspaceId = firstNonEmptyString(paramValues);
-  if (workspaceId) return workspaceId;
+  if (
+    resolvedWorkspaceId &&
+    options.allowBodyWorkspaceId === true &&
+    bodyWorkspaceId &&
+    bodyWorkspaceId !== resolvedWorkspaceId
+  ) {
+    return { workspaceId: null, code: CERTOPS_API_TOKEN_WORKSPACE_MISMATCH };
+  }
+  if (resolvedWorkspaceId) {
+    return { workspaceId: resolvedWorkspaceId, code: null };
+  }
 
   if (options.allowBodyWorkspaceId === true) {
-    return firstNonEmptyString([req.body?.workspaceId]);
+    return { workspaceId: bodyWorkspaceId, code: null };
   }
 
-  return null;
+  return { workspaceId: null, code: CERTOPS_API_TOKEN_WORKSPACE_REQUIRED };
+}
+
+function workspaceIdFromRequest(req, options = {}) {
+  return workspaceResolutionFromRequest(req, options).workspaceId;
+}
+
+function hasSessionIdentity(req) {
+  return Boolean(
+    req.user ||
+      req.session ||
+      req.isAdmin === true ||
+      req.authenticated === true ||
+      (typeof req.isAuthenticated === "function" && req.isAuthenticated() === true),
+  );
 }
 
 function safeApiTokenIdentity(token) {
@@ -131,16 +202,27 @@ function createCertOpsApiTokenAuth(options = {}) {
   const validateToken = options.validateApiToken || validateApiToken;
 
   return async function certOpsApiTokenAuth(req, res, next) {
+    if (hasSessionIdentity(req)) {
+      return res
+        .status(401)
+        .json(responseForUnauthorized(CERTOPS_API_TOKEN_SESSION_IDENTITY_FORBIDDEN));
+    }
+
     const bearer = bearerTokenFromRequest(req);
     if (!bearer.ok) {
       return res.status(401).json(UNAUTHORIZED_RESPONSE);
     }
 
-    const workspaceId = workspaceIdFromRequest(req, options);
+    const workspaceResolution = workspaceResolutionFromRequest(req, options);
+    const workspaceId = workspaceResolution.workspaceId;
     if (!workspaceId) {
       return res
         .status(401)
-        .json(responseForUnauthorized(CERTOPS_API_TOKEN_WORKSPACE_REQUIRED));
+        .json(
+          responseForUnauthorized(
+            workspaceResolution.code || CERTOPS_API_TOKEN_WORKSPACE_REQUIRED,
+          ),
+        );
     }
 
     let validation;
@@ -172,7 +254,10 @@ function createCertOpsApiTokenAuth(options = {}) {
 
 module.exports = {
   CERTOPS_API_TOKEN_UNAUTHORIZED,
+  CERTOPS_API_TOKEN_SCOPE_REQUIRED,
   CERTOPS_API_TOKEN_WORKSPACE_REQUIRED,
+  CERTOPS_API_TOKEN_WORKSPACE_MISMATCH,
+  CERTOPS_API_TOKEN_SESSION_IDENTITY_FORBIDDEN,
   bearerTokenFromRequest,
   createCertOpsApiTokenAuth,
   requireCertOpsApiToken: createCertOpsApiTokenAuth,
@@ -180,6 +265,8 @@ module.exports = {
   workspaceIdFromRequest,
   _test: {
     normalizeRequiredScopes,
+    hasSessionIdentity,
     responseForUnauthorized,
+    workspaceResolutionFromRequest,
   },
 };

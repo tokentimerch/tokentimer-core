@@ -70,7 +70,10 @@ function buildAuthHarness(requiredScopes = ["certops:events:write"]) {
 
   app.post(
     "/api/v1/workspaces/:id/certops/machine-auth-test",
-    createCertOpsApiTokenAuth({ scopes: requiredScopes }),
+    createCertOpsApiTokenAuth({
+      scopes: requiredScopes,
+      workspaceIdParam: "id",
+    }),
     (req, res) =>
       res.status(200).json({
         apiToken: req.apiToken,
@@ -120,7 +123,7 @@ describe("CertOps API token auth middleware", function () {
       const response = await supertest(buildAuthHarness())
         .post(`/api/v1/workspaces/${workspaceA}/certops/machine-auth-test`)
         .set("Authorization", `Bearer ${created.plaintextToken}`)
-        .send({ workspaceId: workspaceB });
+        .send({});
 
       expect(response.status).to.equal(200);
       expect(response.body.apiToken).to.include({
