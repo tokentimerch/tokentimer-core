@@ -3376,7 +3376,7 @@ paths:
       tags: [CertOps]
       summary: List CertOps API tokens
       operationId: listCertOpsTokens
-      description: Returns scoped CertOps API tokens (metadata only, never secrets). Skeleton; response schema lands in M2.
+      description: Returns scoped CertOps API-token metadata only. Responses never include plaintext tokens, token secrets, token hashes, Authorization headers, or credential material. M2-A1 reserves a closed contract shape; runtime token storage and management land in later M2 PRs.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3385,8 +3385,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsApiTokenListResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3397,7 +3396,7 @@ paths:
       tags: [CertOps]
       summary: Issue a scoped CertOps API token
       operationId: createCertOpsToken
-      description: Issues a scoped API token for executor/agent use. The plaintext token is returned once at creation and never stored in recoverable form. Skeleton; request/response schema lands in M2.
+      description: Issues a scoped CertOps API token. The one-time plaintext token may be returned only in this create response and is never stored in recoverable form. List/get/revoke responses never include plaintext tokens, token secrets, token hashes, Authorization headers, or credential material. M2-A1 reserves a closed contract shape; runtime token storage and management land in later M2 PRs.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -3405,16 +3404,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: "#/components/schemas/CertOpsApiTokenCreateRequest"
       responses:
         "201":
           description: API token issued
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: "#/components/schemas/CertOpsApiTokenCreateResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3423,12 +3420,45 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke:
+    post:
+      tags: [CertOps]
+      summary: Revoke a scoped CertOps API token
+      operationId: revokeCertOpsToken
+      description: Revokes a scoped CertOps API token and returns metadata only. The response never includes plaintext tokens, token secrets, token hashes, Authorization headers, or credential material. M2-A1 reserves a closed contract shape; runtime token revocation lands in a later M2 PR.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: tokenId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: "^[A-Za-z0-9_.:-]+$"
+      responses:
+        "200":
+          description: API token revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsApiTokenRevokeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/certops/executor/events:
     post:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: Executor reports job progress and public evidence metadata. Scoped-token authenticated. Payloads containing private key material are rejected (422). M2-A1 defines the contract skeleton only; runtime auth, rate limiting, persistence, and redaction enforcement land in later M2 PRs.
+      description: M2 external executor reporting envelope for normalized job and evidence events. Scoped-token authenticated. Payloads containing private key material are rejected (422). Older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as normalized job/evidence events. Richer agent-executed job protocol and job signing are deferred to M4. M2-A1 defines the contract skeleton only; runtime auth, rate limiting, persistence, and redaction enforcement land in later M2 PRs.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3970,7 +4000,7 @@ components:
         name:
           type: string
           maxLength: 64
-          pattern: "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+          pattern: "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
         value:
           oneOf:
             - type: string
@@ -4066,10 +4096,127 @@ components:
             $ref: "#/components/schemas/CertOpsJob"
         pagination:
           $ref: "#/components/schemas/Pagination"
+    CertOpsApiTokenScope:
+      type: string
+      enum:
+        - certops:read
+        - certops:events:write
+        - certops:jobs:read
+        - certops:evidence:write
+      description: Canonical M2 CertOps API-token scope. Job-claim and signed-agent scopes are deferred to M4.
+    CertOpsApiToken:
+      type: object
+      additionalProperties: false
+      description: Public CertOps API-token metadata. Plaintext token values, token hashes, Authorization headers, and credential material are never returned by metadata/list/revoke responses.
+      required:
+        - id
+        - workspaceId
+        - name
+        - tokenPrefix
+        - scopes
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        tokenPrefix:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^ttx_[A-Za-z0-9_.:-]+$"
+          description: Public lookup prefix only; not sufficient to authenticate.
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/CertOpsApiTokenScope"
+        status:
+          type: string
+          enum: [active, revoked, expired]
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        createdByUserId:
+          type: integer
+          nullable: true
+    CertOpsApiTokenListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsApiToken"
+    CertOpsApiTokenCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/CertOpsApiTokenScope"
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsApiTokenCreateResponse:
+      type: object
+      additionalProperties: false
+      description: Token creation response. plaintextToken is returned once at creation only; it is never returned by list/get/revoke responses and is never stored in recoverable form.
+      required: [token, plaintextToken]
+      properties:
+        token:
+          $ref: "#/components/schemas/CertOpsApiToken"
+        plaintextToken:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: "^ttx_[^_]+_[^_]+$"
+          description: One-time plaintext token value shown only by the create response.
+    CertOpsApiTokenRevokeResponse:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          $ref: "#/components/schemas/CertOpsApiToken"
     CertOpsEvidenceMetadata:
       type: object
       additionalProperties: false
-      description: Public, sanitized evidence metadata skeleton. Raw executor output and key-bearing artifacts are intentionally excluded.
+      description: Strict standalone normalized/persisted evidence metadata skeleton. Raw executor output and key-bearing artifacts are intentionally excluded. M2 runtime rejects private-key material, redacts generic secrets, and stores redacted output separately where output is accepted.
       required:
         - schemaVersion
         - evidenceId
@@ -4164,10 +4311,108 @@ components:
         redactionApplied:
           type: boolean
           nullable: true
+    CertOpsEmbeddedExecutorEvidenceItem:
+      type: object
+      additionalProperties: false
+      description: Relaxed embedded evidence item for the M2 executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata.
+      required: [eventType]
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        evidenceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        jobId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+        workspaceId:
+          type: string
+          format: uuid
+        certificateId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        certificateInstanceId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        targetId:
+          type: string
+          maxLength: 128
+          pattern: "^[A-Za-z0-9_.:-]+$"
+          nullable: true
+        eventType:
+          type: string
+          enum:
+            - certificate.observed
+            - deployment.checked
+            - deployment.updated
+            - validation.passed
+            - validation.failed
+            - policy.checked
+        source:
+          type: string
+          enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]
+          nullable: true
+        status:
+          type: string
+          enum: [accepted, redacted, rejected, failed]
+          nullable: true
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        fingerprintSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          nullable: true
+        summary:
+          type: string
+          maxLength: 1024
+          nullable: true
+        metadata:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/CertOpsMetadataEntry"
+        artifactRefs:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, reference]
+            properties:
+              type:
+                type: string
+                enum: [log, report, certificate, deployment, external]
+              reference:
+                type: string
+                minLength: 1
+                maxLength: 512
+              sha256:
+                type: string
+                pattern: "^[a-f0-9]{64}$"
+                nullable: true
+        output:
+          type: string
+          maxLength: 65536
+          nullable: true
+          description: Optional executor output. Runtime rejects private-key material and persists only generic-secret-redacted output under the evidence policy.
+        redactionApplied:
+          type: boolean
+          nullable: true
     CertOpsExecutorEventRequest:
       type: object
       additionalProperties: false
-      description: External executor event envelope. Full auth, rate limiting, persistence, and redaction enforcement land in later M2 runtime PRs.
+      description: M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. The M2 envelope uses job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected, and evidence.attached. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed job protocol and job signing are deferred to M4.
       required:
         - schemaVersion
         - eventId
@@ -4203,14 +4448,9 @@ components:
           maxLength: 128
           pattern: "^[A-Za-z0-9_.:-]+$"
           nullable: true
-        attemptId:
-          type: string
-          maxLength: 128
-          pattern: "^[A-Za-z0-9_.:-]+$"
-          nullable: true
         status:
           type: string
-          enum: [accepted, running, succeeded, failed, rejected, canceled]
+          enum: [accepted, running, succeeded, failed, rejected, cancelled]
         eventType:
           type: string
           enum:
@@ -4232,7 +4472,7 @@ components:
           type: array
           maxItems: 16
           items:
-            $ref: "#/components/schemas/CertOpsEvidenceMetadata"
+            $ref: "#/components/schemas/CertOpsEmbeddedExecutorEvidenceItem"
         metadata:
           type: array
           maxItems: 32

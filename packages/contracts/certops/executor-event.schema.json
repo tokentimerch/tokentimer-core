@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/executor-event.schema.json",
   "title": "CertOps Executor Event",
-  "description": "M2 contract skeleton for external executor event ingestion. This envelope is public-metadata-only and does not implement runtime auth, rate limiting, persistence, or redaction enforcement.",
+  "description": "M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. The envelope reports normalized public job/evidence events only: older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as job.* events plus normalized evidence items. The richer agent-executed job protocol, job signing, attemptId semantics, agent identity/selector, nonce replay cache, signingKeyId, and signature are deferred to M4. Runtime implementations reject private-key material before persistence and redact generic secrets where evidence/log policy applies.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -45,14 +45,9 @@
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$"
     },
-    "attemptId": {
-      "type": ["string", "null"],
-      "maxLength": 128,
-      "pattern": "^[A-Za-z0-9_.:-]+$"
-    },
     "status": {
       "type": "string",
-      "enum": ["accepted", "running", "succeeded", "failed", "rejected", "canceled"]
+      "enum": ["accepted", "running", "succeeded", "failed", "rejected", "cancelled"]
     },
     "eventType": {
       "type": "string",
@@ -78,7 +73,7 @@
       "type": "array",
       "maxItems": 16,
       "items": {
-        "$ref": "evidence.schema.json"
+        "$ref": "#/definitions/embeddedEvidenceItem"
       }
     },
     "metadata": {
@@ -91,6 +86,120 @@
     }
   },
   "definitions": {
+    "embeddedEvidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Relaxed embedded evidence item accepted inside the M2 executor envelope. Context such as jobId, workspaceId, source, and observedAt may be derived or soft-filled by later runtime from the envelope/path. Standalone normalized/persisted evidence remains strict in evidence.schema.json.",
+      "required": ["eventType"],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "evidenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "certificateId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "certificateInstanceId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "targetId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "certificate.observed",
+            "deployment.checked",
+            "deployment.updated",
+            "validation.passed",
+            "validation.failed",
+            "policy.checked"
+          ]
+        },
+        "source": {
+          "type": ["string", "null"],
+          "enum": ["executor", "domain-monitor", "endpoint-monitor", "control-plane", "external", null]
+        },
+        "status": {
+          "type": ["string", "null"],
+          "enum": ["accepted", "redacted", "rejected", "failed", null]
+        },
+        "observedAt": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "fingerprintSha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "maxLength": 1024
+        },
+        "metadata": {
+          "type": "array",
+          "maxItems": 32,
+          "description": "Public, sanitized metadata entries only.",
+          "items": {
+            "$ref": "#/definitions/publicMetadataEntry"
+          }
+        },
+        "artifactRefs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "reference"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["log", "report", "certificate", "deployment", "external"]
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "sha256": {
+                "type": ["string", "null"],
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        "output": {
+          "type": ["string", "null"],
+          "maxLength": 65536,
+          "description": "Optional executor output. Runtime rejects private-key material and persists only generic-secret-redacted output under the evidence policy."
+        },
+        "redactionApplied": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
     "publicMetadataEntry": {
       "type": "object",
       "additionalProperties": false,
@@ -98,7 +207,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
         },
         "value": {
           "oneOf": [

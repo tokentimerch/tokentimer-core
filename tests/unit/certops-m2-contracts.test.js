@@ -40,6 +40,46 @@ const FORBIDDEN_FIELD_FRAGMENTS = [
   "password",
   "secret",
   "credential",
+  "tokensecret",
+  "apisecret",
+  "rawsecret",
+  "rawprivatekey",
+  "keypem",
+];
+
+const FORBIDDEN_METADATA_NAMES = [
+  "privateKey",
+  "privateKeyPem",
+  "encryptedPrivateKey",
+  "keyMaterial",
+  "pfxBlob",
+  "jksBlob",
+  "tlsKey",
+  "caPrivateKey",
+  "password",
+  "secret",
+  "credential",
+  "tokenSecret",
+  "apiSecret",
+  "rawSecret",
+  "rawPrivateKey",
+  "keyPem",
+];
+
+const SAFE_METADATA_NAMES = [
+  "issuer",
+  "fingerprintSha256",
+  "summary",
+  "source",
+  "attempt",
+  "executor",
+];
+
+const CANONICAL_M2_SCOPES = [
+  "certops:read",
+  "certops:events:write",
+  "certops:jobs:read",
+  "certops:evidence:write",
 ];
 
 const m2Schemas = {
@@ -132,12 +172,6 @@ function validJobPayload() {
     keyMode: "agent-local",
     keyReference: "external-ref-1",
     requestedAt: "2026-06-30T00:00:00.000Z",
-    issuedAt: "2026-06-30T00:00:00.000Z",
-    expiresAt: "2026-06-30T00:10:00.000Z",
-    nonce: "nonce-1234567890123456",
-    signingKeyId: "signing-key-1",
-    signature:
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   };
 }
 
@@ -164,8 +198,12 @@ function validExecutorEvent() {
     status: "running",
     eventType: "job.progress",
     occurredAt: "2026-06-30T00:02:00.000Z",
-    evidence: [validEvidence()],
+    evidence: [{ eventType: "certificate.observed" }],
   };
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function parseOpenApiPathMethods(source) {
@@ -217,6 +255,78 @@ function openApiPathBlock(routePath) {
   return openApiSource.slice(start, end);
 }
 
+function openApiComponentBlock(componentName) {
+  const schemasStart = openApiSource.indexOf("\n  schemas:");
+  assert.notEqual(schemasStart, -1, "OpenAPI schemas section missing");
+
+  const marker = `    ${componentName}:`;
+  const start = openApiSource.indexOf(marker, schemasStart);
+  assert.notEqual(start, -1, `${componentName} missing from OpenAPI`);
+
+  const rest = openApiSource.slice(start + marker.length);
+  const nextComponent = rest.search(/\n    [A-Za-z0-9][A-Za-z0-9_]*:/);
+  const end =
+    nextComponent === -1
+      ? openApiSource.length
+      : start + marker.length + nextComponent;
+
+  return openApiSource.slice(start, end);
+}
+
+function openApiComponentEnum(componentName) {
+  const block = openApiComponentBlock(componentName);
+  const lines = block.split(/\r?\n/);
+  const enumIndex = lines.findIndex((line) => line.trim() === "enum:");
+  assert.notEqual(enumIndex, -1, `${componentName} enum missing`);
+
+  const values = [];
+  for (const line of lines.slice(enumIndex + 1)) {
+    const item = line.match(/^\s+-\s+(.+?)\s*$/);
+    if (item) {
+      values.push(item[1]);
+      continue;
+    }
+    if (values.length > 0 && line.trim()) break;
+  }
+  return values;
+}
+
+function prChangedFiles() {
+  const refs = ["feature/certops", "origin/feature/certops"];
+  const errors = [];
+
+  for (const ref of refs) {
+    try {
+      execFileSync("git", ["rev-parse", "--verify", ref], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const output = execFileSync(
+        "git",
+        ["diff", "--name-only", `${ref}...HEAD`],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+        },
+      );
+      return {
+        ref,
+        files: output
+          .split(/\r?\n/)
+          .map((file) => file.trim().replace(/\\/g, "/"))
+          .filter(Boolean),
+      };
+    } catch (error) {
+      errors.push(`${ref}: ${error.message}`);
+    }
+  }
+
+  throw new Error(
+    `Unable to compare M2-A1 PR diff against feature/certops or origin/feature/certops: ${errors.join("; ")}`,
+  );
+}
+
 describe("CertOps M2 contract skeletons", () => {
   it("includes the M2 job, executor event, and evidence schemas in the manifest", () => {
     const paths = manifestPaths();
@@ -251,12 +361,48 @@ describe("CertOps M2 contract skeletons", () => {
   it("rejects custody-shaped fields and metadata names in M2 schema examples", () => {
     const ajv = createAjv();
     const examples = [
-      [jobPayloadSchema.$id, validJobPayload()],
-      [evidenceSchema.$id, validEvidence()],
-      [executorEventSchema.$id, validExecutorEvent()],
+      {
+        schemaId: jobPayloadSchema.$id,
+        example: validJobPayload(),
+        withMetadataName(name) {
+          return { ...validJobPayload(), metadata: [{ name, value: "public" }] };
+        },
+      },
+      {
+        schemaId: evidenceSchema.$id,
+        example: validEvidence(),
+        withMetadataName(name) {
+          return { ...validEvidence(), metadata: [{ name, value: "public" }] };
+        },
+      },
+      {
+        schemaId: executorEventSchema.$id,
+        example: validExecutorEvent(),
+        withMetadataName(name) {
+          return {
+            ...validExecutorEvent(),
+            metadata: [{ name, value: "public" }],
+          };
+        },
+      },
+      {
+        schemaId: executorEventSchema.$id,
+        example: validExecutorEvent(),
+        withMetadataName(name) {
+          return {
+            ...validExecutorEvent(),
+            evidence: [
+              {
+                eventType: "certificate.observed",
+                metadata: [{ name, value: "public" }],
+              },
+            ],
+          };
+        },
+      },
     ];
 
-    for (const [schemaId, example] of examples) {
+    for (const { schemaId, example, withMetadataName } of examples) {
       const validate = ajv.getSchema(schemaId);
       assert.ok(validate, `${schemaId} validator missing`);
       assert.equal(validate(example), true, `${schemaId} valid example failed`);
@@ -271,16 +417,104 @@ describe("CertOps M2 contract skeletons", () => {
         `${schemaId} must reject custody-shaped extra fields`,
       );
 
-      const withCustodyMetadataName = {
-        ...example,
-        metadata: [{ name: "privateKey", value: "not-allowed" }],
-      };
+      for (const metadataName of FORBIDDEN_METADATA_NAMES) {
+        assert.equal(
+          validate(withMetadataName(metadataName)),
+          false,
+          `${schemaId} must reject custody-shaped metadata name ${metadataName}`,
+        );
+      }
+
+      for (const metadataName of SAFE_METADATA_NAMES) {
+        assert.equal(
+          validate(withMetadataName(metadataName)),
+          true,
+          `${schemaId} must allow safe metadata name ${metadataName}`,
+        );
+      }
+    }
+  });
+
+  it("uses relaxed embedded executor evidence while keeping standalone evidence strict", () => {
+    const ajv = createAjv();
+    const validateEvent = ajv.getSchema(executorEventSchema.$id);
+    const validateStandaloneEvidence = ajv.getSchema(evidenceSchema.$id);
+
+    const minimalEmbeddedEvidence = {
+      ...validExecutorEvent(),
+      evidence: [{ eventType: "certificate.observed" }],
+    };
+    assert.equal(validateEvent(minimalEmbeddedEvidence), true);
+
+    const publicEmbeddedEvidence = {
+      ...validExecutorEvent(),
+      evidence: [
+        {
+          eventType: "deployment.checked",
+          source: "executor",
+          observedAt: "2026-06-30T00:03:00.000Z",
+          fingerprintSha256:
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          summary: "Checked public deployment reference",
+          metadata: [{ name: "issuer", value: "Example CA" }],
+          artifactRefs: [
+            {
+              type: "report",
+              reference: "external-report-1",
+              sha256:
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            },
+          ],
+          output: "[REDACTED]",
+          redactionApplied: true,
+        },
+      ],
+    };
+    assert.equal(validateEvent(publicEmbeddedEvidence), true);
+
+    const unknownEmbeddedField = clone(publicEmbeddedEvidence);
+    unknownEmbeddedField.evidence[0].unexpectedPublicField = "not allowed";
+    assert.equal(validateEvent(unknownEmbeddedField), false);
+
+    const privateKeyShapedEmbeddedField = clone(publicEmbeddedEvidence);
+    privateKeyShapedEmbeddedField.evidence[0].privateKey = "not allowed";
+    assert.equal(validateEvent(privateKeyShapedEmbeddedField), false);
+
+    assert.equal(
+      validateStandaloneEvidence({ eventType: "certificate.observed" }),
+      false,
+      "standalone evidence schema must keep normalized persisted fields required",
+    );
+  });
+
+  it("keeps M2 job payload signing and replay fields optional and documented as M4", () => {
+    const ajv = createAjv();
+    const validate = ajv.getSchema(jobPayloadSchema.$id);
+
+    for (const m4OnlyField of [
+      "issuedAt",
+      "expiresAt",
+      "nonce",
+      "signingKeyId",
+      "signature",
+    ]) {
       assert.equal(
-        validate(withCustodyMetadataName),
+        jobPayloadSchema.required.includes(m4OnlyField),
         false,
-        `${schemaId} must reject custody-shaped metadata names`,
+        `${m4OnlyField} must not be required in M2-A1`,
+      );
+      assert.match(
+        jobPayloadSchema.properties[m4OnlyField].description,
+        /M4-reserved|M4/i,
+        `${m4OnlyField} must be documented as M4-reserved`,
       );
     }
+
+    assert.match(jobPayloadSchema.description, /M2-A1 public, unsigned/i);
+    assert.match(jobPayloadSchema.description, /M4/i);
+    assert.match(jobPayloadSchema.description, /signed job dispatch/i);
+    assert.equal(validate(validJobPayload()), true);
+    assert.equal(validate({ ...validJobPayload(), privateKey: "nope" }), false);
   });
 
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
@@ -310,13 +544,90 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
-  it("does not change apps runtime files or wire executor job/evidence behavior", () => {
-    const appsDiff = execFileSync("git", ["diff", "--name-only", "--", "apps"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    }).trim();
+  it("closes token OpenAPI skeletons around canonical M2 scopes", () => {
+    const tokenListPath = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/tokens",
+    );
+    const tokenRevokePath = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+    );
 
-    assert.equal(appsDiff, "");
+    for (const block of [tokenListPath, tokenRevokePath]) {
+      assert.doesNotMatch(block, /additionalProperties:\s+true/);
+    }
+
+    assert.match(
+      tokenListPath,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenListResponse"/,
+    );
+    assert.match(
+      tokenListPath,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenCreateRequest"/,
+    );
+    assert.match(
+      tokenListPath,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenCreateResponse"/,
+    );
+    assert.match(
+      tokenRevokePath,
+      /\$ref: "#\/components\/schemas\/CertOpsApiTokenRevokeResponse"/,
+    );
+
+    assert.deepEqual(
+      openApiComponentEnum("CertOpsApiTokenScope"),
+      CANONICAL_M2_SCOPES,
+    );
+
+    for (const componentName of [
+      "CertOpsApiToken",
+      "CertOpsApiTokenListResponse",
+      "CertOpsApiTokenCreateRequest",
+      "CertOpsApiTokenCreateResponse",
+      "CertOpsApiTokenRevokeResponse",
+    ]) {
+      const block = openApiComponentBlock(componentName);
+      assert.match(block, /additionalProperties:\s+false/);
+      assert.doesNotMatch(block, /additionalProperties:\s+true/);
+    }
+
+    const tokenMetadataBlock = openApiComponentBlock("CertOpsApiToken");
+    assert.doesNotMatch(
+      tokenMetadataBlock,
+      /^\s{8}(plaintextToken|tokenHash|token_hash|rawSecret|tokenSecret|apiSecret):/im,
+    );
+    assert.match(
+      openApiComponentBlock("CertOpsApiTokenCreateResponse"),
+      /^\s{8}plaintextToken:/m,
+    );
+
+    for (const oldScope of [
+      "certops:executor:events",
+      "certops:jobs:write",
+      "certops:jobs:claim",
+    ]) {
+      assert.equal(
+        openApiSource.includes(oldScope),
+        false,
+        `${oldScope} must not appear in the M2-A1 OpenAPI`,
+      );
+    }
+  });
+
+  it("does not change apps runtime files or wire executor job/evidence behavior", () => {
+    const { ref, files } = prChangedFiles();
+    const allowed = files.filter(
+      (file) =>
+        file === "contracts.manifest.json" ||
+        file.startsWith("packages/contracts/") ||
+        file === "tests/unit/certops-m2-contracts.test.js" ||
+        file === "tests/unit/certops-routes-hardening.test.js",
+    );
+
+    assert.deepEqual(
+      files.filter((file) => !allowed.includes(file)),
+      [],
+      `M2-A1 diff against ${ref} must stay contract/test-only`,
+    );
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
       false,
