@@ -47,7 +47,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["accepted", "running", "succeeded", "failed", "rejected", "cancelled"]
+      "enum": ["accepted", "claimed", "running", "succeeded", "failed", "rejected", "blocked", "cancelled"]
     },
     "eventType": {
       "type": "string",

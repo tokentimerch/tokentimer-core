@@ -4048,7 +4048,17 @@ components:
           enum: [renew, deploy, reload, revoke, noop]
         status:
           type: string
-          enum: [queued, dispatched, running, succeeded, failed, canceled, expired]
+          enum:
+            - pending_approval
+            - approved
+            - rejected
+            - pending
+            - claimed
+            - running
+            - succeeded
+            - failed
+            - blocked
+            - cancelled
         target:
           type: object
           additionalProperties: false
@@ -4450,7 +4460,15 @@ components:
           nullable: true
         status:
           type: string
-          enum: [accepted, running, succeeded, failed, rejected, cancelled]
+          enum:
+            - accepted
+            - claimed
+            - running
+            - succeeded
+            - failed
+            - rejected
+            - blocked
+            - cancelled
         eventType:
           type: string
           enum:

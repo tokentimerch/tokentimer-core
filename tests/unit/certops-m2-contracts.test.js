@@ -82,6 +82,32 @@ const CANONICAL_M2_SCOPES = [
   "certops:evidence:write",
 ];
 
+const PLAN_M2_JOB_STATUSES = [
+  "pending_approval",
+  "approved",
+  "rejected",
+  "pending",
+  "claimed",
+  "running",
+  "succeeded",
+  "failed",
+  "blocked",
+  "cancelled",
+];
+
+const PLAN_M2_EXECUTOR_EVENT_STATUSES = [
+  "accepted",
+  "claimed",
+  "running",
+  "succeeded",
+  "failed",
+  "rejected",
+  "blocked",
+  "cancelled",
+];
+
+const STALE_STATUS_VALUES = ["queued", "dispatched", "canceled", "expired"];
+
 const m2Schemas = {
   "job-payload.schema.json": jobPayloadSchema,
   "evidence.schema.json": evidenceSchema,
@@ -278,6 +304,39 @@ function openApiComponentEnum(componentName) {
   const lines = block.split(/\r?\n/);
   const enumIndex = lines.findIndex((line) => line.trim() === "enum:");
   assert.notEqual(enumIndex, -1, `${componentName} enum missing`);
+
+  const values = [];
+  for (const line of lines.slice(enumIndex + 1)) {
+    const item = line.match(/^\s+-\s+(.+?)\s*$/);
+    if (item) {
+      values.push(item[1]);
+      continue;
+    }
+    if (values.length > 0 && line.trim()) break;
+  }
+  return values;
+}
+
+function openApiPropertyEnum(componentName, propertyName) {
+  const block = openApiComponentBlock(componentName);
+  const lines = block.split(/\r?\n/);
+  const propertyIndex = lines.findIndex(
+    (line) => line === `        ${propertyName}:`,
+  );
+  assert.notEqual(
+    propertyIndex,
+    -1,
+    `${componentName}.${propertyName} missing from OpenAPI`,
+  );
+
+  const enumIndex = lines.findIndex(
+    (line, index) => index > propertyIndex && line.trim() === "enum:",
+  );
+  assert.notEqual(
+    enumIndex,
+    -1,
+    `${componentName}.${propertyName} enum missing`,
+  );
 
   const values = [];
   for (const line of lines.slice(enumIndex + 1)) {
@@ -542,6 +601,46 @@ describe("CertOps M2 contract skeletons", () => {
       routeBlock,
       /\$ref: "#\/components\/schemas\/CertOpsExecutorEventAcceptedResponse"/,
     );
+  });
+
+  it("uses only v1.7 job and executor event statuses", () => {
+    assert.deepEqual(
+      openApiPropertyEnum("CertOpsJob", "status"),
+      PLAN_M2_JOB_STATUSES,
+    );
+    assert.deepEqual(
+      openApiPropertyEnum("CertOpsExecutorEventRequest", "status"),
+      PLAN_M2_EXECUTOR_EVENT_STATUSES,
+    );
+
+    const ajv = createAjv();
+    const validateExecutorEvent = ajv.getSchema(executorEventSchema.$id);
+
+    for (const status of PLAN_M2_EXECUTOR_EVENT_STATUSES) {
+      assert.equal(
+        validateExecutorEvent({ ...validExecutorEvent(), status }),
+        true,
+        `${status} must be accepted by the executor event schema`,
+      );
+    }
+
+    for (const status of STALE_STATUS_VALUES) {
+      assert.equal(
+        PLAN_M2_JOB_STATUSES.includes(status),
+        false,
+        `${status} must not remain a CertOps job status`,
+      );
+      assert.equal(
+        PLAN_M2_EXECUTOR_EVENT_STATUSES.includes(status),
+        false,
+        `${status} must not remain a CertOps executor event status`,
+      );
+      assert.equal(
+        validateExecutorEvent({ ...validExecutorEvent(), status }),
+        false,
+        `${status} must be rejected by the executor event schema`,
+      );
+    }
   });
 
   it("closes token OpenAPI skeletons around canonical M2 scopes", () => {
