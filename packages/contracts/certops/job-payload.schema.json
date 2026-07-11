@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/job-payload.schema.json",
-  "title": "CertOps Signed Job Payload",
-  "description": "M2 contract skeleton for future certificate lifecycle jobs. This contract carries only public certificate references, target references, lifecycle intent, and a replay-protected signing envelope. Later M2 runtime PRs implement storage, dispatch, auth, and execution. Customer private key material and key-bearing bundles are outside this contract.",
+  "title": "CertOps M2 Job Payload",
+  "description": "M2-A1 public, unsigned planning/reporting skeleton for future certificate lifecycle jobs under TOKENTIMER_CERTOPS_PLAN v1.7. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. The action field is the M2 lifecycle action vocabulary, not the future M4 signed job dispatch protocol. Agent execution, job signing, attemptId, agentId/selector, nonce replay cache, signingKeyId, signature, signed dispatch, and related replay enforcement are M4 additions and are not required for M2 validation. Customer private key material and key-bearing bundles are outside this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,12 +13,7 @@
     "action",
     "target",
     "keyMode",
-    "requestedAt",
-    "issuedAt",
-    "expiresAt",
-    "nonce",
-    "signingKeyId",
-    "signature"
+    "requestedAt"
   ],
   "properties": {
     "schemaVersion": {
@@ -30,7 +25,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "Unique job identifier. Part of the replay-protection tuple."
+      "description": "Unique public job identifier. M4 signed dispatch adds replay-protection semantics."
     },
     "workspaceId": {
       "type": "string",
@@ -135,32 +130,33 @@
     },
     "issuedAt": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "M4-reserved signed job dispatch timestamp. Optional in M2-A1 and not required for M2 validation."
     },
     "expiresAt": {
       "type": "string",
       "format": "date-time",
-      "description": "Hard validity bound. Executors must reject jobs outside this window."
+      "description": "M4-reserved signed job validity bound. Optional in M2-A1 and not required for M2 validation."
     },
     "nonce": {
       "type": "string",
       "minLength": 16,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "Single-use nonce for replay protection."
+      "description": "M4-reserved single-use nonce for signed job replay protection. Optional in M2-A1 and not required for M2 validation."
     },
     "signingKeyId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "Identifier of the control-plane operational signing key."
+      "description": "M4-reserved identifier of the control-plane operational signing key. Optional in M2-A1 and not required for M2 validation."
     },
     "signature": {
       "type": "string",
       "minLength": 64,
       "maxLength": 1024,
-      "description": "Base64 Ed25519 signature over the canonical payload excluding this field. HMAC is not accepted."
+      "description": "M4-reserved signature over the canonical job payload. Optional in M2-A1 and not required for M2 validation."
     }
   },
   "definitions": {
@@ -171,7 +167,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
         },
         "value": {
           "oneOf": [
