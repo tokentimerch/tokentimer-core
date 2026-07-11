@@ -9,6 +9,7 @@ const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations, migrations } = requireMigrateModule();
 const {
   CERTOPS_API_TOKEN_SCOPE_INVALID,
+  CERTOPS_API_TOKEN_SCOPE_DENIED,
   createApiToken,
   getApiTokenById,
   listApiTokens,
@@ -65,7 +66,7 @@ function assertNoPlaintext(value, plaintextToken) {
 }
 
 function parseTokenShape(rawToken) {
-  const match = /^ttx_([^_]+)_([^_]+)$/.exec(rawToken);
+  const match = /^ttx_([a-f0-9]{16})_([a-f0-9]{64})$/.exec(rawToken);
   expect(match, `expected ttx_<id>_<secret> token, got ${rawToken}`).to.not.equal(
     null,
   );
@@ -152,6 +153,7 @@ describe("CertOps API tokens", function () {
       });
 
       const { idPart, secretPart } = parseTokenShape(created.plaintextToken);
+      expect(created.plaintextToken.length).to.equal(_test.RAW_TOKEN_LENGTH);
       expect(idPart).to.not.equal("");
       expect(secretPart).to.not.equal("");
       expect(created.plaintextToken).to.not.match(/^ttx__/);
@@ -168,6 +170,9 @@ describe("CertOps API tokens", function () {
       expect(persisted.rows[0].token_prefix).to.not.equal("ttx__");
       expect(persisted.rows[0].token_hash).to.equal(
         _test.sha256Hex(created.plaintextToken),
+      );
+      expect(persisted.rows[0].token_hash).to.not.equal(
+        _test.sha256Hex(secretPart),
       );
       expect(JSON.stringify(persisted.rows[0])).to.not.include(
         created.plaintextToken,
@@ -276,6 +281,43 @@ describe("CertOps API tokens", function () {
       expect(JSON.stringify(persisted.rows[0])).to.not.include(
         created.plaintextToken,
       );
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("allows certops:read for job reads but not write scopes", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-api-token-read-scope",
+    );
+
+    try {
+      const created = await createApiToken({
+        workspaceId: workspaceA,
+        name: "Read-only observer",
+        scopes: ["certops:read"],
+        createdBy: ownerId,
+      });
+
+      const jobsRead = await validateApiToken({
+        workspaceId: workspaceA,
+        rawToken: created.plaintextToken,
+        requiredScopes: ["certops:jobs:read"],
+      });
+      expect(jobsRead.valid).to.equal(true);
+
+      for (const requiredScope of [
+        "certops:events:write",
+        "certops:evidence:write",
+      ]) {
+        const result = await validateApiToken({
+          workspaceId: workspaceA,
+          rawToken: created.plaintextToken,
+          requiredScopes: [requiredScope],
+        });
+        expect(result.valid).to.equal(false);
+        expect(result.code).to.equal(CERTOPS_API_TOKEN_SCOPE_DENIED);
+      }
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

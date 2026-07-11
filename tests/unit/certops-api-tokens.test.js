@@ -108,13 +108,17 @@ function createMemoryClient() {
       if (normalizedSql.includes("SET last_used_at = CASE")) {
         const row = rows.find((item) => item.id === params[0]);
         client.beforeValidatedTouch?.(row, params);
-        const effectiveScopes = new Set(row?.scopes || []);
-        if (effectiveScopes.has("certops:read")) {
-          effectiveScopes.add("certops:jobs:read");
-        }
-        const hasRequiredScopes = (params[3] || []).every((scope) =>
-          effectiveScopes.has(scope),
+        const containsScopeSet = (scopeSet) =>
+          scopeSet.every((scope) => row?.scopes?.includes(scope));
+        const hasJobReadFallback = normalizedSql.includes(
+          "(scopes @> $4::text[] OR scopes @> $5::text[])",
         );
+        const hasRequiredScopes = hasJobReadFallback
+          ?
+              (containsScopeSet(params[3]) || containsScopeSet(params[4])) &&
+              params.slice(5).every(containsScopeSet)
+          : params.slice(3).every(containsScopeSet);
+        client.lastValidatedTouch = { sql: normalizedSql, params };
         const isExpired =
           row?.expires_at && new Date(row.expires_at).getTime() <= Date.now();
         if (
@@ -150,7 +154,7 @@ function assertNoPlaintextToken(value, plaintextToken) {
 }
 
 function parseTokenShape(rawToken) {
-  const match = /^ttx_([^_]+)_([^_]+)$/.exec(rawToken);
+  const match = /^ttx_([a-f0-9]{16})_([a-f0-9]{64})$/.exec(rawToken);
   assert.ok(match, `expected ttx_<id>_<secret> token, got ${rawToken}`);
   return { idPart: match[1], secretPart: match[2] };
 }
@@ -213,6 +217,7 @@ describe("CertOps API token service", () => {
     const { idPart, secretPart } = parseTokenShape(created.plaintextToken);
 
     assert.equal(TOKEN_PREFIX, "ttx_");
+    assert.equal(created.plaintextToken.length, _test.RAW_TOKEN_LENGTH);
     assert.notEqual(idPart, "");
     assert.notEqual(secretPart, "");
     assert.equal(created.plaintextToken.startsWith("ttx__"), false);
@@ -223,6 +228,7 @@ describe("CertOps API token service", () => {
       client.rows[0].token_hash,
       _test.sha256Hex(created.plaintextToken),
     );
+    assert.notEqual(client.rows[0].token_hash, _test.sha256Hex(secretPart));
     assert.notEqual(client.rows[0].token_hash, created.plaintextToken);
     assert.equal(JSON.stringify(client.rows[0]).includes(created.plaintextToken), false);
     assert.equal(created.token.tokenHash, undefined);
@@ -259,6 +265,14 @@ describe("CertOps API token service", () => {
       requiredScopes: ["certops:jobs:read"],
     });
     assert.equal(jobsRead.valid, true);
+    assert.match(
+      client.lastValidatedTouch.sql,
+      /\(scopes @> \$4::text\[\] OR scopes @> \$5::text\[\]\)/,
+    );
+    assert.deepEqual(client.lastValidatedTouch.params.slice(3), [
+      ["certops:jobs:read"],
+      ["certops:read"],
+    ]);
 
     for (const requiredScope of [
       "certops:events:write",
@@ -379,12 +393,16 @@ describe("CertOps API token service", () => {
       name: "Exact token",
       scopes: ["certops:events:write"],
     });
+    const { idPart, secretPart } = parseTokenShape(created.plaintextToken);
     const queriesBeforeMalformedInput = client.queries.length;
 
     for (const rawToken of [
       `${created.plaintextToken} `,
       ` ${created.plaintextToken}`,
-      `ttx_id_${"a".repeat(257)}`,
+      `ttx_${idPart.toUpperCase()}_${secretPart}`,
+      `ttx_${idPart}a_${secretPart}`,
+      `ttx_${idPart}_${secretPart}a`,
+      created.plaintextToken.slice(0, -1),
     ]) {
       const result = await validateApiToken({
         client,
