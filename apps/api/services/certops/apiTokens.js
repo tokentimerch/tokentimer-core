@@ -18,12 +18,14 @@ const TOKEN_PREFIX = "ttx_";
 const TOKEN_ID_BYTES = 8;
 const TOKEN_RANDOM_BYTES = 32;
 const MAX_TOKEN_CREATE_ATTEMPTS = 3;
+const MAX_RAW_TOKEN_LENGTH = 256;
+const LAST_USED_UPDATE_INTERVAL = "5 minutes";
 const RAW_TOKEN_PATTERN = /^ttx_([A-Za-z0-9]+)_([A-Za-z0-9]+)$/;
 
 const ALLOWED_SCOPES = Object.freeze([
-  "certops:executor:events",
+  "certops:read",
+  "certops:events:write",
   "certops:jobs:read",
-  "certops:jobs:write",
   "certops:evidence:write",
 ]);
 const ALLOWED_SCOPE_SET = new Set(ALLOWED_SCOPES);
@@ -155,12 +157,18 @@ function generateRawToken() {
 }
 
 function parseRawToken(rawToken) {
-  const token = typeof rawToken === "string" ? rawToken.trim() : "";
-  const match = RAW_TOKEN_PATTERN.exec(token);
+  if (
+    typeof rawToken !== "string" ||
+    rawToken.length === 0 ||
+    rawToken.length > MAX_RAW_TOKEN_LENGTH
+  ) {
+    return null;
+  }
+  const match = RAW_TOKEN_PATTERN.exec(rawToken);
   if (!match) return null;
 
   return {
-    rawToken: token,
+    rawToken,
     tokenId: match[1],
     tokenPrefix: `${TOKEN_PREFIX}${match[1]}`,
   };
@@ -175,13 +183,16 @@ function sha256Hex(value) {
 }
 
 function safeCompareSha256Hex(candidateHash, storedHash) {
-  const candidate = /^[a-f0-9]{64}$/.test(candidateHash)
+  const candidateIsSha256 = /^[a-f0-9]{64}$/.test(candidateHash);
+  const storedIsSha256 = /^[a-f0-9]{64}$/.test(String(storedHash || ""));
+  const candidate = candidateIsSha256
     ? Buffer.from(candidateHash, "hex")
     : Buffer.alloc(32);
-  const stored = /^[a-f0-9]{64}$/.test(String(storedHash || ""))
+  const stored = storedIsSha256
     ? Buffer.from(storedHash, "hex")
     : Buffer.alloc(32);
-  return crypto.timingSafeEqual(candidate, stored) && storedHash === candidateHash;
+  const matches = crypto.timingSafeEqual(candidate, stored);
+  return candidateIsSha256 && storedIsSha256 && matches;
 }
 
 function scopesFromRow(row) {
@@ -199,7 +210,19 @@ function scopesFromRow(row) {
 
 function hasRequiredScopes(grantedScopes, requiredScopes) {
   const granted = new Set(grantedScopes);
+  if (granted.has("certops:read")) {
+    granted.add("certops:jobs:read");
+  }
   return requiredScopes.every((scope) => granted.has(scope));
+}
+
+function tokenStatusFromRow(row) {
+  if (row?.status !== "active") return row?.status || null;
+  const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
+  if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date()) {
+    return "expired";
+  }
+  return "active";
 }
 
 function tokenMetadataFromRow(row) {
@@ -210,7 +233,7 @@ function tokenMetadataFromRow(row) {
     name: row.name,
     tokenPrefix: row.token_prefix,
     scopes: scopesFromRow(row),
-    status: row.status,
+    status: tokenStatusFromRow(row),
     expiresAt: dateToIso(row.expires_at),
     lastUsedAt: dateToIso(row.last_used_at),
     revokedAt: dateToIso(row.revoked_at),
@@ -324,13 +347,30 @@ async function revokeApiToken(options) {
 }
 
 async function markApiTokenUsed(options) {
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const tokenHash = String(options.tokenHash || "");
+  if (!/^[a-f0-9]{64}$/.test(tokenHash)) return null;
+  const requiredScopes = normalizeRequiredScopes(options.requiredScopes);
   const result = await (options.client || pool).query(
     `UPDATE api_tokens
-        SET last_used_at = NOW(),
-            updated_at = NOW()
+        SET last_used_at = CASE
+              WHEN last_used_at IS NULL OR last_used_at <= NOW() - INTERVAL '${LAST_USED_UPDATE_INTERVAL}'
+                THEN NOW()
+              ELSE last_used_at
+            END,
+            updated_at = CASE
+              WHEN last_used_at IS NULL OR last_used_at <= NOW() - INTERVAL '${LAST_USED_UPDATE_INTERVAL}'
+                THEN NOW()
+              ELSE updated_at
+            END
       WHERE id = $1
+        AND workspace_id = $2
+        AND token_hash = $3
+        AND status = 'active'
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND scopes @> $4::text[]
       RETURNING ${SAFE_SELECT_FIELDS}`,
-    [options.tokenId],
+    [options.tokenId, workspaceId, tokenHash, requiredScopes],
   );
   return tokenMetadataFromRow(result.rows[0] || null);
 }
@@ -400,8 +440,12 @@ async function validateApiToken(options) {
   const token = await markApiTokenUsed({
     client: options.client,
     tokenId: row.id,
+    workspaceId,
+    tokenHash: candidateHash,
+    requiredScopes,
   });
-  return { valid: true, token: token || tokenMetadataFromRow(row) };
+  if (!token) return invalidValidation();
+  return { valid: true, token };
 }
 
 module.exports = {
@@ -426,6 +470,7 @@ module.exports = {
     scopesFromRow,
     sha256Hex,
     parseRawToken,
+    tokenStatusFromRow,
     tokenMetadataFromRow,
     tokenPrefixFor,
   },
