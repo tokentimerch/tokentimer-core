@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {
+  ALLOWED_SCOPES,
   CERTOPS_API_TOKEN_MALFORMED,
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
@@ -22,6 +23,12 @@ const {
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
+const CANONICAL_M2_SCOPES = [
+  "certops:read",
+  "certops:events:write",
+  "certops:jobs:read",
+  "certops:evidence:write",
+];
 
 function date(offsetMs) {
   return new Date(Date.now() + offsetMs);
@@ -31,10 +38,14 @@ function createMemoryClient() {
   const rows = [];
   let nextId = 1;
 
-  return {
+  const client = {
     rows,
+    queries: [],
+    usageUpdateCount: 0,
+    beforeValidatedTouch: null,
     async query(sql, params = []) {
       const normalizedSql = sql.replace(/\s+/g, " ");
+      client.queries.push(normalizedSql);
 
       if (normalizedSql.includes("INSERT INTO api_tokens")) {
         const row = {
@@ -94,17 +105,40 @@ function createMemoryClient() {
         return { rows: [row] };
       }
 
-      if (normalizedSql.includes("SET last_used_at = NOW()")) {
+      if (normalizedSql.includes("SET last_used_at = CASE")) {
         const row = rows.find((item) => item.id === params[0]);
-        if (!row) return { rows: [] };
-        row.last_used_at = new Date("2026-06-30T00:02:00.000Z");
-        row.updated_at = new Date("2026-06-30T00:02:00.000Z");
+        client.beforeValidatedTouch?.(row, params);
+        const effectiveScopes = new Set(row?.scopes || []);
+        if (effectiveScopes.has("certops:read")) {
+          effectiveScopes.add("certops:jobs:read");
+        }
+        const hasRequiredScopes = (params[3] || []).every((scope) =>
+          effectiveScopes.has(scope),
+        );
+        const isExpired =
+          row?.expires_at && new Date(row.expires_at).getTime() <= Date.now();
+        if (
+          !row ||
+          row.workspace_id !== params[1] ||
+          row.token_hash !== params[2] ||
+          row.status !== "active" ||
+          isExpired ||
+          !hasRequiredScopes
+        ) {
+          return { rows: [] };
+        }
+        if (!row.last_used_at) {
+          row.last_used_at = new Date("2026-06-30T00:02:00.000Z");
+          row.updated_at = new Date("2026-06-30T00:02:00.000Z");
+          client.usageUpdateCount += 1;
+        }
         return { rows: [row] };
       }
 
       throw new Error(`Unexpected query: ${normalizedSql}`);
     },
   };
+  return client;
 }
 
 function assertNoPlaintextToken(value, plaintextToken) {
@@ -172,7 +206,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: date(60_000),
       createdBy: 123,
     });
@@ -207,6 +241,57 @@ describe("CertOps API token service", () => {
     );
   });
 
+  it("uses canonical M2 scopes and keeps jobs claim deferred to M4", async () => {
+    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_M2_SCOPES);
+
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Read-only observer",
+      scopes: ["certops:read"],
+    });
+
+    const jobsRead = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:jobs:read"],
+    });
+    assert.equal(jobsRead.valid, true);
+
+    for (const requiredScope of [
+      "certops:events:write",
+      "certops:evidence:write",
+    ]) {
+      const result = await validateApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        rawToken: created.plaintextToken,
+        requiredScopes: [requiredScope],
+      });
+      assert.equal(result.valid, false);
+      assert.equal(result.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
+    }
+
+    for (const deferredOrLegacyScope of [
+      "certops:executor:events",
+      "certops:jobs:write",
+      "certops:jobs:claim",
+    ]) {
+      await assert.rejects(
+        () =>
+          createApiToken({
+            client: createMemoryClient(),
+            workspaceId: WORKSPACE_A,
+            name: "Unsupported scope",
+            scopes: [deferredOrLegacyScope],
+          }),
+        (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
+      );
+    }
+  });
+
   it("rejects private key material in persisted token metadata", async () => {
     await assert.rejects(
       () =>
@@ -214,7 +299,7 @@ describe("CertOps API token service", () => {
           client: createMemoryClient(),
           workspaceId: WORKSPACE_A,
           name: "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
-          scopes: ["certops:executor:events"],
+          scopes: ["certops:events:write"],
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
     );
@@ -226,7 +311,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events", "certops:jobs:read"],
+      scopes: ["certops:events:write", "certops:jobs:read"],
     });
 
     const failed = await validateApiToken({
@@ -243,11 +328,23 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(validated.valid, true);
     assert.equal(validated.token.id, created.token.id);
     assert.match(validated.token.lastUsedAt, /^2026-06-30T00:02:00/);
+
+    const firstLastUsedAt = client.rows[0].last_used_at;
+    const firstUsageUpdateCount = client.usageUpdateCount;
+    const validatedAgain = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:events:write"],
+    });
+    assert.equal(validatedAgain.valid, true);
+    assert.equal(client.rows[0].last_used_at, firstLastUsedAt);
+    assert.equal(client.usageUpdateCount, firstUsageUpdateCount);
   });
 
   it("rejects malformed tokens and wrong prefixes", async () => {
@@ -274,13 +371,70 @@ describe("CertOps API token service", () => {
     }
   });
 
+  it("hashes the full raw token and rejects oversized input before lookup", async () => {
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Exact token",
+      scopes: ["certops:events:write"],
+    });
+    const queriesBeforeMalformedInput = client.queries.length;
+
+    for (const rawToken of [
+      `${created.plaintextToken} `,
+      ` ${created.plaintextToken}`,
+      `ttx_id_${"a".repeat(257)}`,
+    ]) {
+      const result = await validateApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        rawToken,
+        requiredScopes: [],
+      });
+      assert.equal(result.valid, false);
+      assert.equal(result.code, CERTOPS_API_TOKEN_MALFORMED);
+    }
+    assert.equal(client.queries.length, queriesBeforeMalformedInput);
+
+    const exactToken = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:events:write"],
+    });
+    assert.equal(exactToken.valid, true);
+  });
+
+  it("atomically rejects a token revoked after lookup and before use", async () => {
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Race-safe token",
+      scopes: ["certops:events:write"],
+    });
+    client.beforeValidatedTouch = (row) => {
+      row.status = "revoked";
+    };
+
+    const result = await validateApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      rawToken: created.plaintextToken,
+      requiredScopes: ["certops:events:write"],
+    });
+    assert.equal(result.valid, false);
+    assert.equal(client.rows[0].last_used_at, null);
+  });
+
   it("rejects revoked tokens", async () => {
     const client = createMemoryClient();
     const created = await createApiToken({
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
 
     await revokeApiToken({
@@ -294,7 +448,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
   });
@@ -305,7 +459,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Expired",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: date(-60_000),
     });
 
@@ -313,10 +467,19 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
     assert.equal(client.rows[0].last_used_at, null);
+    assert.equal(created.token.status, "expired");
+    const listed = await listApiTokens({ client, workspaceId: WORKSPACE_A });
+    const fetched = await getApiTokenById({
+      client,
+      workspaceId: WORKSPACE_A,
+      tokenId: created.token.id,
+    });
+    assert.equal(listed[0].status, "expired");
+    assert.equal(fetched.status, "expired");
   });
 
   it("enforces workspace binding", async () => {
@@ -325,14 +488,14 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Workspace A",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
 
     const result = await validateApiToken({
       client,
       workspaceId: WORKSPACE_B,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
     assert.equal(client.rows[0].last_used_at, null);
@@ -344,7 +507,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Executor",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
 
     const list = await listApiTokens({ client, workspaceId: WORKSPACE_A });
@@ -374,7 +537,7 @@ describe("CertOps API token service", () => {
       client,
       workspaceId: WORKSPACE_A,
       name: "Safe metadata",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
     });
     const listed = await listApiTokens({ client, workspaceId: WORKSPACE_A });
 

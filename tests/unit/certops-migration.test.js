@@ -232,6 +232,24 @@ describe("CertOps inventory migration", () => {
       certOpsApiTokensMigration.sql,
       /left\(token_prefix,\s*5\)\s*=\s*'ttx__'/,
     );
+    for (const scope of [
+      "certops:read",
+      "certops:events:write",
+      "certops:jobs:read",
+      "certops:evidence:write",
+    ]) {
+      assert.match(certOpsApiTokensMigration.sql, new RegExp(`'${scope}'`));
+    }
+    for (const staleOrDeferredScope of [
+      "certops:executor:events",
+      "certops:jobs:write",
+      "certops:jobs:claim",
+    ]) {
+      assert.doesNotMatch(
+        certOpsApiTokensMigration.sql,
+        new RegExp(`'${staleOrDeferredScope}'`),
+      );
+    }
     assert.match(certOpsApiTokensMigration.sql, /uq_api_tokens_token_prefix/);
     assert.match(certOpsApiTokensMigration.sql, /uq_api_tokens_token_hash/);
     assert.doesNotMatch(

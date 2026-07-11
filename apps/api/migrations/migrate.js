@@ -835,16 +835,16 @@ const migrations = [
         name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 128),
         token_prefix TEXT NOT NULL,
         token_hash TEXT NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
-        scopes TEXT[] NOT NULL DEFAULT '{}'
-          CHECK (
+        scopes TEXT[] NOT NULL DEFAULT '{}',
+        CONSTRAINT api_tokens_scopes_check CHECK (
             COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
             scopes <@ ARRAY[
-              'certops:executor:events',
+              'certops:read',
+              'certops:events:write',
               'certops:jobs:read',
-              'certops:jobs:write',
               'certops:evidence:write'
             ]::text[]
-          ),
+        ),
         status TEXT NOT NULL DEFAULT 'active'
           CHECK (status IN ('active', 'revoked')),
         expires_at TIMESTAMPTZ NULL,
@@ -876,6 +876,40 @@ const migrations = [
         LOOP
           EXECUTE format('ALTER TABLE api_tokens DROP CONSTRAINT %I', old_constraint_name);
         END LOOP;
+
+        FOR old_constraint_name IN
+          SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.contype = 'c'
+             AND t.relname = 'api_tokens'
+             AND n.nspname = current_schema()
+             AND c.conname = 'api_tokens_scopes_check'
+        LOOP
+          EXECUTE format('ALTER TABLE api_tokens DROP CONSTRAINT %I', old_constraint_name);
+        END LOOP;
+
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.conname = 'api_tokens_scopes_check'
+             AND t.relname = 'api_tokens'
+             AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE api_tokens
+            ADD CONSTRAINT api_tokens_scopes_check CHECK (
+              COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+              scopes <@ ARRAY[
+                'certops:read',
+                'certops:events:write',
+                'certops:jobs:read',
+                'certops:evidence:write'
+              ]::text[]
+            ) NOT VALID;
+        END IF;
 
         IF NOT EXISTS (
           SELECT 1
