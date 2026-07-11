@@ -14,6 +14,7 @@ const {
   createCertOpsApiTokenAuth,
 } = require("../../apps/api/middleware/api-token-auth");
 const {
+  createCertOpsMachineTokenPreAuthRateLimit,
   createCertOpsMachineTokenRateLimit,
 } = require("../../apps/api/middleware/machine-token-rate-limit");
 
@@ -97,10 +98,43 @@ function buildRateLimitHarness({ max = 2, windowMs = 60_000 } = {}) {
   return app;
 }
 
+function buildPreAuthOrderingHarness({ max = 0, onValidate } = {}) {
+  const app = express();
+  app.use(express.json());
+
+  app.post(
+    "/api/v1/workspaces/:workspaceId/certops/pre-auth-rate-limit-test",
+    createCertOpsMachineTokenPreAuthRateLimit({ max }),
+    createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      validateApiToken: async () => {
+        onValidate?.();
+        return {
+          valid: true,
+          token: {
+            id: "not-used",
+            workspaceId: "not-used",
+            tokenPrefix: "ttx_0123456789abcdef",
+            scopes: ["certops:events:write"],
+            name: "not-used",
+            createdBy: null,
+            lastUsedAt: null,
+          },
+        };
+      },
+    }),
+    (_req, res) => res.status(200).json({ ok: true }),
+  );
+
+  return app;
+}
+
 function expectNoRawToken(responseBody, rawToken) {
   expect(JSON.stringify(responseBody)).to.not.include(rawToken);
   expect(JSON.stringify(responseBody)).to.not.include(`Bearer ${rawToken}`);
   expect(JSON.stringify(responseBody)).to.not.include("token_hash");
+  expect(JSON.stringify(responseBody)).to.not.include("privateKey");
+  expect(JSON.stringify(responseBody)).to.not.include("credential");
 }
 
 describe("CertOps machine-token rate limiter", function () {
@@ -144,6 +178,8 @@ describe("CertOps machine-token rate limiter", function () {
       expect(third.status).to.equal(429);
       expect(third.body.code).to.equal("CERTOPS_MACHINE_RATE_LIMITED");
       expect(third.headers["retry-after"]).to.match(/^[1-9][0-9]*$/);
+      expect(third.body.retryAfterSeconds).to.be.a("number");
+      expect(third.body.retry_after_seconds).to.equal(undefined);
       expectNoRawToken(third.body, created.plaintextToken);
       expect(first.body.hasUser).to.equal(false);
       expect(first.body.isAdmin).to.equal(false);
@@ -209,5 +245,30 @@ describe("CertOps machine-token rate limiter", function () {
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
+  });
+
+  it("blocks at pre-auth rate limiting before token validation", async () => {
+    let validationCalls = 0;
+    const rawToken = `ttx_0123456789abcdef_${"a".repeat(64)}`;
+    const response = await supertest(
+      buildPreAuthOrderingHarness({
+        max: 0,
+        onValidate: () => {
+          validationCalls += 1;
+        },
+      }),
+    )
+      .post(
+        "/api/v1/workspaces/11111111-1111-4111-8111-111111111111/certops/pre-auth-rate-limit-test",
+      )
+      .set("Authorization", `Bearer ${rawToken}`)
+      .send({});
+
+    expect(response.status).to.equal(429);
+    expect(response.body.code).to.equal("CERTOPS_MACHINE_RATE_LIMITED");
+    expect(response.body.retryAfterSeconds).to.be.a("number");
+    expect(response.body.retry_after_seconds).to.equal(undefined);
+    expect(validationCalls).to.equal(0);
+    expectNoRawToken(response.body, rawToken);
   });
 });
