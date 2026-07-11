@@ -15,12 +15,14 @@ const CERTOPS_API_TOKEN_WORKSPACE_REQUIRED =
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 const TOKEN_PREFIX = "ttx_";
-const TOKEN_ID_BYTES = 8;
-const TOKEN_RANDOM_BYTES = 32;
+const TOKEN_ID_HEX_LENGTH = 16;
+const TOKEN_SECRET_HEX_LENGTH = 64;
+const RAW_TOKEN_LENGTH = 85;
+const TOKEN_ID_BYTES = TOKEN_ID_HEX_LENGTH / 2;
+const TOKEN_RANDOM_BYTES = TOKEN_SECRET_HEX_LENGTH / 2;
 const MAX_TOKEN_CREATE_ATTEMPTS = 3;
-const MAX_RAW_TOKEN_LENGTH = 256;
 const LAST_USED_UPDATE_INTERVAL = "5 minutes";
-const RAW_TOKEN_PATTERN = /^ttx_([A-Za-z0-9]+)_([A-Za-z0-9]+)$/;
+const RAW_TOKEN_PATTERN = /^ttx_([a-f0-9]{16})_([a-f0-9]{64})$/;
 
 const ALLOWED_SCOPES = Object.freeze([
   "certops:read",
@@ -29,6 +31,9 @@ const ALLOWED_SCOPES = Object.freeze([
   "certops:evidence:write",
 ]);
 const ALLOWED_SCOPE_SET = new Set(ALLOWED_SCOPES);
+const IMPLIED_SCOPE_GRANTS = Object.freeze({
+  "certops:read": Object.freeze(["certops:jobs:read"]),
+});
 
 const SAFE_SELECT_FIELDS = `
   id,
@@ -157,11 +162,7 @@ function generateRawToken() {
 }
 
 function parseRawToken(rawToken) {
-  if (
-    typeof rawToken !== "string" ||
-    rawToken.length === 0 ||
-    rawToken.length > MAX_RAW_TOKEN_LENGTH
-  ) {
+  if (typeof rawToken !== "string" || rawToken.length !== RAW_TOKEN_LENGTH) {
     return null;
   }
   const match = RAW_TOKEN_PATTERN.exec(rawToken);
@@ -210,10 +211,42 @@ function scopesFromRow(row) {
 
 function hasRequiredScopes(grantedScopes, requiredScopes) {
   const granted = new Set(grantedScopes);
-  if (granted.has("certops:read")) {
-    granted.add("certops:jobs:read");
+  for (const [scope, impliedScopes] of Object.entries(IMPLIED_SCOPE_GRANTS)) {
+    if (!granted.has(scope)) continue;
+    for (const impliedScope of impliedScopes) {
+      granted.add(impliedScope);
+    }
   }
   return requiredScopes.every((scope) => granted.has(scope));
+}
+
+function grantingScopesFor(requiredScope) {
+  const grantingScopes = [requiredScope];
+  for (const [scope, impliedScopes] of Object.entries(IMPLIED_SCOPE_GRANTS)) {
+    if (impliedScopes.includes(requiredScope)) grantingScopes.push(scope);
+  }
+  return grantingScopes;
+}
+
+function scopePredicateFor(requiredScopes, firstParameterIndex = 4) {
+  let parameterIndex = firstParameterIndex;
+  const values = [];
+  const clauses = requiredScopes.map((requiredScope) => {
+    const alternatives = grantingScopesFor(requiredScope).map((scope) => {
+      const placeholder = `$${parameterIndex}::text[]`;
+      parameterIndex += 1;
+      values.push([scope]);
+      return `scopes @> ${placeholder}`;
+    });
+    return alternatives.length === 1
+      ? alternatives[0]
+      : `(${alternatives.join(" OR ")})`;
+  });
+
+  return {
+    sql: clauses.length > 0 ? clauses.join("\n        AND ") : "TRUE",
+    values,
+  };
 }
 
 function tokenStatusFromRow(row) {
@@ -351,6 +384,7 @@ async function markApiTokenUsed(options) {
   const tokenHash = String(options.tokenHash || "");
   if (!/^[a-f0-9]{64}$/.test(tokenHash)) return null;
   const requiredScopes = normalizeRequiredScopes(options.requiredScopes);
+  const scopePredicate = scopePredicateFor(requiredScopes);
   const result = await (options.client || pool).query(
     `UPDATE api_tokens
         SET last_used_at = CASE
@@ -368,9 +402,9 @@ async function markApiTokenUsed(options) {
         AND token_hash = $3
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > NOW())
-        AND scopes @> $4::text[]
+        AND ${scopePredicate.sql}
       RETURNING ${SAFE_SELECT_FIELDS}`,
-    [options.tokenId, workspaceId, tokenHash, requiredScopes],
+    [options.tokenId, workspaceId, tokenHash, ...scopePredicate.values],
   );
   return tokenMetadataFromRow(result.rows[0] || null);
 }
@@ -465,11 +499,15 @@ module.exports = {
   revokeApiToken,
   validateApiToken,
   _test: {
+    RAW_TOKEN_LENGTH,
+    TOKEN_ID_HEX_LENGTH,
+    TOKEN_SECRET_HEX_LENGTH,
     hasRequiredScopes,
     safeCompareSha256Hex,
     scopesFromRow,
     sha256Hex,
     parseRawToken,
+    scopePredicateFor,
     tokenStatusFromRow,
     tokenMetadataFromRow,
     tokenPrefixFor,
