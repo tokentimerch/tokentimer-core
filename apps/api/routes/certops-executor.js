@@ -1079,6 +1079,13 @@ async function executorEventsHandler(req, res, options = {}) {
 
         let updatedJob = null;
         if (event.jobStatus) {
+          // Late/out-of-order lifecycle events on a terminal job are ignored,
+          // not rejected: updateCertificateJobStatus applies a monotonic
+          // guard (see TERMINAL_JOB_STATUSES in services/certops/jobs.js) and
+          // returns the job unchanged. The event is still logged above and
+          // the executor gets 202 with the job's real (terminal) status,
+          // consistent with the duplicate-eventId idempotency model; 409 is
+          // reserved for eventId conflicts with a different payload.
           updatedJob = await updateCertificateJobStatus({
             client,
             workspaceId,

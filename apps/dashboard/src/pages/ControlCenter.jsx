@@ -25,7 +25,6 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import {
-  Activity,
   AlertTriangle,
   CalendarClock,
   Clock3,
@@ -39,13 +38,10 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import DashboardShell from '../components/DashboardShell';
-import ApiTokenPanel from '../components/certops/ApiTokenPanel.jsx';
-import JobStatusBadge from '../components/certops/JobStatusBadge.jsx';
 import {
   useCertOpsAvailability,
   useWorkspaceCertOps,
 } from '../components/certops/useCertOps.js';
-import { useCertOpsJobs } from '../components/certops/useCertOpsJobs.js';
 import {
   expiryDescriptor,
   isRetiredStatus,
@@ -53,10 +49,6 @@ import {
   statusLabel,
   statusScheme,
 } from '../components/certops/certopsFormat.js';
-import {
-  formatDateTime,
-  jobOperationLabel,
-} from '../components/certops/certopsJobsFormat.js';
 import {
   DashboardActionButton,
   DashboardPanel as SharedDashboardPanel,
@@ -1016,9 +1008,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     useCertOpsAvailability();
   const { items: managedCertItems, loading: certOpsLoading } =
     useWorkspaceCertOps();
-  const { jobs: certOpsJobs, loading: certOpsJobsLoading } = useCertOpsJobs({
-    limit: 5,
-  });
 
   const activeManagedCerts = useMemo(
     () => managedCertItems.filter(cert => !isRetiredStatus(cert.status)),
@@ -1581,68 +1570,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                   })
                                 : null}
                             </InsightListShell>
-                          </InsightPanelBody>
-                        ) : (
-                          <InsightPanelBody>
-                            <CompactEmptyState>
-                              Certificate operations is not enabled for this
-                              workspace yet.
-                            </CompactEmptyState>
-                          </InsightPanelBody>
-                        )}
-                      </ControlCenterPanel>
-
-                      <ControlCenterPanel
-                        title='Machine executors'
-                        description='Executor-reported certificate jobs and scoped API tokens'
-                      >
-                        {!certOpsReady ? (
-                          <InsightPanelBody>
-                            <CompactEmptyState>
-                              Checking certificate operations availability...
-                            </CompactEmptyState>
-                          </InsightPanelBody>
-                        ) : certOpsEnabled ? (
-                          <InsightPanelBody>
-                            <InsightPanelSummary
-                              icon={Activity}
-                              accent='#0ea5e9'
-                              label='Recent certificate jobs'
-                              value={certOpsJobs.length}
-                              detail={
-                                certOpsJobsLoading
-                                  ? 'Loading executor activity...'
-                                  : 'Reported by machine tokens and the API'
-                              }
-                            />
-                            <InsightListShell emptyMessage='No executor-reported certificate jobs yet.'>
-                              {certOpsJobs.length > 0
-                                ? certOpsJobs.map(job => (
-                                    <InsightListRow
-                                      key={job.id}
-                                      accent='#0ea5e9'
-                                      icon={Activity}
-                                      title={jobOperationLabel(job.operation)}
-                                      subtitle={
-                                        job.source
-                                          ? `Source: ${job.source}`
-                                          : 'Certificate job'
-                                      }
-                                      trailing={
-                                        <JobStatusBadge status={job.status} />
-                                      }
-                                      meta={
-                                        job.createdAt
-                                          ? `Created ${formatDateTime(job.createdAt)}`
-                                          : undefined
-                                      }
-                                    />
-                                  ))
-                                : null}
-                            </InsightListShell>
-                            <Box mt={4}>
-                              <ApiTokenPanel />
-                            </Box>
+                            <InsightPanelFooterLink to='/certops/operations'>
+                              View executor jobs and machine tokens
+                            </InsightPanelFooterLink>
                           </InsightPanelBody>
                         ) : (
                           <InsightPanelBody>

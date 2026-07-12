@@ -122,10 +122,20 @@ function createMemoryClient() {
           (item) => item.workspace_id === params[0] && item.id === params[1],
         );
         if (!row) return { rows: [] };
+        const terminalStatuses = [
+          "succeeded",
+          "failed",
+          "rejected",
+          "blocked",
+          "cancelled",
+        ];
+        if (terminalStatuses.includes(row.status) && row.status !== params[2]) {
+          return { rows: [] };
+        }
         row.status = params[2];
         if (params[3]) row.result_metadata = json(params[4]);
-        row.error_code = params[5];
-        row.error_message = params[6];
+        row.error_code = params[5] ?? row.error_code;
+        row.error_message = params[6] ?? row.error_message;
         row.updated_at = now();
         if (params[2] === "running") row.started_at = row.started_at || now();
         if (params[2] === "succeeded" || params[2] === "failed") {
@@ -308,6 +318,99 @@ describe("CertOps jobs service", () => {
         }),
       (error) => error?.code === CERTOPS_JOB_STATUS_INVALID,
     );
+  });
+
+  it("ignores late transitions once a job reaches a terminal status", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-1" },
+    });
+
+    const succeeded = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "succeeded",
+    });
+    assert.equal(succeeded.status, "succeeded");
+    const completedAt = succeeded.completedAt;
+
+    // Late job.started replay with a new eventId must not reopen the job.
+    const lateStart = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "running",
+    });
+    assert.equal(lateStart.status, "succeeded");
+    assert.equal(lateStart.completedAt, completedAt);
+    assert.equal(lateStart.startedAt, succeeded.startedAt);
+
+    const lateCancel = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "cancelled",
+    });
+    assert.equal(lateCancel.status, "succeeded");
+    assert.equal(lateCancel.cancelledAt, null);
+  });
+
+  it("keeps error fields when later non-error events arrive", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-1" },
+    });
+
+    const failed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+      errorCode: "RENEWAL_TIMEOUT",
+      errorMessage: "Executor timed out during renewal",
+    });
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.errorCode, "RENEWAL_TIMEOUT");
+
+    // Late non-error event: terminal status stays, error fields survive.
+    const lateStart = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "running",
+    });
+    assert.equal(lateStart.status, "failed");
+    assert.equal(lateStart.errorCode, "RENEWAL_TIMEOUT");
+    assert.equal(lateStart.errorMessage, "Executor timed out during renewal");
+
+    // Same-status replay without error fields must not clear them either.
+    const replayFailed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+    });
+    assert.equal(replayFailed.status, "failed");
+    assert.equal(replayFailed.errorCode, "RENEWAL_TIMEOUT");
+    assert.equal(replayFailed.errorMessage, "Executor timed out during renewal");
+  });
+
+  it("still returns null for unknown jobs on status update", async () => {
+    const client = createMemoryClient();
+    const missing = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: "missing-job",
+      status: "running",
+    });
+    assert.equal(missing, null);
   });
 
   it("appends and lists safe job log entries", async () => {

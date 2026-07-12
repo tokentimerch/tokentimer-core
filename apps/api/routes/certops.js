@@ -344,6 +344,9 @@ router.get(
   "/api/v1/workspaces/:id/certops/tokens",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Token metadata enumeration is manager-only, same as create/revoke:
+  // viewers must not see machine-token names, prefixes, or scopes.
+  requireCertOpsWriteRole,
   async (req, res) => {
     try {
       const tokens = await listApiTokens({

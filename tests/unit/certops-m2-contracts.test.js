@@ -653,6 +653,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/dashboard/src/components/AssetFilters.jsx",
       "apps/dashboard/src/components/ImportTokensModal.jsx",
       "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertOpsPreferencesEntry.jsx",
       "apps/dashboard/src/components/certops/CertificateTimeline.jsx",
       "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
       "apps/dashboard/src/components/certops/JobStatusBadge.jsx",
@@ -661,8 +662,12 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/dashboard/src/components/certops/certopsJobsFormat.js",
       "apps/dashboard/src/components/certops/certopsTokensApi.js",
       "apps/dashboard/src/components/certops/useCertOpsJobs.js",
+      "apps/dashboard/src/pages/AlertPreferences.jsx",
       "apps/dashboard/src/pages/Audit.jsx",
       "apps/dashboard/src/pages/ControlCenter.jsx",
+      // D6 orchestration page mounted via the /certops/* splat route
+      "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsRoutes.jsx",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

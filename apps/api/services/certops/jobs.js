@@ -28,6 +28,26 @@ const JOB_STATUSES = Object.freeze([
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
+// Monotonic state machine: these statuses are terminal and never reopen.
+// The set mirrors the completed_at/canceled_at stamping below. Late or
+// replayed lifecycle events against a terminal job are ignored (the event is
+// still recorded in certificate_job_log, but the job row is returned
+// unchanged) rather than rejected, matching the executor idempotency model in
+// routes/certops-executor.js: replayed events get 202 + duplicate, and 409 is
+// reserved for eventId conflicts with a different payload.
+const TERMINAL_JOB_STATUSES = Object.freeze([
+  "succeeded",
+  "failed",
+  "rejected",
+  "blocked",
+  "cancelled",
+]);
+const TERMINAL_JOB_STATUS_SET = new Set(TERMINAL_JOB_STATUSES);
+
+function isTerminalJobStatus(status) {
+  return TERMINAL_JOB_STATUS_SET.has(status);
+}
+
 const LOG_STATUSES = Object.freeze([
   "pending_approval",
   "approved",
@@ -687,12 +707,17 @@ async function updateCertificateJobStatus(options) {
     "errorMessage",
   );
 
+  // Monotonic guard: only apply the update when the job is not already in a
+  // different terminal status. Error fields survive later non-error events
+  // via COALESCE. If the guard filters the row out, the current job is
+  // returned unchanged (late event ignored, not rejected; see
+  // TERMINAL_JOB_STATUSES above).
   const result = await db.query(
     `UPDATE certificate_jobs
         SET status = $3,
             result_metadata = CASE WHEN $4 THEN $5::jsonb ELSE result_metadata END,
-            error_code = $6,
-            error_message = $7,
+            error_code = COALESCE($6, error_code),
+            error_message = COALESCE($7, error_message),
             updated_at = NOW(),
             started_at = CASE
               WHEN $3 = 'running' THEN COALESCE(started_at, NOW())
@@ -708,6 +733,7 @@ async function updateCertificateJobStatus(options) {
             END
       WHERE workspace_id = $1
         AND id = $2
+        AND (status = $3 OR status NOT IN ('succeeded', 'failed', 'rejected', 'blocked', 'cancelled'))
       RETURNING ${SAFE_JOB_SELECT_FIELDS}`,
     [
       workspaceId,
@@ -720,7 +746,11 @@ async function updateCertificateJobStatus(options) {
     ],
   );
 
-  return jobFromRow(result.rows[0] || null);
+  if (result.rows[0]) return jobFromRow(result.rows[0]);
+
+  // No row updated: either the job does not exist (return null, as before)
+  // or it is terminal and the late transition was ignored (return it as-is).
+  return getJobById(db, workspaceId, jobId);
 }
 
 async function appendCertificateJobLog(options) {
@@ -812,12 +842,14 @@ module.exports = {
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
+  TERMINAL_JOB_STATUSES,
   appendCertificateJobLog,
   assertSafePublicValue,
   createCertificateJob,
   dateToIso,
   fieldNameLooksForbidden,
   getCertificateJobById,
+  isTerminalJobStatus,
   jobFromRow,
   jobLogFromRow,
   listCertificateJobLog,

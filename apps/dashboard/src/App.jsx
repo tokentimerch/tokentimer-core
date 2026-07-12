@@ -139,6 +139,7 @@ const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const UserPreferences = lazy(() => import('./pages/UserPreferences'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
+const CertOpsRoutes = lazy(() => import('./pages/certops/CertOpsRoutes.jsx'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
@@ -2961,6 +2962,18 @@ function App() {
                         <Route
                           path='/usage'
                           element={<Navigate to='/control-center' replace />}
+                        />
+                        <Route
+                          path='/certops/*'
+                          element={
+                            <RequireManagerRoute session={session}>
+                              <CertOpsRoutes
+                                session={session}
+                                onLogout={handleLogout}
+                                onAccountClick={handleHelpAccountClick}
+                              />
+                            </RequireManagerRoute>
+                          }
                         />
                         <Route
                           path='/workspaces'
