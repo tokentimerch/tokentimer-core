@@ -33,6 +33,15 @@ admin role, `/certops/operations` page, "Machine API tokens" panel.
 
 ## 2. Report events
 
+> **No public job-creation route yet.** M2 ships only the three
+> machine-token routes documented here (events, per-job events, evidence);
+> there is no API to create a `jobId`. Jobs must already exist before an
+> executor can report against them (seeded by an internal process today).
+> Treat `jobId` as an identifier your integration receives out-of-band, not
+> one it mints itself; posting events for a `jobId` TokenTimer doesn't
+> recognize returns 404 `CERTOPS_JOB_NOT_FOUND` (see below), it does not
+> create the job.
+
 ```
 POST /api/v1/certops/executor/events
 POST /api/v1/certops/jobs/:jobId/events
@@ -93,7 +102,39 @@ Requires `certops:evidence:write`. Evidence types: `certificate.observed`,
   is rejected with `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` rather than truncated
   silently.
 
-## 4. Minimal external executor example
+## 4. Rate limiting
+
+Every machine token is limited to a default of 120 requests per 60-second
+window (`apps/api/middleware/machine-token-rate-limit.js`). The limiter key is
+`certops-machine:<workspaceId>:<tokenPrefix>[:<machineId>]`, with **no route
+segment**: a single token shares one bucket across all three executor routes
+(`POST /api/v1/certops/executor/events`, `POST
+/api/v1/certops/jobs/:jobId/events`, `POST /api/v1/certops/jobs/:jobId/evidence`),
+not a separate budget per route. Exceeding the limit returns HTTP 429
+`CERTOPS_MACHINE_RATE_LIMITED` with a `Retry-After` header (seconds). See
+`plans/CERTOPS_EXECUTION_PLAN_2DEV.md` (task A3) for the recorded design
+decision behind the shared bucket.
+
+## 5. Error codes
+
+| HTTP | Code | Meaning |
+|---|---|---|
+| 401 | `CERTOPS_API_TOKEN_UNAUTHORIZED` | Missing, malformed, unknown, revoked, or expired token. |
+| 403 | `CERTOPS_API_TOKEN_SCOPE_DENIED` | Token is valid but lacks a required scope for this route. |
+| 403 | `CERTOPS_EXECUTOR_WORKSPACE_MISMATCH` | Body `workspaceId`/`jobId` conflicts with the token's bound workspace or the per-job route's path parameter. |
+| 400 | `CERTOPS_EXECUTOR_EVENT_INVALID` | Malformed event payload: bad schema, unknown top-level/evidence-item field, invalid `eventType`, malformed IDs. |
+| 400 | `CERTOPS_EXECUTOR_EVENT_TYPE_INVALID` | Evidence-mode request (`/jobs/:jobId/evidence`) sent with an `eventType` other than `evidence.attached`. |
+| 404 | `CERTOPS_JOB_NOT_FOUND` | `jobId` does not reference a job TokenTimer already knows about. |
+| 409 | `CERTOPS_EXECUTOR_EVENT_CONFLICT` | Same `eventId` replayed with a different payload than the one first accepted. |
+| 422 | `PRIVATE_KEY_MATERIAL_REJECTED` | Payload matched a known private-key pattern; rejected before any other validation or persistence. |
+| 422 | `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` | Evidence `output` exceeds the 64 KB post-redaction size cap. |
+| 429 | `CERTOPS_MACHINE_RATE_LIMITED` | Token exceeded its shared rate-limit bucket (see section 4). |
+| 404 | `NOT_FOUND` | CertOps is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
+
+All error bodies are `{ "error": { "code": "...", "message": "..." } }` with
+no sensitive data (tokens, key material, raw secrets) ever echoed back.
+
+## 6. Minimal external executor example
 
 A plain HTTP loop is enough to be a valid executor; there is no SDK
 requirement in M2.
@@ -120,7 +161,7 @@ curl -sS -X POST "$API_BASE/certops/jobs/$JOB_ID/events" \
   -d "{\"schemaVersion\":1,\"eventId\":\"$(uuidgen)\",\"jobId\":\"$JOB_ID\",\"eventType\":\"job.completed\",\"occurredAt\":\"$(date -u +%FT%TZ)\"}"
 ```
 
-## 5. certbot / acme.sh renewal hook example
+## 7. certbot / acme.sh renewal hook example
 
 Both certbot's `--deploy-hook` and acme.sh's `--renew-hook` run a shell
 command after a successful renewal, with the renewed domain/paths available
@@ -155,7 +196,7 @@ fingerprints, never key material. `--deploy-hook` and `--renew-hook` scripts
 run with access to the private key on disk, but nothing derived from that key
 should ever be sent to TokenTimer.
 
-## 6. Timeline in the dashboard
+## 8. Timeline in the dashboard
 
 Reported events and evidence show up under `/certops/operations` (Executor
 jobs panel + evidence timeline) for workspace managers/admins, with status
