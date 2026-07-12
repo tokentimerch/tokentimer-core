@@ -9,7 +9,13 @@ const {
   createCertOpsMachineTokenPreAuthRateLimit,
   createCertOpsMachineTokenRateLimit,
 } = require("../middleware/machine-token-rate-limit");
+const {
+  requireCertOpsEnabled,
+} = require("../middleware/require-certops-enabled");
 const { logger } = require("../utils/logger");
+const {
+  CERTOPS_API_TOKEN_SCOPE_DENIED,
+} = require("../services/certops/apiTokens");
 const {
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
@@ -32,15 +38,22 @@ const {
   CERTOPS_EVIDENCE_TYPE_INVALID,
   createCertificateEvidence,
 } = require("../services/certops/evidence");
+const {
+  CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT,
+  ingestExecutorEvent,
+} = require("../services/certops/executorEvents");
 
 const CERTOPS_EXECUTOR_EVENT_INVALID = "CERTOPS_EXECUTOR_EVENT_INVALID";
 const CERTOPS_EXECUTOR_EVENT_TYPE_INVALID =
   "CERTOPS_EXECUTOR_EVENT_TYPE_INVALID";
+const CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH =
+  "CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH";
 const CERTOPS_EXECUTOR_JOB_REQUIRED = "CERTOPS_EXECUTOR_JOB_REQUIRED";
 const CERTOPS_EXECUTOR_WORKSPACE_MISMATCH =
   "CERTOPS_EXECUTOR_WORKSPACE_MISMATCH";
 
 const EXECUTOR_EVENT_SCOPE = "certops:events:write";
+const EXECUTOR_EVIDENCE_SCOPE = "certops:evidence:write";
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -75,16 +88,18 @@ const EXECUTOR_EVENT_STATUSES = new Set([
 ]);
 const LOG_STATUSES_SET = new Set(LOG_STATUSES);
 
-const LOG_STATUS_BY_EVENT_TYPE = Object.freeze({
-  "job.accepted": "approved",
-  "job.started": "running",
-  "job.progress": "running",
-  "job.completed": "succeeded",
-  "job.failed": "failed",
-  "job.rejected": "rejected",
+const ALLOWED_STATUSES_BY_EVENT_TYPE = Object.freeze({
+  "job.accepted": new Set(["claimed"]),
+  "job.started": new Set(["running"]),
+  "job.progress": new Set(["claimed", "running"]),
+  "job.completed": new Set(["succeeded"]),
+  "job.failed": new Set(["failed"]),
+  "job.rejected": new Set(["rejected"]),
+  "evidence.attached": new Set(["accepted"]),
 });
 
 const JOB_STATUS_BY_EVENT_TYPE = Object.freeze({
+  "job.accepted": "claimed",
   "job.started": "running",
   "job.completed": "succeeded",
   "job.failed": "failed",
@@ -228,6 +243,16 @@ function normalizeStatus(value) {
     throw executorEventError("Executor event status is invalid", CERTOPS_JOB_STATUS_INVALID);
   }
   return status;
+}
+
+function assertEventStatusMatch(eventType, status) {
+  const allowedStatuses = ALLOWED_STATUSES_BY_EVENT_TYPE[eventType];
+  if (!allowedStatuses?.has(status)) {
+    throw executorEventError(
+      "Executor event status does not match the event type",
+      CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH,
+    );
+  }
 }
 
 function metadataEntriesToObject(entries, fieldName) {
@@ -527,6 +552,7 @@ function normalizeExecutorEventBody(body, apiToken) {
 
   const eventType = normalizeEventType(body.eventType);
   const status = normalizeStatus(body.status);
+  assertEventStatusMatch(eventType, status);
   const jobId = requiredUuid(
     body.jobId,
     "jobId",
@@ -545,16 +571,14 @@ function normalizeExecutorEventBody(body, apiToken) {
     jobId,
     message: optionalPublicText(body.message, "message", 1024),
     occurredAt,
-    logStatus:
-      LOG_STATUS_BY_EVENT_TYPE[eventType] ||
-      (LOG_STATUSES_SET.has(status) ? status : null),
+    logStatus: LOG_STATUSES_SET.has(status) ? status : null,
     jobStatus: JOB_STATUS_BY_EVENT_TYPE[eventType] || null,
     metadata: eventMetadataFromBody(body, occurredAt),
     evidence: evidenceItemsFromBody(body),
   };
 }
 
-async function persistEvidenceItems({ body, event, workspaceId, apiToken }) {
+async function persistEvidenceItems({ client, body, event, workspaceId, apiToken }) {
   const created = [];
   for (const item of event.evidence) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -571,6 +595,7 @@ async function persistEvidenceItems({ body, event, workspaceId, apiToken }) {
     );
     const subject = evidenceSubjectFromItem(item);
     const evidence = await createCertificateEvidence({
+      client,
       workspaceId,
       jobId: event.jobId,
       evidenceType,
@@ -607,13 +632,26 @@ function handleExecutorEventError(res, error) {
     });
   }
 
+  if (
+    error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID ||
+    error?.code === CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT
+  ) {
+    return res.status(409).json({
+      error:
+        error.code === CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT
+          ? "Executor event conflicts with a previously accepted event"
+          : "Executor event conflicts with the current certificate job status",
+      code: error.code,
+    });
+  }
+
   const badRequestCodes = new Set([
     CERTOPS_EXECUTOR_EVENT_INVALID,
     CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
+    CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH,
     CERTOPS_EXECUTOR_JOB_REQUIRED,
     CERTOPS_JOB_INVALID,
     CERTOPS_JOB_STATUS_INVALID,
-    CERTOPS_JOB_STATUS_TRANSITION_INVALID,
     CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
     CERTOPS_EVIDENCE_INVALID,
     CERTOPS_EVIDENCE_TYPE_INVALID,
@@ -632,47 +670,68 @@ async function executorEventsHandler(req, res) {
   try {
     const workspaceId = req.apiToken.workspaceId;
     const event = normalizeExecutorEventBody(req.body, req.apiToken);
-    const job = await getCertificateJobById({
+    const result = await ingestExecutorEvent({
       workspaceId,
       jobId: event.jobId,
-    });
+      eventId: event.eventId,
+      request: event,
+      apiTokenId: req.apiToken.id,
+      process: async (client) => {
+        const job = await getCertificateJobById({
+          client,
+          workspaceId,
+          jobId: event.jobId,
+        });
+        if (!job) {
+          throw executorEventError(
+            "Certificate job not found",
+            CERTOPS_JOB_NOT_FOUND,
+          );
+        }
 
-    if (!job) {
-      throw executorEventError("Certificate job not found", CERTOPS_JOB_NOT_FOUND);
-    }
+        let updatedJob = job;
+        if (event.jobStatus) {
+          updatedJob = await updateCertificateJobStatus({
+            client,
+            workspaceId,
+            jobId: event.jobId,
+            status: event.jobStatus,
+          });
+        }
 
-    const log = await appendCertificateJobLog({
-      workspaceId,
-      jobId: event.jobId,
-      eventType: event.eventType,
-      status: event.logStatus,
-      message: event.message,
-      metadata: event.metadata,
-      createdByApiTokenId: req.apiToken.id,
-    });
+        const log = await appendCertificateJobLog({
+          client,
+          workspaceId,
+          jobId: event.jobId,
+          eventType: event.eventType,
+          status: event.logStatus,
+          message: event.message,
+          metadata: event.metadata,
+          createdByApiTokenId: req.apiToken.id,
+        });
 
-    let updatedJob = null;
-    if (event.jobStatus) {
-      updatedJob = await updateCertificateJobStatus({
-        workspaceId,
-        jobId: event.jobId,
-        status: event.jobStatus,
-      });
-    }
+        const evidence = await persistEvidenceItems({
+          client,
+          body: req.body,
+          event,
+          workspaceId,
+          apiToken: req.apiToken,
+        });
 
-    const evidence = await persistEvidenceItems({
-      body: req.body,
-      event,
-      workspaceId,
-      apiToken: req.apiToken,
+        const response = {
+          ok: true,
+          eventId: log.id,
+          jobId: event.jobId,
+          status: updatedJob.status,
+        };
+        if (evidence[0]?.id) response.evidenceId = evidence[0].id;
+        return response;
+      },
     });
 
     return res.status(202).json({
-      ok: true,
-      eventId: log.id,
-      jobId: event.jobId,
-      status: updatedJob?.status || job.status,
-      evidenceId: evidence[0]?.id,
+      ...result.response,
+      ...(result.duplicate ? { duplicate: true } : {}),
     });
   } catch (error) {
     const handled = handleExecutorEventError(res, error);
@@ -691,6 +750,30 @@ async function executorEventsHandler(req, res) {
   }
 }
 
+function requestCarriesEvidence(req) {
+  const body = req.body;
+  return Boolean(
+    body &&
+      typeof body === "object" &&
+      (body.eventType === "evidence.attached" ||
+        (Array.isArray(body.evidence) && body.evidence.length > 0)),
+  );
+}
+
+function requireExecutorEvidenceScope(req, res, next) {
+  if (
+    !requestCarriesEvidence(req) ||
+    req.apiToken?.scopes?.includes(EXECUTOR_EVIDENCE_SCOPE)
+  ) {
+    return next();
+  }
+
+  return res.status(403).json({
+    error: "CertOps API token scope denied",
+    code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+  });
+}
+
 function createCertOpsExecutorRouter(options = {}) {
   const certOpsExecutorRouter = router();
   const preAuthRateLimitMiddleware =
@@ -704,6 +787,8 @@ function createCertOpsExecutorRouter(options = {}) {
       scopes: [EXECUTOR_EVENT_SCOPE],
       resolveWorkspaceId: workspaceIdHintFromBody,
     });
+  const certOpsEnabledMiddleware =
+    options.certOpsEnabledMiddleware || requireCertOpsEnabled;
   const rateLimitMiddleware =
     options.rateLimitMiddleware ||
     createCertOpsMachineTokenRateLimit(options.rateLimitOptions || {});
@@ -711,8 +796,10 @@ function createCertOpsExecutorRouter(options = {}) {
   certOpsExecutorRouter.post(
     "/api/v1/certops/executor/events",
     preAuthRateLimitMiddleware,
+    certOpsEnabledMiddleware,
     authMiddleware,
     rateLimitMiddleware,
+    requireExecutorEvidenceScope,
     executorEventsHandler,
   );
 
@@ -725,13 +812,18 @@ module.exports = defaultRouter;
 module.exports.createCertOpsExecutorRouter = createCertOpsExecutorRouter;
 module.exports._test = {
   CERTOPS_EXECUTOR_EVENT_INVALID,
+  CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH,
   CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
   CERTOPS_EXECUTOR_JOB_REQUIRED,
   CERTOPS_EXECUTOR_WORKSPACE_MISMATCH,
   EXECUTOR_EVENT_TYPES,
+  EXECUTOR_EVIDENCE_SCOPE,
+  EXECUTOR_EVENT_SCOPE,
+  assertEventStatusMatch,
   evidenceMetadataFromItem,
   evidenceSubjectFromItem,
   handleExecutorEventError,
   metadataEntriesToObject,
   normalizeExecutorEventBody,
+  requestCarriesEvidence,
 };

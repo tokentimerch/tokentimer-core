@@ -1064,6 +1064,44 @@ const migrations = [
         WHERE subject_type IS NOT NULL AND subject_id IS NOT NULL;
     `,
   },
+  {
+    version: 14,
+    name: "certops_executor_event_idempotency",
+    sql: `
+      -- Executor event records hold only a hash of the normalized public
+      -- envelope and a safe accepted response. They never retain request
+      -- bodies, bearer tokens, credentials, or private-key material.
+      CREATE TABLE IF NOT EXISTS certificate_executor_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NOT NULL,
+        executor_event_id TEXT NOT NULL
+          CHECK (char_length(btrim(executor_event_id)) BETWEEN 1 AND 128),
+        request_hash TEXT NOT NULL
+          CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+        response JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'accepted'
+          CHECK (status IN ('accepted', 'claimed', 'running', 'succeeded', 'failed', 'rejected', 'blocked', 'cancelled')),
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_executor_events_workspace_job_event
+          UNIQUE (workspace_id, job_id, executor_event_id),
+        CONSTRAINT fk_certificate_executor_events_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_certificate_executor_events_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_workspace_job_created
+        ON certificate_executor_events(workspace_id, job_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_workspace_event
+        ON certificate_executor_events(workspace_id, executor_event_id);
+    `,
+  },
 ];
 
 async function runMigrations() {

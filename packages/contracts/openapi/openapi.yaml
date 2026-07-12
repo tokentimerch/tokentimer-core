@@ -3458,7 +3458,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: M2 external executor reporting envelope for normalized job and evidence events. Scoped-token authenticated. Payloads containing private key material are rejected (422). Older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as normalized job/evidence events. Richer agent-executed job protocol and job signing are deferred to M4. M2-A1 defines the contract skeleton only; runtime auth, rate limiting, persistence, and redaction enforcement land in later M2 PRs.
+      description: M2 external executor reporting envelope for normalized job and evidence events. Lifecycle events require `certops:events:write`; evidence-bearing events additionally require `certops:evidence:write`. The route is hidden with 404 when `certops.enabled` is disabled. `eventId` is idempotent within a workspace and job: exact retries return 202 without repeating side effects, while a different accepted envelope using the same key returns 409. Payloads containing private key material are rejected with 422. Older operational lifecycle names such as csr-generated, issued, deployed, validated, reloaded, rolled-back, key-generated-locally, key-not-exported, and revocation-* are represented in M2 as normalized job/evidence events. Richer agent-executed job protocol and job signing are deferred to M4.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3474,8 +3474,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The event conflicts with the current job state or a prior event with the same workspace, job, and eventId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Request rejected because it contained private key material
           content:
@@ -4520,6 +4532,10 @@ components:
           type: string
           format: uuid
           nullable: true
+        duplicate:
+          type: boolean
+          default: false
+          description: True only when this response is an exact idempotent replay; no lifecycle, evidence, or audit side effects were repeated.
     SessionUser:
       type: object
       required: [id, email]
