@@ -309,11 +309,11 @@ describe("CertOps machine-token rate limiter", () => {
   });
 
   it("max: 0 disables traffic (blocks every request), does not fall back to the default budget", async () => {
-    // Guards the recorded plan decision (CERTOPS_EXECUTION_PLAN_2DEV.md, A3):
-    // "max: 0 (or equivalent) must disable traffic, not silently fall back to
-    // defaults." positiveInteger() would have coerced 0 up to DEFAULT_MAX
-    // (120) because 0 is not > 0; nonNegativeInteger() must preserve the
-    // explicit 0 so every request is blocked from the very first one.
+    // Guards the decision that max: 0 (or equivalent) must disable traffic,
+    // not silently fall back to defaults. positiveInteger() would have
+    // coerced 0 up to DEFAULT_MAX (120) because 0 is not > 0;
+    // nonNegativeInteger() must preserve the explicit 0 so every request is
+    // blocked from the very first one.
     const middleware = createCertOpsMachineTokenRateLimit({
       windowMs: 60_000,
       max: 0,

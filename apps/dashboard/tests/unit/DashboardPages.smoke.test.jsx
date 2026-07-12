@@ -279,7 +279,7 @@ describe('Dashboard page smoke tests', () => {
     ).toBeInTheDocument();
   });
 
-  it('re-reads the ?q= filter from the URL when navigating between audit links without remounting (M2-35)', async () => {
+  it('re-reads the ?q= filter from the URL when navigating between audit links without remounting', async () => {
     workspaceListMock.mockResolvedValue({
       items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
     });

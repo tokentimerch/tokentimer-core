@@ -25,12 +25,11 @@ function positiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-// Unlike positiveInteger, 0 is a valid, meaningful value here: per the plan
-// (CERTOPS_EXECUTION_PLAN_2DEV.md, A3), "max: 0 (or equivalent) must disable
-// traffic, not silently fall back to defaults." express-rate-limit v8 already
-// treats limit/max: 0 as "block all requests" (not "unlimited"), so this must
-// only fall back to the default when the value is missing/invalid, never
-// coerce an explicit 0 up to DEFAULT_MAX.
+// Unlike positiveInteger, 0 is a valid, meaningful value here: max: 0 (or
+// equivalent) must disable traffic, not silently fall back to defaults.
+// express-rate-limit v8 already treats limit/max: 0 as "block all requests"
+// (not "unlimited"), so this must only fall back to the default when the
+// value is missing/invalid, never coerce an explicit 0 up to DEFAULT_MAX.
 function nonNegativeInteger(value, fallback) {
   if (value === undefined || value === null) return fallback;
   const parsed = Number.parseInt(String(value), 10);

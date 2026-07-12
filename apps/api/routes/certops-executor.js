@@ -1199,12 +1199,12 @@ async function executorEventsHandler(req, res, options = {}) {
 function createCertOpsExecutorRouter(options = {}) {
   const certOpsExecutorRouter = router();
   // Fail-closed on the CertOps rollout flag, same as the workspace-scoped
-  // routes in routes/certops.js (see CERTOPS_EXECUTION_PLAN_2DEV.md, A2:
-  // "Machine routes honor certops.enabled fail-closed, same as workspace
-  // routes."). Placed before token auth and rate limiting so that a disabled
-  // workspace never spends a rate-limit bucket entry or exercises token
-  // validation, and always sees the same 404 response an unknown route would
-  // return, whether or not the caller holds a valid machine token.
+  // routes in routes/certops.js: machine routes honor certops.enabled
+  // fail-closed, same as workspace routes. Placed before token auth and
+  // rate limiting so that a disabled workspace never spends a rate-limit
+  // bucket entry or exercises token validation, and always sees the same
+  // 404 response an unknown route would return, whether or not the caller
+  // holds a valid machine token.
   const requireCertOpsEnabledMiddleware =
     options.requireCertOpsEnabled || defaultRequireCertOpsEnabled;
   const authMiddleware =

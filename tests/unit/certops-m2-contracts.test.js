@@ -668,6 +668,7 @@ describe("CertOps M2 contract skeletons", () => {
       // D6 orchestration page mounted via the /certops/* splat route
       "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
       "apps/dashboard/src/pages/certops/CertOpsRoutes.jsx",
+      "apps/dashboard/tests/unit/DashboardPages.smoke.test.jsx",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

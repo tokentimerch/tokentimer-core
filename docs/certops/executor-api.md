@@ -203,9 +203,10 @@ segment**: a single token shares one bucket across all three executor routes
 (`POST /api/v1/certops/executor/events`, `POST
 /api/v1/certops/jobs/:jobId/events`, `POST /api/v1/certops/jobs/:jobId/evidence`),
 not a separate budget per route. Exceeding the limit returns HTTP 429
-`CERTOPS_MACHINE_RATE_LIMITED` with a `Retry-After` header (seconds). See
-`plans/CERTOPS_EXECUTION_PLAN_2DEV.md` (task A3) for the recorded design
-decision behind the shared bucket.
+`CERTOPS_MACHINE_RATE_LIMITED` with a `Retry-After` header (seconds). The
+shared bucket is a deliberate design decision: a single token's traffic
+budget applies uniformly across the executor route family instead of
+resetting per route.
 
 ## 5. Error codes
 

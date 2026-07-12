@@ -222,12 +222,12 @@ describe("CertOps executor event ingestion", function () {
   });
 
   it("honors certops.enabled fail-closed on all three executor routes, before token auth and rate limiting", async () => {
-    // CERTOPS_EXECUTION_PLAN_2DEV.md, A2: "Machine routes honor certops.enabled
-    // fail-closed, same as workspace routes." The workspace-scoped routes in
-    // routes/certops.js already 404 when the flag is off; this guards that
-    // the machine-token executor routes do the same, and that the check runs
-    // ahead of auth/rate-limiting (a disabled flag must 404 even for a
-    // malformed or missing token, not leak a 401).
+    // Machine routes honor certops.enabled fail-closed, same as workspace
+    // routes. The workspace-scoped routes in routes/certops.js already 404
+    // when the flag is off; this guards that the machine-token executor
+    // routes do the same, and that the check runs ahead of auth/rate-limiting
+    // (a disabled flag must 404 even for a malformed or missing token, not
+    // leak a 401).
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-flag",
     );
@@ -583,13 +583,11 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
-  it("shares one rate-limit bucket per token across the aggregate and per-job route families (recorded A3 decision)", async () => {
+  it("shares one rate-limit bucket per token across the aggregate and per-job route families", async () => {
     // createCertOpsExecutorRouter builds a single rateLimitMiddleware
     // instance and reuses it on all three executor routes; the limiter key
     // has no route segment, so a token that exhausts its budget on one
-    // route is also blocked on the others within the same window. See
-    // plans/CERTOPS_EXECUTION_PLAN_2DEV.md task A3 for the recorded
-    // decision this test guards.
+    // route is also blocked on the others within the same window.
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-shared-bucket",
     );
