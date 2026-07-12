@@ -18,7 +18,12 @@
         "certificate_profiles",
         "managed_certificates",
         "certificate_targets",
-        "certificate_instances"
+        "certificate_instances",
+        "api_tokens",
+        "certificate_jobs",
+        "certificate_job_log",
+        "certificate_evidence",
+        "certificate_executor_events"
       ],
       "properties": {
         "users": {
@@ -44,6 +49,21 @@
         },
         "certificate_instances": {
           "$ref": "#/definitions/tableCertificateInstances"
+        },
+        "api_tokens": {
+          "$ref": "#/definitions/tableApiTokens"
+        },
+        "certificate_jobs": {
+          "$ref": "#/definitions/tableCertificateJobs"
+        },
+        "certificate_job_log": {
+          "$ref": "#/definitions/tableCertificateJobLog"
+        },
+        "certificate_evidence": {
+          "$ref": "#/definitions/tableCertificateEvidenceM2"
+        },
+        "certificate_executor_events": {
+          "$ref": "#/definitions/tableCertificateExecutorEvents"
         }
       }
     }
@@ -251,6 +271,122 @@
             { "contains": { "const": "public_metadata" } },
             { "contains": { "const": "created_at" } },
             { "contains": { "const": "updated_at" } }
+          ]
+        }
+      }
+    },
+    "tableApiTokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 9,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "name" } },
+            { "contains": { "const": "token_prefix" } },
+            { "contains": { "const": "token_hash" } },
+            { "contains": { "const": "scopes" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "created_at" } },
+            { "contains": { "const": "updated_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateJobs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 9,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "operation" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "source" } },
+            { "contains": { "const": "payload" } },
+            { "contains": { "const": "result_metadata" } },
+            { "contains": { "const": "created_at" } },
+            { "contains": { "const": "updated_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateJobLog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 6,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "job_id" } },
+            { "contains": { "const": "event_type" } },
+            { "contains": { "const": "metadata" } },
+            { "contains": { "const": "created_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateEvidenceM2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 6,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "evidence_type" } },
+            { "contains": { "const": "metadata" } },
+            { "contains": { "const": "created_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateExecutorEvents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 7,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "job_id" } },
+            { "contains": { "const": "executor_event_id" } },
+            { "contains": { "const": "event_type" } },
+            { "contains": { "const": "request_hash_sha256" } },
+            { "contains": { "const": "created_at" } }
           ]
         }
       }
