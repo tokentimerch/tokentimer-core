@@ -9,7 +9,10 @@ loadRootEnv();
 const { expect, TestUtils } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations } = requireMigrateModule();
-const { createApiToken } = require("../../apps/api/services/certops/apiTokens");
+const {
+  createApiToken,
+  getApiTokenById,
+} = require("../../apps/api/services/certops/apiTokens");
 const {
   createCertificateJob,
   getCertificateJobById,
@@ -68,6 +71,10 @@ async function createWorkspacePair(label) {
 
 async function cleanupWorkspacePair(ownerId, workspaceIds) {
   await TestUtils.execQuery(
+    "DELETE FROM certificate_executor_events WHERE workspace_id = ANY($1::uuid[])",
+    [workspaceIds],
+  );
+  await TestUtils.execQuery(
     "DELETE FROM certificate_evidence WHERE workspace_id = ANY($1::uuid[])",
     [workspaceIds],
   );
@@ -89,7 +96,12 @@ async function cleanupWorkspacePair(ownerId, workspaceIds) {
   await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
 }
 
-function buildExecutorApp({ rateLimitOptions, csrf = false } = {}) {
+function buildExecutorApp({
+  rateLimitOptions,
+  csrf = false,
+  authMiddleware,
+  certOpsEnabledMiddleware,
+} = {}) {
   const app = express();
   app.use(express.json());
 
@@ -109,6 +121,8 @@ function buildExecutorApp({ rateLimitOptions, csrf = false } = {}) {
   app.use(
     createCertOpsExecutorRouter({
       rateLimitOptions: rateLimitOptions || { windowMs: 60_000, max: 100 },
+      authMiddleware,
+      certOpsEnabledMiddleware,
     }),
   );
   app.post("/api/v1/workspaces/:id/certops/unrelated-write", (_req, res) =>
@@ -174,6 +188,17 @@ async function countJobArtifacts({ workspaceId, jobId }) {
     logs: logs.items.length,
     evidence: evidence.items.length,
   };
+}
+
+async function countExecutorEventRecords({ workspaceId, jobId }) {
+  const result = await TestUtils.execQuery(
+    `SELECT COUNT(*)::integer AS count
+       FROM certificate_executor_events
+      WHERE workspace_id = $1
+        AND job_id = $2`,
+    [workspaceId, jobId],
+  );
+  return result.rows[0].count;
 }
 
 function expectNoSensitiveValues(body, rawToken, extraForbidden = []) {
@@ -258,6 +283,64 @@ describe("CertOps executor event ingestion", function () {
       expect(ok.body.user).to.equal(undefined);
       expect(ok.body.authenticated).to.equal(undefined);
       expectNoSensitiveValues(ok.body, scoped.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("hides executor ingestion when CertOps is disabled before token validation or persistence", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-disabled",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      let authCalls = 0;
+      const app = buildExecutorApp({
+        certOpsEnabledMiddleware: (_req, res) =>
+          res.status(404).json({ error: "Endpoint not found", code: "NOT_FOUND" }),
+        authMiddleware: (_req, _res, next) => {
+          authCalls += 1;
+          return next();
+        },
+      });
+      const before = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const response = await supertest(app)
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send(eventPayload({ workspaceId: workspaceA, jobId: job.id }));
+      const after = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const persistedToken = await getApiTokenById({
+        workspaceId: workspaceA,
+        tokenId: token.token.id,
+      });
+
+      expect(response.status).to.equal(404);
+      expect(response.body).to.deep.equal({
+        error: "Endpoint not found",
+        code: "NOT_FOUND",
+      });
+      expect(authCalls).to.equal(0);
+      expect(after).to.deep.equal(before);
+      expect(
+        await countExecutorEventRecords({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        }),
+      ).to.equal(0);
+      expect(persistedToken.lastUsedAt).to.equal(null);
+      expectNoSensitiveValues(response.body, token.plaintextToken);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
@@ -432,6 +515,449 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("rejects eventType and status mismatches before any persistence", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-status-mismatch",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const app = buildExecutorApp();
+
+      for (const [eventType, status] of [
+        ["job.completed", "failed"],
+        ["job.failed", "succeeded"],
+        ["job.started", "succeeded"],
+      ]) {
+        const before = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const response = await supertest(app)
+          .post("/api/v1/certops/executor/events")
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send(
+            eventPayload({
+              workspaceId: workspaceA,
+              jobId: job.id,
+              eventType,
+              status,
+            }),
+          );
+        const after = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+
+        expect(response.status).to.equal(400);
+        expect(response.body.code).to.equal(
+          "CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH",
+        );
+        expect(after).to.deep.equal(before);
+        expect(
+          await countExecutorEventRecords({
+            workspaceId: workspaceA,
+            jobId: job.id,
+          }),
+        ).to.equal(0);
+        expect(
+          (
+            await getCertificateJobById({
+              workspaceId: workspaceA,
+              jobId: job.id,
+            })
+          ).status,
+        ).to.equal("pending");
+        expectNoSensitiveValues(response.body, token.plaintextToken);
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("requires evidence scope before scanning or persisting evidence-bearing events", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-evidence-scope",
+    );
+
+    try {
+      const eventsToken = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const evidenceToken = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const app = buildExecutorApp();
+      const lifecycleJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const evidenceJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const validEvidence = {
+        schemaVersion: 1,
+        evidenceId: `evidence-${crypto.randomUUID()}`,
+        jobId: evidenceJob.id,
+        workspaceId: workspaceA,
+        certificateId: "cert-1",
+        eventType: "certificate.observed",
+        source: "executor",
+        observedAt: new Date().toISOString(),
+      };
+
+      const lifecycle = await supertest(app)
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", `Bearer ${eventsToken.plaintextToken}`)
+        .send(eventPayload({ workspaceId: workspaceA, jobId: lifecycleJob.id }));
+      expect(lifecycle.status).to.equal(202);
+
+      for (const body of [
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: evidenceJob.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: evidenceJob.id,
+          eventType: "job.progress",
+          status: "running",
+          evidence: [validEvidence],
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: evidenceJob.id,
+          eventType: "job.progress",
+          status: "running",
+          evidence: [{ ...validEvidence, privateKey: PRIVATE_KEY_PEM }],
+        }),
+      ]) {
+        const before = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: evidenceJob.id,
+        });
+        const response = await supertest(app)
+          .post("/api/v1/certops/executor/events")
+          .set("Authorization", `Bearer ${eventsToken.plaintextToken}`)
+          .send(body);
+        const after = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: evidenceJob.id,
+        });
+
+        expect(response.status).to.equal(403);
+        expect(response.body.code).to.equal("CERTOPS_API_TOKEN_SCOPE_DENIED");
+        expect(after).to.deep.equal(before);
+        expect(
+          await countExecutorEventRecords({
+            workspaceId: workspaceA,
+            jobId: evidenceJob.id,
+          }),
+        ).to.equal(0);
+        expectNoSensitiveValues(response.body, eventsToken.plaintextToken);
+      }
+
+      const accepted = await supertest(app)
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", `Bearer ${evidenceToken.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: evidenceJob.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [validEvidence],
+          }),
+        );
+      expect(accepted.status).to.equal(202);
+      expect(accepted.body.evidenceId).to.be.a("string").that.is.not.empty;
+      expectNoSensitiveValues(accepted.body, evidenceToken.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("does not reopen terminal jobs when late lifecycle events arrive", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-terminal",
+    );
+
+    try {
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+
+      const terminalCases = [
+        {
+          initialStatus: "running",
+          terminalEventType: "job.completed",
+          terminalStatus: "succeeded",
+          timestamp: "completedAt",
+        },
+        {
+          initialStatus: "running",
+          terminalEventType: "job.failed",
+          terminalStatus: "failed",
+          timestamp: "completedAt",
+        },
+        {
+          initialStatus: "cancelled",
+          terminalEventType: null,
+          terminalStatus: "cancelled",
+          timestamp: "cancelledAt",
+        },
+      ];
+
+      for (const terminalCase of terminalCases) {
+        const job = await createJob({
+          workspaceId: workspaceA,
+          ownerId,
+          status: terminalCase.initialStatus,
+        });
+
+        if (terminalCase.terminalEventType) {
+          const terminal = await supertest(app)
+            .post(route)
+            .set("Authorization", `Bearer ${token.plaintextToken}`)
+            .send(
+              eventPayload({
+                workspaceId: workspaceA,
+                jobId: job.id,
+                eventType: terminalCase.terminalEventType,
+                status: terminalCase.terminalStatus,
+              }),
+            );
+          expect(terminal.status).to.equal(202);
+        }
+
+        const beforeJob = await getCertificateJobById({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const beforeArtifacts = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const late = await supertest(app)
+          .post(route)
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send(
+            eventPayload({
+              workspaceId: workspaceA,
+              jobId: job.id,
+              eventType: "job.started",
+              status: "running",
+            }),
+          );
+        const afterJob = await getCertificateJobById({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const afterArtifacts = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+
+        expect(late.status).to.equal(409);
+        expect(late.body.code).to.equal(
+          "CERTOPS_JOB_STATUS_TRANSITION_INVALID",
+        );
+        expect(afterJob.status).to.equal(terminalCase.terminalStatus);
+        expect(afterJob[terminalCase.timestamp]).to.equal(
+          beforeJob[terminalCase.timestamp],
+        );
+        expect(afterJob[terminalCase.timestamp]).to.be.a("string").that.is.not
+          .empty;
+        expect(afterArtifacts).to.deep.equal(beforeArtifacts);
+        expectNoSensitiveValues(late.body, token.plaintextToken);
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("processes executor events atomically and idempotently", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-idempotency",
+    );
+
+    try {
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      const replayJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const replayPayload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: replayJob.id,
+      });
+      const first = await supertest(app).post(route).set("Authorization", auth).send(replayPayload);
+      const afterFirst = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: replayJob.id,
+      });
+      const replay = await supertest(app).post(route).set("Authorization", auth).send(replayPayload);
+      const afterReplay = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: replayJob.id,
+      });
+
+      expect(first.status).to.equal(202);
+      expect(first.body.duplicate).to.equal(undefined);
+      expect(replay.status).to.equal(202);
+      expect(replay.body).to.include({ ...first.body, duplicate: true });
+      expect(afterReplay).to.deep.equal(afterFirst);
+      expect(
+        await countExecutorEventRecords({
+          workspaceId: workspaceA,
+          jobId: replayJob.id,
+        }),
+      ).to.equal(1);
+      expectNoSensitiveValues(replay.body, token.plaintextToken);
+
+      const conflictJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const conflictPayload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: conflictJob.id,
+        eventType: "job.progress",
+        status: "running",
+      });
+      const conflictFirst = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(conflictPayload);
+      const beforeConflict = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: conflictJob.id,
+      });
+      const conflict = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send({ ...conflictPayload, status: "claimed" });
+      const afterConflict = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: conflictJob.id,
+      });
+
+      expect(conflictFirst.status).to.equal(202);
+      expect(conflict.status).to.equal(409);
+      expect(conflict.body.code).to.equal(
+        "CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT",
+      );
+      expect(afterConflict).to.deep.equal(beforeConflict);
+      expectNoSensitiveValues(conflict.body, token.plaintextToken);
+
+      const evidenceJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const evidencePayload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: evidenceJob.id,
+        eventType: "evidence.attached",
+        status: "accepted",
+        evidence: [
+          {
+            schemaVersion: 1,
+            evidenceId: `evidence-${crypto.randomUUID()}`,
+            jobId: evidenceJob.id,
+            workspaceId: workspaceA,
+            certificateId: "cert-1",
+            eventType: "certificate.observed",
+            source: "executor",
+            observedAt: new Date().toISOString(),
+            summary: "Initial public observation",
+          },
+        ],
+      });
+      const evidenceFirst = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(evidencePayload);
+      const beforeEvidenceConflict = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: evidenceJob.id,
+      });
+      const evidenceConflict = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send({
+          ...evidencePayload,
+          evidence: [
+            { ...evidencePayload.evidence[0], summary: "Changed public observation" },
+          ],
+        });
+      const afterEvidenceConflict = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: evidenceJob.id,
+      });
+
+      expect(evidenceFirst.status).to.equal(202);
+      expect(evidenceConflict.status).to.equal(409);
+      expect(evidenceConflict.body.code).to.equal(
+        "CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT",
+      );
+      expect(afterEvidenceConflict).to.deep.equal(beforeEvidenceConflict);
+
+      const rollbackJob = await createJob({ workspaceId: workspaceA, ownerId });
+      const beforeRollback = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: rollbackJob.id,
+      });
+      const rollback = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: rollbackJob.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [
+              {
+                schemaVersion: 1,
+                evidenceId: `evidence-${crypto.randomUUID()}`,
+                jobId: rollbackJob.id,
+                workspaceId: workspaceA,
+                eventType: "not-a-valid-evidence-type",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        );
+      const afterRollback = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: rollbackJob.id,
+      });
+
+      expect(rollback.status).to.equal(400);
+      expect(rollback.body.code).to.equal("CERTOPS_EVIDENCE_TYPE_INVALID");
+      expect(afterRollback).to.deep.equal(beforeRollback);
+      expect(
+        await countExecutorEventRecords({
+          workspaceId: workspaceA,
+          jobId: rollbackJob.id,
+        }),
+      ).to.equal(0);
+      expectNoSensitiveValues(rollback.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("creates sanitized evidence and appends evidence.attached logs", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-evidence",
@@ -442,7 +968,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:events:write"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const response = await supertest(buildExecutorApp())
         .post("/api/v1/certops/executor/events")
@@ -536,7 +1062,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:events:write"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const app = buildExecutorApp();
       const route = "/api/v1/certops/executor/events";

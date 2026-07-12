@@ -31,6 +31,8 @@ const CERTOPS_JOB_TABLES = [
   "certificate_evidence",
 ];
 
+const CERTOPS_EXECUTOR_EVENT_TABLES = ["certificate_executor_events"];
+
 const BASELINE_CERTOPS_COLUMNS = {
   certificate_profiles: [
     "id",
@@ -136,6 +138,9 @@ const certOpsApiTokensMigration = migrations.find(
 const certOpsJobsEvidenceMigration = migrations.find(
   (migration) => migration.name === "certops_jobs_evidence_schema",
 );
+const certOpsExecutorEventMigration = migrations.find(
+  (migration) => migration.name === "certops_executor_event_idempotency",
+);
 
 function getTableBlock(tableName, migration = certOpsMigration) {
   const marker = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
@@ -190,8 +195,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-4).map((migration) => migration.version),
-      [10, 11, 12, 13],
+      migrations.slice(-5).map((migration) => migration.version),
+      [10, 11, 12, 13, 14],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -320,6 +325,54 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("defines idempotent, workspace-scoped executor event records", () => {
+    assert.ok(
+      certOpsExecutorEventMigration,
+      "expected certops_executor_event_idempotency migration",
+    );
+    assert.equal(certOpsExecutorEventMigration.version, 14);
+
+    for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
+      assert.match(
+        certOpsExecutorEventMigration.sql,
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\(`),
+      );
+      assert.match(
+        getTableBlock(tableName, certOpsExecutorEventMigration),
+        /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
+      );
+    }
+
+    const table = getTableBlock(
+      "certificate_executor_events",
+      certOpsExecutorEventMigration,
+    );
+    assert.match(
+      table,
+      /UNIQUE \(workspace_id, job_id, executor_event_id\)/,
+    );
+    assert.match(
+      table,
+      /FOREIGN KEY \(workspace_id, job_id\)\s+REFERENCES certificate_jobs\(workspace_id, id\)\s+ON DELETE CASCADE/,
+    );
+    assert.match(
+      table,
+      /FOREIGN KEY \(workspace_id, created_by_api_token_id\)\s+REFERENCES api_tokens\(workspace_id, id\)\s+ON DELETE SET NULL \(created_by_api_token_id\)/,
+    );
+    assert.match(table, /request_hash TEXT NOT NULL/);
+    assert.match(table, /response JSONB NOT NULL DEFAULT '\{\}'::jsonb/);
+    assert.doesNotMatch(
+      table,
+      /private_key|privateKey|key_material|pfx|jks|password|credential|secret|authorization|token_hash/i,
+    );
+    for (const indexName of [
+      "idx_certificate_executor_events_workspace_job_created",
+      "idx_certificate_executor_events_workspace_event",
+    ]) {
+      assert.match(certOpsExecutorEventMigration.sql, new RegExp(indexName));
+    }
+  });
+
   it("creates every CertOps table idempotently", () => {
     for (const tableName of CERTOPS_TABLES) {
       assert.match(
@@ -350,6 +403,23 @@ describe("CertOps inventory migration", () => {
     );
     assert.doesNotMatch(
       certOpsJobsEvidenceMigration.sql,
+      /CREATE (?:UNIQUE )?INDEX (?!IF NOT EXISTS)/,
+    );
+  });
+
+  it("creates executor event records idempotently", () => {
+    for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
+      assert.match(
+        certOpsExecutorEventMigration.sql,
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\(`),
+      );
+    }
+    assert.doesNotMatch(
+      certOpsExecutorEventMigration.sql,
+      /CREATE TABLE (?!IF NOT EXISTS)/,
+    );
+    assert.doesNotMatch(
+      certOpsExecutorEventMigration.sql,
       /CREATE (?:UNIQUE )?INDEX (?!IF NOT EXISTS)/,
     );
   });
@@ -421,6 +491,24 @@ describe("CertOps inventory migration", () => {
       for (const columnName of getColumnNames(
         tableName,
         certOpsJobsEvidenceMigration,
+      )) {
+        const hit = FORBIDDEN_CUSTODY_COLUMNS.find((fragment) =>
+          columnName.toLowerCase().includes(fragment.toLowerCase()),
+        );
+        assert.equal(
+          hit,
+          undefined,
+          `${tableName}.${columnName} looks like private-key custody`,
+        );
+      }
+    }
+  });
+
+  it("does not define private-key custody columns in executor event records", () => {
+    for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
+      for (const columnName of getColumnNames(
+        tableName,
+        certOpsExecutorEventMigration,
       )) {
         const hit = FORBIDDEN_CUSTODY_COLUMNS.find((fragment) =>
           columnName.toLowerCase().includes(fragment.toLowerCase()),
@@ -553,6 +641,10 @@ describe("CertOps inventory migration", () => {
   it("defers dedicated security events and audit hash-chain storage beyond M2", () => {
     assert.doesNotMatch(
       certOpsJobsEvidenceMigration.sql,
+      /\bsecurity_events\b|\bprev_hash\b|\brow_hash\b|\balert_queue\b/i,
+    );
+    assert.doesNotMatch(
+      certOpsExecutorEventMigration.sql,
       /\bsecurity_events\b|\bprev_hash\b|\brow_hash\b|\balert_queue\b/i,
     );
   });

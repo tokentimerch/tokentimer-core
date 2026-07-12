@@ -627,6 +627,10 @@ describe("CertOps M2 contract skeletons", () => {
       /\n        status:\r?\n          type: string\r?\n          enum: \[pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled\]/,
     );
     assert.match(schemaBlock, /\n        evidenceId:\r?\n          type: string\r?\n          format: uuid\r?\n          nullable: true/);
+    assert.match(
+      schemaBlock,
+      /\n        duplicate:\r?\n          type: boolean\r?\n          default: false/,
+    );
   });
 
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
@@ -654,17 +658,35 @@ describe("CertOps M2 contract skeletons", () => {
       routeBlock,
       /\$ref: "#\/components\/schemas\/CertOpsExecutorEventAcceptedResponse"/,
     );
+    assert.match(routeBlock, /certops:events:write/);
+    assert.match(routeBlock, /certops:evidence:write/);
+    assert.doesNotMatch(routeBlock, /certops:executor:events/);
+    assert.match(routeBlock, /"404":/);
+    assert.match(routeBlock, /"409":/);
+    assert.match(routeBlock, /PRIVATE_KEY_MATERIAL_REJECTED/);
   });
 
-  it("uses the canonical machine event scope and ordered rate-limit guards", () => {
+  it("uses canonical executor scopes with feature, auth, and rate-limit guards", () => {
     assert.match(
       certOpsExecutorRoutesSource,
       /const EXECUTOR_EVENT_SCOPE = "certops:events:write"/,
     );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /const EXECUTOR_EVIDENCE_SCOPE = "certops:evidence:write"/,
+    );
     assert.doesNotMatch(certOpsExecutorRoutesSource, /certops:executor:events/);
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*executorEventsHandler,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitMiddleware,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT/,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH/,
     );
   });
 
@@ -806,6 +828,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
+      "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
       "tests/integration/certops-api-token-auth.test.js",
@@ -856,6 +879,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
+      "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
     ]);
