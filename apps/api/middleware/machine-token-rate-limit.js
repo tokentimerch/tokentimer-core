@@ -25,6 +25,18 @@ function positiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+// Unlike positiveInteger, 0 is a valid, meaningful value here: per the plan
+// (CERTOPS_EXECUTION_PLAN_2DEV.md, A3), "max: 0 (or equivalent) must disable
+// traffic, not silently fall back to defaults." express-rate-limit v8 already
+// treats limit/max: 0 as "block all requests" (not "unlimited"), so this must
+// only fall back to the default when the value is missing/invalid, never
+// coerce an explicit 0 up to DEFAULT_MAX.
+function nonNegativeInteger(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function safeRoutePattern(req) {
   return req.route?.path || req.baseUrl || null;
 }
@@ -71,7 +83,7 @@ function retryAfterSeconds(req, windowMs) {
 
 function createCertOpsMachineTokenRateLimit(options = {}) {
   const windowMs = positiveInteger(options.windowMs, DEFAULT_WINDOW_MS);
-  const max = positiveInteger(options.max, DEFAULT_MAX);
+  const max = nonNegativeInteger(options.max, DEFAULT_MAX);
   const keyResolver = options.keyResolver || machineTokenRateLimitKey;
 
   const limiter = rateLimit({
@@ -122,6 +134,7 @@ module.exports = {
   machineTokenRateLimitKey,
   _test: {
     defaultMachineIdResolver,
+    nonNegativeInteger,
     retryAfterSeconds,
     safeKeyFragment,
     safeRoutePattern,

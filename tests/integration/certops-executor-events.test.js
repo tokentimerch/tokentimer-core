@@ -221,6 +221,84 @@ describe("CertOps executor event ingestion", function () {
     await runMigrations();
   });
 
+  it("honors certops.enabled fail-closed on all three executor routes, before token auth and rate limiting", async () => {
+    // CERTOPS_EXECUTION_PLAN_2DEV.md, A2: "Machine routes honor certops.enabled
+    // fail-closed, same as workspace routes." The workspace-scoped routes in
+    // routes/certops.js already 404 when the flag is off; this guards that
+    // the machine-token executor routes do the same, and that the check runs
+    // ahead of auth/rate-limiting (a disabled flag must 404 even for a
+    // malformed or missing token, not leak a 401).
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-flag",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const scoped = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+
+      const disabledApp = express();
+      disabledApp.use(express.json());
+      disabledApp.use(
+        createCertOpsExecutorRouter({
+          rateLimitOptions: { windowMs: 60_000, max: 100 },
+          requireCertOpsEnabled: (_req, res) =>
+            res.status(404).json({ error: "Endpoint not found", code: "NOT_FOUND" }),
+        }),
+      );
+      disabledApp.use((err, _req, res, next) => {
+        if (res.headersSent) return next(err);
+        return res.status(500).json({ error: "Internal test harness error", code: err?.code || "INTERNAL_ERROR" });
+      });
+
+      const auth = `Bearer ${scoped.plaintextToken}`;
+      const payload = eventPayload({ workspaceId: workspaceA, jobId: job.id });
+
+      const aggregate = await supertest(disabledApp)
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", auth)
+        .send(payload);
+      expect(aggregate.status).to.equal(404);
+      expect(aggregate.body.code).to.equal("NOT_FOUND");
+
+      const perJobEvent = await supertest(disabledApp)
+        .post(`/api/v1/certops/jobs/${job.id}/events`)
+        .set("Authorization", auth)
+        .send({ ...payload, workspaceId: undefined, jobId: undefined });
+      expect(perJobEvent.status).to.equal(404);
+      expect(perJobEvent.body.code).to.equal("NOT_FOUND");
+
+      const perJobEvidence = await supertest(disabledApp)
+        .post(`/api/v1/certops/jobs/${job.id}/evidence`)
+        .set("Authorization", auth)
+        .send({ schemaVersion: 1, eventId: `event-${crypto.randomUUID()}`, occurredAt: new Date().toISOString(), evidence: [] });
+      expect(perJobEvidence.status).to.equal(404);
+      expect(perJobEvidence.body.code).to.equal("NOT_FOUND");
+
+      // Same 404 even with no/garbage auth, proving the gate runs before
+      // token validation rather than after a 401.
+      const noAuth = await supertest(disabledApp)
+        .post("/api/v1/certops/executor/events")
+        .send(payload);
+      expect(noAuth.status).to.equal(404);
+      expect(noAuth.body.code).to.equal("NOT_FOUND");
+
+      // Default-enabled app (default requireCertOpsEnabled, using the real
+      // CERTOPS_ENABLED=true test env) still accepts the same request.
+      const enabledApp = buildExecutorApp();
+      const stillWorks = await supertest(enabledApp)
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", auth)
+        .send(eventPayload({ workspaceId: workspaceA, jobId: job.id }));
+      expect(stillWorks.status).to.equal(202);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("requires a valid machine token with certops:events:write scope", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-auth",

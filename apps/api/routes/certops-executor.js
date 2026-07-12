@@ -8,6 +8,9 @@ const {
 const {
   createCertOpsMachineTokenRateLimit,
 } = require("../middleware/machine-token-rate-limit");
+const {
+  requireCertOpsEnabled: defaultRequireCertOpsEnabled,
+} = require("../middleware/require-certops-enabled");
 const { logger } = require("../utils/logger");
 const {
   CERTOPS_JOB_INVALID,
@@ -1195,6 +1198,15 @@ async function executorEventsHandler(req, res, options = {}) {
 
 function createCertOpsExecutorRouter(options = {}) {
   const certOpsExecutorRouter = router();
+  // Fail-closed on the CertOps rollout flag, same as the workspace-scoped
+  // routes in routes/certops.js (see CERTOPS_EXECUTION_PLAN_2DEV.md, A2:
+  // "Machine routes honor certops.enabled fail-closed, same as workspace
+  // routes."). Placed before token auth and rate limiting so that a disabled
+  // workspace never spends a rate-limit bucket entry or exercises token
+  // validation, and always sees the same 404 response an unknown route would
+  // return, whether or not the caller holds a valid machine token.
+  const requireCertOpsEnabledMiddleware =
+    options.requireCertOpsEnabled || defaultRequireCertOpsEnabled;
   const authMiddleware =
     options.authMiddleware ||
     createCertOpsApiTokenAuth({
@@ -1219,6 +1231,7 @@ function createCertOpsExecutorRouter(options = {}) {
 
   certOpsExecutorRouter.post(
     "/api/v1/certops/executor/events",
+    requireCertOpsEnabledMiddleware,
     authMiddleware,
     rateLimitMiddleware,
     executorEventsHandler,
@@ -1226,6 +1239,7 @@ function createCertOpsExecutorRouter(options = {}) {
 
   certOpsExecutorRouter.post(
     "/api/v1/certops/jobs/:jobId/events",
+    requireCertOpsEnabledMiddleware,
     perJobEventAuthMiddleware,
     rateLimitMiddleware,
     (req, res) => executorEventsHandler(req, res, { mode: "event" }),
@@ -1233,6 +1247,7 @@ function createCertOpsExecutorRouter(options = {}) {
 
   certOpsExecutorRouter.post(
     "/api/v1/certops/jobs/:jobId/evidence",
+    requireCertOpsEnabledMiddleware,
     perJobEvidenceAuthMiddleware,
     rateLimitMiddleware,
     (req, res) => executorEventsHandler(req, res, { mode: "evidence" }),

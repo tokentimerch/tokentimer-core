@@ -308,6 +308,24 @@ describe("CertOps machine-token rate limiter", () => {
     assert.equal(result.res.body.code, CERTOPS_API_TOKEN_UNAUTHORIZED);
   });
 
+  it("max: 0 disables traffic (blocks every request), does not fall back to the default budget", async () => {
+    // Guards the recorded plan decision (CERTOPS_EXECUTION_PLAN_2DEV.md, A3):
+    // "max: 0 (or equivalent) must disable traffic, not silently fall back to
+    // defaults." positiveInteger() would have coerced 0 up to DEFAULT_MAX
+    // (120) because 0 is not > 0; nonNegativeInteger() must preserve the
+    // explicit 0 so every request is blocked from the very first one.
+    const middleware = createCertOpsMachineTokenRateLimit({
+      windowMs: 60_000,
+      max: 0,
+    });
+
+    const first = await runMiddleware(middleware, createRequest());
+    assert.equal(first.nextCalled, false);
+    assert.equal(first.res.statusCode, 429);
+    assert.equal(first.res.body.code, CERTOPS_MACHINE_RATE_LIMITED);
+    assertNoSensitiveResponseData(first.res.body);
+  });
+
   it("is independent from req.user and session state", async () => {
     const middleware = createCertOpsMachineTokenRateLimit({
       windowMs: 60_000,
