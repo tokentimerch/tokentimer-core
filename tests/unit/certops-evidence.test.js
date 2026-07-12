@@ -345,7 +345,18 @@ describe("CertOps evidence service", () => {
     assert.equal(evidence.metadata.target, "endpoint/api.example.com");
     assert.equal(evidence.redactedOutput, "deployment ok [REDACTED]");
     assert.equal(evidence.outputTruncated, false);
-    assert.equal(evidence.outputSizeBytes, Buffer.byteLength("deployment ok password=swordfish"));
+    // Per plan A6: stored size/sha256 describe the stored *redacted* output,
+    // not the pre-redaction input. Redaction shrinks "password=swordfish"
+    // down to "[REDACTED]", so this must not equal the raw input's byte
+    // length.
+    assert.equal(
+      evidence.outputSizeBytes,
+      Buffer.byteLength(evidence.redactedOutput),
+    );
+    assert.notEqual(
+      evidence.outputSizeBytes,
+      Buffer.byteLength("deployment ok password=swordfish"),
+    );
     assert.match(evidence.outputSha256, /^[a-f0-9]{64}$/);
     assert.equal(evidence.outputRedactionApplied, true);
     assert.equal(JSON.stringify(evidence).includes("swordfish"), false);

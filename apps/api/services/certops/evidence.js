@@ -136,8 +136,10 @@ function normalizeRedactedOutput(value) {
     );
   }
 
-  const outputSizeBytes = Buffer.byteLength(value, "utf8");
-  if (outputSizeBytes > MAX_REDACTED_OUTPUT_BYTES) {
+  // Size-limit the raw (pre-redaction) input per the plan (A6): this is the
+  // caller's payload size, checked before spending time on redaction.
+  const rawSizeBytes = Buffer.byteLength(value, "utf8");
+  if (rawSizeBytes > MAX_REDACTED_OUTPUT_BYTES) {
     throw serviceError(
       "CertOps evidence output is too large",
       CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
@@ -153,7 +155,12 @@ function normalizeRedactedOutput(value) {
     redactedOutput: report.value,
     outputTruncated: false,
     outputSha256: sha256Hex(report.value),
-    outputSizeBytes,
+    // Per the plan (A6): "stored size ... metadata describe the stored
+    // redacted output, not the pre-redaction input." Redaction replaces
+    // matched substrings with a fixed-length marker, so the byte length can
+    // shift versus the raw input; outputSizeBytes must reflect what is
+    // actually persisted in redactedOutput, matching outputSha256.
+    outputSizeBytes: Buffer.byteLength(report.value, "utf8"),
     redactionApplied: report.redactionApplied,
     redactionCount: report.redactionCount || 0,
   };

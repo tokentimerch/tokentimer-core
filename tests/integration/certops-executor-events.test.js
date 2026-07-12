@@ -833,7 +833,12 @@ describe("CertOps executor event ingestion", function () {
       expect(outputEvidence.redactedOutput).to.not.include("swordfish");
       expect(outputEvidence.outputTruncated).to.equal(false);
       expect(outputEvidence.outputSha256).to.match(/^[a-f0-9]{64}$/);
+      // Per plan A6: stored size describes the stored *redacted* output, not
+      // the pre-redaction input.
       expect(outputEvidence.outputSizeBytes).to.equal(
+        Buffer.byteLength(outputEvidence.redactedOutput),
+      );
+      expect(outputEvidence.outputSizeBytes).to.not.equal(
         Buffer.byteLength("executor finished password=swordfish"),
       );
 
