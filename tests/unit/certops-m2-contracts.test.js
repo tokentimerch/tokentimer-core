@@ -894,7 +894,60 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("keeps the committed M2-A1 through M2-A7 diff within the stacked scope", () => {
+  it("documents M2-A8 token management without permanently excluding M2-A10 routes", () => {
+    const tokenPath = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/tokens",
+    );
+    const revokePath = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+    );
+    const createRequest = openApiComponentBlock(
+      "CertOpsApiTokenCreateRequest",
+    );
+    const createResponse = openApiComponentBlock(
+      "CertOpsApiTokenCreateResponse",
+    );
+    const executorNotes = routeCompatContract.namespacePolicy.executor.notes.join(
+      " ",
+    );
+
+    for (const [routePath, method] of [
+      ["/api/v1/workspaces/{id}/certops/tokens", "GET"],
+      ["/api/v1/workspaces/{id}/certops/tokens", "POST"],
+      [
+        "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+        "POST",
+      ],
+    ]) {
+      assert.ok(
+        routeCompatContract.guarantees.stableRoutes.some(
+          (route) => route.path === routePath && route.method === method,
+        ),
+        `${method} ${routePath} must stay frozen in route compat`,
+      );
+    }
+
+    assert.match(tokenPath, /CertOpsApiTokenListResponse/);
+    assert.match(tokenPath, /CertOpsApiTokenCreateRequest/);
+    assert.match(tokenPath, /CertOpsApiTokenCreateResponse/);
+    assert.match(revokePath, /CertOpsApiTokenRevokeResponse/);
+    assert.match(createRequest, /Must not contain a raw CertOps token/);
+    assert.match(createRequest, /bearer credential/);
+    assert.match(createRequest, /token hash/);
+    assert.match(createRequest, /private-key material/);
+    assert.match(
+      createResponse,
+      /\^ttx_\[a-f0-9\]\{16\}_\[a-f0-9\]\{64\}\$/,
+    );
+    assert.match(createResponse, /minLength: 85/);
+    assert.match(createResponse, /maxLength: 85/);
+    assert.match(executorNotes, /M2-A10 \/ PR #59/);
+    assert.match(executorNotes, /not a permanent exclusion from M2/i);
+    assert.doesNotMatch(executorNotes, /not part of M2/i);
+    assert.doesNotMatch(executorNotes, /only M2 executor ingestion endpoint/i);
+  });
+
+  it("keeps the committed M2-A1 through M2-A8 diff within the stacked scope", () => {
     const { ref, files } = prChangedFiles();
     const allowedM2Files = new Set([
       "apps/api/migrations/migrate.js",
@@ -904,12 +957,14 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/index.js",
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
+      "apps/api/services/audit.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
       "tests/integration/certops-api-token-auth.test.js",
+      "tests/integration/certops-api-token-routes.test.js",
       "tests/integration/certops-api-tokens.test.js",
       "tests/integration/certops-executor-events.test.js",
       "tests/integration/certops-job-read-apis.test.js",
@@ -937,7 +992,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.deepEqual(
       files.filter((file) => !unexpectedFiles.includes(file)),
       [],
-      `stacked M2-A1 through M2-A7 diff against ${ref} must stay within the allowed scope`,
+      `stacked M2-A1 through M2-A8 diff against ${ref} must stay within the allowed scope`,
     );
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
@@ -948,7 +1003,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
   });
 
-  it("keeps local app changes within the M2-A2 through M2-A6 backend scope", () => {
+  it("keeps local app changes within the M2-A2 through M2-A8 backend scope", () => {
     const allowedStackedM2Files = new Set([
       "apps/api/migrations/migrate.js",
       "apps/api/middleware/api-token-auth.js",
@@ -957,6 +1012,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/index.js",
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
+      "apps/api/services/audit.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/executorEvents.js",

@@ -15,6 +15,7 @@ const { pool } = require("../db/database");
  */
 
 async function writeAudit({
+  client = null,
   actorUserId = null,
   subjectUserId,
   action,
@@ -24,6 +25,7 @@ async function writeAudit({
   workspaceId = null,
   metadata = {},
 }) {
+  const db = client || pool;
   // Ensure target_id matches schema (INTEGER). If a UUID or non-integer is passed, store NULL.
   let safeTargetId = null;
   try {
@@ -38,7 +40,7 @@ async function writeAudit({
   } catch (_) {
     /* noop */
   }
-  await pool.query(
+  await db.query(
     `INSERT INTO audit_events (actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata, workspace_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [

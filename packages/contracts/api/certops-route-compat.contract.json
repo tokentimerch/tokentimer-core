@@ -19,8 +19,9 @@
         "Machine surface for the M2 executor. Scoped API-token (bearer) auth.",
         "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
-        "M2 executor writes are intentionally collapsed into the single ingestion endpoint: POST /api/v1/certops/executor/events.",
-        "Do not add POST /certops/jobs/{jobId}/events or POST /certops/jobs/{jobId}/evidence in M2. Per-job write routes are not part of M2 unless a later ADR changes that."
+        "M2-A8 token management continues to use POST /api/v1/certops/executor/events as the current general executor ingestion endpoint.",
+        "Per-job event and evidence write routes are not implemented by M2-A8. They are staged for M2-A10 / PR #59; their absence here is not a permanent exclusion from M2.",
+        "M2-A10 owns the final route-compat extension and implementation for any per-job executor write routes."
       ]
     },
     "agent": {

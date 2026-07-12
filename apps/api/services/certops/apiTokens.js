@@ -4,6 +4,7 @@ const crypto = require("crypto");
 
 const { pool } = require("../../db/database");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const { assertSafePublicValue } = require("./jobs");
 
 const CERTOPS_API_TOKEN_INVALID = "CERTOPS_API_TOKEN_INVALID";
 const CERTOPS_API_TOKEN_MALFORMED = "CERTOPS_API_TOKEN_MALFORMED";
@@ -23,6 +24,14 @@ const TOKEN_RANDOM_BYTES = TOKEN_SECRET_HEX_LENGTH / 2;
 const MAX_TOKEN_CREATE_ATTEMPTS = 3;
 const LAST_USED_UPDATE_INTERVAL = "5 minutes";
 const RAW_TOKEN_PATTERN = /^ttx_([a-f0-9]{16})_([a-f0-9]{64})$/;
+const RAW_TOKEN_EMBEDDED_PATTERN = new RegExp(
+  `${TOKEN_PREFIX}[a-f0-9]{${TOKEN_ID_HEX_LENGTH}}_[a-f0-9]{${TOKEN_SECRET_HEX_LENGTH}}`,
+  "i",
+);
+const TOKEN_HASH_ASSIGNMENT_PATTERN =
+  /\btoken[_-]?hash\s*[:=]\s*[a-f0-9]{64}\b/i;
+const BARE_BEARER_CREDENTIAL_PATTERN =
+  /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}\b/i;
 
 const ALLOWED_SCOPES = Object.freeze([
   "certops:read",
@@ -78,7 +87,34 @@ function normalizeName(value) {
       PRIVATE_KEY_MATERIAL_REJECTED,
     );
   }
+  if (
+    containsRawCertOpsToken(trimmed) ||
+    containsGenericCredentialMaterial(trimmed)
+  ) {
+    throw serviceError("API token name is invalid", CERTOPS_API_TOKEN_NAME_INVALID);
+  }
   return trimmed;
+}
+
+function containsRawCertOpsToken(value) {
+  return RAW_TOKEN_EMBEDDED_PATTERN.test(String(value || ""));
+}
+
+function containsGenericCredentialMaterial(value) {
+  const text = String(value || "");
+  if (
+    TOKEN_HASH_ASSIGNMENT_PATTERN.test(text) ||
+    BARE_BEARER_CREDENTIAL_PATTERN.test(text)
+  ) {
+    return true;
+  }
+
+  try {
+    assertSafePublicValue(text);
+    return false;
+  } catch (_error) {
+    return true;
+  }
 }
 
 function normalizeScopes(scopes) {
@@ -360,23 +396,46 @@ async function getApiTokenById(options) {
   return tokenMetadataFromRow(result.rows[0] || null);
 }
 
-async function revokeApiToken(options) {
-  const result = await (options.client || pool).query(
+async function revokeApiTokenWithResult(options) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const result = await db.query(
     `UPDATE api_tokens
         SET status = 'revoked',
-            revoked_at = COALESCE(revoked_at, NOW()),
-            revoked_by = COALESCE(revoked_by, $3),
+            revoked_at = NOW(),
+            revoked_by = $3,
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
+        AND status = 'active'
       RETURNING ${SAFE_SELECT_FIELDS}`,
     [
-      normalizeWorkspaceId(options.workspaceId),
+      workspaceId,
       options.tokenId,
       options.revokedBy || null,
     ],
   );
-  return tokenMetadataFromRow(result.rows[0] || null);
+
+  if (result.rows[0]) {
+    return {
+      token: tokenMetadataFromRow(result.rows[0]),
+      revokedNow: true,
+    };
+  }
+
+  return {
+    token: await getApiTokenById({
+      client: db,
+      workspaceId,
+      tokenId: options.tokenId,
+    }),
+    revokedNow: false,
+  };
+}
+
+async function revokeApiToken(options) {
+  const result = await revokeApiTokenWithResult(options);
+  return result.token;
 }
 
 async function markApiTokenUsed(options) {
@@ -497,11 +556,14 @@ module.exports = {
   listApiTokens,
   markApiTokenUsed,
   revokeApiToken,
+  revokeApiTokenWithResult,
   validateApiToken,
   _test: {
     RAW_TOKEN_LENGTH,
     TOKEN_ID_HEX_LENGTH,
     TOKEN_SECRET_HEX_LENGTH,
+    containsRawCertOpsToken,
+    containsGenericCredentialMaterial,
     hasRequiredScopes,
     safeCompareSha256Hex,
     scopesFromRow,
