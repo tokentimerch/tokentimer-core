@@ -817,7 +817,7 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("keeps the committed M2-A1 through M2-A6 diff within the stacked scope", () => {
+  it("keeps the committed M2-A1 through M2-A7 diff within the stacked scope", () => {
     const { ref, files } = prChangedFiles();
     const allowedM2Files = new Set([
       "apps/api/migrations/migrate.js",
@@ -825,6 +825,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
       "apps/api/index.js",
+      "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
@@ -834,6 +835,7 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/integration/certops-api-token-auth.test.js",
       "tests/integration/certops-api-tokens.test.js",
       "tests/integration/certops-executor-events.test.js",
+      "tests/integration/certops-job-read-apis.test.js",
       "tests/integration/certops-jobs-evidence.test.js",
       "tests/integration/certops-machine-token-rate-limit.test.js",
       "tests/integration/suites/core-compatible.txt",
@@ -858,7 +860,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.deepEqual(
       files.filter((file) => !unexpectedFiles.includes(file)),
       [],
-      `stacked M2-A1 through M2-A6 diff against ${ref} must stay within the allowed scope`,
+      `stacked M2-A1 through M2-A7 diff against ${ref} must stay within the allowed scope`,
     );
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
@@ -876,6 +878,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
       "apps/api/index.js",
+      "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",

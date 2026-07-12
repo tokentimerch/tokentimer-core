@@ -704,6 +704,45 @@ async function listCertificateJobs(options) {
     conditions.push(`status = $${params.length}`);
   }
 
+  if (options.operation !== undefined && options.operation !== null && options.operation !== "") {
+    const operation = normalizeEnum(
+      options.operation,
+      JOB_OPERATION_SET,
+      CERTOPS_JOB_OPERATION_INVALID,
+      "operation",
+    );
+    params.push(operation);
+    conditions.push(`operation = $${params.length}`);
+  }
+
+  if (options.source !== undefined && options.source !== null && options.source !== "") {
+    const source = normalizeEnum(
+      options.source,
+      JOB_SOURCE_SET,
+      CERTOPS_JOB_SOURCE_INVALID,
+      "source",
+    );
+    params.push(source);
+    conditions.push(`source = $${params.length}`);
+  }
+
+  if (options.subjectType !== undefined && options.subjectType !== null && options.subjectType !== "") {
+    const subjectType = normalizeEnum(
+      options.subjectType,
+      SUBJECT_TYPE_SET,
+      CERTOPS_JOB_INVALID,
+      "subjectType",
+    );
+    params.push(subjectType);
+    conditions.push(`subject_type = $${params.length}`);
+  }
+
+  if (options.subjectId !== undefined && options.subjectId !== null && options.subjectId !== "") {
+    const subjectId = normalizeOptionalShortText(options.subjectId, "subjectId");
+    params.push(subjectId);
+    conditions.push(`subject_id = $${params.length}`);
+  }
+
   params.push(limit, offset);
   const result = await db.query(
     `SELECT ${SAFE_JOB_SELECT_FIELDS}

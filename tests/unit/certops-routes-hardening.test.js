@@ -74,8 +74,8 @@ function routeBlock(method, routePath) {
   return routesSource.slice(start, end);
 }
 
-describe("CertOps M1 route hardening", () => {
-  it("implements only the frozen M1 workspace inventory routes", () => {
+describe("CertOps route hardening", () => {
+  it("implements only the frozen workspace inventory and M2 read routes", () => {
     const routeMatches = Array.from(
       routesSource.matchAll(/router\.(get|post)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
@@ -84,6 +84,10 @@ describe("CertOps M1 route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/certificates",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
+      "GET /api/v1/workspaces/:id/certops/jobs",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
@@ -93,7 +97,7 @@ describe("CertOps M1 route hardening", () => {
     assert.equal(routesSource.includes("/api/v1/certops/agent"), false);
   });
 
-  it("gates every inventory route with certops.enabled", () => {
+  it("gates every workspace CertOps route with certops.enabled", () => {
     for (const [method, routePath] of [
       ["get", "/api/v1/workspaces/:id/certops/certificates"],
       ["post", "/api/v1/workspaces/:id/certops/certificates"],
@@ -107,12 +111,16 @@ describe("CertOps M1 route hardening", () => {
       ],
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
     ]) {
       assert.match(routeBlock(method, routePath), /requireCertOpsEnabled/);
     }
   });
 
-  it("declares specific certificate child routes before generic certificate detail", () => {
+  it("declares specific child routes before generic detail routes", () => {
     const instancesIndex = routesSource.indexOf(
       '"/api/v1/workspaces/:id/certops/certificates/:certId/instances"',
     );
@@ -133,6 +141,27 @@ describe("CertOps M1 route hardening", () => {
     assert.ok(
       retireIndex < detailIndex,
       "retire route must be declared before generic certificate detail",
+    );
+
+    const logIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/jobs/:jobId/log"',
+    );
+    const evidenceIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"',
+    );
+    const jobDetailIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/jobs/:jobId"',
+    );
+    assert.notEqual(logIndex, -1);
+    assert.notEqual(evidenceIndex, -1);
+    assert.notEqual(jobDetailIndex, -1);
+    assert.ok(
+      logIndex < jobDetailIndex,
+      "job log route must be declared before generic job detail",
+    );
+    assert.ok(
+      evidenceIndex < jobDetailIndex,
+      "job evidence route must be declared before generic job detail",
     );
   });
 
@@ -205,6 +234,16 @@ describe("CertOps M1 route hardening", () => {
     assertOpenApiRoute(
       "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire",
       "POST",
+    );
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs", "GET");
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs/{jobId}", "GET");
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log",
+      "GET",
+    );
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
+      "GET",
     );
   });
 });
