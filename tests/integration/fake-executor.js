@@ -186,6 +186,24 @@ function createFakeExecutor({ app, workspaceId, plaintextToken }) {
       );
     },
 
+    async accepted(jobId, overrides = {}) {
+      return executor.sendLifecycleEvent(
+        jobId,
+        "job.accepted",
+        "claimed",
+        overrides,
+      );
+    },
+
+    async rejected(jobId, overrides = {}) {
+      return executor.sendLifecycleEvent(
+        jobId,
+        "job.rejected",
+        "rejected",
+        overrides,
+      );
+    },
+
     async progress(jobId, overrides = {}) {
       return executor.sendLifecycleEvent(
         jobId,

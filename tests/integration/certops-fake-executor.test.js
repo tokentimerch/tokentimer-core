@@ -101,6 +101,100 @@ describe("CertOps fake executor (B3)", function () {
     }
   });
 
+  it("moves a job to claimed on job.accepted", async () => {
+    // JOB_STATUS_BY_EVENT_TYPE / LOG_STATUS_BY_EVENT_TYPE in
+    // routes/certops-executor.js map job.accepted -> claimed, but no test
+    // exercised this event type end-to-end before (audit gap: only
+    // started/progress/completed/failed had coverage).
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-fake-executor-accepted",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const executor = createFakeExecutor({
+        app,
+        workspaceId: workspaceA,
+        plaintextToken: token.plaintextToken,
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      const accepted = await executor.accepted(job.id);
+      expect(accepted.status).to.equal(202);
+      expect(accepted.body.status).to.equal("claimed");
+      expectNoSensitiveValues(accepted.body, token.plaintextToken);
+
+      const updated = await getCertificateJobById({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(updated.status).to.equal("claimed");
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const acceptedLog = logs.items.find(
+        (item) => item.eventType === "job.accepted",
+      );
+      expect(acceptedLog.status).to.equal("claimed");
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("moves a job to the terminal rejected status on job.rejected and does not allow it to be reopened", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-fake-executor-rejected",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const executor = createFakeExecutor({
+        app,
+        workspaceId: workspaceA,
+        plaintextToken: token.plaintextToken,
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      const rejected = await executor.rejected(job.id);
+      expect(rejected.status).to.equal(202);
+      expect(rejected.body.status).to.equal("rejected");
+      expectNoSensitiveValues(rejected.body, token.plaintextToken);
+
+      const terminal = await getCertificateJobById({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(terminal.status).to.equal("rejected");
+      expect(terminal.completedAt).to.not.equal(null);
+
+      // Monotonic guard: rejected is terminal, so a late job.started must
+      // not reopen it (same contract as the succeeded-job replay test above).
+      const lateStart = await executor.started(job.id);
+      expect(lateStart.status).to.equal(202);
+      expect(lateStart.body.status).to.equal("rejected");
+
+      const afterLateStart = await getCertificateJobById({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(afterLateStart.status).to.equal("rejected");
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("keeps error fields on a failed job when a late non-error event arrives", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-fake-executor-error-fields",

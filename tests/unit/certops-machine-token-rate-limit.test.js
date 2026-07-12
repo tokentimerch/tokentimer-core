@@ -344,4 +344,32 @@ describe("CertOps machine-token rate limiter", () => {
     assert.equal(first.nextCalled, true);
     assert.equal(second.res.statusCode, 429);
   });
+
+  it("allows requests again once the rate-limit window elapses", async () => {
+    // Every other test here uses a fixed 60s window and never advances past
+    // it, so window-reset behavior itself was never exercised (audit gap).
+    // Uses a short real window (100ms) rather than a fake clock since
+    // express-rate-limit's underlying store schedules its own timers.
+    const middleware = createCertOpsMachineTokenRateLimit({
+      windowMs: 100,
+      max: 1,
+    });
+
+    const first = await runMiddleware(middleware, createRequest());
+    assert.equal(first.nextCalled, true);
+
+    const blocked = await runMiddleware(middleware, createRequest());
+    assert.equal(blocked.nextCalled, false);
+    assert.equal(blocked.res.statusCode, 429);
+    const retryAfterSeconds = Number(blocked.res.headers["Retry-After"]);
+    assert.ok(
+      Number.isInteger(retryAfterSeconds) && retryAfterSeconds >= 0,
+      `expected a sane non-negative integer Retry-After, got ${blocked.res.headers["Retry-After"]}`,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const afterWindow = await runMiddleware(middleware, createRequest());
+    assert.equal(afterWindow.nextCalled, true);
+  });
 });
