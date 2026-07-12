@@ -44,15 +44,6 @@ admin role, `/certops/operations` page, "Machine API tokens" panel.
 
 ## 2. Report events
 
-> **No public job-creation route yet.** M2 ships only the three
-> machine-token routes documented here (events, per-job events, evidence);
-> there is no API to create a `jobId`. Jobs must already exist before an
-> executor can report against them (seeded by an internal process today).
-> Treat `jobId` as an identifier your integration receives out-of-band, not
-> one it mints itself; posting events for a `jobId` TokenTimer doesn't
-> recognize returns 404 `CERTOPS_JOB_NOT_FOUND` (see below), it does not
-> create the job.
-
 ```
 POST /api/v1/certops/executor/events
 POST /api/v1/certops/jobs/:jobId/events
