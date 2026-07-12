@@ -347,6 +347,24 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     load(auditPage);
   }, [load, auditPage]);
 
+  // Keep query in sync with the URL when navigating between /audit?q=... links
+  // (e.g. from CertOps evidence timeline entries) while the component stays mounted.
+  // Intentionally omits `query` from deps: this effect must only react to
+  // external URL changes, not to the user typing in the search box (which
+  // updates `query` but never pushes to the URL), or it would revert typed input.
+  useEffect(() => {
+    try {
+      const nextQuery = new URLSearchParams(location.search).get('q') || '';
+      if (nextQuery !== query) {
+        setQuery(nextQuery);
+        setAuditPage(1);
+      }
+    } catch (_) {
+      // ignore malformed search string
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
   // Redirect viewers (no manager/admin role) only when we have workspaces; avoid redirect when list empty (e.g. bootstrap admin)
   useEffect(() => {
     if (
