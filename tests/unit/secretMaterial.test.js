@@ -7,6 +7,7 @@ const path = require("path");
 const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   containsPrivateKeyMaterial,
+  looksPrivateKeyDer,
   looksPkcs12Bundle,
   redactPrivateKeyMaterial,
   redactGenericSecrets,
@@ -24,6 +25,24 @@ function fakePkcs12Buffer() {
   return Buffer.concat([
     Buffer.from([0x30, 0x5c, 0x02, 0x01, 0x03]),
     Buffer.alloc(89, 0),
+  ]);
+}
+
+function fakePkcs8PrivateKeyBuffer() {
+  const value = Buffer.alloc(96);
+  value[0] = 0x30;
+  value[1] = 0x5e;
+  value[2] = 0x02;
+  value[3] = 0x01;
+  value[4] = 0x00;
+  value[5] = 0x30;
+  return value;
+}
+
+function fakeCertificateDerBuffer() {
+  return Buffer.from([
+    0x30, 0x0a, 0x30, 0x08, 0x02, 0x01, 0x01, 0x30, 0x03, 0x06, 0x01,
+    0x2a,
   ]);
 }
 
@@ -125,6 +144,28 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
     assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
   });
 
+  it("detects base64-wrapped PKCS#8 DER private keys without PEM armor", () => {
+    const privateKeyDer = fakePkcs8PrivateKeyBuffer();
+    assert.strictEqual(looksPrivateKeyDer(privateKeyDer), true);
+    assert.strictEqual(
+      containsPrivateKeyMaterial(privateKeyDer.toString("base64")),
+      true,
+    );
+  });
+
+  it("detects hex-encoded private-key PEM blobs", () => {
+    const hexEncoded = Buffer.from(pem("EC PRIVATE KEY"), "utf8").toString(
+      "hex",
+    );
+    assert.strictEqual(containsPrivateKeyMaterial(hexEncoded), true);
+  });
+
+  it("does not confuse a DER certificate envelope with a private key", () => {
+    const certificateDer = fakeCertificateDerBuffer();
+    assert.strictEqual(looksPrivateKeyDer(certificateDer), false);
+    assert.strictEqual(containsPrivateKeyMaterial(certificateDer), false);
+  });
+
   it("detects key material under an innocent field name", () => {
     const payload = { note: "harmless", attachment: pem("EC PRIVATE KEY") };
     assert.strictEqual(containsPrivateKeyMaterial(payload), true);
@@ -212,6 +253,19 @@ describe("secretMaterial.redactPrivateKeyMaterial", () => {
     const wrapped = fakePkcs12Buffer().toString("base64");
     const out = redactPrivateKeyMaterial(wrapped);
     assert.strictEqual(out, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  });
+
+  it("redacts base64-wrapped DER private keys and hex-encoded PEM blobs", () => {
+    const der = fakePkcs8PrivateKeyBuffer().toString("base64");
+    const hex = Buffer.from(pem("RSA PRIVATE KEY"), "utf8").toString("hex");
+    assert.strictEqual(
+      redactPrivateKeyMaterial(der),
+      PRIVATE_KEY_REDACTION_PLACEHOLDER,
+    );
+    assert.strictEqual(
+      redactPrivateKeyMaterial(hex),
+      PRIVATE_KEY_REDACTION_PLACEHOLDER,
+    );
   });
 
   it("leaves non-key strings unchanged", () => {

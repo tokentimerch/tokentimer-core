@@ -6,8 +6,10 @@ const path = require("node:path");
 
 const {
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+  CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
+  CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
@@ -121,17 +123,32 @@ function createMemoryClient() {
         const row = jobs.find(
           (item) => item.workspace_id === params[0] && item.id === params[1],
         );
-        if (!row) return { rows: [] };
+        if (!row || row.status !== params[9]) return { rows: [] };
         row.status = params[2];
         if (params[3]) row.result_metadata = json(params[4]);
-        row.error_code = params[5];
-        row.error_message = params[6];
+        if (params[5]) row.error_code = params[6];
+        if (params[7]) row.error_message = params[8];
         row.updated_at = now();
+        if (
+          [
+            "pending_approval",
+            "approved",
+            "pending",
+            "claimed",
+            "running",
+          ].includes(params[2])
+        ) {
+          row.queued_at = row.queued_at || now();
+        }
         if (params[2] === "running") row.started_at = row.started_at || now();
-        if (params[2] === "succeeded" || params[2] === "failed") {
+        if (
+          ["succeeded", "failed", "blocked"].includes(params[2])
+        ) {
           row.completed_at = row.completed_at || now();
         }
-        if (params[2] === "canceled") row.canceled_at = row.canceled_at || now();
+        if (params[2] === "cancelled") {
+          row.canceled_at = row.canceled_at || now();
+        }
         return { rows: [row] };
       }
 
@@ -234,7 +251,7 @@ describe("CertOps jobs service", () => {
 
     assert.equal(job.workspaceId, WORKSPACE_A);
     assert.equal(job.operation, "deploy");
-    assert.equal(job.status, "queued");
+    assert.equal(job.status, "pending");
     assert.equal(job.payload.target, "kubernetes/default/web-cert");
     assert.match(job.createdAt, /^2026-06-30T/);
     assertNoCustodyKeys(job);
@@ -308,6 +325,156 @@ describe("CertOps jobs service", () => {
         }),
       (error) => error?.code === CERTOPS_JOB_STATUS_INVALID,
     );
+
+    for (const staleStatus of ["queued", "canceled"]) {
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation: "renew",
+            status: staleStatus,
+            payload: { certificateId: "cert-1" },
+          }),
+        (error) => error?.code === CERTOPS_JOB_STATUS_INVALID,
+      );
+    }
+  });
+
+  it("enforces monotonic transitions and preserves terminal timestamps", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-1" },
+      status: "pending_approval",
+    });
+
+    const approved = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "approved",
+    });
+    const pending = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "pending",
+    });
+    const running = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "running",
+    });
+    const failed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+      errorCode: "DEPLOY_FAILED",
+      errorMessage: "The public deployment check failed",
+    });
+
+    assert.equal(approved.status, "approved");
+    assert.equal(pending.status, "pending");
+    assert.equal(running.status, "running");
+    assert.match(running.startedAt, /^2026-06-30T/);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.completedAt, /^2026-06-30T/);
+
+    await assert.rejects(
+      () =>
+        updateCertificateJobStatus({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          status: "running",
+        }),
+      (error) => error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID,
+    );
+
+    const replay = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+    });
+    assert.equal(replay.status, "failed");
+    assert.equal(replay.completedAt, failed.completedAt);
+    assert.equal(replay.errorCode, "DEPLOY_FAILED");
+    assert.equal(replay.errorMessage, "The public deployment check failed");
+  });
+
+  it("sets lifecycle timestamps from the initial canonical status", async () => {
+    const client = createMemoryClient();
+    const running = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-running" },
+      status: "running",
+    });
+    const blocked = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-blocked" },
+      status: "blocked",
+    });
+    const cancelled = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-cancelled" },
+      status: "cancelled",
+    });
+
+    assert.match(running.queuedAt, /^20/);
+    assert.match(running.startedAt, /^20/);
+    assert.match(blocked.completedAt, /^20/);
+    assert.match(cancelled.cancelledAt, /^20/);
+  });
+
+  it("preserves error fields unless explicitly changed", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-1" },
+      status: "running",
+    });
+
+    const failed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+      errorCode: "VALIDATION_FAILED",
+      errorMessage: "Public certificate validation failed",
+    });
+    const replay = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+    });
+    const cleared = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "failed",
+      errorCode: null,
+      errorMessage: "",
+    });
+
+    assert.equal(replay.errorCode, failed.errorCode);
+    assert.equal(replay.errorMessage, failed.errorMessage);
+    assert.equal(cleared.errorCode, null);
+    assert.equal(cleared.errorMessage, null);
   });
 
   it("appends and lists safe job log entries", async () => {
@@ -361,6 +528,18 @@ describe("CertOps jobs service", () => {
           workspaceId: WORKSPACE_A,
           operation: "renew",
           payload: { nested: { privateKeyPem: PRIVATE_KEY_PEM } },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          payload: { certificateId: "cert-1" },
+          resultMetadata: { apiKey: "not-allowed" },
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
     );
@@ -424,6 +603,95 @@ describe("CertOps jobs service", () => {
 
     assert.equal(second.id, first.id);
     assert.notEqual(otherWorkspace.id, first.id);
+
+    for (const change of [
+      { operation: "deploy" },
+      { payload: { certificateId: "cert-2" } },
+      { subjectType: "managed_certificate", subjectId: "cert-2" },
+      { source: "external" },
+      { status: "approved" },
+    ]) {
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation: "renew",
+            idempotencyKey: "idem-1",
+            payload: { certificateId: "cert-1" },
+            ...change,
+          }),
+        (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+      );
+    }
+  });
+
+  it("throws not found for missing or wrong-workspace status updates", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-1" },
+    });
+
+    for (const options of [
+      { workspaceId: WORKSPACE_A, jobId: "missing-job" },
+      { workspaceId: WORKSPACE_B, jobId: job.id },
+    ]) {
+      await assert.rejects(
+        () =>
+          updateCertificateJobStatus({
+            client,
+            ...options,
+            status: "running",
+          }),
+        (error) => error?.code === CERTOPS_JOB_NOT_FOUND,
+      );
+    }
+  });
+
+  it("rejects generic secret metadata while allowing public certificate metadata", async () => {
+    const client = createMemoryClient();
+    const publicMetadata = {
+      issuer: "TokenTimer Test CA",
+      fingerprintSha256:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      serialNumber: "01AF",
+      subject: "CN=example.com",
+      san: ["example.com"],
+      status: "valid",
+      source: "executor",
+      attempt: 1,
+    };
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: publicMetadata,
+      resultMetadata: publicMetadata,
+    });
+    assert.equal(job.payload.issuer, "TokenTimer Test CA");
+
+    for (const metadata of [
+      { apiKey: "not-allowed" },
+      { passphrase: "not-allowed" },
+      { authorization: "Bearer not-allowed" },
+      { note: "accessToken=not-allowed" },
+      { note: "clientSecret=not-allowed" },
+    ]) {
+      await assert.rejects(
+        () =>
+          appendCertificateJobLog({
+            client,
+            workspaceId: WORKSPACE_A,
+            jobId: job.id,
+            eventType: "job.progress",
+            metadata,
+          }),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
   });
 
   it("rejects log writes for missing or wrong-workspace jobs", async () => {

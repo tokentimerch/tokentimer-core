@@ -24,6 +24,11 @@ const certOpsRoutesSource = fs.readFileSync(
   path.join(repoRoot, "apps/api/routes/certops.js"),
   "utf8",
 );
+const {
+  JOB_STATUSES,
+  LOG_STATUSES,
+} = require("../../apps/api/services/certops/jobs.js");
+const { migrations } = require("../../apps/api/migrations/migrate.js");
 
 const FORBIDDEN_FIELD_FRAGMENTS = [
   "privatekey",
@@ -667,6 +672,24 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
+  it("keeps M2-A5 persistence statuses aligned with the v1.7 contract", () => {
+    const jobsMigration = migrations.find(
+      (migration) => migration.name === "certops_jobs_evidence_schema",
+    );
+    assert.ok(jobsMigration, "M2-A5 jobs migration must exist");
+    assert.deepEqual(JOB_STATUSES, PLAN_M2_JOB_STATUSES);
+    assert.deepEqual(LOG_STATUSES, PLAN_M2_JOB_STATUSES);
+    for (const stale of ["queued", "canceled"]) {
+      assert.equal(JOB_STATUSES.includes(stale), false);
+      assert.equal(LOG_STATUSES.includes(stale), false);
+      assert.equal(
+        jobsMigration.sql.includes(`'${stale}'`),
+        false,
+        `${stale} must not remain in M2-A5 migration checks`,
+      );
+    }
+  });
+
   it("closes token OpenAPI skeletons around canonical M2 scopes", () => {
     const tokenListPath = openApiPathBlock(
       "/api/v1/workspaces/{id}/certops/tokens",
@@ -746,6 +769,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/jobs.js",
+      "apps/api/utils/secretMaterial.js",
       "tests/integration/certops-api-token-auth.test.js",
       "tests/integration/certops-api-tokens.test.js",
       "tests/integration/certops-jobs-evidence.test.js",
@@ -758,6 +782,7 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/unit/certops-jobs.test.js",
       "tests/unit/certops-machine-token-rate-limit.test.js",
       "tests/unit/certops-migration.test.js",
+      "tests/unit/secretMaterial.test.js",
     ]);
     const unexpectedFiles = files.filter(
       (file) =>
@@ -791,6 +816,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/jobs.js",
+      "apps/api/utils/secretMaterial.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),
