@@ -505,6 +505,73 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("shares one rate-limit bucket per token across the aggregate and per-job route families (recorded A3 decision)", async () => {
+    // createCertOpsExecutorRouter builds a single rateLimitMiddleware
+    // instance and reuses it on all three executor routes; the limiter key
+    // has no route segment, so a token that exhausts its budget on one
+    // route is also blocked on the others within the same window. See
+    // plans/CERTOPS_EXECUTION_PLAN_2DEV.md task A3 for the recorded
+    // decision this test guards.
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-shared-bucket",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const eventsToken = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const app = buildExecutorApp({ rateLimitOptions: { windowMs: 60_000, max: 1 } });
+      const auth = `Bearer ${eventsToken.plaintextToken}`;
+
+      const aggregateRoute = "/api/v1/certops/executor/events";
+      const perJobEventRoute = `/api/v1/certops/jobs/${job.id}/events`;
+      const perJobEvidenceRoute = `/api/v1/certops/jobs/${job.id}/evidence`;
+
+      const first = await supertest(app)
+        .post(aggregateRoute)
+        .set("Authorization", auth)
+        .send(eventPayload({ workspaceId: workspaceA, jobId: job.id, eventType: "job.progress" }));
+      expect(first.status).to.equal(202);
+
+      // Same token, different route (per-job events): still blocked because
+      // the bucket is shared across the route family, not per-route.
+      const secondDifferentRoute = await supertest(app)
+        .post(perJobEventRoute)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.progress",
+          status: "running",
+          occurredAt: new Date().toISOString(),
+        });
+      expect(secondDifferentRoute.status).to.equal(429);
+      expect(secondDifferentRoute.body.code).to.equal(
+        "CERTOPS_MACHINE_RATE_LIMITED",
+      );
+
+      // And the third route in the family (per-job evidence) too.
+      const thirdDifferentRoute = await supertest(app)
+        .post(perJobEvidenceRoute)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          occurredAt: new Date().toISOString(),
+          evidence: [],
+        });
+      expect(thirdDifferentRoute.status).to.equal(429);
+      expect(thirdDifferentRoute.body.code).to.equal(
+        "CERTOPS_MACHINE_RATE_LIMITED",
+      );
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("is CSRF-exempt only for the executor machine-token namespace", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-csrf",
@@ -818,6 +885,61 @@ describe("CertOps executor event ingestion", function () {
       expect(logs.items.map((item) => item.eventType)).to.include("job.started");
       expect(logs.items[0].createdByApiTokenId).to.equal(token.token.id);
       expectNoSensitiveValues(started.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("derives job/log status from eventType, not the client-supplied status field", async () => {
+    // The `status` field is validated as a well-formed status string, but the
+    // resulting job/log status is looked up from `eventType` via
+    // LOG_STATUS_BY_EVENT_TYPE / JOB_STATUS_BY_EVENT_TYPE. A client sending a
+    // mismatched status must not be able to force a different outcome.
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-status-mismatch",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const route = "/api/v1/certops/executor/events";
+
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const response = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "job.completed",
+            // Mismatched on purpose: a well-formed but contradictory status.
+            status: "failed",
+          }),
+        );
+      expect(response.status).to.equal(202);
+      // eventType (job.completed) is authoritative, not the client's status.
+      expect(response.body.status).to.equal("succeeded");
+      expect(
+        (await getCertificateJobById({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        })).status,
+      ).to.equal("succeeded");
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const logEntry = logs.items.find(
+        (item) => item.eventType === "job.completed",
+      );
+      expect(logEntry).to.exist;
+      expect(logEntry.status).to.equal("succeeded");
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

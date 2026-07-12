@@ -269,6 +269,18 @@ describe("CertOps API tokens", function () {
       expect(JSON.stringify(persisted.rows[0])).to.not.include(
         created.plaintextToken,
       );
+
+      // Verify status is surfaced as 'expired' (not 'active') on list/get,
+      // per the plan requirement that expired tokens are surfaced honestly.
+      const fetched = await getApiTokenById({
+        workspaceId: workspaceA,
+        tokenId: created.token.id,
+      });
+      expect(fetched.status).to.equal("expired");
+
+      const listed = await listApiTokens({ workspaceId: workspaceA });
+      const listedExpired = listed.find((t) => t.id === created.token.id);
+      expect(listedExpired.status).to.equal("expired");
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

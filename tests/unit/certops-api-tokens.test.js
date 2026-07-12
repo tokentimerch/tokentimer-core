@@ -348,6 +348,32 @@ describe("CertOps API token service", () => {
     assert.equal(client.rows[0].last_used_at, null);
   });
 
+  it("surfaces expired tokens as status 'expired' on list/get, never 'active' past expiresAt", async () => {
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Expired Listing",
+      scopes: ["certops:events:write"],
+      expiresAt: date(-60_000),
+    });
+
+    // The DB row itself keeps status='active' (no background job flips it);
+    // callers must never see 'active' surfaced past expiresAt though.
+    assert.equal(client.rows[0].status, "active");
+
+    const fetched = await getApiTokenById({
+      client,
+      workspaceId: WORKSPACE_A,
+      tokenId: created.token.id,
+    });
+    assert.equal(fetched.status, "expired");
+
+    const listed = await listApiTokens({ client, workspaceId: WORKSPACE_A });
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].status, "expired");
+  });
+
   it("enforces workspace binding", async () => {
     const client = createMemoryClient();
     const created = await createApiToken({

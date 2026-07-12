@@ -20,6 +20,11 @@ admin role, `/certops/operations` page, "Machine API tokens" panel.
   - `certops:events:write` - report job lifecycle events.
   - `certops:evidence:write` - attach evidence records (separate from
     `certops:events:write`; an events-only token cannot attach evidence).
+  - M2 ships only the three write/report routes below (all `POST`); no
+    machine-token-authenticated read route exists yet, so `certops:read` and
+    `certops:jobs:read` are accepted and stored but not yet enforced by any
+    route. They are forward-compatible with a machine-token read API planned
+    for a later milestone.
 - Tokens can have an optional expiry and are revocable at any time from the
   same panel. Revoking breaks any executor using that token immediately.
 - Machine-token auth has no session dependency and is not subject to CSRF
@@ -55,9 +60,17 @@ Requires `certops:events:write`. Body:
   with a different payload returns 409 `CERTOPS_EXECUTOR_EVENT_CONFLICT`.
 - Job status transitions are monotonic. Once a job reaches a terminal status
   (`succeeded`, `failed`, `rejected`, `blocked`, `cancelled`), later events
-  cannot reopen it; out-of-order/late events are accepted (200) but do not
+  cannot reopen it; out-of-order/late events are accepted (202) but do not
   change the stored status.
 - Unknown top-level fields are rejected, not silently dropped.
+- Every event must reference an existing `jobId`; TokenTimer creates jobs
+  (not the executor). Posting to an unknown `jobId` returns 404
+  `CERTOPS_JOB_NOT_FOUND`.
+- If the body's `workspaceId`/`jobId` conflicts with the per-job route's path
+  parameters, the request is rejected with 403
+  `CERTOPS_EXECUTOR_WORKSPACE_MISMATCH`. Evidence-mode requests sent with any
+  `eventType` other than `evidence.attached` are rejected with 400
+  `CERTOPS_EXECUTOR_EVENT_TYPE_INVALID`.
 
 ## 3. Attach evidence
 

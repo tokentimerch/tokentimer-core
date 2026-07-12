@@ -2,6 +2,7 @@ const { loadRootEnv } = require("../../scripts/load-root-env");
 
 loadRootEnv();
 
+const crypto = require("crypto");
 const { expect } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations } = requireMigrateModule();
@@ -9,6 +10,9 @@ const {
   getCertificateJobById,
   listCertificateJobLog,
 } = require("../../apps/api/services/certops/jobs");
+const {
+  listCertificateEvidence,
+} = require("../../apps/api/services/certops/evidence");
 const {
   buildExecutorApp,
   cleanupWorkspacePair,
@@ -18,6 +22,9 @@ const {
   createWorkspacePair,
   revokeApiToken,
 } = require("./fake-executor");
+
+const PRIVATE_KEY_PEM =
+  "-----BEGIN RSA PRIVATE KEY-----\nRkFLRS1OT1QtQS1SRUFMLUtFWQ==\n-----END RSA PRIVATE KEY-----";
 
 function expectNoSensitiveValues(body, rawToken) {
   const serialized = JSON.stringify(body);
@@ -217,6 +224,185 @@ describe("CertOps fake executor (B3)", function () {
         jobId: job.id,
       });
       expect(logs.items.length).to.equal(1);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("attaches evidence through the harness and lists it back sanitized", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-fake-executor-evidence",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const executor = createFakeExecutor({
+        app,
+        workspaceId: workspaceA,
+        plaintextToken: token.plaintextToken,
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      const attached = await executor.attachEvidence(job.id, [
+        {
+          schemaVersion: 1,
+          evidenceId: `evidence-${crypto.randomUUID()}`,
+          jobId: job.id,
+          workspaceId: workspaceA,
+          certificateId: "cert-1",
+          eventType: "certificate.observed",
+          source: "executor",
+          observedAt: new Date().toISOString(),
+          summary: "Observed public certificate fingerprint via harness",
+          metadata: [{ name: "issuer", value: "TokenTimer Test CA" }],
+        },
+      ]);
+
+      expect(attached.status).to.equal(202);
+      expectNoSensitiveValues(attached.body, token.plaintextToken);
+
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidence.items).to.have.length(1);
+      expect(evidence.items[0]).to.include({
+        evidenceType: "certificate.observed",
+        subjectId: "cert-1",
+        createdByApiTokenId: token.token.id,
+      });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("redacts secret-looking metadata sent through the harness", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-fake-executor-redaction",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const executor = createFakeExecutor({
+        app,
+        workspaceId: workspaceA,
+        plaintextToken: token.plaintextToken,
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      const started = await executor.started(job.id, {
+        message: "password=swordfish",
+        metadata: [{ name: "credential", value: "abc" }],
+      });
+
+      expect(started.status).to.equal(202);
+      expectNoSensitiveValues(started.body, token.plaintextToken);
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(logs.items[0].message).to.equal("[REDACTED]");
+      expect(logs.items[0].metadata.redactionApplied).to.equal(true);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("rejects a private-key upload attempt through the harness before persistence", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-fake-executor-keyupload",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const executor = createFakeExecutor({
+        app,
+        workspaceId: workspaceA,
+        plaintextToken: token.plaintextToken,
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      const beforeLogs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const rejected = await executor.started(job.id, {
+        message: PRIVATE_KEY_PEM,
+      });
+
+      expect(rejected.status).to.equal(422);
+      expect(rejected.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+      expectNoSensitiveValues(rejected.body, token.plaintextToken);
+
+      const afterLogs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(afterLogs.items.length).to.equal(beforeLogs.items.length);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("rejects an evidence attempt through the harness when the token lacks evidence:write scope", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-fake-executor-wrongscope",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        // Deliberately missing certops:evidence:write.
+        scopes: ["certops:events:write"],
+      });
+      const executor = createFakeExecutor({
+        app,
+        workspaceId: workspaceA,
+        plaintextToken: token.plaintextToken,
+      });
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      const denied = await executor.attachEvidence(job.id, [
+        {
+          schemaVersion: 1,
+          evidenceId: `evidence-${crypto.randomUUID()}`,
+          jobId: job.id,
+          workspaceId: workspaceA,
+          certificateId: "cert-1",
+          eventType: "certificate.observed",
+          source: "executor",
+          observedAt: new Date().toISOString(),
+          summary: "Should be denied before reaching persistence",
+        },
+      ]);
+
+      expect(denied.status).to.equal(403);
+      expect(denied.body.code).to.equal("CERTOPS_API_TOKEN_SCOPE_DENIED");
+      expectNoSensitiveValues(denied.body, token.plaintextToken);
+
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidence.items).to.have.length(0);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

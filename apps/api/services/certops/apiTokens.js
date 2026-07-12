@@ -206,6 +206,19 @@ function hasRequiredScopes(grantedScopes, requiredScopes) {
   );
 }
 
+function isPastExpiry(expiresAt) {
+  if (!expiresAt) return false;
+  const expires = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  return !Number.isNaN(expires.getTime()) && expires.getTime() <= Date.now();
+}
+
+function displayStatusFromRow(row) {
+  if (row.status === "active" && isPastExpiry(row.expires_at)) {
+    return "expired";
+  }
+  return row.status;
+}
+
 function tokenMetadataFromRow(row) {
   if (!row) return null;
   return {
@@ -214,7 +227,7 @@ function tokenMetadataFromRow(row) {
     name: row.name,
     tokenPrefix: row.token_prefix,
     scopes: scopesFromRow(row),
-    status: row.status,
+    status: displayStatusFromRow(row),
     expiresAt: dateToIso(row.expires_at),
     lastUsedAt: dateToIso(row.last_used_at),
     revokedAt: dateToIso(row.revoked_at),

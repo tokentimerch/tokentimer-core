@@ -4392,7 +4392,7 @@ components:
               - certops:evidence:write
         status:
           type: string
-          enum: [active, revoked]
+          enum: [active, revoked, expired]
         expiresAt:
           type: string
           format: date-time
