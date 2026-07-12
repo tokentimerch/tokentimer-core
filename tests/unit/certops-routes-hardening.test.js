@@ -88,9 +88,12 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
+      "GET /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
+      "POST /api/v1/workspaces/:id/certops/tokens",
+      "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ].sort());
 
     assert.equal(routesSource.includes("/api/v1/certops/executor"), false);
@@ -115,6 +118,9 @@ describe("CertOps route hardening", () => {
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
+      ["get", "/api/v1/workspaces/:id/certops/tokens"],
+      ["post", "/api/v1/workspaces/:id/certops/tokens"],
+      ["post", "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke"],
     ]) {
       assert.match(routeBlock(method, routePath), /requireCertOpsEnabled/);
     }
@@ -170,6 +176,8 @@ describe("CertOps route hardening", () => {
       "/api/v1/workspaces/:id/certops/certificates",
       "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "/api/v1/workspaces/:id/certops/imports",
+      "/api/v1/workspaces/:id/certops/tokens",
+      "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ]) {
       const block = routeBlock("post", routePath);
       assert.ok(
@@ -244,6 +252,12 @@ describe("CertOps route hardening", () => {
     assertOpenApiRoute(
       "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
       "GET",
+    );
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/tokens", "GET");
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/tokens", "POST");
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+      "POST",
     );
   });
 });
