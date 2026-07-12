@@ -3353,11 +3353,15 @@ paths:
       tags: [CertOps]
       summary: List CertOps jobs
       operationId: listCertOpsJobs
-      description: Returns public CertOps job summaries for the workspace. Private key material, raw executor output, token hashes, and credentials are never returned.
+      description: >-
+        Returns paginated public CertOps job summaries for the workspace. Consumers
+        must follow pagination.limit and pagination.offset; long job histories can
+        require multiple requests. Private key material, raw executor output, token
+        hashes, and credentials are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
         - in: query
           name: status
           schema:
@@ -3398,6 +3402,15 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          description: A filter contained private-key or forbidden secret material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
@@ -3443,7 +3456,10 @@ paths:
       tags: [CertOps]
       summary: List CertOps job log entries
       operationId: listCertOpsJobLog
-      description: Returns sanitized timeline entries for one workspace-scoped CertOps job.
+      description: >-
+        Returns paginated sanitized timeline entries for one workspace-scoped
+        CertOps job. Consumers must follow pagination.limit and pagination.offset;
+        long job histories can require multiple requests.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3452,8 +3468,8 @@ paths:
           schema:
             type: string
             format: uuid
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: Job log list
@@ -3483,7 +3499,12 @@ paths:
       tags: [CertOps]
       summary: List CertOps job evidence
       operationId: listCertOpsJobEvidence
-      description: Returns sanitized public evidence metadata for one workspace-scoped CertOps job. Raw secrets, private keys, token hashes, and key-bearing artifacts are never returned.
+      description: >-
+        Returns paginated sanitized public evidence metadata for one
+        workspace-scoped CertOps job. Consumers must follow pagination.limit and
+        pagination.offset; long job histories can require multiple requests. Raw
+        secrets, private keys, token hashes, and key-bearing artifacts are never
+        returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3492,8 +3513,8 @@ paths:
           schema:
             type: string
             format: uuid
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: Job evidence list
@@ -3818,6 +3839,27 @@ components:
       schema:
         type: integer
         minimum: 0
+    certOpsReadLimitParam:
+      in: query
+      name: limit
+      description: >-
+        Number of items returned. Defaults to 50 when omitted or nonnumeric,
+        is limited to 100, and values below 1 are normalized to 1.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    certOpsReadOffsetParam:
+      in: query
+      name: offset
+      description: >-
+        Number of items skipped before the page begins. Defaults to 0 when
+        omitted or nonnumeric; negative values are normalized to 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
     auditSinceParam:
       in: query
       name: since

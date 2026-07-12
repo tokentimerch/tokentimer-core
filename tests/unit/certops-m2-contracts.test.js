@@ -307,6 +307,27 @@ function openApiComponentBlock(componentName) {
   return openApiSource.slice(start, end);
 }
 
+function openApiParameterBlock(parameterName) {
+  const parametersStart = openApiSource.indexOf("\n  parameters:");
+  assert.notEqual(parametersStart, -1, "OpenAPI parameters section missing");
+
+  const marker = `    ${parameterName}:`;
+  const start = openApiSource.indexOf(marker, parametersStart);
+  assert.notEqual(start, -1, `${parameterName} missing from OpenAPI`);
+
+  const remainingParameters = openApiSource.slice(start + marker.length);
+  const nextParameterMatch = remainingParameters.match(/\n    [^\s]/);
+  const nextParameter = nextParameterMatch
+    ? start + marker.length + nextParameterMatch.index
+    : -1;
+  const schemasStart = openApiSource.indexOf("\n  schemas:", start);
+  const end = [nextParameter, schemasStart]
+    .filter((index) => index !== -1)
+    .sort((left, right) => left - right)[0];
+  assert.notEqual(end, undefined, `${parameterName} OpenAPI block end not found`);
+  return openApiSource.slice(start, end);
+}
+
 function openApiComponentEnum(componentName) {
   const block = openApiComponentBlock(componentName);
   const lines = block.split(/\r?\n/);
@@ -814,6 +835,62 @@ describe("CertOps M2 contract skeletons", () => {
         false,
         `${oldScope} must not appear in the M2-A1 OpenAPI`,
       );
+    }
+  });
+
+  it("documents M2-A7 scanner rejection, pagination, and the strict job detail shape", () => {
+    const listPath = openApiPathBlock("/api/v1/workspaces/{id}/certops/jobs");
+    const logPath = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log",
+    );
+    const evidencePath = openApiPathBlock(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
+    );
+    const limitParameter = openApiParameterBlock("certOpsReadLimitParam");
+    const offsetParameter = openApiParameterBlock("certOpsReadOffsetParam");
+    const jobDetail = openApiComponentBlock("CertOpsJobDetail");
+
+    for (const responseCode of ["400", "401", "403", "404", "422", "500"]) {
+      assert.match(listPath, new RegExp(`\\"${responseCode}\\":`));
+    }
+    assert.match(
+      listPath,
+      /"422":\r?\n          description: A filter contained private-key or forbidden secret material\r?\n          content:\r?\n            application\/json:\r?\n              schema:\r?\n                \$ref: "#\/components\/schemas\/ErrorResponse"/,
+    );
+    assert.match(listPath, /PRIVATE_KEY_MATERIAL_REJECTED/);
+
+    for (const pathBlock of [listPath, logPath, evidencePath]) {
+      assert.match(
+        pathBlock,
+        /\$ref: "#\/components\/parameters\/certOpsReadLimitParam"/,
+      );
+      assert.match(
+        pathBlock,
+        /\$ref: "#\/components\/parameters\/certOpsReadOffsetParam"/,
+      );
+      assert.match(pathBlock, /pagination\.limit and\s+pagination\.offset/);
+    }
+    assert.match(limitParameter, /minimum: 1/);
+    assert.match(limitParameter, /maximum: 100/);
+    assert.match(limitParameter, /default: 50/);
+    assert.match(offsetParameter, /minimum: 0/);
+    assert.match(offsetParameter, /default: 0/);
+
+    assert.doesNotMatch(jobDetail, /\ballOf:/);
+    assert.match(jobDetail, /type: object/);
+    assert.match(jobDetail, /additionalProperties: false/);
+    for (const property of [
+      "id",
+      "workspaceId",
+      "operation",
+      "status",
+      "source",
+      "payload",
+      "resultMetadata",
+      "errorCode",
+      "errorMessage",
+    ]) {
+      assert.match(jobDetail, new RegExp(`\\n        ${property}:`));
     }
   });
 
