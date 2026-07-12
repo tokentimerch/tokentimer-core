@@ -13,6 +13,7 @@ const {
   requireCertOpsEnabled,
 } = require("../middleware/require-certops-enabled");
 const { logger } = require("../utils/logger");
+const { writeAudit } = require("../services/audit");
 const {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
 } = require("../services/certops/apiTokens");
@@ -37,12 +38,12 @@ const {
   createCertificateEvidence,
 } = require("../services/certops/evidence");
 const {
-  CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT,
+  CERTOPS_EXECUTOR_EVENT_CONFLICT,
   ingestExecutorEvent,
 } = require("../services/certops/executorEvents");
 const {
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
-  containsPrivateKeyMaterial,
+  assertNoPrivateKeyMaterial,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
   redactGenericSecretsWithReport,
@@ -56,6 +57,8 @@ const CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH =
 const CERTOPS_EXECUTOR_JOB_REQUIRED = "CERTOPS_EXECUTOR_JOB_REQUIRED";
 const CERTOPS_EXECUTOR_WORKSPACE_MISMATCH =
   "CERTOPS_EXECUTOR_WORKSPACE_MISMATCH";
+const CERTOPS_SECURITY_AUDIT_UNAVAILABLE =
+  "CERTOPS_SECURITY_AUDIT_UNAVAILABLE";
 
 const EXECUTOR_EVENT_SCOPE = "certops:events:write";
 const EXECUTOR_EVIDENCE_SCOPE = "certops:evidence:write";
@@ -221,6 +224,15 @@ function noteRedaction(tracker, fields = []) {
   if (fields.length === 0) tracker.fields.add("generic");
 }
 
+function genericSecretCategory(fieldName) {
+  const normalized = String(fieldName || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (normalized.includes("authorization")) return "authorization";
+  if (normalized.includes("cookie")) return "cookie";
+  return "generic-secret";
+}
+
 function mergeRedactionReport(tracker, report, fallbackField) {
   if (!tracker || !report?.redactionApplied) return;
   tracker.count += report.redactionCount || 1;
@@ -231,7 +243,7 @@ function mergeRedactionReport(tracker, report, fallbackField) {
     tracker.fields.add(fallbackField || "generic");
     return;
   }
-  for (const _field of fields) tracker.fields.add(fallbackField || "generic");
+  for (const field of fields) tracker.fields.add(field);
 }
 
 function redactionMetadata(tracker) {
@@ -243,28 +255,8 @@ function redactionMetadata(tracker) {
   };
 }
 
-function rejectPrivateKeyMaterial(value, depth = 0, seen = new WeakSet()) {
-  if (depth > 12) throw privateKeyMaterialError();
-  if (containsPrivateKeyMaterial(value)) throw privateKeyMaterialError();
-  if (value === null || value === undefined) return;
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return;
-  }
-  if (Buffer.isBuffer(value)) throw privateKeyMaterialError();
-  if (Array.isArray(value)) {
-    for (const item of value) rejectPrivateKeyMaterial(item, depth + 1, seen);
-    return;
-  }
-  if (typeof value === "object") {
-    if (seen.has(value)) throw privateKeyMaterialError();
-    seen.add(value);
-    for (const [key, item] of Object.entries(value)) {
-      if (fieldNameLooksPrivateKeyMaterial(key)) throw privateKeyMaterialError();
-      rejectPrivateKeyMaterial(item, depth + 1, seen);
-    }
-    seen.delete(value);
-  }
+function rejectPrivateKeyMaterial(value) {
+  assertNoPrivateKeyMaterial(value);
 }
 
 function rejectUnknownTopLevelFields(body) {
@@ -393,7 +385,12 @@ function assertEventStatusMatch(eventType, status) {
   }
 }
 
-function metadataEntriesToObject(entries, fieldName, tracker = null) {
+function metadataEntriesToObject(
+  entries,
+  fieldName,
+  tracker = null,
+  idempotencyMetadata = null,
+) {
   if (entries === undefined || entries === null) return {};
   if (!Array.isArray(entries)) {
     throw executorEventError(
@@ -473,7 +470,10 @@ function metadataEntriesToObject(entries, fieldName, tracker = null) {
     if (fieldNameLooksGenericSecret(name)) {
       metadata[`redactedMetadata${index + 1}`] =
         GENERIC_SECRET_REDACTION_PLACEHOLDER;
-      noteRedaction(tracker, [fieldName]);
+      noteRedaction(tracker, [genericSecretCategory(name)]);
+      if (idempotencyMetadata) {
+        idempotencyMetadata[name] = GENERIC_SECRET_REDACTION_PLACEHOLDER;
+      }
       return;
     }
 
@@ -483,12 +483,18 @@ function metadataEntriesToObject(entries, fieldName, tracker = null) {
     }
 
     metadata[name] = normalizedValue;
+    if (idempotencyMetadata) idempotencyMetadata[name] = normalizedValue;
   });
 
   return normalizePublicObject(metadata, fieldName);
 }
 
-function eventMetadataFromBody(body, occurredAt, tracker = createRedactionTracker()) {
+function eventMetadataFromBody(
+  body,
+  occurredAt,
+  tracker = createRedactionTracker(),
+  idempotencyMetadata = null,
+) {
   const metadata = {
     executorEventId: body.eventId,
     executorEventType: body.eventType,
@@ -504,7 +510,12 @@ function eventMetadataFromBody(body, occurredAt, tracker = createRedactionTracke
     if (value) metadata[targetKey] = value;
   }
 
-  const entries = metadataEntriesToObject(body.metadata, "metadata", tracker);
+  const entries = metadataEntriesToObject(
+    body.metadata,
+    "metadata",
+    tracker,
+    idempotencyMetadata,
+  );
   return normalizePublicObject(
     {
       ...metadata,
@@ -613,7 +624,7 @@ function normalizeArtifactRefs(value, tracker = null) {
   });
 }
 
-function evidenceMetadataFromItem(item) {
+function evidenceMetadataFromItem(item, idempotencyMetadata = null) {
   const tracker = createRedactionTracker();
   const metadata = {};
   for (const [targetKey, sourceKey] of [
@@ -625,7 +636,10 @@ function evidenceMetadataFromItem(item) {
     const maxLength =
       sourceKey === "summary" ? 1024 : sourceKey === "fingerprintSha256" ? 64 : 128;
     const value = optionalPublicText(item[sourceKey], sourceKey, maxLength, tracker);
-    if (value) metadata[targetKey] = value;
+    if (value) {
+      metadata[targetKey] = value;
+      if (idempotencyMetadata) idempotencyMetadata[targetKey] = value;
+    }
   }
 
   for (const [targetKey, sourceKey] of [
@@ -635,15 +649,28 @@ function evidenceMetadataFromItem(item) {
     ["targetId", "targetId"],
   ]) {
     const value = optionalPublicId(item[sourceKey], sourceKey);
-    if (value) metadata[targetKey] = value;
+    if (value) {
+      metadata[targetKey] = value;
+      if (idempotencyMetadata) idempotencyMetadata[targetKey] = value;
+    }
   }
 
   const artifactRefs = normalizeArtifactRefs(item.artifactRefs, tracker);
   if (artifactRefs !== undefined) {
     metadata.artifactRefs = artifactRefs;
+    if (idempotencyMetadata) idempotencyMetadata.artifactRefs = artifactRefs;
   }
 
-  const entries = metadataEntriesToObject(item.metadata, "evidence.metadata", tracker);
+  const customMetadata = {};
+  const entries = metadataEntriesToObject(
+    item.metadata,
+    "evidence.metadata",
+    tracker,
+    customMetadata,
+  );
+  if (idempotencyMetadata && Object.keys(customMetadata).length > 0) {
+    idempotencyMetadata.metadata = customMetadata;
+  }
   return normalizePublicObject(
     {
       ...metadata,
@@ -678,6 +705,43 @@ function evidenceItemsFromBody(body) {
 
     rejectPrivateKeyMaterial(item);
     rejectUnknownEvidenceItemFields(item);
+    if (item.schemaVersion !== undefined && item.schemaVersion !== 1) {
+      throw executorEventError(
+        "evidence.schemaVersion is invalid",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+    const hasItemJobId = Object.prototype.hasOwnProperty.call(item, "jobId");
+    const hasItemWorkspaceId = Object.prototype.hasOwnProperty.call(
+      item,
+      "workspaceId",
+    );
+    const itemJobId = hasItemJobId
+      ? requiredUuid(item.jobId, "evidence.jobId", CERTOPS_EXECUTOR_EVENT_INVALID)
+      : body.jobId;
+    const itemWorkspaceId = hasItemWorkspaceId
+      ? requiredUuid(
+          item.workspaceId,
+          "evidence.workspaceId",
+          CERTOPS_EXECUTOR_EVENT_INVALID,
+        )
+      : body.workspaceId;
+    if (itemJobId !== body.jobId || itemWorkspaceId !== body.workspaceId) {
+      throw executorEventError(
+        "Evidence item context does not match the executor event",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
+    if (
+      item.redactionApplied !== undefined &&
+      item.redactionApplied !== null &&
+      typeof item.redactionApplied !== "boolean"
+    ) {
+      throw executorEventError(
+        "evidence.redactionApplied is invalid",
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
     const evidenceType = requiredTrimmedString(
       item.eventType,
       "evidence.eventType",
@@ -685,13 +749,129 @@ function evidenceItemsFromBody(body) {
     );
     rejectPrivateKeyMaterial(evidenceType);
     const subject = evidenceSubjectFromItem(item);
+    const idempotencyMetadata = {};
+    const metadata = evidenceMetadataFromItem(item, idempotencyMetadata);
+    const observedAt = normalizeOccurredAt(item.observedAt || body.occurredAt);
     return {
       evidenceType,
       subjectType: subject.subjectType,
       subjectId: subject.subjectId,
-      metadata: evidenceMetadataFromItem(item),
-      observedAt: item.observedAt || body.occurredAt,
+      metadata,
+      observedAt,
+      idempotency: {
+        schemaVersion: item.schemaVersion || 1,
+        evidenceId: idempotencyMetadata.evidenceId || null,
+        jobId: itemJobId,
+        workspaceId: itemWorkspaceId,
+        certificateId: idempotencyMetadata.certificateId || null,
+        certificateInstanceId:
+          idempotencyMetadata.certificateInstanceId || null,
+        targetId: idempotencyMetadata.targetId || null,
+        eventType: evidenceType,
+        source: idempotencyMetadata.source || null,
+        status: idempotencyMetadata.status || null,
+        observedAt,
+        fingerprintSha256:
+          idempotencyMetadata.fingerprintSha256 || null,
+        summary: idempotencyMetadata.summary || null,
+        metadata: idempotencyMetadata.metadata || {},
+        artifactRefs: idempotencyMetadata.artifactRefs || [],
+        redactionApplied:
+          typeof item.redactionApplied === "boolean"
+            ? item.redactionApplied
+            : null,
+      },
     };
+  });
+}
+
+function executorEventIdempotencyPayload(event) {
+  return {
+    schemaVersion: event.schemaVersion,
+    eventId: event.eventId,
+    jobId: event.jobId,
+    workspaceId: event.workspaceId,
+    certificateId: event.certificateId,
+    executorId: event.executorId,
+    status: event.status,
+    eventType: event.eventType,
+    occurredAt: event.occurredAt,
+    message: event.message,
+    metadata: event.clientMetadata,
+    evidence: event.evidence.map((item) => ({
+      schemaVersion: item.idempotency.schemaVersion,
+      evidenceId: item.idempotency.evidenceId,
+      jobId: item.idempotency.jobId,
+      workspaceId: item.idempotency.workspaceId,
+      certificateId: item.idempotency.certificateId,
+      certificateInstanceId: item.idempotency.certificateInstanceId,
+      targetId: item.idempotency.targetId,
+      eventType: item.idempotency.eventType,
+      source: item.idempotency.source,
+      status: item.idempotency.status,
+      observedAt: item.idempotency.observedAt,
+      fingerprintSha256: item.idempotency.fingerprintSha256,
+      summary: item.idempotency.summary,
+      metadata: item.idempotency.metadata,
+      artifactRefs: item.idempotency.artifactRefs,
+      redactionApplied: item.idempotency.redactionApplied,
+    })),
+  };
+}
+
+function executorEventRedactionSummary(event) {
+  let redactionCount = 0;
+  const redactedFields = new Set();
+  for (const metadata of [
+    event.metadata,
+    ...event.evidence.map((item) => item.metadata),
+  ]) {
+    if (!metadata?.redactionApplied) continue;
+    redactionCount += Number.isInteger(metadata.redactionCount)
+      ? metadata.redactionCount
+      : 1;
+    for (const field of metadata.redactedFields || []) {
+      if (typeof field === "string" && field.length <= 64) {
+        redactedFields.add(field);
+      }
+    }
+  }
+
+  return {
+    redactionApplied: redactionCount > 0,
+    redactionCount,
+    redactedFields: Array.from(redactedFields).sort(),
+  };
+}
+
+async function writeExecutorAudit({
+  client = null,
+  workspaceId,
+  action,
+  metadata,
+}) {
+  await writeAudit({
+    client,
+    actorUserId: null,
+    subjectUserId: null,
+    action,
+    targetType: "certificate_job",
+    targetId: null,
+    workspaceId,
+    metadata,
+  });
+}
+
+async function recordExecutorKeyMaterialRejection(req) {
+  await writeExecutorAudit({
+    workspaceId: req.apiToken?.workspaceId || null,
+    action: "CERTOPS_KEY_MATERIAL_REJECTED",
+    metadata: {
+      code: PRIVATE_KEY_MATERIAL_REJECTED,
+      method: req.method || null,
+      path: "/api/v1/certops/executor/events",
+      apiTokenId: req.apiToken?.id || null,
+    },
   });
 }
 
@@ -741,17 +921,32 @@ function normalizeExecutorEventBody(body, apiToken) {
   );
   const occurredAt = normalizeOccurredAt(body.occurredAt);
   const tracker = createRedactionTracker();
+  const message = optionalPublicText(body.message, "message", 1024, tracker);
+  const clientMetadata = {};
+  const metadata = eventMetadataFromBody(
+    body,
+    occurredAt,
+    tracker,
+    clientMetadata,
+  );
+  const evidence = evidenceItemsFromBody(body);
 
   return {
+    schemaVersion: 1,
     eventId,
     eventType,
     jobId,
-    message: optionalPublicText(body.message, "message", 1024, tracker),
+    workspaceId,
+    certificateId: metadata.certificateId || null,
+    executorId: metadata.executorId || null,
+    status,
+    message,
     occurredAt,
     logStatus: LOG_STATUSES_SET.has(status) ? status : null,
     jobStatus: JOB_STATUS_BY_EVENT_TYPE[eventType] || null,
-    metadata: eventMetadataFromBody(body, occurredAt, tracker),
-    evidence: evidenceItemsFromBody(body),
+    metadata,
+    clientMetadata,
+    evidence,
   };
 }
 
@@ -805,11 +1000,11 @@ function handleExecutorEventError(res, error) {
 
   if (
     error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID ||
-    error?.code === CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT
+    error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT
   ) {
     return res.status(409).json({
       error:
-        error.code === CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT
+        error.code === CERTOPS_EXECUTOR_EVENT_CONFLICT
           ? "Executor event conflicts with a previously accepted event"
           : "Executor event conflicts with the current certificate job status",
       code: error.code,
@@ -845,7 +1040,7 @@ async function executorEventsHandler(req, res) {
       workspaceId,
       jobId: event.jobId,
       eventId: event.eventId,
-      request: event,
+      request: executorEventIdempotencyPayload(event),
       apiTokenId: req.apiToken.id,
       process: async (client, executorEventRecord) => {
         const job = await getCertificateJobById({
@@ -877,7 +1072,15 @@ async function executorEventsHandler(req, res) {
           eventType: event.eventType,
           status: event.logStatus,
           message: event.message,
-          metadata: event.metadata,
+          metadata: {
+            ...event.metadata,
+            jobStatusTransitionApplied:
+              updatedJob.statusTransitionApplied ?? false,
+            jobStatusTransitionIgnored:
+              updatedJob.statusTransitionIgnored ?? false,
+            jobStatusTransitionIgnoredReason:
+              updatedJob.statusTransitionIgnoredReason || null,
+          },
           createdByApiTokenId: req.apiToken.id,
         });
 
@@ -887,6 +1090,46 @@ async function executorEventsHandler(req, res) {
           workspaceId,
           apiToken: req.apiToken,
         });
+
+        const safeAuditMetadata = {
+          apiTokenId: req.apiToken.id,
+          executorEventRecordId: executorEventRecord.id,
+          executorEventId: event.eventId,
+          eventType: event.eventType,
+          jobId: event.jobId,
+          logId: log.id,
+          status: updatedJob.status,
+          evidenceIds: evidence.map((item) => item.id),
+        };
+        await writeExecutorAudit({
+          client,
+          workspaceId,
+          action: "CERTOPS_EXECUTOR_EVENT_ACCEPTED",
+          metadata: safeAuditMetadata,
+        });
+        if (evidence.length > 0) {
+          await writeExecutorAudit({
+            client,
+            workspaceId,
+            action: "CERTOPS_EVIDENCE_ACCEPTED",
+            metadata: safeAuditMetadata,
+          });
+        }
+
+        const redaction = executorEventRedactionSummary(event);
+        if (redaction.redactionApplied) {
+          await writeExecutorAudit({
+            client,
+            workspaceId,
+            action: "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
+            metadata: {
+              ...safeAuditMetadata,
+              redactionApplied: true,
+              redactionCount: redaction.redactionCount,
+              redactedFields: redaction.redactedFields,
+            },
+          });
+        }
 
         const response = {
           ok: true,
@@ -908,6 +1151,23 @@ async function executorEventsHandler(req, res) {
       idempotent: result.duplicate,
     });
   } catch (error) {
+    if (error?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
+      try {
+        await recordExecutorKeyMaterialRejection(req);
+      } catch (auditError) {
+        logger.warn("Failed to record CertOps key-material rejection audit", {
+          code: auditError?.code || null,
+          errorName: auditError?.name || null,
+          path: "/api/v1/certops/executor/events",
+          method: req.method || null,
+        });
+        return res.status(503).json({
+          error: "Security audit unavailable",
+          code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
+        });
+      }
+    }
+
     const handled = handleExecutorEventError(res, error);
     if (handled) return handled;
 
@@ -995,9 +1255,12 @@ module.exports._test = {
   EXECUTOR_EVENT_SCOPE,
   assertEventStatusMatch,
   evidenceMetadataFromItem,
+  executorEventIdempotencyPayload,
+  executorEventRedactionSummary,
   evidenceSubjectFromItem,
   handleExecutorEventError,
   metadataEntriesToObject,
+  mergeRedactionReport,
   normalizeExecutorEventBody,
   requestCarriesEvidence,
 };

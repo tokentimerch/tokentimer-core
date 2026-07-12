@@ -659,7 +659,7 @@ describe("CertOps M2 contract skeletons", () => {
   });
 
   it("keeps executor event requests closed and runtime top-level validation strict", () => {
-    const schemaBlock = openApiSchemaBlock("CertOpsExecutorEventRequest");
+    const schemaBlock = openApiComponentBlock("CertOpsExecutorEventRequest");
 
     assert.match(schemaBlock, /additionalProperties: false/);
     for (const fieldName of [
@@ -709,7 +709,7 @@ describe("CertOps M2 contract skeletons", () => {
   });
 
   it("keeps executor evidence metadata closed and runtime evidence-item validation strict", () => {
-    const schemaBlock = openApiSchemaBlock("CertOpsEvidenceMetadata");
+    const schemaBlock = openApiComponentBlock("CertOpsEvidenceMetadata");
     const allowedFields = [
       "schemaVersion",
       "evidenceId",
@@ -821,7 +821,7 @@ describe("CertOps M2 contract skeletons", () => {
     );
     assert.match(
       certOpsExecutorRoutesSource,
-      /CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT/,
+      /CERTOPS_EXECUTOR_EVENT_CONFLICT/,
     );
     assert.match(
       certOpsExecutorRoutesSource,
@@ -1065,7 +1065,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(executorNotes, /only M2 executor ingestion endpoint/i);
   });
 
-  it("keeps the committed M2-A1 through M2-A8 diff within the stacked scope", () => {
+  it("keeps the committed M2-A1 through M2-A9 diff within the stacked scope", () => {
     const { ref, files } = prChangedFiles();
     const allowedM2Files = new Set([
       "apps/api/migrations/migrate.js",
@@ -1088,11 +1088,13 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/integration/certops-job-read-apis.test.js",
       "tests/integration/certops-jobs-evidence.test.js",
       "tests/integration/certops-machine-token-rate-limit.test.js",
+      "tests/integration/certops-migration.test.js",
       "tests/integration/suites/core-compatible.txt",
       "tests/integration/suites/core.txt",
       "tests/unit/certops-api-token-auth.test.js",
       "tests/unit/certops-api-tokens.test.js",
       "tests/unit/certops-evidence.test.js",
+      "tests/unit/certops-executor-events.test.js",
       "tests/unit/certops-jobs.test.js",
       "tests/unit/certops-machine-token-rate-limit.test.js",
       "tests/unit/certops-migration.test.js",
@@ -1110,7 +1112,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.deepEqual(
       files.filter((file) => !unexpectedFiles.includes(file)),
       [],
-      `stacked M2-A1 through M2-A8 diff against ${ref} must stay within the allowed scope`,
+      `stacked M2-A1 through M2-A9 diff against ${ref} must stay within the allowed scope`,
     );
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
@@ -1121,7 +1123,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
   });
 
-  it("keeps local app changes within the M2-A2 through M2-A8 backend scope", () => {
+  it("keeps local app changes within the M2-A2 through M2-A9 backend scope", () => {
     const allowedStackedM2Files = new Set([
       "apps/api/migrations/migrate.js",
       "apps/api/middleware/api-token-auth.js",

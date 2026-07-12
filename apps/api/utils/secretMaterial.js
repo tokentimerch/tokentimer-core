@@ -24,6 +24,7 @@
 
 const PRIVATE_KEY_REDACTION_PLACEHOLDER = "[PRIVATE_KEY_REDACTED]";
 const GENERIC_SECRET_REDACTION_PLACEHOLDER = "[REDACTED]";
+const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 // Matches PEM private-key opening lines for PKCS#8 (BEGIN PRIVATE KEY),
 // PKCS#1 (BEGIN RSA PRIVATE KEY), SEC1 (BEGIN EC PRIVATE KEY), DSA, OpenSSH,
@@ -76,6 +77,7 @@ const GENERIC_SECRET_FIELD_FRAGMENTS = Object.freeze([
   "apisecret",
   "apikey",
   "authorization",
+  "cookie",
   "accesstoken",
   "refreshtoken",
   "clientsecret",
@@ -260,6 +262,55 @@ function containsPrivateKeyMaterial(value, depth = 0) {
   return false;
 }
 
+function privateKeyMaterialRejectedError() {
+  const error = new Error(
+    "Private key material is not accepted in CertOps requests",
+  );
+  error.code = PRIVATE_KEY_MATERIAL_REJECTED;
+  return error;
+}
+
+function assertNoPrivateKeyMaterial(
+  value,
+  depth = 0,
+  seen = new WeakSet(),
+) {
+  if (depth > MAX_SCAN_DEPTH) throw privateKeyMaterialRejectedError();
+  if (value === null || value === undefined) return;
+
+  if (typeof value === "string") {
+    if (stringContainsPrivateKey(value)) throw privateKeyMaterialRejectedError();
+    return;
+  }
+
+  if (Buffer.isBuffer(value)) {
+    if (bufferContainsPrivateKey(value)) throw privateKeyMaterialRejectedError();
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throw privateKeyMaterialRejectedError();
+    seen.add(value);
+    for (const item of value) {
+      assertNoPrivateKeyMaterial(item, depth + 1, seen);
+    }
+    seen.delete(value);
+    return;
+  }
+
+  if (typeof value === "object") {
+    if (seen.has(value)) throw privateKeyMaterialRejectedError();
+    seen.add(value);
+    for (const [key, item] of Object.entries(value)) {
+      if (fieldNameLooksPrivateKeyMaterial(key)) {
+        throw privateKeyMaterialRejectedError();
+      }
+      assertNoPrivateKeyMaterial(item, depth + 1, seen);
+    }
+    seen.delete(value);
+  }
+}
+
 /**
  * Replaces any private key PEM blocks found in a string with a redaction
  * placeholder. Returns the input unchanged when it is not a string.
@@ -288,10 +339,9 @@ function redactPrivateKeyMaterial(value) {
 }
 
 /**
- * Generic secret redactor for evidence and log contexts (CertOps detector
- * "second mode", plan 3.3 layer 6). Redacts private-key PEM blocks and
- * Authorization/bearer header values. Deep-walks objects and arrays, returning
- * a redacted copy without mutating the input.
+ * Generic-secret-only redactor for evidence and log contexts. Private-key
+ * material is rejected before traversal; this helper must never be used as a
+ * fallback that converts prohibited key material into accepted data.
  *
  * Phase 0 baseline; the secret pattern set expands in M2 evidence redaction.
  * @param {*} value
@@ -321,10 +371,7 @@ function finalizeRedactionReport(report, value) {
 }
 
 function redactGenericString(value, report) {
-  let result = redactPrivateKeyMaterial(value);
-  if (result !== value) noteRedaction(report, "private-key");
-
-  result = result.replace(AUTHORIZATION_VALUE_PATTERN, () => {
+  let result = value.replace(AUTHORIZATION_VALUE_PATTERN, () => {
     noteRedaction(report, "authorization");
     return GENERIC_SECRET_REDACTION_PLACEHOLDER;
   });
@@ -351,10 +398,6 @@ function redactGenericSecretsInternal(value, report, depth = 0, seen = new WeakS
   }
 
   if (Buffer.isBuffer(value)) {
-    if (bufferContainsPrivateKey(value)) {
-      noteRedaction(report, "private-key");
-      return PRIVATE_KEY_REDACTION_PLACEHOLDER;
-    }
     return value;
   }
 
@@ -375,9 +418,12 @@ function redactGenericSecretsInternal(value, report, depth = 0, seen = new WeakS
       result = {};
       for (const [key, item] of Object.entries(value)) {
         if (fieldNameLooksGenericSecret(key)) {
-          const category = normalizeFieldName(key).includes("authorization")
+          const normalizedKey = normalizeFieldName(key);
+          const category = normalizedKey.includes("authorization")
             ? "authorization"
-            : "generic-secret";
+            : normalizedKey.includes("cookie")
+              ? "cookie"
+              : "generic-secret";
           noteRedaction(report, category);
           result[key] = GENERIC_SECRET_REDACTION_PLACEHOLDER;
           continue;
@@ -398,6 +444,7 @@ function redactGenericSecretsInternal(value, report, depth = 0, seen = new WeakS
 }
 
 function redactGenericSecretsWithReport(value) {
+  assertNoPrivateKeyMaterial(value);
   const report = createRedactionReport();
   return finalizeRedactionReport(
     report,
@@ -410,10 +457,12 @@ function redactGenericSecrets(value) {
 }
 
 module.exports = {
+  PRIVATE_KEY_MATERIAL_REJECTED,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   PRIVATE_KEY_PEM_PATTERN,
   containsPrivateKeyMaterial,
+  assertNoPrivateKeyMaterial,
   looksPrivateKeyDer,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
