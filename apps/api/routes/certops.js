@@ -25,6 +25,14 @@ const {
   retireManagedCertificate,
 } = require("../services/certops/inventory");
 const {
+  CERTOPS_API_TOKEN_INVALID,
+  CERTOPS_API_TOKEN_NAME_INVALID,
+  CERTOPS_API_TOKEN_SCOPE_INVALID,
+  createApiToken,
+  listApiTokens,
+  revokeApiToken,
+} = require("../services/certops/apiTokens");
+const {
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_NOT_FOUND,
@@ -42,6 +50,8 @@ const {
 } = require("../services/certops/evidence");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
+
+const CERTOPS_API_TOKEN_NOT_FOUND = "CERTOPS_API_TOKEN_NOT_FOUND";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -147,6 +157,24 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_API_TOKEN_NOT_FOUND) {
+    return res.status(404).json({
+      error: "CertOps API token not found",
+      code: CERTOPS_API_TOKEN_NOT_FOUND,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_API_TOKEN_INVALID ||
+    err?.code === CERTOPS_API_TOKEN_NAME_INVALID ||
+    err?.code === CERTOPS_API_TOKEN_SCOPE_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps API token request is invalid",
+      code: err.code,
+    });
+  }
+
   if (err?.code === CERTOPS_JOB_NOT_FOUND) {
     return res.status(404).json({
       error: "Certificate job not found",
@@ -183,6 +211,18 @@ function jobIdFromParams(req, res) {
     return null;
   }
   return jobId;
+}
+
+function tokenIdFromParams(req, res) {
+  const tokenId = String(req.params.tokenId || "");
+  if (!UUID_PATTERN.test(tokenId)) {
+    res.status(400).json({
+      error: "CertOps API token identifier is invalid",
+      code: CERTOPS_API_TOKEN_INVALID,
+    });
+    return null;
+  }
+  return tokenId;
 }
 
 function jobListOptionsFromRequest(req) {
@@ -259,6 +299,24 @@ function evidenceItem(item) {
   };
 }
 
+function apiTokenMetadata(token) {
+  return {
+    id: token.id,
+    workspaceId: token.workspaceId,
+    name: token.name,
+    tokenPrefix: token.tokenPrefix,
+    scopes: Array.isArray(token.scopes) ? [...token.scopes] : [],
+    status: token.status,
+    expiresAt: token.expiresAt,
+    lastUsedAt: token.lastUsedAt,
+    revokedAt: token.revokedAt,
+    revokedByUserId: token.revokedBy ?? null,
+    createdByUserId: token.createdBy ?? null,
+    createdAt: token.createdAt,
+    updatedAt: token.updatedAt,
+  };
+}
+
 async function recordInventoryAudit(req, source, certificates) {
   const actorUserId = req.user?.id || null;
   await writeAudit({
@@ -281,6 +339,116 @@ async function recordInventoryAudit(req, source, certificates) {
     },
   });
 }
+
+router.get(
+  "/api/v1/workspaces/:id/certops/tokens",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const tokens = await listApiTokens({
+        workspaceId: req.workspace.id,
+      });
+      return res.json({ items: tokens.map(apiTokenMetadata) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps API token list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps API tokens",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/tokens",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const created = await createApiToken({
+        workspaceId: req.workspace.id,
+        name: req.body?.name,
+        scopes: req.body?.scopes,
+        expiresAt: req.body?.expiresAt,
+        createdBy: req.user?.id || null,
+      });
+
+      return res.status(201).json({
+        token: apiTokenMetadata(created.token),
+        plaintextToken: created.plaintextToken,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps API token create failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps API token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    const tokenId = tokenIdFromParams(req, res);
+    if (!tokenId) return null;
+
+    try {
+      const revoked = await revokeApiToken({
+        workspaceId: req.workspace.id,
+        tokenId,
+        revokedBy: req.user?.id || null,
+      });
+
+      if (!revoked) {
+        return res.status(404).json({
+          error: "CertOps API token not found",
+          code: CERTOPS_API_TOKEN_NOT_FOUND,
+        });
+      }
+
+      return res.json({ token: apiTokenMetadata(revoked) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps API token revoke failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        tokenId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to revoke CertOps API token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
 
 router.get(
   "/api/v1/workspaces/:id/certops/jobs",

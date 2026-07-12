@@ -18,7 +18,9 @@
       "notes": [
         "Machine surface for the M2 executor. Scoped API-token (bearer) auth.",
         "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
-        "Ingest payloads are scanned and rejected (422) if they contain private key material."
+        "Ingest payloads are scanned and rejected (422) if they contain private key material.",
+        "M2 executor writes are intentionally collapsed into the single ingestion endpoint: POST /api/v1/certops/executor/events.",
+        "Do not add POST /certops/jobs/{jobId}/events or POST /certops/jobs/{jobId}/evidence in M2. Per-job write routes are not part of M2 unless a later ADR changes that."
       ]
     },
     "agent": {
@@ -49,8 +51,12 @@
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/imports", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke", "method": "POST" },
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
       { "path": "/api/v1/certops/agent/register", "method": "POST" },
       { "path": "/api/v1/certops/agent/heartbeat", "method": "POST" },
