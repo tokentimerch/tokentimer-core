@@ -3353,11 +3353,36 @@ paths:
       tags: [CertOps]
       summary: List CertOps jobs
       operationId: listCertOpsJobs
-      description: Returns public CertOps job metadata for the workspace. M2-A1 defines the contract skeleton only; runtime job persistence and dispatch land in later M2 PRs.
+      description: Returns public CertOps job summaries for the workspace. Private key material, raw executor output, token hashes, and credentials are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/limitParam"
         - $ref: "#/components/parameters/offsetParam"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+        - in: query
+          name: operation
+          schema:
+            type: string
+            enum: [renew, deploy, reload, revoke, noop]
+        - in: query
+          name: source
+          schema:
+            type: string
+            enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+        - in: query
+          name: subjectType
+          schema:
+            type: string
+            enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+        - in: query
+          name: subjectId
+          schema:
+            type: string
+            maxLength: 128
       responses:
         "200":
           description: Job list
@@ -3365,10 +3390,132 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CertOpsJobListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}:
+    get:
+      tags: [CertOps]
+      summary: Get a CertOps job
+      operationId: getCertOpsJob
+      description: Returns one sanitized CertOps job detail for the authorized workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Certificate job not found
+                code: CERTOPS_JOB_NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/log:
+    get:
+      tags: [CertOps]
+      summary: List CertOps job log entries
+      operationId: listCertOpsJobLog
+      description: Returns sanitized timeline entries for one workspace-scoped CertOps job.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Job log list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobLogListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Certificate job not found
+                code: CERTOPS_JOB_NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence:
+    get:
+      tags: [CertOps]
+      summary: List CertOps job evidence
+      operationId: listCertOpsJobEvidence
+      description: Returns sanitized public evidence metadata for one workspace-scoped CertOps job. Raw secrets, private keys, token hashes, and key-bearing artifacts are never returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Job evidence list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsEvidenceListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Certificate job not found
+                code: CERTOPS_JOB_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/tokens:
@@ -4023,39 +4170,23 @@ components:
     CertOpsJob:
       type: object
       additionalProperties: false
-      description: Public M2 job metadata skeleton. Runtime persistence and state transitions land in later M2 PRs.
+      description: Public CertOps job summary for dashboard and timeline reads. Payload and result metadata are omitted from list responses.
       required:
-        - schemaVersion
         - id
         - workspaceId
-        - certificateId
-        - action
+        - operation
         - status
-        - requestedAt
+        - source
         - createdAt
         - updatedAt
       properties:
-        schemaVersion:
-          type: integer
-          enum: [1]
         id:
           type: string
-          minLength: 1
-          maxLength: 128
-          pattern: "^[A-Za-z0-9_.:-]+$"
+          format: uuid
         workspaceId:
           type: string
           format: uuid
-        certificateId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: "^[A-Za-z0-9_.:-]+$"
-        tokenId:
-          type: integer
-          minimum: 1
-          nullable: true
-        action:
+        operation:
           type: string
           enum: [renew, deploy, reload, revoke, noop]
         status:
@@ -4071,42 +4202,46 @@ components:
             - failed
             - blocked
             - cancelled
-        target:
-          type: object
-          additionalProperties: false
-          nullable: true
-          properties:
-            type:
-              type: string
-              enum: [domain, endpoint, kubernetes, appliance, load-balancer, external]
-            reference:
-              type: string
-              maxLength: 512
-        requestedAt:
+        source:
           type: string
-          format: date-time
-        requestedBy:
-          type: object
-          additionalProperties: false
+          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+        subjectType:
+          type: string
           nullable: true
-          properties:
-            actorType:
-              type: string
-              enum: [user, system, automation]
-            actorId:
-              type: string
-              maxLength: 128
-              nullable: true
-            displayName:
-              type: string
-              maxLength: 256
-              nullable: true
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+        subjectId:
+          type: string
+          maxLength: 128
+          nullable: true
+        requestedByUserId:
+          type: integer
+          nullable: true
+        requestedByApiTokenId:
+          type: string
+          format: uuid
+          nullable: true
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+        queuedAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
     CertOpsJobListResponse:
       type: object
       additionalProperties: false
@@ -4116,6 +4251,187 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CertOpsJob"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    CertOpsPublicObject:
+      type: object
+      additionalProperties: true
+      description: Sanitized public metadata object. Runtime rejects private-key material, credentials, token secrets, raw secret dumps, and custody-shaped field names before persistence.
+    CertOpsJobDetail:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, operation, status, source, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        operation:
+          type: string
+          enum: [renew, deploy, reload, revoke, noop]
+        status:
+          type: string
+          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+        source:
+          type: string
+          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+        subjectType:
+          type: string
+          nullable: true
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+        subjectId:
+          type: string
+          maxLength: 128
+          nullable: true
+        requestedByUserId:
+          type: integer
+          nullable: true
+        requestedByApiTokenId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        queuedAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        payload:
+          $ref: "#/components/schemas/CertOpsPublicObject"
+        resultMetadata:
+          $ref: "#/components/schemas/CertOpsPublicObject"
+        errorCode:
+          type: string
+          maxLength: 128
+          nullable: true
+        errorMessage:
+          type: string
+          maxLength: 1024
+          nullable: true
+    CertOpsJobDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [job]
+      properties:
+        job:
+          $ref: "#/components/schemas/CertOpsJobDetail"
+    CertOpsJobLogEntry:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, jobId, eventType, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum: [job.created, job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected, job.cancelled, job.status_updated, evidence.attached]
+        status:
+          type: string
+          nullable: true
+          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+        message:
+          type: string
+          maxLength: 1024
+          nullable: true
+        metadata:
+          $ref: "#/components/schemas/CertOpsPublicObject"
+        createdByUserId:
+          type: integer
+          nullable: true
+        createdByApiTokenId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    CertOpsJobLogListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsJobLogEntry"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    CertOpsEvidenceItem:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, evidenceType, metadata, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+          format: uuid
+          nullable: true
+        evidenceType:
+          type: string
+          enum: [certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, policy.checked]
+        subjectType:
+          type: string
+          nullable: true
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+        subjectId:
+          type: string
+          maxLength: 128
+          nullable: true
+        metadata:
+          $ref: "#/components/schemas/CertOpsPublicObject"
+        observedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdByUserId:
+          type: integer
+          nullable: true
+        createdByApiTokenId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    CertOpsEvidenceListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsEvidenceItem"
         pagination:
           $ref: "#/components/schemas/Pagination"
     CertOpsApiTokenScope:
