@@ -185,9 +185,12 @@ describe("CertOps route hardening", () => {
           block.indexOf("requireCertOpsEnabled"),
         `${routePath} must reject private key material before the rollout gate`,
       );
+      const authorizationMiddleware = routePath.includes("/certops/tokens")
+        ? "requireCertOpsTokenManager"
+        : "requireCertOpsWriteRole";
       assert.ok(
         block.indexOf("requireCertOpsEnabled") <
-          block.indexOf("requireCertOpsWriteRole"),
+          block.indexOf(authorizationMiddleware),
         `${routePath} must check the rollout gate before write authorization`,
       );
     }

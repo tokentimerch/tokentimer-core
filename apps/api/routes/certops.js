@@ -2,6 +2,7 @@
 
 const router = require("express").Router();
 
+const { pool } = require("../db/database");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -30,7 +31,7 @@ const {
   CERTOPS_API_TOKEN_SCOPE_INVALID,
   createApiToken,
   listApiTokens,
-  revokeApiToken,
+  revokeApiTokenWithResult,
 } = require("../services/certops/apiTokens");
 const {
   CERTOPS_JOB_INVALID,
@@ -58,6 +59,24 @@ const UUID_PATTERN =
 
 function requireCertOpsWriteRole(req, res, next) {
   if (req.isWorkerCall) return next();
+
+  if (!hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager")) {
+    return res.status(403).json({
+      error: "Forbidden: insufficient role",
+      code: "INSUFFICIENT_ROLE",
+    });
+  }
+
+  return next();
+}
+
+function requireCertOpsTokenManager(req, res, next) {
+  if (req.isWorkerCall || !req.user?.id) {
+    return res.status(403).json({
+      error: "Forbidden: session user required",
+      code: "INSUFFICIENT_ROLE",
+    });
+  }
 
   if (!hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager")) {
     return res.status(403).json({
@@ -317,6 +336,63 @@ function apiTokenMetadata(token) {
   };
 }
 
+function apiTokenAuditMetadata(token, { includeRevocation = false } = {}) {
+  const metadata = {
+    api_token_id: token.id,
+    token_prefix: token.tokenPrefix,
+    name: token.name,
+    scopes: Array.isArray(token.scopes) ? [...token.scopes] : [],
+    status: token.status,
+  };
+
+  if (includeRevocation) {
+    metadata.revoked_at = token.revokedAt;
+  } else {
+    metadata.expires_at = token.expiresAt;
+  }
+
+  return metadata;
+}
+
+async function withCertOpsTokenTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // Preserve the original mutation or audit error for the safe route handler.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function recordApiTokenAudit({
+  client,
+  req,
+  action,
+  token,
+  includeRevocation,
+}) {
+  const actorUserId = req.user.id;
+  await writeAudit({
+    client,
+    actorUserId,
+    subjectUserId: actorUserId,
+    action,
+    targetType: "certops_api_token",
+    targetId: null,
+    workspaceId: req.workspace.id,
+    metadata: apiTokenAuditMetadata(token, { includeRevocation }),
+  });
+}
+
 async function recordInventoryAudit(req, source, certificates) {
   const actorUserId = req.user?.id || null;
   await writeAudit({
@@ -373,15 +449,26 @@ router.post(
   getApiLimiter(),
   rejectKeyMaterial,
   requireCertOpsEnabled,
-  requireCertOpsWriteRole,
+  requireCertOpsTokenManager,
   async (req, res) => {
     try {
-      const created = await createApiToken({
-        workspaceId: req.workspace.id,
-        name: req.body?.name,
-        scopes: req.body?.scopes,
-        expiresAt: req.body?.expiresAt,
-        createdBy: req.user?.id || null,
+      const created = await withCertOpsTokenTransaction(async (client) => {
+        const tokenResult = await createApiToken({
+          client,
+          workspaceId: req.workspace.id,
+          name: req.body?.name,
+          scopes: req.body?.scopes,
+          expiresAt: req.body?.expiresAt,
+          createdBy: req.user.id,
+        });
+        await recordApiTokenAudit({
+          client,
+          req,
+          action: "CERTOPS_API_TOKEN_CREATED",
+          token: tokenResult.token,
+          includeRevocation: false,
+        });
+        return tokenResult;
       });
 
       return res.status(201).json({
@@ -411,26 +498,39 @@ router.post(
   getApiLimiter(),
   rejectKeyMaterial,
   requireCertOpsEnabled,
-  requireCertOpsWriteRole,
+  requireCertOpsTokenManager,
   async (req, res) => {
     const tokenId = tokenIdFromParams(req, res);
     if (!tokenId) return null;
 
     try {
-      const revoked = await revokeApiToken({
-        workspaceId: req.workspace.id,
-        tokenId,
-        revokedBy: req.user?.id || null,
+      const revoked = await withCertOpsTokenTransaction(async (client) => {
+        const result = await revokeApiTokenWithResult({
+          client,
+          workspaceId: req.workspace.id,
+          tokenId,
+          revokedBy: req.user.id,
+        });
+        if (result.token && result.revokedNow) {
+          await recordApiTokenAudit({
+            client,
+            req,
+            action: "CERTOPS_API_TOKEN_REVOKED",
+            token: result.token,
+            includeRevocation: true,
+          });
+        }
+        return result;
       });
 
-      if (!revoked) {
+      if (!revoked.token) {
         return res.status(404).json({
           error: "CertOps API token not found",
           code: CERTOPS_API_TOKEN_NOT_FOUND,
         });
       }
 
-      return res.json({ token: apiTokenMetadata(revoked) });
+      return res.json({ token: apiTokenMetadata(revoked.token) });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;

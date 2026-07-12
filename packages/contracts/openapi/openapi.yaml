@@ -3544,7 +3544,7 @@ paths:
       tags: [CertOps]
       summary: List CertOps API tokens
       operationId: listCertOpsTokens
-      description: Returns scoped CertOps API-token metadata only. Responses never include plaintext tokens, token secrets, token hashes, Authorization headers, or credential material. M2-A1 reserves a closed contract shape; runtime token storage and management land in later M2 PRs.
+      description: Returns workspace-scoped CertOps API-token metadata only. Plaintext tokens, token hashes, Authorization headers, and credential material are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3558,13 +3558,15 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
     post:
       tags: [CertOps]
       summary: Issue a scoped CertOps API token
       operationId: createCertOpsToken
-      description: Issues a scoped CertOps API token. The one-time plaintext token may be returned only in this create response and is never stored in recoverable form. List/get/revoke responses never include plaintext tokens, token secrets, token hashes, Authorization headers, or credential material. M2-A1 reserves a closed contract shape; runtime token storage and management land in later M2 PRs.
+      description: Issues a scoped CertOps API token. The one-time plaintext token is returned only by this create response and is never stored in recoverable form. List and revoke responses never include plaintext tokens, token hashes, Authorization headers, or credential material.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -3586,6 +3588,17 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke:
@@ -3593,7 +3606,7 @@ paths:
       tags: [CertOps]
       summary: Revoke a scoped CertOps API token
       operationId: revokeCertOpsToken
-      description: Revokes a scoped CertOps API token and returns metadata only. The response never includes plaintext tokens, token secrets, token hashes, Authorization headers, or credential material. M2-A1 reserves a closed contract shape; runtime token revocation lands in a later M2 PR.
+      description: Revokes a scoped CertOps API token within the authorized workspace and returns metadata only. The response never includes plaintext tokens, token hashes, Authorization headers, or credential material.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3601,9 +3614,7 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 128
-            pattern: "^[A-Za-z0-9_.:-]+$"
+            format: uuid
       responses:
         "200":
           description: API token revoked
@@ -3618,7 +3629,29 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: CertOps is disabled or the API token was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                tokenNotFound:
+                  value:
+                    error: CertOps API token not found
+                    code: CERTOPS_API_TOKEN_NOT_FOUND
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/executor/events:
@@ -4499,9 +4532,7 @@ components:
       properties:
         id:
           type: string
-          minLength: 1
-          maxLength: 128
-          pattern: "^[A-Za-z0-9_.:-]+$"
+          format: uuid
         workspaceId:
           type: string
           format: uuid
@@ -4513,7 +4544,7 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: "^ttx_[A-Za-z0-9_.:-]+$"
+          pattern: "^ttx_[a-f0-9]{16}$"
           description: Public lookup prefix only; not sufficient to authenticate.
         scopes:
           type: array
@@ -4540,6 +4571,12 @@ components:
         createdAt:
           type: string
           format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        revokedByUserId:
+          type: integer
+          nullable: true
         createdByUserId:
           type: integer
           nullable: true
@@ -4561,6 +4598,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+          description: Public label. Must not contain a raw CertOps token, bearer credential, token hash, private-key material, or generic credential material.
         scopes:
           type: array
           minItems: 1
@@ -4582,9 +4620,9 @@ components:
           $ref: "#/components/schemas/CertOpsApiToken"
         plaintextToken:
           type: string
-          minLength: 1
-          maxLength: 256
-          pattern: "^ttx_[^_]+_[^_]+$"
+          minLength: 85
+          maxLength: 85
+          pattern: "^ttx_[a-f0-9]{16}_[a-f0-9]{64}$"
           description: One-time plaintext token value shown only by the create response.
     CertOpsApiTokenRevokeResponse:
       type: object

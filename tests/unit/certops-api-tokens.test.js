@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   ALLOWED_SCOPES,
+  CERTOPS_API_TOKEN_NAME_INVALID,
   CERTOPS_API_TOKEN_MALFORMED,
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
@@ -15,6 +16,7 @@ const {
   getApiTokenById,
   listApiTokens,
   revokeApiToken,
+  revokeApiTokenWithResult,
   validateApiToken,
   _test,
 } = require(
@@ -97,7 +99,13 @@ function createMemoryClient() {
         const row = rows.find(
           (item) => item.workspace_id === params[0] && item.id === params[1],
         );
-        if (!row) return { rows: [] };
+        if (
+          !row ||
+          (normalizedSql.includes("AND status = 'active'") &&
+            row.status !== "active")
+        ) {
+          return { rows: [] };
+        }
         row.status = "revoked";
         row.revoked_at = row.revoked_at || new Date("2026-06-30T00:01:00.000Z");
         row.revoked_by = row.revoked_by || params[2] || null;
@@ -319,6 +327,47 @@ describe("CertOps API token service", () => {
     );
   });
 
+  it("rejects complete CertOps raw tokens in names without blocking public prefixes", async () => {
+    const client = createMemoryClient();
+    const existing = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Existing token",
+      scopes: ["certops:events:write"],
+    });
+
+    for (const name of [
+      existing.plaintextToken,
+      `production-${existing.plaintextToken}`,
+      `credential=${existing.plaintextToken}`,
+      "credential=not-a-token",
+      "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      `token_hash=${"a".repeat(64)}`,
+    ]) {
+      await assert.rejects(
+        () =>
+          createApiToken({
+            client,
+            workspaceId: WORKSPACE_A,
+            name,
+            scopes: ["certops:events:write"],
+          }),
+        (error) => error?.code === CERTOPS_API_TOKEN_NAME_INVALID,
+      );
+    }
+
+    await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: existing.token.tokenPrefix,
+      scopes: ["certops:events:write"],
+    });
+    assert.equal(
+      _test.containsRawCertOpsToken(existing.token.tokenPrefix),
+      false,
+    );
+  });
+
   it("validates required scopes and updates last_used_at only on success", async () => {
     const client = createMemoryClient();
     const created = await createApiToken({
@@ -469,6 +518,34 @@ describe("CertOps API token service", () => {
       requiredScopes: ["certops:events:write"],
     });
     assert.equal(result.valid, false);
+  });
+
+  it("reports whether a revoke performed the active-to-revoked transition", async () => {
+    const client = createMemoryClient();
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Revocation result",
+      scopes: ["certops:events:write"],
+    });
+
+    const first = await revokeApiTokenWithResult({
+      client,
+      workspaceId: WORKSPACE_A,
+      tokenId: created.token.id,
+      revokedBy: 321,
+    });
+    const second = await revokeApiTokenWithResult({
+      client,
+      workspaceId: WORKSPACE_A,
+      tokenId: created.token.id,
+      revokedBy: 321,
+    });
+
+    assert.equal(first.revokedNow, true);
+    assert.equal(second.revokedNow, false);
+    assert.equal(first.token.status, "revoked");
+    assert.equal(second.token.status, "revoked");
   });
 
   it("rejects expired tokens", async () => {

@@ -98,6 +98,35 @@ function expectMetadataOnlyToken(token) {
   expect(token).to.not.have.property("plaintextToken");
 }
 
+async function tokenAuditEvents(workspaceId, action, tokenId) {
+  const result = await TestUtils.execQuery(
+    `SELECT actor_user_id,
+            subject_user_id,
+            target_type,
+            target_id,
+            workspace_id,
+            metadata
+       FROM audit_events
+      WHERE workspace_id = $1
+        AND action = $2
+        AND metadata->>'api_token_id' = $3
+      ORDER BY id ASC`,
+    [workspaceId, action, tokenId],
+  );
+  return result.rows;
+}
+
+async function tokenAuditCount(workspaceId, action) {
+  const result = await TestUtils.execQuery(
+    `SELECT COUNT(*)::int AS count
+       FROM audit_events
+      WHERE workspace_id = $1
+        AND action = $2`,
+    [workspaceId, action],
+  );
+  return result.rows[0].count;
+}
+
 async function createWorkspaceFixture() {
   const ownerUser = await TestUtils.createVerifiedTestUser();
   const ownerSession = await TestUtils.loginTestUser(
@@ -159,6 +188,10 @@ async function cleanupWorkspaceFixture(fixture) {
   ].filter(Boolean);
   if (workspaceIds.length > 0) {
     await TestUtils.execQuery(
+      "DELETE FROM audit_events WHERE workspace_id = ANY($1::uuid[])",
+      [workspaceIds],
+    );
+    await TestUtils.execQuery(
       "DELETE FROM api_tokens WHERE workspace_id = ANY($1::uuid[])",
       [workspaceIds],
     );
@@ -213,14 +246,14 @@ describe("CertOps API token management routes", function () {
     const created = await createApiToken({
       workspaceId: fixture.workspaceId,
       name: "Workspace route list",
-      scopes: ["certops:executor:events", "certops:jobs:read"],
+      scopes: ["certops:events:write", "certops:jobs:read"],
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       createdBy: fixture.ownerUser.id,
     });
     const otherWorkspaceToken = await createApiToken({
       workspaceId: fixture.outsiderWorkspaceId,
       name: "Other workspace",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       createdBy: fixture.outsiderUser.id,
     });
@@ -243,15 +276,22 @@ describe("CertOps API token management routes", function () {
   });
 
   it("creates a scoped API token for managers and returns plaintext only once", async () => {
+    const auditsBefore = await tokenAuditCount(
+      fixture.workspaceId,
+      "CERTOPS_API_TOKEN_CREATED",
+    );
     const viewerDenied = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
       .set("Cookie", fixture.viewerSession.cookie)
       .send({
         name: "Viewer denied",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
       });
     expect(viewerDenied.status).to.equal(403);
     expectNoTokenLeak(viewerDenied.body);
+    expect(
+      await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
+    ).to.equal(auditsBefore);
 
     const invalidScope = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
@@ -263,13 +303,16 @@ describe("CertOps API token management routes", function () {
     expect(invalidScope.status).to.equal(400);
     expect(invalidScope.body.code).to.equal("CERTOPS_API_TOKEN_SCOPE_INVALID");
     expectNoTokenLeak(invalidScope.body);
+    expect(
+      await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
+    ).to.equal(auditsBefore);
 
     const response = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
       .set("Cookie", fixture.managerSession.cookie)
       .send({
         name: "Executor route token",
-        scopes: ["certops:executor:events", "certops:jobs:read"],
+        scopes: ["certops:events:write", "certops:jobs:read"],
         expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       })
       .expect(201);
@@ -285,6 +328,28 @@ describe("CertOps API token management routes", function () {
       response.body.plaintextToken,
     );
     expectNoTokenLeak(response.body.token, [response.body.plaintextToken]);
+
+    const createAudits = await tokenAuditEvents(
+      fixture.workspaceId,
+      "CERTOPS_API_TOKEN_CREATED",
+      response.body.token.id,
+    );
+    expect(createAudits).to.have.length(1);
+    expect(createAudits[0]).to.include({
+      actor_user_id: fixture.managerUser.id,
+      subject_user_id: fixture.managerUser.id,
+      target_type: "certops_api_token",
+      target_id: null,
+      workspace_id: fixture.workspaceId,
+    });
+    expect(createAudits[0].metadata).to.deep.include({
+      api_token_id: response.body.token.id,
+      token_prefix: response.body.token.tokenPrefix,
+      name: response.body.token.name,
+      scopes: response.body.token.scopes,
+      status: response.body.token.status,
+    });
+    expectNoTokenLeak(createAudits[0].metadata, [response.body.plaintextToken]);
 
     const persisted = await TestUtils.execQuery(
       "SELECT token_prefix, token_hash FROM api_tokens WHERE id = $1",
@@ -305,16 +370,29 @@ describe("CertOps API token management routes", function () {
       response.body.plaintextToken,
     );
     expectNoTokenLeak(listAfterCreate.body, [response.body.plaintextToken]);
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_CREATED",
+        response.body.token.id,
+      ),
+    ).to.have.length(1);
   });
 
   it("revokes tokens within the workspace without returning plaintext or hashes", async () => {
     const created = await createApiToken({
       workspaceId: fixture.workspaceId,
       name: "Route revoke",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       createdBy: fixture.ownerUser.id,
     });
+    const revokeAuditsBefore = await tokenAuditEvents(
+      fixture.workspaceId,
+      "CERTOPS_API_TOKEN_REVOKED",
+      created.token.id,
+    );
+    expect(revokeAuditsBefore).to.have.length(0);
 
     const viewerDenied = await request(BASE)
       .post(
@@ -324,6 +402,13 @@ describe("CertOps API token management routes", function () {
       .send({});
     expect(viewerDenied.status).to.equal(403);
     expectNoTokenLeak(viewerDenied.body, [created.plaintextToken]);
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_REVOKED",
+        created.token.id,
+      ),
+    ).to.have.length(0);
 
     const crossWorkspace = await request(BASE)
       .post(
@@ -334,6 +419,13 @@ describe("CertOps API token management routes", function () {
     expect(crossWorkspace.status).to.equal(404);
     expect(crossWorkspace.body.code).to.equal("CERTOPS_API_TOKEN_NOT_FOUND");
     expectNoTokenLeak(crossWorkspace.body, [created.plaintextToken]);
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_REVOKED",
+        created.token.id,
+      ),
+    ).to.have.length(0);
 
     const malformed = await request(BASE)
       .post(
@@ -345,6 +437,13 @@ describe("CertOps API token management routes", function () {
     expect(malformed.status).to.not.equal(500);
     expect(malformed.body.code).to.equal("CERTOPS_API_TOKEN_INVALID");
     expectNoTokenLeak(malformed.body, ["not-a-uuid"]);
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_REVOKED",
+        created.token.id,
+      ),
+    ).to.have.length(0);
 
     const response = await request(BASE)
       .post(
@@ -359,10 +458,32 @@ describe("CertOps API token management routes", function () {
     expectMetadataOnlyToken(response.body.token);
     expectNoTokenLeak(response.body, [created.plaintextToken]);
 
+    const revokeAudits = await tokenAuditEvents(
+      fixture.workspaceId,
+      "CERTOPS_API_TOKEN_REVOKED",
+      created.token.id,
+    );
+    expect(revokeAudits).to.have.length(1);
+    expect(revokeAudits[0]).to.include({
+      actor_user_id: fixture.managerUser.id,
+      subject_user_id: fixture.managerUser.id,
+      target_type: "certops_api_token",
+      target_id: null,
+      workspace_id: fixture.workspaceId,
+    });
+    expect(revokeAudits[0].metadata).to.deep.include({
+      api_token_id: created.token.id,
+      token_prefix: created.token.tokenPrefix,
+      name: created.token.name,
+      scopes: created.token.scopes,
+      status: "revoked",
+    });
+    expectNoTokenLeak(revokeAudits[0].metadata, [created.plaintextToken]);
+
     const afterRevoke = await validateApiToken({
       workspaceId: fixture.workspaceId,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     expect(afterRevoke.valid).to.equal(false);
 
@@ -375,6 +496,222 @@ describe("CertOps API token management routes", function () {
       .expect(200);
     expect(idempotent.body.token.status).to.equal("revoked");
     expectNoTokenLeak(idempotent.body, [created.plaintextToken]);
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_REVOKED",
+        created.token.id,
+      ),
+    ).to.have.length(1);
+  });
+
+  it("rejects raw CertOps tokens in names without exposing them or overblocking prefixes", async () => {
+    const tokenA = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        name: "Token A",
+        scopes: ["certops:events:write"],
+      })
+      .expect(201);
+    const tokensBefore = await TestUtils.execQuery(
+      "SELECT COUNT(*)::int AS count FROM api_tokens WHERE workspace_id = $1",
+      [fixture.workspaceId],
+    );
+
+    for (const name of [
+      tokenA.body.plaintextToken,
+      `production-${tokenA.body.plaintextToken}`,
+      `credential=${tokenA.body.plaintextToken}`,
+      "credential=not-a-token",
+      "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      `token_hash=${"a".repeat(64)}`,
+    ]) {
+      const rejected = await request(BASE)
+        .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+        .set("Cookie", fixture.managerSession.cookie)
+        .send({ name, scopes: ["certops:events:write"] });
+      expect(rejected.status).to.equal(400);
+      expect(rejected.body.code).to.equal("CERTOPS_API_TOKEN_NAME_INVALID");
+      expectNoTokenLeak(rejected.body, [tokenA.body.plaintextToken]);
+    }
+
+    const tokensAfterRejectedNames = await TestUtils.execQuery(
+      "SELECT COUNT(*)::int AS count FROM api_tokens WHERE workspace_id = $1",
+      [fixture.workspaceId],
+    );
+    expect(tokensAfterRejectedNames.rows[0].count).to.equal(
+      tokensBefore.rows[0].count,
+    );
+
+    const prefixOnly = tokenA.body.token.tokenPrefix;
+    const prefixAccepted = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({ name: prefixOnly, scopes: ["certops:events:write"] })
+      .expect(201);
+    expect(prefixAccepted.body.token.name).to.equal(prefixOnly);
+    expectNoTokenLeak(prefixAccepted.body.token, [tokenA.body.plaintextToken]);
+
+    const viewerList = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.viewerSession.cookie)
+      .expect(200);
+    expectNoTokenLeak(viewerList.body, [tokenA.body.plaintextToken]);
+  });
+
+  it("requires a real session manager or admin for token mutations", async () => {
+    const workerKey = process.env.WORKER_API_KEY || process.env.SESSION_SECRET;
+    expect(workerKey).to.be.a("string").and.not.equal("");
+    const createAuditsBefore = await tokenAuditCount(
+      fixture.workspaceId,
+      "CERTOPS_API_TOKEN_CREATED",
+    );
+
+    const workerCreate = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Authorization", `Bearer ${workerKey}`)
+      .send({
+        name: "Worker denied",
+        scopes: ["certops:events:write"],
+      });
+    expect(workerCreate.status).to.equal(403);
+    expectNoTokenLeak(workerCreate.body);
+    expect(
+      await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
+    ).to.equal(createAuditsBefore);
+
+    const adminCreated = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.ownerSession.cookie)
+      .send({
+        name: "Owner admin token",
+        scopes: ["certops:events:write"],
+      })
+      .expect(201);
+    expect(adminCreated.body.token.createdByUserId).to.equal(
+      fixture.ownerUser.id,
+    );
+
+    const workerRevoked = await request(BASE)
+      .post(
+        `/api/v1/workspaces/${fixture.workspaceId}/certops/tokens/${adminCreated.body.token.id}/revoke`,
+      )
+      .set("Authorization", `Bearer ${workerKey}`)
+      .send({});
+    expect(workerRevoked.status).to.equal(403);
+    expectNoTokenLeak(workerRevoked.body, [adminCreated.body.plaintextToken]);
+
+    const persisted = await TestUtils.execQuery(
+      "SELECT status FROM api_tokens WHERE id = $1",
+      [adminCreated.body.token.id],
+    );
+    expect(persisted.rows[0].status).to.equal("active");
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_REVOKED",
+        adminCreated.body.token.id,
+      ),
+    ).to.have.length(0);
+  });
+
+  it("writes one revoke audit for concurrent idempotent revocation", async () => {
+    const created = await createApiToken({
+      workspaceId: fixture.workspaceId,
+      name: "Concurrent revoke",
+      scopes: ["certops:events:write"],
+      createdBy: fixture.ownerUser.id,
+    });
+    const url = `/api/v1/workspaces/${fixture.workspaceId}/certops/tokens/${created.token.id}/revoke`;
+    const responses = await Promise.all([
+      request(BASE).post(url).set("Cookie", fixture.managerSession.cookie).send({}),
+      request(BASE).post(url).set("Cookie", fixture.ownerSession.cookie).send({}),
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).to.equal(200);
+      expect(response.body.token.status).to.equal("revoked");
+      expectNoTokenLeak(response.body, [created.plaintextToken]);
+    }
+    expect(
+      await tokenAuditEvents(
+        fixture.workspaceId,
+        "CERTOPS_API_TOKEN_REVOKED",
+        created.token.id,
+      ),
+    ).to.have.length(1);
+  });
+
+  it("rolls back token mutations when the corresponding audit write fails", async () => {
+    await TestUtils.execQuery(`
+      CREATE OR REPLACE FUNCTION fail_certops_api_token_audit_for_test()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action IN ('CERTOPS_API_TOKEN_CREATED', 'CERTOPS_API_TOKEN_REVOKED') THEN
+          RAISE EXCEPTION 'forced CertOps API token audit failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    await TestUtils.execQuery(`
+      CREATE TRIGGER fail_certops_api_token_audit_for_test_trigger
+      BEFORE INSERT ON audit_events
+      FOR EACH ROW
+      EXECUTE FUNCTION fail_certops_api_token_audit_for_test();
+    `);
+
+    try {
+      const failedCreate = await request(BASE)
+        .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+        .set("Cookie", fixture.managerSession.cookie)
+        .send({
+          name: "Audit failure create",
+          scopes: ["certops:events:write"],
+        });
+      expect(failedCreate.status).to.equal(500);
+      expectNoTokenLeak(failedCreate.body);
+      const createdRows = await TestUtils.execQuery(
+        "SELECT id FROM api_tokens WHERE workspace_id = $1 AND name = $2",
+        [fixture.workspaceId, "Audit failure create"],
+      );
+      expect(createdRows.rows).to.have.length(0);
+
+      const created = await createApiToken({
+        workspaceId: fixture.workspaceId,
+        name: "Audit failure revoke",
+        scopes: ["certops:events:write"],
+        createdBy: fixture.ownerUser.id,
+      });
+      const failedRevoke = await request(BASE)
+        .post(
+          `/api/v1/workspaces/${fixture.workspaceId}/certops/tokens/${created.token.id}/revoke`,
+        )
+        .set("Cookie", fixture.managerSession.cookie)
+        .send({});
+      expect(failedRevoke.status).to.equal(500);
+      expectNoTokenLeak(failedRevoke.body, [created.plaintextToken]);
+      const revokedRow = await TestUtils.execQuery(
+        "SELECT status FROM api_tokens WHERE id = $1",
+        [created.token.id],
+      );
+      expect(revokedRow.rows[0].status).to.equal("active");
+      expect(
+        await tokenAuditEvents(
+          fixture.workspaceId,
+          "CERTOPS_API_TOKEN_REVOKED",
+          created.token.id,
+        ),
+      ).to.have.length(0);
+    } finally {
+      await TestUtils.execQuery(
+        "DROP TRIGGER IF EXISTS fail_certops_api_token_audit_for_test_trigger ON audit_events",
+      );
+      await TestUtils.execQuery(
+        "DROP FUNCTION IF EXISTS fail_certops_api_token_audit_for_test()",
+      );
+    }
   });
 
   it("rejects private-key material before token creation or revoke handlers run", async () => {
@@ -383,7 +720,7 @@ describe("CertOps API token management routes", function () {
       .set("Cookie", fixture.managerSession.cookie)
       .send({
         name: "bad",
-        scopes: ["certops:executor:events"],
+        scopes: ["certops:events:write"],
         note: "-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----",
       });
     expect(createRejected.status).to.equal(422);
@@ -393,7 +730,7 @@ describe("CertOps API token management routes", function () {
     const created = await createApiToken({
       workspaceId: fixture.workspaceId,
       name: "Reject revoke body",
-      scopes: ["certops:executor:events"],
+      scopes: ["certops:events:write"],
       createdBy: fixture.ownerUser.id,
     });
 
@@ -412,7 +749,7 @@ describe("CertOps API token management routes", function () {
     const stillValid = await validateApiToken({
       workspaceId: fixture.workspaceId,
       rawToken: created.plaintextToken,
-      requiredScopes: ["certops:executor:events"],
+      requiredScopes: ["certops:events:write"],
     });
     expect(stillValid.valid).to.equal(true);
   });
