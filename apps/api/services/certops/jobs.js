@@ -402,6 +402,32 @@ function assertJobStatusTransition(fromStatus, toStatus) {
   );
 }
 
+function isTerminalJobStatus(status) {
+  return TERMINAL_JOB_STATUSES.has(status);
+}
+
+function jobStatusTransitionDecision(fromStatus, toStatus) {
+  if (isTerminalJobStatus(fromStatus)) {
+    return {
+      applied: false,
+      ignoredReason:
+        fromStatus === toStatus ? "terminal_replay" : "terminal_regression",
+    };
+  }
+
+  assertJobStatusTransition(fromStatus, toStatus);
+  return { applied: true, ignoredReason: null };
+}
+
+function withStatusTransitionOutcome(job, decision) {
+  return {
+    ...job,
+    statusTransitionApplied: decision.applied,
+    statusTransitionIgnored: !decision.applied,
+    statusTransitionIgnoredReason: decision.ignoredReason,
+  };
+}
+
 function initialLifecycleTimestamps(options, status) {
   const now = new Date();
   const queuedAt =
@@ -800,7 +826,11 @@ async function updateCertificateJobStatus(options) {
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    assertJobStatusTransition(current.status, status);
+    const decision = jobStatusTransitionDecision(current.status, status);
+    if (!decision.applied) {
+      return withStatusTransitionOutcome(current, decision);
+    }
+
     const result = await db.query(
       `UPDATE certificate_jobs
           SET status = $3,
@@ -845,7 +875,9 @@ async function updateCertificateJobStatus(options) {
       ],
     );
 
-    if (result.rows[0]) return jobFromRow(result.rows[0]);
+    if (result.rows[0]) {
+      return withStatusTransitionOutcome(jobFromRow(result.rows[0]), decision);
+    }
 
     current = await getJobById(db, workspaceId, jobId);
     if (!current) {
@@ -957,6 +989,7 @@ module.exports = {
   dateToIso,
   fieldNameLooksForbidden,
   getCertificateJobById,
+  isTerminalJobStatus,
   jobFromRow,
   jobLogFromRow,
   listCertificateJobLog,

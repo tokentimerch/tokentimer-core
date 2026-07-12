@@ -5,7 +5,9 @@ const assert = require("node:assert");
 const path = require("path");
 
 const {
+  PRIVATE_KEY_MATERIAL_REJECTED,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
+  assertNoPrivateKeyMaterial,
   containsPrivateKeyMaterial,
   looksPrivateKeyDer,
   fieldNameLooksGenericSecret,
@@ -281,10 +283,12 @@ describe("secretMaterial.redactPrivateKeyMaterial", () => {
 });
 
 describe("secretMaterial.redactGenericSecrets", () => {
-  it("redacts private key blocks in nested structures without mutating input", () => {
+  it("hard-rejects private key blocks instead of accepting redacted key material", () => {
     const input = { logs: [pem("PRIVATE KEY")] };
-    const out = redactGenericSecrets(input);
-    assert.ok(out.logs[0].includes(PRIVATE_KEY_REDACTION_PLACEHOLDER));
+    assert.throws(
+      () => redactGenericSecrets(input),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
     assert.ok(input.logs[0].includes(FAKE_BODY), "input must not be mutated");
   });
 
@@ -303,15 +307,18 @@ describe("secretMaterial.redactGenericSecrets", () => {
     const out = redactGenericSecretsWithReport({
       note: "credential=abc",
       authorization: "Authorization: Bearer abc123tokenvalue",
+      cookie: "session-value",
     });
     assert.deepStrictEqual(out.value, {
       note: "[REDACTED]",
       authorization: "[REDACTED]",
+      cookie: "[REDACTED]",
     });
     assert.strictEqual(out.redactionApplied, true);
     assert.ok(out.redactionCount >= 2);
     assert.ok(out.redactedFields.includes("generic-secret"));
     assert.ok(out.redactedFields.includes("authorization"));
+    assert.ok(out.redactedFields.includes("cookie"));
   });
 
   it("redacts values under generic secret-looking field names", () => {
@@ -325,20 +332,42 @@ describe("secretMaterial.redactGenericSecrets", () => {
     });
   });
 
-  it("redacts a base64-wrapped private key nested in a structure", () => {
+  it("hard-rejects a base64-wrapped private key nested in a structure", () => {
     const wrapped = Buffer.from(pem("RSA PRIVATE KEY")).toString("base64");
-    const out = redactGenericSecrets({ evidence: { blob: wrapped } });
-    assert.strictEqual(out.evidence.blob, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+    assert.throws(
+      () => redactGenericSecrets({ evidence: { blob: wrapped } }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
   });
 
-  it("redacts a Buffer carrying private key material", () => {
-    const out = redactGenericSecrets({ raw: Buffer.from(pem("PRIVATE KEY")) });
-    assert.strictEqual(out.raw, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  it("hard-rejects a Buffer carrying private key material", () => {
+    assert.throws(
+      () => redactGenericSecrets({ raw: Buffer.from(pem("PRIVATE KEY")) }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
   });
 
-  it("redacts a Buffer carrying PKCS#12/PFX-like material", () => {
-    const out = redactGenericSecrets({ raw: fakePkcs12Buffer() });
-    assert.strictEqual(out.raw, PRIVATE_KEY_REDACTION_PLACEHOLDER);
+  it("hard-rejects a Buffer carrying PKCS#12/PFX-like material", () => {
+    assert.throws(
+      () => redactGenericSecrets({ raw: fakePkcs12Buffer() }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+  });
+
+  it("hard-rejects incomplete PEM headers and private-key-shaped fields", () => {
+    for (const value of [
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----\nincomplete",
+      { publicNote: { privateKeyPem: "not-accepted" } },
+    ]) {
+      assert.throws(
+        () => redactGenericSecretsWithReport(value),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+      assert.throws(
+        () => assertNoPrivateKeyMaterial(value),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
   });
 
   it("leaves ordinary content intact", () => {
@@ -348,22 +377,22 @@ describe("secretMaterial.redactGenericSecrets", () => {
     );
   });
 
-  it("does not throw or leak the original subtree on cyclic objects", () => {
+  it("fails closed on cyclic objects", () => {
     const node = { label: "evidence" };
     node.self = node;
-    const out = redactGenericSecrets(node);
-    assert.notStrictEqual(out, node, "must return a copy, not the original");
-    assert.notStrictEqual(out.self, node, "must not embed the original cycle");
-    assert.strictEqual(out.self, "[REDACTED:circular]");
-    assert.strictEqual(out.label, "evidence");
+    assert.throws(
+      () => redactGenericSecrets(node),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
   });
 
-  it("still redacts a key reachable before a cycle closes", () => {
+  it("rejects a key reachable before a cycle closes", () => {
     const node = { secret: pem("RSA PRIVATE KEY") };
     node.self = node;
-    const out = redactGenericSecrets(node);
-    assert.strictEqual(out.secret, "[REDACTED]");
-    assert.strictEqual(out.self, "[REDACTED:circular]");
+    assert.throws(
+      () => redactGenericSecrets(node),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
   });
 
   it("classifies private-key and generic secret field names separately", () => {

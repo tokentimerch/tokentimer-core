@@ -9,7 +9,6 @@ const {
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
-  CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
@@ -312,6 +311,8 @@ describe("CertOps jobs service", () => {
       resultMetadata: { executor: "executor-a" },
     });
     assert.equal(running.status, "running");
+    assert.equal(running.statusTransitionApplied, true);
+    assert.equal(running.statusTransitionIgnored, false);
     assert.equal(running.resultMetadata.executor, "executor-a");
     assert.match(running.startedAt, /^2026-06-30T/);
 
@@ -385,15 +386,24 @@ describe("CertOps jobs service", () => {
     assert.equal(failed.status, "failed");
     assert.match(failed.completedAt, /^2026-06-30T/);
 
-    await assert.rejects(
-      () =>
-        updateCertificateJobStatus({
-          client,
-          workspaceId: WORKSPACE_A,
-          jobId: job.id,
-          status: "running",
-        }),
-      (error) => error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID,
+    const lateRunning = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "running",
+    });
+    assert.equal(lateRunning.status, "failed");
+    assert.equal(lateRunning.statusTransitionApplied, false);
+    assert.equal(lateRunning.statusTransitionIgnored, true);
+    assert.equal(
+      lateRunning.statusTransitionIgnoredReason,
+      "terminal_regression",
+    );
+    assert.equal(lateRunning.completedAt, failed.completedAt);
+    assert.equal(lateRunning.errorCode, "DEPLOY_FAILED");
+    assert.equal(
+      lateRunning.errorMessage,
+      "The public deployment check failed",
     );
 
     const replay = await updateCertificateJobStatus({
@@ -403,9 +413,55 @@ describe("CertOps jobs service", () => {
       status: "failed",
     });
     assert.equal(replay.status, "failed");
+    assert.equal(replay.statusTransitionApplied, false);
+    assert.equal(replay.statusTransitionIgnoredReason, "terminal_replay");
     assert.equal(replay.completedAt, failed.completedAt);
     assert.equal(replay.errorCode, "DEPLOY_FAILED");
     assert.equal(replay.errorMessage, "The public deployment check failed");
+  });
+
+  it("ignores active-state regressions from every terminal status", async () => {
+    const client = createMemoryClient();
+
+    for (const terminalStatus of [
+      "succeeded",
+      "failed",
+      "rejected",
+      "blocked",
+      "cancelled",
+    ]) {
+      const job = await createCertificateJob({
+        client,
+        workspaceId: WORKSPACE_A,
+        operation: "renew",
+        payload: { certificateId: `cert-${terminalStatus}` },
+        status: terminalStatus,
+        errorCode: terminalStatus === "failed" ? "DEPLOY_FAILED" : null,
+        errorMessage:
+          terminalStatus === "failed" ? "Public deployment failed" : null,
+      });
+
+      const lateRunning = await updateCertificateJobStatus({
+        client,
+        workspaceId: WORKSPACE_A,
+        jobId: job.id,
+        status: "running",
+        errorCode: null,
+        errorMessage: null,
+      });
+
+      assert.equal(lateRunning.status, terminalStatus);
+      assert.equal(lateRunning.statusTransitionApplied, false);
+      assert.equal(lateRunning.statusTransitionIgnored, true);
+      assert.equal(
+        lateRunning.statusTransitionIgnoredReason,
+        "terminal_regression",
+      );
+      assert.equal(lateRunning.completedAt, job.completedAt);
+      assert.equal(lateRunning.cancelledAt, job.cancelledAt);
+      assert.equal(lateRunning.errorCode, job.errorCode);
+      assert.equal(lateRunning.errorMessage, job.errorMessage);
+    }
   });
 
   it("sets lifecycle timestamps from the initial canonical status", async () => {
@@ -438,7 +494,7 @@ describe("CertOps jobs service", () => {
     assert.match(cancelled.cancelledAt, /^20/);
   });
 
-  it("preserves error fields unless explicitly changed", async () => {
+  it("preserves terminal error fields even when a replay tries to clear them", async () => {
     const client = createMemoryClient();
     const job = await createCertificateJob({
       client,
@@ -473,8 +529,9 @@ describe("CertOps jobs service", () => {
 
     assert.equal(replay.errorCode, failed.errorCode);
     assert.equal(replay.errorMessage, failed.errorMessage);
-    assert.equal(cleared.errorCode, null);
-    assert.equal(cleared.errorMessage, null);
+    assert.equal(cleared.errorCode, failed.errorCode);
+    assert.equal(cleared.errorMessage, failed.errorMessage);
+    assert.equal(cleared.statusTransitionApplied, false);
   });
 
   it("appends and lists safe job log entries", async () => {

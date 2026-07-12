@@ -11,7 +11,6 @@ const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations, migrations } = requireMigrateModule();
 const {
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
-  CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
@@ -540,19 +539,21 @@ describe("CertOps jobs and evidence persistence", function () {
       });
       expect(failed.completedAt).to.be.a("string");
 
-      let invalidTransition;
-      try {
-        await updateCertificateJobStatus({
-          workspaceId: workspaceA,
-          jobId: job.id,
-          status: "succeeded",
-        });
-      } catch (error) {
-        invalidTransition = error;
-      }
-      expect(invalidTransition?.code).to.equal(
-        CERTOPS_JOB_STATUS_TRANSITION_INVALID,
+      const lateSucceeded = await updateCertificateJobStatus({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        status: "succeeded",
+      });
+      expect(lateSucceeded.status).to.equal("failed");
+      expect(lateSucceeded.statusTransitionApplied).to.equal(false);
+      expect(lateSucceeded.statusTransitionIgnoredReason).to.equal(
+        "terminal_regression",
       );
+      expect(lateSucceeded.errorCode).to.equal("DEPLOY_FAILED");
+      expect(lateSucceeded.errorMessage).to.equal(
+        "Public deployment validation failed",
+      );
+      expect(lateSucceeded.completedAt).to.equal(failed.completedAt);
 
       const sameTerminal = await updateCertificateJobStatus({
         workspaceId: workspaceA,

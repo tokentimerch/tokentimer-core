@@ -5,8 +5,7 @@ const crypto = require("crypto");
 const { pool } = require("../../db/database");
 const { CERTOPS_JOB_NOT_FOUND, serviceError } = require("./jobs");
 
-const CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT =
-  "CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT";
+const CERTOPS_EXECUTOR_EVENT_CONFLICT = "CERTOPS_EXECUTOR_EVENT_CONFLICT";
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -40,7 +39,7 @@ function parseResponse(value) {
 function idempotencyConflict() {
   return serviceError(
     "Executor event ID was already used with a different event",
-    CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT,
+    CERTOPS_EXECUTOR_EVENT_CONFLICT,
   );
 }
 
@@ -162,7 +161,7 @@ async function ingestExecutorEvent({
 }
 
 module.exports = {
-  CERTOPS_EXECUTOR_EVENT_IDEMPOTENCY_CONFLICT,
+  CERTOPS_EXECUTOR_EVENT_CONFLICT,
   ingestExecutorEvent,
   _test: {
     canonicalize,

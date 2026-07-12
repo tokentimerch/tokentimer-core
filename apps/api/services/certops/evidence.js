@@ -2,6 +2,9 @@
 
 const { pool } = require("../../db/database");
 const {
+  assertNoPrivateKeyMaterial,
+} = require("../../utils/secretMaterial");
+const {
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   PRIVATE_KEY_MATERIAL_REJECTED,
@@ -149,6 +152,9 @@ async function ensureJobExists(db, workspaceId, jobId) {
 }
 
 async function createCertificateEvidence(options) {
+  assertNoPrivateKeyMaterial(options.evidenceType);
+  assertNoPrivateKeyMaterial(options.subjectId);
+  assertNoPrivateKeyMaterial(options.metadata);
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const jobId = normalizeRequiredId(options.jobId, CERTOPS_JOB_INVALID);

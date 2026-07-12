@@ -456,17 +456,17 @@ describe("CertOps inventory migration", () => {
   it("keeps every CertOps executor event idempotency table workspace-scoped", () => {
     for (const tableName of CERTOPS_EXECUTOR_EVENT_TABLES) {
       assert.match(
-        getTableBlock(tableName, certOpsExecutorEventsMigration),
+        getTableBlock(tableName, certOpsExecutorEventMigration),
         /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
         `${tableName} must have a non-null workspace FK`,
       );
     }
     assert.match(
-      getTableBlock("certificate_executor_events", certOpsExecutorEventsMigration),
+      getTableBlock("certificate_executor_events", certOpsExecutorEventMigration),
       /FOREIGN KEY \(workspace_id, job_id\)\s+REFERENCES certificate_jobs\(workspace_id, id\)\s+ON DELETE CASCADE/,
     );
     assert.match(
-      getTableBlock("certificate_executor_events", certOpsExecutorEventsMigration),
+      getTableBlock("certificate_executor_events", certOpsExecutorEventMigration),
       /FOREIGN KEY \(workspace_id, created_by_api_token_id\)\s+REFERENCES api_tokens\(workspace_id, id\)\s+ON DELETE SET NULL \(created_by_api_token_id\)/,
     );
   });

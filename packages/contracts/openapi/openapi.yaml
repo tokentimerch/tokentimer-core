@@ -3659,7 +3659,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: M2 external executor reporting envelope for normalized job and public evidence events through the single executor ingestion endpoint. Lifecycle events require `certops:events:write`; evidence-bearing events additionally require `certops:evidence:write`. The route is hidden with 404 when `certops.enabled` is disabled. `eventId` is idempotent within a workspace and job: exact retries return 202 without repeating logs, evidence, or status side effects, while a different sanitized envelope using the same key returns 409. Payloads containing private key material are rejected with 422; generic secrets in log and evidence metadata are redacted to `[REDACTED]` before persistence. Older operational lifecycle names are represented in M2 as normalized job/evidence events. Per-job executor write routes, richer agent-executed protocol, and job signing are deferred unless a later ADR changes that.
+      description: M2 external executor reporting envelope for normalized job and public evidence events through the single executor ingestion endpoint. Lifecycle events require `certops:events:write`; evidence-bearing events additionally require `certops:evidence:write`. The route is hidden with 404 when `certops.enabled` is disabled. `eventId` is idempotent within a workspace and job: exact retries return 202 without repeating logs, evidence, audit rows, or status side effects, while a different sanitized envelope using the same key returns 409. Late lifecycle events are recorded in the job log but cannot regress or reopen a terminal job. Payloads containing private key material are rejected with 422. Generic secret material in log and evidence metadata is redacted to `[REDACTED]` before persistence. Older operational lifecycle names are represented in M2 as normalized job/evidence events. Per-job executor write routes, richer agent-executed protocol, and job signing are deferred unless a later ADR changes that.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3683,12 +3683,6 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          description: The event conflicts with the current job state or a prior event with the same workspace, job, and eventId
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Request rejected because it contained private key material
           content:
