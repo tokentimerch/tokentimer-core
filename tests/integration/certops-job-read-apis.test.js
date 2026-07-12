@@ -319,7 +319,34 @@ describe("CertOps job read APIs", function () {
     expect(ids).to.not.include(jobs.otherWorkspaceJob.id);
     expect(list.body.items[0]).to.not.have.property("payload");
     expect(list.body.items[0]).to.not.have.property("resultMetadata");
+    expect(list.body.pagination).to.deep.equal({ limit: 50, offset: 0 });
     expectNoSensitiveValues(list.body);
+
+    const nonNumericPage = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?limit=not-a-number&offset=not-a-number`,
+      )
+      .set("Cookie", fixture.viewerSession.cookie)
+      .expect(200);
+    expect(nonNumericPage.body.pagination).to.deep.equal({
+      limit: 50,
+      offset: 0,
+    });
+
+    const cappedPage = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?limit=500`)
+      .set("Cookie", fixture.viewerSession.cookie)
+      .expect(200);
+    expect(cappedPage.body.pagination).to.deep.equal({ limit: 100, offset: 0 });
+
+    const clampedOffsetPage = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?limit=1&offset=-5`)
+      .set("Cookie", fixture.viewerSession.cookie)
+      .expect(200);
+    expect(clampedOffsetPage.body.pagination).to.deep.equal({
+      limit: 1,
+      offset: 0,
+    });
 
     const firstPage = await request(BASE)
       .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?limit=1&offset=0`)
@@ -402,7 +429,16 @@ describe("CertOps job read APIs", function () {
     expect(log.body.items.map((item) => item.eventType)).to.include(
       "job.created",
     );
+    expect(log.body.pagination).to.deep.equal({ limit: 50, offset: 0 });
     expectNoSensitiveValues(log.body);
+
+    const cappedLog = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${fixture.workspaceId}/certops/jobs/${jobs.deployJob.id}/log?limit=500&offset=-5`,
+      )
+      .set("Cookie", fixture.viewerSession.cookie)
+      .expect(200);
+    expect(cappedLog.body.pagination).to.deep.equal({ limit: 100, offset: 0 });
 
     const evidence = await request(BASE)
       .get(
@@ -420,7 +456,19 @@ describe("CertOps job read APIs", function () {
       type: "report",
       reference: "reports/certops/public-observation.json",
     });
+    expect(evidence.body.pagination).to.deep.equal({ limit: 50, offset: 0 });
     expectNoSensitiveValues(evidence.body);
+
+    const cappedEvidence = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${fixture.workspaceId}/certops/jobs/${jobs.deployJob.id}/evidence?limit=500&offset=-5`,
+      )
+      .set("Cookie", fixture.viewerSession.cookie)
+      .expect(200);
+    expect(cappedEvidence.body.pagination).to.deep.equal({
+      limit: 100,
+      offset: 0,
+    });
 
     for (const suffix of ["log", "evidence"]) {
       const crossWorkspace = await request(BASE)
