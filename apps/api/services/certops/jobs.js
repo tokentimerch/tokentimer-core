@@ -8,6 +8,10 @@ const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
 const CERTOPS_JOB_OPERATION_INVALID = "CERTOPS_JOB_OPERATION_INVALID";
 const CERTOPS_JOB_SOURCE_INVALID = "CERTOPS_JOB_SOURCE_INVALID";
 const CERTOPS_JOB_STATUS_INVALID = "CERTOPS_JOB_STATUS_INVALID";
+const CERTOPS_JOB_STATUS_TRANSITION_INVALID =
+  "CERTOPS_JOB_STATUS_TRANSITION_INVALID";
+const CERTOPS_JOB_IDEMPOTENCY_CONFLICT =
+  "CERTOPS_JOB_IDEMPOTENCY_CONFLICT";
 const CERTOPS_JOB_LOG_EVENT_TYPE_INVALID =
   "CERTOPS_JOB_LOG_EVENT_TYPE_INVALID";
 const CERTOPS_JOB_METADATA_INVALID = "CERTOPS_JOB_METADATA_INVALID";
@@ -15,24 +19,44 @@ const CERTOPS_JOB_WORKSPACE_REQUIRED = "CERTOPS_JOB_WORKSPACE_REQUIRED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 const JOB_STATUSES = Object.freeze([
-  "queued",
+  "pending_approval",
+  "approved",
+  "rejected",
+  "pending",
+  "claimed",
   "running",
   "succeeded",
   "failed",
-  "canceled",
+  "blocked",
+  "cancelled",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
-const LOG_STATUSES = Object.freeze([
-  "queued",
-  "accepted",
-  "running",
+const LOG_STATUSES = JOB_STATUSES;
+const LOG_STATUS_SET = new Set(LOG_STATUSES);
+
+const TERMINAL_JOB_STATUSES = new Set([
+  "rejected",
   "succeeded",
   "failed",
-  "rejected",
-  "canceled",
+  "blocked",
+  "cancelled",
 ]);
-const LOG_STATUS_SET = new Set(LOG_STATUSES);
+const ACTIVE_JOB_STATUSES = new Set(
+  JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
+);
+const JOB_STATUS_TRANSITIONS = Object.freeze({
+  pending_approval: new Set(["approved", "rejected", "cancelled"]),
+  approved: new Set(["pending", "cancelled"]),
+  pending: new Set(["claimed", "running", "blocked", "cancelled"]),
+  claimed: new Set(["running", "failed", "blocked", "cancelled"]),
+  running: new Set(["succeeded", "failed", "blocked", "cancelled"]),
+  rejected: new Set(),
+  succeeded: new Set(),
+  failed: new Set(),
+  blocked: new Set(),
+  cancelled: new Set(),
+});
 
 const JOB_OPERATIONS = Object.freeze(["renew", "deploy", "reload", "revoke", "noop"]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
@@ -68,7 +92,7 @@ const JOB_LOG_EVENT_TYPES = Object.freeze([
   "job.completed",
   "job.failed",
   "job.rejected",
-  "job.canceled",
+  "job.cancelled",
   "job.status_updated",
   "evidence.attached",
 ]);
@@ -130,6 +154,7 @@ const FORBIDDEN_PUBLIC_FIELD_FRAGMENTS = Object.freeze([
   "credential",
   "tokensecret",
   "apisecret",
+  "apikey",
   "rawsecret",
   "rawprivatekey",
   "rawkey",
@@ -140,10 +165,19 @@ const FORBIDDEN_PUBLIC_FIELD_FRAGMENTS = Object.freeze([
   "pfx",
   "jks",
   "keystore",
+  "passphrase",
+  "bearer",
+  "authorization",
+  "accesskey",
+  "accesskeyid",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+  "secretkey",
 ]);
 
 const CREDENTIAL_DUMP_PATTERN =
-  /\b(?:authorization\s*[:=]\s*(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]+|(?:password|passwd|secret|credential|api[_-]?secret|token[_-]?secret|private[_-]?key|key[_-]?material)\s*[:=]\s*\S+)/i;
+  /\b(?:authorization\s*[:=]\s*(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]+|(?:password|passwd|secret|credential|api[_-]?key|api[_-]?secret|passphrase|access[_-]?key(?:id)?|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|token[_-]?secret|private[_-]?key|key[_-]?material)\s*[:=]\s*\S+)/i;
 
 function serviceError(message, code) {
   const error = new Error(message);
@@ -359,6 +393,35 @@ function normalizeOptionalEnum(value, allowedSet, code, fieldName) {
   return normalizeEnum(value, allowedSet, code, fieldName);
 }
 
+function assertJobStatusTransition(fromStatus, toStatus) {
+  if (fromStatus === toStatus) return;
+  if (JOB_STATUS_TRANSITIONS[fromStatus]?.has(toStatus)) return;
+  throw serviceError(
+    "CertOps job status transition is invalid",
+    CERTOPS_JOB_STATUS_TRANSITION_INVALID,
+  );
+}
+
+function initialLifecycleTimestamps(options, status) {
+  const now = new Date();
+  const queuedAt =
+    normalizeOptionalDate(options.queuedAt, "queuedAt") ||
+    (ACTIVE_JOB_STATUSES.has(status) ? now : null);
+  const startedAt =
+    normalizeOptionalDate(options.startedAt, "startedAt") ||
+    (status === "running" ? now : null);
+  const completedAt =
+    normalizeOptionalDate(options.completedAt, "completedAt") ||
+    (["succeeded", "failed", "blocked"].includes(status) ? now : null);
+  // The database column retains the American spelling for compatibility. The
+  // public job state and service option use the plan's canonical "cancelled".
+  const cancelledAt =
+    normalizeOptionalDate(options.cancelledAt, "cancelledAt") ||
+    (status === "cancelled" ? now : null);
+
+  return { queuedAt, startedAt, completedAt, cancelledAt };
+}
+
 function normalizeSubject(options) {
   const subjectType = normalizeOptionalEnum(
     options.subjectType,
@@ -398,8 +461,36 @@ function jobFromRow(row) {
     queuedAt: dateToIso(row.queued_at),
     startedAt: dateToIso(row.started_at),
     completedAt: dateToIso(row.completed_at),
-    canceledAt: dateToIso(row.canceled_at),
+    cancelledAt: dateToIso(row.canceled_at),
   };
+}
+
+function canonicalizeJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalizeJson(value[key])]),
+  );
+}
+
+function idempotencyIdentity(value) {
+  return JSON.stringify(
+    canonicalizeJson({
+      operation: value.operation,
+      status: value.status,
+      source: value.source,
+      requestedByUserId: value.requestedByUserId || null,
+      requestedByApiTokenId: value.requestedByApiTokenId || null,
+      subjectType: value.subjectType || null,
+      subjectId: value.subjectId || null,
+      payload: value.payload || {},
+      resultMetadata: value.resultMetadata || {},
+      errorCode: value.errorCode || null,
+      errorMessage: value.errorMessage || null,
+    }),
+  );
 }
 
 function jobLogFromRow(row) {
@@ -470,7 +561,7 @@ async function createCertificateJob(options) {
     JOB_STATUS_SET,
     CERTOPS_JOB_STATUS_INVALID,
     "status",
-    "queued",
+    "pending",
   );
   const source = normalizeEnum(
     options.source,
@@ -494,12 +585,21 @@ async function createCertificateJob(options) {
     options.errorMessage,
     "errorMessage",
   );
-  const queuedAt =
-    normalizeOptionalDate(options.queuedAt, "queuedAt") ||
-    (status === "queued" ? new Date() : null);
-  const startedAt = normalizeOptionalDate(options.startedAt, "startedAt");
-  const completedAt = normalizeOptionalDate(options.completedAt, "completedAt");
-  const canceledAt = normalizeOptionalDate(options.canceledAt, "canceledAt");
+  const { queuedAt, startedAt, completedAt, cancelledAt } =
+    initialLifecycleTimestamps(options, status);
+  const requestIdentity = idempotencyIdentity({
+    operation,
+    status,
+    source,
+    requestedByUserId: options.requestedByUserId,
+    requestedByApiTokenId: options.requestedByApiTokenId,
+    subjectType,
+    subjectId,
+    payload,
+    resultMetadata,
+    errorCode,
+    errorMessage,
+  });
 
   try {
     const result = await db.query(
@@ -544,7 +644,7 @@ async function createCertificateJob(options) {
         queuedAt,
         startedAt,
         completedAt,
-        canceledAt,
+        cancelledAt,
       ],
     );
 
@@ -562,7 +662,15 @@ async function createCertificateJob(options) {
         workspaceId,
         idempotencyKey,
       );
-      if (existing) return existing;
+      if (existing) {
+        if (idempotencyIdentity(existing) === requestIdentity) {
+          return existing;
+        }
+        throw serviceError(
+          "Idempotency key was already used with a different CertOps job request",
+          CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+        );
+      }
     }
     throw error;
   }
@@ -629,46 +737,87 @@ async function updateCertificateJobStatus(options) {
   const resultMetadata = hasResultMetadata
     ? normalizePublicObject(options.resultMetadata, "resultMetadata")
     : {};
-  const errorCode = normalizeOptionalShortText(options.errorCode, "errorCode");
-  const errorMessage = normalizeOptionalPublicText(
-    options.errorMessage,
+  const hasErrorCode = Object.prototype.hasOwnProperty.call(
+    options,
+    "errorCode",
+  );
+  const hasErrorMessage = Object.prototype.hasOwnProperty.call(
+    options,
     "errorMessage",
   );
+  const errorCode = hasErrorCode
+    ? normalizeOptionalShortText(options.errorCode, "errorCode")
+    : null;
+  const errorMessage = hasErrorMessage
+    ? normalizeOptionalPublicText(options.errorMessage, "errorMessage")
+    : null;
 
-  const result = await db.query(
-    `UPDATE certificate_jobs
-        SET status = $3,
-            result_metadata = CASE WHEN $4 THEN $5::jsonb ELSE result_metadata END,
-            error_code = $6,
-            error_message = $7,
-            updated_at = NOW(),
-            started_at = CASE
-              WHEN $3 = 'running' THEN COALESCE(started_at, NOW())
-              ELSE started_at
-            END,
-            completed_at = CASE
-              WHEN $3 IN ('succeeded', 'failed') THEN COALESCE(completed_at, NOW())
-              ELSE completed_at
-            END,
-            canceled_at = CASE
-              WHEN $3 = 'canceled' THEN COALESCE(canceled_at, NOW())
-              ELSE canceled_at
-            END
-      WHERE workspace_id = $1
-        AND id = $2
-      RETURNING ${SAFE_JOB_SELECT_FIELDS}`,
-    [
-      workspaceId,
-      jobId,
-      status,
-      hasResultMetadata,
-      JSON.stringify(resultMetadata),
-      errorCode,
-      errorMessage,
-    ],
+  // Compare-and-swap on the current state makes every transition atomic. It
+  // prevents concurrent writers from overwriting a terminal state without
+  // requiring a transaction-capable client in the unit-test service harness.
+  let current = await getJobById(db, workspaceId, jobId);
+  if (!current) {
+    throw serviceError("Certificate job not found", CERTOPS_JOB_NOT_FOUND);
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertJobStatusTransition(current.status, status);
+    const result = await db.query(
+      `UPDATE certificate_jobs
+          SET status = $3,
+              result_metadata = CASE WHEN $4 THEN $5::jsonb ELSE result_metadata END,
+              error_code = CASE WHEN $6 THEN $7 ELSE error_code END,
+              error_message = CASE WHEN $8 THEN $9 ELSE error_message END,
+              updated_at = NOW(),
+              queued_at = CASE
+                WHEN $3 IN ('pending_approval', 'approved', 'pending', 'claimed', 'running')
+                  THEN COALESCE(queued_at, NOW())
+                ELSE queued_at
+              END,
+              started_at = CASE
+                WHEN $3 = 'running' THEN COALESCE(started_at, NOW())
+                ELSE started_at
+              END,
+              completed_at = CASE
+                WHEN $3 IN ('succeeded', 'failed', 'blocked') THEN COALESCE(completed_at, NOW())
+                ELSE completed_at
+              END,
+              -- Keep the legacy column name only as storage compatibility for
+              -- the canonical British-spelled cancelled job state.
+              canceled_at = CASE
+                WHEN $3 = 'cancelled' THEN COALESCE(canceled_at, NOW())
+                ELSE canceled_at
+              END
+        WHERE workspace_id = $1
+          AND id = $2
+          AND status = $10
+        RETURNING ${SAFE_JOB_SELECT_FIELDS}`,
+      [
+        workspaceId,
+        jobId,
+        status,
+        hasResultMetadata,
+        JSON.stringify(resultMetadata),
+        hasErrorCode,
+        errorCode,
+        hasErrorMessage,
+        errorMessage,
+        current.status,
+      ],
+    );
+
+    if (result.rows[0]) return jobFromRow(result.rows[0]);
+
+    current = await getJobById(db, workspaceId, jobId);
+    if (!current) {
+      throw serviceError("Certificate job not found", CERTOPS_JOB_NOT_FOUND);
+    }
+  }
+
+  throw serviceError(
+    "CertOps job status transition is invalid",
+    CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   );
-
-  return jobFromRow(result.rows[0] || null);
 }
 
 async function appendCertificateJobLog(options) {
@@ -746,17 +895,20 @@ async function listCertificateJobLog(options) {
 
 module.exports = {
   CERTOPS_JOB_INVALID,
+  CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_METADATA_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
+  CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   CERTOPS_JOB_WORKSPACE_REQUIRED,
   JOB_LOG_EVENT_TYPES,
   JOB_OPERATIONS,
   JOB_SOURCES,
   JOB_STATUSES,
+  JOB_STATUS_TRANSITIONS,
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,

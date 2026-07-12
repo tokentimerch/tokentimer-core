@@ -10,6 +10,8 @@ const { expect, TestUtils } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations, migrations } = requireMigrateModule();
 const {
+  CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+  CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
@@ -270,7 +272,7 @@ describe("CertOps jobs and evidence persistence", function () {
         requestedByUserId: ownerId,
       });
       expect(job.workspaceId).to.equal(workspaceA);
-      expect(job.status).to.equal("queued");
+      expect(job.status).to.equal("pending");
       expect(job.payload.target).to.equal("kubernetes/default/web-cert");
 
       const idempotent = await createCertificateJob({
@@ -280,7 +282,11 @@ describe("CertOps jobs and evidence persistence", function () {
         idempotencyKey: "deploy-cert-1",
         subjectType: "managed_certificate",
         subjectId: "cert-1",
-        payload: { target: "kubernetes/default/web-cert" },
+        payload: {
+          target: "kubernetes/default/web-cert",
+          fingerprintSha256:
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
         requestedByUserId: ownerId,
       });
       expect(idempotent.id).to.equal(job.id);
@@ -449,6 +455,127 @@ describe("CertOps jobs and evidence persistence", function () {
     }
   });
 
+  it("enforces monotonic status transitions and replay-safe idempotency", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-jobs-fsm",
+    );
+
+    try {
+      const request = {
+        workspaceId: workspaceA,
+        operation: "deploy",
+        source: "api",
+        status: "pending_approval",
+        idempotencyKey: "fsm-deploy-1",
+        subjectType: "managed_certificate",
+        subjectId: "cert-fsm-1",
+        payload: { target: "kubernetes/default/fsm-cert", attempt: 1 },
+        resultMetadata: { source: "control-plane" },
+        requestedByUserId: ownerId,
+      };
+      const job = await createCertificateJob(request);
+      for (const staleStatus of ["queued", "canceled"]) {
+        let serviceError;
+        try {
+          await createCertificateJob({
+            ...request,
+            idempotencyKey: `stale-${staleStatus}`,
+            status: staleStatus,
+          });
+        } catch (error) {
+          serviceError = error;
+        }
+        expect(serviceError?.code).to.equal("CERTOPS_JOB_STATUS_INVALID");
+
+        let databaseError;
+        try {
+          await TestUtils.execQuery(
+            `INSERT INTO certificate_jobs (workspace_id, operation, status, source)
+             VALUES ($1, 'noop', $2, 'api')`,
+            [workspaceA, staleStatus],
+          );
+        } catch (error) {
+          databaseError = error;
+        }
+        expect(databaseError?.code).to.equal("23514");
+      }
+      const replay = await createCertificateJob({
+        ...request,
+        payload: { attempt: 1, target: "kubernetes/default/fsm-cert" },
+      });
+      expect(replay.id).to.equal(job.id);
+
+      let conflict;
+      try {
+        await createCertificateJob({
+          ...request,
+          payload: { target: "kubernetes/default/other-cert", attempt: 1 },
+        });
+      } catch (error) {
+        conflict = error;
+      }
+      expect(conflict?.code).to.equal(CERTOPS_JOB_IDEMPOTENCY_CONFLICT);
+
+      await updateCertificateJobStatus({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        status: "approved",
+      });
+      await updateCertificateJobStatus({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        status: "pending",
+      });
+      await updateCertificateJobStatus({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        status: "running",
+      });
+      const failed = await updateCertificateJobStatus({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        status: "failed",
+        errorCode: "DEPLOY_FAILED",
+        errorMessage: "Public deployment validation failed",
+      });
+      expect(failed.completedAt).to.be.a("string");
+
+      let invalidTransition;
+      try {
+        await updateCertificateJobStatus({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          status: "succeeded",
+        });
+      } catch (error) {
+        invalidTransition = error;
+      }
+      expect(invalidTransition?.code).to.equal(
+        CERTOPS_JOB_STATUS_TRANSITION_INVALID,
+      );
+
+      const sameTerminal = await updateCertificateJobStatus({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        status: "failed",
+      });
+      expect(sameTerminal.errorCode).to.equal("DEPLOY_FAILED");
+      expect(sameTerminal.errorMessage).to.equal(
+        "Public deployment validation failed",
+      );
+      expect(sameTerminal.completedAt).to.equal(failed.completedAt);
+
+      const otherWorkspace = await createCertificateJob({
+        ...request,
+        workspaceId: workspaceB,
+        payload: { target: "kubernetes/default/other-workspace", attempt: 1 },
+      });
+      expect(otherWorkspace.id).to.not.equal(job.id);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("cascades job logs and detaches evidence when a job is deleted", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-jobs-delete",
@@ -465,7 +592,7 @@ describe("CertOps jobs and evidence persistence", function () {
         workspaceId: workspaceA,
         jobId: job.id,
         eventType: "job.created",
-        status: "queued",
+        status: "pending",
         metadata: { reason: "created" },
         createdByUserId: ownerId,
       });

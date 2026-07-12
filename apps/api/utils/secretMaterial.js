@@ -99,6 +99,38 @@ function looksPkcs12Bundle(value) {
   );
 }
 
+/**
+ * Detects the common ASN.1 envelopes used by DER private keys without
+ * attempting to parse arbitrary ASN.1. PKCS#8, PKCS#1 RSA, and SEC1 EC keys
+ * start with SEQUENCE then INTEGER version 0/1. X.509 certificates start with
+ * SEQUENCE then another SEQUENCE, so this deliberately does not flag them.
+ * @param {Buffer} value
+ * @returns {boolean}
+ */
+function looksPrivateKeyDer(value) {
+  if (!Buffer.isBuffer(value) || value.length < 8 || value[0] !== 0x30) {
+    return false;
+  }
+
+  const headerLength = derHeaderLength(value);
+  if (headerLength === null || value.length < headerLength + 4) return false;
+  if (value[headerLength] !== 0x02 || value[headerLength + 1] !== 0x01) {
+    return false;
+  }
+
+  const version = value[headerLength + 2];
+  if (version !== 0x00 && version !== 0x01) return false;
+
+  const nextTag = value[headerLength + 3];
+  // PKCS#8 has AlgorithmIdentifier (SEQUENCE), PKCS#1 RSA has a modulus
+  // INTEGER, and SEC1 EC has an OCTET STRING after version 1.
+  return (
+    nextTag === 0x30 ||
+    nextTag === 0x02 ||
+    (version === 0x01 && nextTag === 0x04)
+  );
+}
+
 function base64DecodeIfLikely(value) {
   if (!looksBase64(value)) return null;
   try {
@@ -108,10 +140,22 @@ function base64DecodeIfLikely(value) {
   }
 }
 
+function hexDecodeIfLikely(value) {
+  if (typeof value !== "string") return null;
+  const compact = value.replace(/\s+/g, "");
+  if (compact.length < 64 || compact.length % 2 !== 0) return null;
+  if (!/^[a-f0-9]+$/i.test(compact)) return null;
+  try {
+    return Buffer.from(compact, "hex");
+  } catch (_err) {
+    return null;
+  }
+}
+
 function bufferContainsPrivateKey(value) {
   if (!Buffer.isBuffer(value)) return false;
-  if (looksPkcs12Bundle(value)) return true;
-  return stringContainsPrivateKey(value.toString("utf8"));
+  if (looksPkcs12Bundle(value) || looksPrivateKeyDer(value)) return true;
+  return PRIVATE_KEY_PEM_PATTERN.test(value.toString("utf8"));
 }
 
 /**
@@ -123,10 +167,12 @@ function stringContainsPrivateKey(value) {
   if (typeof value !== "string" || value.length === 0) return false;
   if (PRIVATE_KEY_PEM_PATTERN.test(value)) return true;
 
+  const hexDecoded = hexDecodeIfLikely(value);
+  if (hexDecoded && bufferContainsPrivateKey(hexDecoded)) return true;
+
   const decoded = base64DecodeIfLikely(value);
   if (decoded) {
-    if (looksPkcs12Bundle(decoded)) return true;
-    if (PRIVATE_KEY_PEM_PATTERN.test(decoded.toString("utf8"))) return true;
+    if (bufferContainsPrivateKey(decoded)) return true;
   }
   return false;
 }
@@ -176,13 +222,12 @@ function redactPrivateKeyMaterial(value) {
   // Detection sees through base64-wrapped PEM, so redaction must too. The
   // decoded key spans the entire blob, so the whole value is replaced.
   const decoded = base64DecodeIfLikely(value);
-  if (decoded) {
-    if (
-      looksPkcs12Bundle(decoded) ||
-      PRIVATE_KEY_PEM_PATTERN.test(decoded.toString("utf8"))
-    ) {
-      return PRIVATE_KEY_REDACTION_PLACEHOLDER;
-    }
+  if (decoded && bufferContainsPrivateKey(decoded)) {
+    return PRIVATE_KEY_REDACTION_PLACEHOLDER;
+  }
+  const hexDecoded = hexDecodeIfLikely(value);
+  if (hexDecoded && bufferContainsPrivateKey(hexDecoded)) {
+    return PRIVATE_KEY_REDACTION_PLACEHOLDER;
   }
   return value;
 }
@@ -243,6 +288,7 @@ module.exports = {
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   PRIVATE_KEY_PEM_PATTERN,
   containsPrivateKeyMaterial,
+  looksPrivateKeyDer,
   looksPkcs12Bundle,
   redactPrivateKeyMaterial,
   redactGenericSecrets,

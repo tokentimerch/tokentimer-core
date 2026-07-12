@@ -287,7 +287,16 @@ describe("CertOps inventory migration", () => {
     );
     assert.match(
       certOpsJobsEvidenceMigration.sql,
-      /status TEXT NOT NULL DEFAULT 'queued'\s+CHECK \(status IN \('queued', 'running', 'succeeded', 'failed', 'canceled'\)\)/,
+      /status TEXT NOT NULL DEFAULT 'pending'\s+CHECK \(status IN \('pending_approval', 'approved', 'rejected', 'pending', 'claimed', 'running', 'succeeded', 'failed', 'blocked', 'cancelled'\)\)/,
+    );
+    assert.match(
+      certOpsJobsEvidenceMigration.sql,
+      /status TEXT NULL\s+CHECK \(status IS NULL OR status IN \('pending_approval', 'approved', 'rejected', 'pending', 'claimed', 'running', 'succeeded', 'failed', 'blocked', 'cancelled'\)\)/,
+    );
+    assert.doesNotMatch(
+      certOpsJobsEvidenceMigration.sql,
+      /status IN \([^)]*'queued'|status IN \([^)]*'canceled'/,
+      "CertOps job status checks must not retain stale plan values",
     );
     assert.match(
       certOpsJobsEvidenceMigration.sql,
@@ -539,5 +548,12 @@ describe("CertOps inventory migration", () => {
         `missing ${indexName}`,
       );
     }
+  });
+
+  it("defers dedicated security events and audit hash-chain storage beyond M2", () => {
+    assert.doesNotMatch(
+      certOpsJobsEvidenceMigration.sql,
+      /\bsecurity_events\b|\bprev_hash\b|\brow_hash\b|\balert_queue\b/i,
+    );
   });
 });

@@ -958,8 +958,8 @@ const migrations = [
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         operation TEXT NOT NULL
           CHECK (operation IN ('renew', 'deploy', 'reload', 'revoke', 'noop')),
-        status TEXT NOT NULL DEFAULT 'queued'
-          CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'canceled')),
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending_approval', 'approved', 'rejected', 'pending', 'claimed', 'running', 'succeeded', 'failed', 'blocked', 'cancelled')),
         source TEXT NOT NULL DEFAULT 'api'
           CHECK (source IN ('api', 'executor', 'system', 'automation', 'domain-monitor', 'endpoint-monitor', 'control-plane', 'external')),
         requested_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
@@ -1006,9 +1006,9 @@ const migrations = [
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
         job_id UUID NOT NULL,
         event_type TEXT NOT NULL
-          CHECK (event_type IN ('job.created', 'job.accepted', 'job.started', 'job.progress', 'job.completed', 'job.failed', 'job.rejected', 'job.canceled', 'job.status_updated', 'evidence.attached')),
+          CHECK (event_type IN ('job.created', 'job.accepted', 'job.started', 'job.progress', 'job.completed', 'job.failed', 'job.rejected', 'job.cancelled', 'job.status_updated', 'evidence.attached')),
         status TEXT NULL
-          CHECK (status IS NULL OR status IN ('queued', 'accepted', 'running', 'succeeded', 'failed', 'rejected', 'canceled')),
+          CHECK (status IS NULL OR status IN ('pending_approval', 'approved', 'rejected', 'pending', 'claimed', 'running', 'succeeded', 'failed', 'blocked', 'cancelled')),
         message TEXT NULL
           CHECK (message IS NULL OR char_length(message) <= 1024),
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,

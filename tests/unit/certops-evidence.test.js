@@ -325,6 +325,32 @@ describe("CertOps evidence service", () => {
     assert.equal(client.evidence.length, 0);
   });
 
+  it("uses the shared secret scanner for generic metadata values", async () => {
+    const client = createMemoryClient();
+    const job = await createJob(client);
+
+    for (const metadata of [
+      { apiKey: "not-allowed" },
+      { passphrase: "not-allowed" },
+      { authorization: "Bearer not-allowed" },
+      { note: "accessToken=not-allowed" },
+      { note: "clientSecret=not-allowed" },
+    ]) {
+      await assert.rejects(
+        () =>
+          createCertificateEvidence({
+            client,
+            workspaceId: WORKSPACE_A,
+            jobId: job.id,
+            evidenceType: "certificate.observed",
+            metadata,
+          }),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
+    assert.equal(client.evidence.length, 0);
+  });
+
   it("rejects secret-looking subject IDs before persistence", async () => {
     const client = createMemoryClient();
     const job = await createJob(client);
