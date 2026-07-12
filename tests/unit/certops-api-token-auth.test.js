@@ -358,6 +358,19 @@ describe("CertOps API token auth middleware", () => {
     );
   });
 
+  it("rejects an empty/missing required-scopes configuration at setup time (plan A2: config error, not a wildcard)", () => {
+    // Array#every() on an empty requiredScopes array is vacuously true, so a
+    // route wired with no scopes option would otherwise accept ANY valid
+    // token regardless of what it's scoped for. This must fail at middleware
+    // construction time, before a single request is served.
+    for (const scopes of [undefined, [], null]) {
+      assert.throws(
+        () => createCertOpsApiTokenAuth({ scopes }),
+        (error) => error.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
+      );
+    }
+  });
+
   it("does not expose custody-looking fields in req.apiToken or responses", async () => {
     const middleware = createCertOpsApiTokenAuth({
       scopes: ["certops:events:write"],

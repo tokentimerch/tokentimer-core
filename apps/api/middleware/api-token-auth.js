@@ -128,6 +128,19 @@ function createCertOpsApiTokenAuth(options = {}) {
   const requiredScopes = normalizeRequiredScopes(
     options.scopes ?? options.requiredScopes,
   );
+  // Per plan A2: "Required-scopes argument must be non-empty (empty scopes is
+  // a config error, not a wildcard)." An empty array here would otherwise
+  // make hasRequiredScopes()'s Array#every() vacuously true, letting a
+  // misconfigured route accept ANY valid token regardless of scope. Fail at
+  // middleware construction time (route wiring), not per-request, so a
+  // missing `scopes`/`requiredScopes` option is caught immediately rather
+  // than silently granting universal access.
+  if (requiredScopes.length === 0) {
+    throw authError(
+      "createCertOpsApiTokenAuth requires a non-empty scopes/requiredScopes option",
+      CERTOPS_API_TOKEN_SCOPE_INVALID,
+    );
+  }
   const validateToken = options.validateApiToken || validateApiToken;
 
   return async function certOpsApiTokenAuth(req, res, next) {
