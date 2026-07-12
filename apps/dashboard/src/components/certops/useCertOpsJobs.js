@@ -7,7 +7,7 @@ import {
   listJobs,
 } from './certopsJobsApi';
 import { listApiTokens } from './certopsTokensApi';
-import { useCertOpsEnabled } from './useCertOps.js';
+import { useCertOpsCanManage, useCertOpsEnabled } from './useCertOps.js';
 
 /**
  * Loads the CertOps job list for the active workspace.
@@ -191,11 +191,15 @@ export function useCertOpsJobTimeline(jobId) {
  * Loads CertOps API token metadata for the active workspace (read-only).
  * Create/revoke are called imperatively via certopsTokensApi from the panel.
  *
+ * The list endpoint is manager-only server-side; the fetch is skipped for
+ * non-managers so viewers see an empty state instead of a 403 error banner.
+ *
  * @returns {{ enabled: boolean|null, tokens: object[], loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsApiTokens() {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
+  const canManage = useCertOpsCanManage();
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -206,7 +210,7 @@ export function useCertOpsApiTokens() {
   }, []);
 
   useEffect(() => {
-    if (!workspaceId || enabled !== true) {
+    if (!workspaceId || enabled !== true || !canManage) {
       setTokens([]);
       setLoading(false);
       setError('');
@@ -241,7 +245,7 @@ export function useCertOpsApiTokens() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, reloadTick]);
+  }, [workspaceId, enabled, canManage, reloadTick]);
 
   return { enabled, tokens, loading, error, refresh };
 }

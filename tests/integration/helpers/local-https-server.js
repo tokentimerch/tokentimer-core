@@ -141,4 +141,8 @@ function startLocalHttpsServer() {
   });
 }
 
-module.exports = { startLocalHttpsServer };
+module.exports = {
+  startLocalHttpsServer,
+  TEST_HTTPS_CERT,
+  TEST_HTTPS_CERT_ROTATED,
+};
