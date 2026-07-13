@@ -20,7 +20,7 @@
         "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
         "M2 keeps POST /api/v1/certops/executor/events as the aggregate executor ingestion endpoint.",
-        "POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable Dev A machine-token aliases scoped by path jobId; they reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior."
+        "POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable machine-token aliases scoped by path jobId; they reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior."
       ]
     },
     "agent": {

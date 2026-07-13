@@ -648,7 +648,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
-      // Phase 2 Dev B dashboard (timeline UI + machine token panel)
+      // Phase 2 dashboard (timeline UI + machine token panel)
       "apps/dashboard/src/App.jsx",
       "apps/dashboard/src/components/AssetFilters.jsx",
       "apps/dashboard/src/components/ImportTokensModal.jsx",
