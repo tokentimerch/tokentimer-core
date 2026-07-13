@@ -1039,8 +1039,12 @@ async function executorEventsHandler(req, res, options = {}) {
   try {
     const workspaceId = req.apiToken.workspaceId;
     const eventBody = bodyWithPathJobContext(req, options.mode);
-    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    // Scope-check before payload normalization (plan A6): a token without
+    // certops:evidence:write must be denied before it can learn anything
+    // about evidence-payload validation (UUID checks, unknown-field
+    // rejection, redaction) from a 400/422 response.
     requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
+    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
     const requestHashSha256 = hashExecutorEventPayload({
       workspaceId,
       jobId: event.jobId,

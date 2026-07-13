@@ -460,11 +460,15 @@ describe("CertOps executor event ingestion", function () {
       expect(evidenceArrayAfter).to.deep.equal(evidenceEventBefore);
       expectNoSensitiveValues(evidenceArrayDenied.body, eventsOnly.plaintextToken);
 
+      // Scope-check runs before payload normalization (plan A6): an
+      // events-only token is denied on an evidence-shaped payload before
+      // private-key detection ever inspects its contents, so it never
+      // learns anything about payload validity via a 400/422 response.
       const privateKeyBefore = await countJobArtifacts({
         workspaceId: workspaceA,
         jobId: job.id,
       });
-      const privateKeyRejected = await supertest(app)
+      const privateKeyScopeDenied = await supertest(app)
         .post(route)
         .set("Authorization", `Bearer ${eventsOnly.plaintextToken}`)
         .send(
@@ -489,12 +493,51 @@ describe("CertOps executor event ingestion", function () {
         workspaceId: workspaceA,
         jobId: job.id,
       });
+      expect(privateKeyScopeDenied.status).to.equal(403);
+      expect(privateKeyScopeDenied.body.code).to.equal(
+        "CERTOPS_API_TOKEN_SCOPE_DENIED",
+      );
+      expect(privateKeyAfter).to.deep.equal(privateKeyBefore);
+      expectNoSensitiveValues(
+        privateKeyScopeDenied.body,
+        eventsOnly.plaintextToken,
+        [PRIVATE_KEY_PEM],
+      );
+
+      // With evidence scope granted, the same payload is now rejected for
+      // its actual content (private key material), confirming the
+      // private-key guard still runs, just after the scope gate.
+      const privateKeyRejected = await supertest(app)
+        .post(route)
+        .set("Authorization", `Bearer ${combined.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [
+              {
+                schemaVersion: 1,
+                eventType: "certificate.observed",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+                output: PRIVATE_KEY_PEM,
+              },
+            ],
+          }),
+        );
+      const privateKeyAfterCombined = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
       expect(privateKeyRejected.status).to.equal(422);
       expect(privateKeyRejected.body.code).to.equal(
         "PRIVATE_KEY_MATERIAL_REJECTED",
       );
-      expect(privateKeyAfter).to.deep.equal(privateKeyBefore);
-      expectNoSensitiveValues(privateKeyRejected.body, eventsOnly.plaintextToken);
+      expect(privateKeyAfterCombined).to.deep.equal(privateKeyBefore);
+      expectNoSensitiveValues(privateKeyRejected.body, combined.plaintextToken);
 
       const attached = await supertest(app)
         .post(route)
@@ -1574,10 +1617,14 @@ describe("CertOps executor event ingestion", function () {
     );
 
     try {
+      // certops:evidence:write is included alongside certops:events:write
+      // so these malformed-payload cases exercise payload validation itself,
+      // not the (separately tested) evidence-scope denial that now runs
+      // before normalization per plan A6.
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:events:write"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const job = await createJob({ workspaceId: workspaceA, ownerId });
       const app = buildExecutorApp();
