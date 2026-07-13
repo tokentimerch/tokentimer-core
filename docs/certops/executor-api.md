@@ -88,7 +88,7 @@ A successful submission returns **HTTP 202** (Accepted), not 200/201:
   "status": "succeeded",
   "evidenceIds": [],
   "duplicate": false,
-  "idempotent": true
+  "idempotent": false
 }
 ```
 
@@ -191,8 +191,9 @@ Redaction and rejection are two different code paths, do not conflate them:
   incidental secrets accidentally captured in command output, not an
   alternative to the private-key rejection above.
 - Evidence `output` is size-limited (64 KB, `MAX_REDACTED_OUTPUT_BYTES`,
-  checked after redaction); oversized output is rejected with
-  `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` rather than truncated silently.
+  checked on the raw input before redaction runs); oversized output is
+  rejected with `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` (HTTP 413) rather than
+  truncated silently.
 
 ## 4. Rate limiting
 
@@ -220,7 +221,7 @@ resetting per route.
 | 404 | `CERTOPS_JOB_NOT_FOUND` | `jobId` does not reference a job TokenTimer already knows about. |
 | 409 | `CERTOPS_EXECUTOR_EVENT_CONFLICT` | Same `eventId` replayed with a different payload than the one first accepted. |
 | 422 | `PRIVATE_KEY_MATERIAL_REJECTED` | Payload matched a known private-key pattern; rejected before any other validation or persistence. |
-| 422 | `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` | Evidence `output` exceeds the 64 KB post-redaction size cap. |
+| 413 | `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` | Evidence `output` exceeds the 64 KB pre-redaction size cap. |
 | 429 | `CERTOPS_MACHINE_RATE_LIMITED` | Token exceeded its shared rate-limit bucket (see section 4). |
 | 404 | `NOT_FOUND` | CertOps is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
 
