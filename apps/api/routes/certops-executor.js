@@ -1043,11 +1043,23 @@ async function auditExecutorRejection(req, error, mode) {
 async function executorEventsHandler(req, res, options = {}) {
   try {
     const workspaceId = req.apiToken.workspaceId;
+    // Scope-check the raw body FIRST, before bodyWithPathJobContext (plan
+    // A6): on the two per-job routes, bodyWithPathJobContext itself does a
+    // private-key deep-scan and workspace/jobId mismatch check ahead of any
+    // normalization, so checking scope only after it ran (as below) would
+    // let an events-only token learn about evidence-payload content
+    // (private-key material, mismatch errors) from a 422/400 response
+    // instead of a clean scope-denied 403. requestCarriesEvidence() only
+    // inspects body.eventType/body.evidence, both already present on the
+    // raw client body, so this check is meaningful before any mutation.
+    requireEvidenceWriteScopeForEvidencePayload(req, req.body);
     const eventBody = bodyWithPathJobContext(req, options.mode);
-    // Scope-check before payload normalization (plan A6): a token without
-    // certops:evidence:write must be denied before it can learn anything
-    // about evidence-payload validation (UUID checks, unknown-field
-    // rejection, redaction) from a 400/422 response.
+    // Re-check after bodyWithPathJobContext/normalization in case mode
+    // "evidence" force-sets eventType to "evidence.attached" on a body that
+    // didn't already carry it (e.g. an empty POST to the per-job evidence
+    // route); redundant with the auth-middleware scope check on that route,
+    // but kept for defense-in-depth and to match the aggregate route, where
+    // bodyWithPathJobContext is a no-op and this is the only scope check.
     requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
     const event = normalizeExecutorEventBody(eventBody, req.apiToken);
     const requestHashSha256 = hashExecutorEventPayload({

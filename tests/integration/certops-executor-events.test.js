@@ -917,6 +917,127 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("scope-checks smuggled evidence on the per-job routes before bodyWithPathJobContext inspects it", async () => {
+    // Regression test for a second instance of the plan A6 ordering bug:
+    // bodyWithPathJobContext() (which runs a private-key deep-scan and
+    // workspace/jobId mismatch check) used to run before the evidence-scope
+    // check on the two per-job routes, even though the aggregate route's
+    // fix already covered the aggregate handler's own ordering. An
+    // events-only token hitting either per-job route with a smuggled
+    // `evidence` payload containing private key material must get a clean
+    // 403 CERTOPS_API_TOKEN_SCOPE_DENIED, not a 422 PRIVATE_KEY_MATERIAL_REJECTED
+    // (which would leak that the payload's content was inspected at all).
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-per-job-scope-ordering",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const eventsOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const eventAuth = `Bearer ${eventsOnly.plaintextToken}`;
+      const eventRoute = `/api/v1/certops/jobs/${job.id}/events`;
+
+      const smuggledEvidencePayload = {
+        schemaVersion: 1,
+        eventId: `event-${crypto.randomUUID()}`,
+        eventType: "job.progress",
+        status: "running",
+        occurredAt: new Date().toISOString(),
+        evidence: [
+          {
+            schemaVersion: 1,
+            eventType: "certificate.observed",
+            source: "executor",
+            observedAt: new Date().toISOString(),
+            output: PRIVATE_KEY_PEM,
+          },
+        ],
+      };
+
+      const before = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const denied = await supertest(app)
+        .post(eventRoute)
+        .set("Authorization", eventAuth)
+        .send(smuggledEvidencePayload);
+      const after = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(denied.status).to.equal(403);
+      expect(denied.body.code).to.equal("CERTOPS_API_TOKEN_SCOPE_DENIED");
+      expect(after).to.deep.equal(before);
+      expectNoSensitiveValues(denied.body, eventsOnly.plaintextToken, [
+        PRIVATE_KEY_PEM,
+      ]);
+
+      // Same smuggled payload also must not leak a workspace/jobId mismatch
+      // error ahead of the scope check (bodyWithPathJobContext validates
+      // body.workspaceId/body.jobId against the path job before the
+      // handler's evidence-scope check runs), so an events-only token
+      // still gets scope-denied even when it also sends a mismatched
+      // workspaceId alongside the smuggled evidence.
+      const mismatchedAndSmuggled = {
+        ...smuggledEvidencePayload,
+        eventId: `event-${crypto.randomUUID()}`,
+        workspaceId: workspaceB,
+      };
+      const deniedWithMismatch = await supertest(app)
+        .post(eventRoute)
+        .set("Authorization", eventAuth)
+        .send(mismatchedAndSmuggled);
+      expect(deniedWithMismatch.status).to.equal(403);
+      expect(deniedWithMismatch.body.code).to.equal(
+        "CERTOPS_API_TOKEN_SCOPE_DENIED",
+      );
+      expectNoSensitiveValues(deniedWithMismatch.body, eventsOnly.plaintextToken, [
+        PRIVATE_KEY_PEM,
+      ]);
+
+      // Same check on the per-job evidence route, where every request is
+      // evidence-shaped by construction (bodyWithPathJobContext forces
+      // eventType to "evidence.attached" for mode "evidence").
+      const evidenceRoute = `/api/v1/certops/jobs/${job.id}/evidence`;
+      const deniedOnEvidenceRoute = await supertest(app)
+        .post(evidenceRoute)
+        .set("Authorization", eventAuth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          occurredAt: new Date().toISOString(),
+          evidence: [
+            {
+              schemaVersion: 1,
+              eventType: "certificate.observed",
+              source: "executor",
+              observedAt: new Date().toISOString(),
+              output: PRIVATE_KEY_PEM,
+            },
+          ],
+        });
+      // The auth middleware for this route already requires
+      // certops:evidence:write, so an events-only token is denied there
+      // first (401/403 from auth, not the handler's scope check); this
+      // just confirms it's never a 422 that would leak payload inspection.
+      expect(deniedOnEvidenceRoute.status).to.equal(403);
+      expect(deniedOnEvidenceRoute.body.code).to.not.equal(
+        "PRIVATE_KEY_MATERIAL_REJECTED",
+      );
+      expectNoSensitiveValues(deniedOnEvidenceRoute.body, eventsOnly.plaintextToken, [
+        PRIVATE_KEY_PEM,
+      ]);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("persists lifecycle events through job services", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-lifecycle",
