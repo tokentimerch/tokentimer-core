@@ -103,13 +103,21 @@ function normalizeRequestHash(value) {
 }
 
 async function ensureJobExists(client, workspaceId, jobId) {
+  // FOR UPDATE (not FOR SHARE): performSideEffects() below may call
+  // updateCertificateJobStatus(), which UPDATEs this same certificate_jobs
+  // row later in the same transaction and therefore needs an exclusive
+  // lock. Taking only a shared lock here let two concurrent events for the
+  // same job both hold SHARE and then both block trying to upgrade to
+  // EXCLUSIVE, a lock-upgrade deadlock Postgres reports as 40P01. Taking
+  // the exclusive lock upfront makes concurrent events on one job simply
+  // queue and serialize instead of deadlocking.
   const result = await client.query(
     `SELECT id
        FROM certificate_jobs
       WHERE workspace_id = $1
         AND id = $2
       LIMIT 1
-      FOR SHARE`,
+      FOR UPDATE`,
     [workspaceId, jobId],
   );
   if (!result.rows[0]) {

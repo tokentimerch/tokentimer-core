@@ -122,6 +122,11 @@ const LOG_STATUS_BY_EVENT_TYPE = Object.freeze({
   "job.completed": "succeeded",
   "job.failed": "failed",
   "job.rejected": "rejected",
+  // evidence.attached always logs as "accepted": the log status must not be
+  // controllable via client-supplied `status`, regardless of which of the
+  // three executor routes (generic /events, per-job /events, per-job
+  // /evidence) the event arrives through.
+  "evidence.attached": "accepted",
 });
 
 const JOB_STATUS_BY_EVENT_TYPE = Object.freeze({
