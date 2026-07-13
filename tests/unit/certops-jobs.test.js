@@ -464,6 +464,116 @@ describe("CertOps jobs service", () => {
     }
   });
 
+  it("ignores stale active-state regressions and preserves current lifecycle data", async () => {
+    const client = createMemoryClient();
+
+    for (const [currentStatus, staleStatus] of [
+      ["running", "claimed"],
+      ["running", "pending"],
+      ["claimed", "pending"],
+    ]) {
+      const job = await createCertificateJob({
+        client,
+        workspaceId: WORKSPACE_A,
+        operation: "renew",
+        payload: { certificateId: `cert-${currentStatus}-${staleStatus}` },
+        status: currentStatus,
+        errorCode: "EXECUTOR_CONTEXT",
+        errorMessage: "Public lifecycle context remains available",
+      });
+
+      const stale = await updateCertificateJobStatus({
+        client,
+        workspaceId: WORKSPACE_A,
+        jobId: job.id,
+        status: staleStatus,
+        errorCode: null,
+        errorMessage: "",
+      });
+
+      assert.equal(stale.status, currentStatus);
+      assert.equal(stale.statusTransitionApplied, false);
+      assert.equal(stale.statusTransitionIgnored, true);
+      assert.equal(stale.statusTransitionIgnoredReason, "active_regression");
+      assert.equal(stale.queuedAt, job.queuedAt);
+      assert.equal(stale.startedAt, job.startedAt);
+      assert.equal(stale.completedAt, job.completedAt);
+      assert.equal(stale.errorCode, "EXECUTOR_CONTEXT");
+      assert.equal(
+        stale.errorMessage,
+        "Public lifecycle context remains available",
+      );
+    }
+  });
+
+  it("treats same active-state reports as observable replays", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-active-replay" },
+      status: "running",
+    });
+
+    const replay = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "running",
+    });
+
+    assert.equal(replay.status, "running");
+    assert.equal(replay.statusTransitionApplied, false);
+    assert.equal(replay.statusTransitionIgnored, true);
+    assert.equal(replay.statusTransitionIgnoredReason, "active_replay");
+  });
+
+  it("allows executor rejection before a job reaches another terminal outcome", async () => {
+    const client = createMemoryClient();
+
+    for (const status of [
+      "pending_approval",
+      "approved",
+      "pending",
+      "claimed",
+      "running",
+    ]) {
+      const job = await createCertificateJob({
+        client,
+        workspaceId: WORKSPACE_A,
+        operation: "renew",
+        payload: { certificateId: `cert-rejected-${status}` },
+        status,
+      });
+      const rejected = await updateCertificateJobStatus({
+        client,
+        workspaceId: WORKSPACE_A,
+        jobId: job.id,
+        status: "rejected",
+      });
+
+      assert.equal(rejected.status, "rejected");
+      assert.equal(rejected.statusTransitionApplied, true);
+    }
+
+    const succeeded = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      payload: { certificateId: "cert-rejected-after-success" },
+      status: "succeeded",
+    });
+    const lateRejected = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: succeeded.id,
+      status: "rejected",
+    });
+    assert.equal(lateRejected.status, "succeeded");
+    assert.equal(lateRejected.statusTransitionIgnoredReason, "terminal_regression");
+  });
+
   it("sets lifecycle timestamps from the initial canonical status", async () => {
     const client = createMemoryClient();
     const running = await createCertificateJob({
@@ -749,6 +859,18 @@ describe("CertOps jobs service", () => {
         (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
       );
     }
+
+    const redactedLog = await appendCertificateJobLog({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      eventType: "job.progress",
+      metadata: {
+        note: "password=[REDACTED]",
+        redactionApplied: true,
+      },
+    });
+    assert.equal(redactedLog.metadata.note, "password=[REDACTED]");
   });
 
   it("rejects log writes for missing or wrong-workspace jobs", async () => {

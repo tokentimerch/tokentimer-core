@@ -190,11 +190,6 @@
             }
           }
         },
-        "output": {
-          "type": ["string", "null"],
-          "maxLength": 65536,
-          "description": "Optional executor output. Runtime rejects private-key material and persists only generic-secret-redacted output under the evidence policy."
-        },
         "redactionApplied": {
           "type": ["boolean", "null"]
         }

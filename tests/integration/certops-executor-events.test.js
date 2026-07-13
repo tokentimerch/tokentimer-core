@@ -36,6 +36,12 @@ const express = apiRequire("express");
 
 const PRIVATE_KEY_PEM =
   "-----BEGIN RSA PRIVATE KEY-----\nRkFLRS1OT1QtQS1SRUFMLUtFWQ==\n-----END RSA PRIVATE KEY-----";
+const ENCRYPTED_PKCS8_DER = Buffer.from([
+  0x30, 0x13,
+  0x30, 0x0b,
+  0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d,
+  0x04, 0x04, 0xde, 0xad, 0xbe, 0xef,
+]);
 
 async function createWorkspacePair(label) {
   const ownerEmail = `${label}-${Date.now()}-${crypto.randomUUID()}@example.com`;
@@ -836,6 +842,116 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("logs stale active lifecycle events without regressing the job or duplicating retries", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-stale-active",
+    );
+
+    try {
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const running = await createJob({
+        workspaceId: workspaceA,
+        ownerId,
+        status: "running",
+      });
+      const staleClaim = eventPayload({
+        workspaceId: workspaceA,
+        jobId: running.id,
+        eventType: "job.accepted",
+        status: "claimed",
+      });
+
+      const accepted = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(staleClaim);
+      const replay = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(staleClaim);
+      const afterStale = await getCertificateJobById({
+        workspaceId: workspaceA,
+        jobId: running.id,
+      });
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: running.id,
+      });
+
+      expect(accepted.status).to.equal(202);
+      expect(accepted.body.status).to.equal("running");
+      expect(replay.status).to.equal(202);
+      expect(replay.body.duplicate).to.equal(true);
+      expect(afterStale.status).to.equal("running");
+      expect(afterStale.startedAt).to.be.a("string").that.is.not.empty;
+      expect(logs.items).to.have.length(1);
+      expect(logs.items[0].metadata.jobStatusTransitionIgnored).to.equal(true);
+      expect(logs.items[0].metadata.jobStatusTransitionIgnoredReason).to.equal(
+        "active_regression",
+      );
+      expect(
+        await countJobArtifacts({ workspaceId: workspaceA, jobId: running.id }),
+      ).to.deep.equal({ logs: 1, evidence: 0, executorEvents: 1 });
+
+      const rejected = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: running.id,
+            eventType: "job.rejected",
+            status: "rejected",
+          }),
+        );
+      expect(rejected.status).to.equal(202);
+      expect(rejected.body.status).to.equal("rejected");
+
+      const pending = await createJob({ workspaceId: workspaceA, ownerId });
+      const concurrent = await Promise.all([
+        supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(
+            eventPayload({
+              workspaceId: workspaceA,
+              jobId: pending.id,
+              eventType: "job.started",
+              status: "running",
+            }),
+          ),
+        supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(
+            eventPayload({
+              workspaceId: workspaceA,
+              jobId: pending.id,
+              eventType: "job.accepted",
+              status: "claimed",
+            }),
+          ),
+      ]);
+      expect(concurrent.map((response) => response.status)).to.deep.equal([
+        202,
+        202,
+      ]);
+      expect(
+        (await getCertificateJobById({ workspaceId: workspaceA, jobId: pending.id }))
+          .status,
+      ).to.equal("running");
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("processes executor events atomically and idempotently", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-idempotency",
@@ -1069,6 +1185,7 @@ describe("CertOps executor event ingestion", function () {
             source: "executor",
             observedAt: occurredAt,
             summary: "credential=first-value",
+            redactionApplied: true,
           },
         ],
       });
@@ -1085,6 +1202,7 @@ describe("CertOps executor event ingestion", function () {
           {
             ...payload.evidence[0],
             summary: "credential=second-value",
+            redactionApplied: false,
           },
         ],
       };
@@ -1489,7 +1607,7 @@ describe("CertOps executor event ingestion", function () {
         jobId: job.id,
       });
       expect(evidence.items[0].metadata.artifactRefs[0].reference).to.equal(
-        "[REDACTED]",
+        "password=[REDACTED]",
       );
       expect(evidence.items[0].metadata.redactionApplied).to.equal(true);
       expectNoSensitiveValues(redacted.body, token.plaintextToken, [
@@ -1649,6 +1767,17 @@ describe("CertOps executor event ingestion", function () {
         code: "CERTOPS_EXECUTOR_EVENT_INVALID",
       });
 
+      for (const occurredAt of [
+        "2026-02-30T12:00:00Z",
+        "2201-01-01T00:00:00Z",
+      ]) {
+        await expectRejectedWithoutPersistence({
+          body: eventPayload({ workspaceId: workspaceA, jobId: job.id, occurredAt }),
+          status: 400,
+          code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        });
+      }
+
       await expectRejectedWithoutPersistence({
         body: eventPayload({
           workspaceId: workspaceA,
@@ -1658,6 +1787,21 @@ describe("CertOps executor event ingestion", function () {
         status: 400,
         code: "CERTOPS_EXECUTOR_EVENT_INVALID",
         forbidden: ["ignored-before-hardening"],
+      });
+
+      await expectRejectedWithoutPersistence({
+        body: eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+          evidence: [
+            validEvidenceItem({ output: "deferred-to-m2-a10" }),
+          ],
+        }),
+        status: 400,
+        code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        forbidden: ["deferred-to-m2-a10"],
       });
 
       await expectRejectedWithoutPersistence({
@@ -1885,6 +2029,21 @@ describe("CertOps executor event ingestion", function () {
             },
           ],
         }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          message: ENCRYPTED_PKCS8_DER.toString("base64"),
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: [
+            {
+              name: "publicNote",
+              value: ENCRYPTED_PKCS8_DER.toString("hex"),
+            },
+          ],
+        }),
       ];
 
       for (const body of dangerousBodies) {
@@ -1983,8 +2142,10 @@ describe("CertOps executor event ingestion", function () {
         jobId: job.id,
       });
       expect(logs.items).to.have.length(1);
-      expect(logs.items[0].message).to.equal("[REDACTED]");
-      expect(logs.items[0].metadata.executorNote).to.equal("[REDACTED]");
+      expect(logs.items[0].message).to.equal("password=[REDACTED]");
+      expect(logs.items[0].metadata.executorNote).to.equal(
+        "Authorization: [REDACTED]",
+      );
       expect(logs.items[0].metadata.redactedMetadata2).to.equal("[REDACTED]");
       expect(logs.items[0].metadata.redactionApplied).to.equal(true);
       expect(logs.items[0].metadata.redactionCount).to.be.greaterThan(0);
@@ -1994,8 +2155,12 @@ describe("CertOps executor event ingestion", function () {
         jobId: job.id,
       });
       expect(evidence.items).to.have.length(1);
-      expect(evidence.items[0].metadata.summary).to.equal("[REDACTED]");
-      expect(evidence.items[0].metadata.note).to.equal("[REDACTED]");
+      expect(evidence.items[0].metadata.summary).to.equal(
+        "credential=[REDACTED]",
+      );
+      expect(evidence.items[0].metadata.note).to.equal(
+        "password=[REDACTED]",
+      );
       expect(evidence.items[0].metadata.redactedMetadata2).to.equal(
         "[REDACTED]",
       );
@@ -2009,6 +2174,122 @@ describe("CertOps executor event ingestion", function () {
       expect(serialized).to.not.include("credential=abc");
       expect(serialized).to.not.include("abc123tokenvalue");
       expect(serialized).to.not.include(token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("redacts cookie, header, token, and cloud-secret strings without losing public timeline context", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-content-redaction",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const response = await supertest(buildExecutorApp())
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            message: "executor failed; token=message-value; retrying",
+            metadata: [
+              { name: "executorNote", value: "X-API-Key: metadata-value" },
+            ],
+            evidence: [
+              {
+                schemaVersion: 1,
+                evidenceId: `evidence-${crypto.randomUUID()}`,
+                jobId: job.id,
+                workspaceId: workspaceA,
+                certificateId: "cert-1",
+                eventType: "certificate.observed",
+                source: "executor",
+                observedAt: new Date().toISOString(),
+                summary: "Cookie: session=summary-value",
+                metadata: [
+                  {
+                    name: "cloudNote",
+                    value: "AWS_SECRET_ACCESS_KEY=evidence-value",
+                  },
+                ],
+                artifactRefs: [
+                  {
+                    type: "log",
+                    reference: "Set-Cookie: sid=artifact-value; HttpOnly",
+                  },
+                ],
+                redactionApplied: false,
+              },
+            ],
+          }),
+        );
+      expect(response.status).to.equal(202);
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const audits = await TestUtils.execQuery(
+        `SELECT action, metadata
+           FROM audit_events
+          WHERE workspace_id = $1
+            AND metadata->>'jobId' = $2
+          ORDER BY action ASC`,
+        [workspaceA, job.id],
+      );
+      const serialized = JSON.stringify({
+        response: response.body,
+        logs: logs.items,
+        evidence: evidence.items,
+        audits: audits.rows,
+      });
+
+      expect(logs.items[0].message).to.equal(
+        "executor failed; token=[REDACTED]; retrying",
+      );
+      expect(logs.items[0].metadata.executorNote).to.equal(
+        "X-API-Key: [REDACTED]",
+      );
+      expect(evidence.items[0].metadata.summary).to.equal(
+        "Cookie: [REDACTED]",
+      );
+      expect(evidence.items[0].metadata.cloudNote).to.equal(
+        "AWS_SECRET_ACCESS_KEY=[REDACTED]",
+      );
+      expect(evidence.items[0].metadata.artifactRefs[0].reference).to.equal(
+        "Set-Cookie: [REDACTED]",
+      );
+      const redactionAudit = audits.rows.find(
+        (row) => row.action === "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
+      );
+      expect(redactionAudit.metadata.redactedFields).to.deep.equal([
+        "cookie",
+        "generic-secret",
+      ]);
+      for (const rawValue of [
+        "message-value",
+        "metadata-value",
+        "summary-value",
+        "evidence-value",
+        "artifact-value",
+      ]) {
+        expect(serialized).to.not.include(rawValue);
+      }
+      expect(serialized).to.include("[REDACTED]");
+      expectNoSensitiveValues(response.body, token.plaintextToken);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

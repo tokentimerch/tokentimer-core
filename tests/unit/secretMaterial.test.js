@@ -9,6 +9,7 @@ const {
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   assertNoPrivateKeyMaterial,
   containsPrivateKeyMaterial,
+  looksEncryptedPkcs8Der,
   looksPrivateKeyDer,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
@@ -44,10 +45,31 @@ function fakePkcs8PrivateKeyBuffer() {
   return value;
 }
 
+function fakeEncryptedPkcs8Buffer() {
+  // Synthetic EncryptedPrivateKeyInfo:
+  // SEQUENCE { AlgorithmIdentifier(PBES2), OCTET STRING }.
+  // The bytes are structural test data only, never a usable private key.
+  return Buffer.from([
+    0x30, 0x13,
+    0x30, 0x0b,
+    0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d,
+    0x04, 0x04, 0xde, 0xad, 0xbe, 0xef,
+  ]);
+}
+
 function fakeCertificateDerBuffer() {
   return Buffer.from([
     0x30, 0x0a, 0x30, 0x08, 0x02, 0x01, 0x01, 0x30, 0x03, 0x06, 0x01,
     0x2a,
+  ]);
+}
+
+function ordinaryAsn1SequenceBuffer() {
+  return Buffer.from([
+    0x30, 0x0a,
+    0x30, 0x05,
+    0x06, 0x03, 0x2a, 0x03, 0x04,
+    0x04, 0x01, 0x00,
   ]);
 }
 
@@ -156,6 +178,38 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
       containsPrivateKeyMaterial(privateKeyDer.toString("base64")),
       true,
     );
+  });
+
+  it("detects encrypted PKCS#8 DER in raw, base64, hex, and nested values", () => {
+    const encrypted = fakeEncryptedPkcs8Buffer();
+    const base64 = encrypted.toString("base64");
+    const hex = encrypted.toString("hex");
+
+    assert.strictEqual(looksEncryptedPkcs8Der(encrypted), true);
+    assert.strictEqual(containsPrivateKeyMaterial(encrypted), true);
+    assert.strictEqual(containsPrivateKeyMaterial(base64), true);
+    assert.strictEqual(containsPrivateKeyMaterial(hex), true);
+    assert.strictEqual(
+      containsPrivateKeyMaterial({ attachment: { evidence: encrypted } }),
+      true,
+    );
+  });
+
+  it("does not classify certificate DER or ordinary ASN.1 envelopes as encrypted PKCS#8", () => {
+    assert.strictEqual(looksEncryptedPkcs8Der(fakeCertificateDerBuffer()), false);
+    assert.strictEqual(looksEncryptedPkcs8Der(ordinaryAsn1SequenceBuffer()), false);
+    assert.strictEqual(containsPrivateKeyMaterial(ordinaryAsn1SequenceBuffer()), false);
+  });
+
+  it("handles malformed DER lengths without throwing or allocating from declarations", () => {
+    for (const malformed of [
+      Buffer.from([0x30, 0x82, 0xff, 0xff]),
+      Buffer.from([0x30, 0x84, 0x7f, 0xff, 0xff, 0xff]),
+      Buffer.from([0x30, 0x13, 0x30, 0x0b, 0x06, 0x09, 0x2a]),
+    ]) {
+      assert.doesNotThrow(() => looksEncryptedPkcs8Der(malformed));
+      assert.strictEqual(containsPrivateKeyMaterial(malformed), false);
+    }
   });
 
   it("detects hex-encoded private-key PEM blobs", () => {
@@ -292,15 +346,49 @@ describe("secretMaterial.redactGenericSecrets", () => {
     assert.ok(input.logs[0].includes(FAKE_BODY), "input must not be mutated");
   });
 
-  it("redacts Authorization bearer header values", () => {
+  it("redacts Authorization bearer header values while preserving the header name", () => {
     const out = redactGenericSecrets("Authorization: Bearer abc123tokenvalue");
     assert.ok(!out.includes("abc123tokenvalue"));
-    assert.strictEqual(out, "[REDACTED]");
+    assert.strictEqual(out, "Authorization: [REDACTED]");
   });
 
   it("redacts generic secret assignment values", () => {
     const out = redactGenericSecrets("password=swordfish");
-    assert.strictEqual(out, "[REDACTED]");
+    assert.strictEqual(out, "password=[REDACTED]");
+  });
+
+  it("redacts common free-form cookie, token, and cloud-secret values", () => {
+    const input = [
+      "Cookie: session=abc123",
+      "Set-Cookie: sid=abc123; HttpOnly",
+      "X-API-Key: abc123",
+      "X-Auth-Token: abc123",
+      "token=abc123",
+      "bearer_token=abc123",
+      "AWS_SECRET_ACCESS_KEY=abc123",
+      "client-secret: abc123",
+      "refresh-token: abc123",
+    ].join("\n");
+    const out = redactGenericSecretsWithReport(input);
+
+    assert.ok(!out.value.includes("abc123"));
+    assert.match(out.value, /Cookie: \[REDACTED\]/);
+    assert.match(out.value, /Set-Cookie: \[REDACTED\]/);
+    assert.match(out.value, /X-API-Key: \[REDACTED\]/);
+    assert.match(out.value, /token=\[REDACTED\]/);
+    assert.ok(out.redactedFields.includes("cookie"));
+    assert.ok(out.redactedFields.includes("generic-secret"));
+  });
+
+  it("preserves surrounding public log text and avoids bounded false positives", () => {
+    assert.strictEqual(
+      redactGenericSecrets("request failed; token=abc123; retrying"),
+      "request failed; token=[REDACTED]; retrying",
+    );
+    assert.strictEqual(
+      redactGenericSecrets("tokenization=enabled; secretary=present; cookiePolicyEnabled=true"),
+      "tokenization=enabled; secretary=present; cookiePolicyEnabled=true",
+    );
   });
 
   it("returns safe redaction metadata without echoing field names", () => {
@@ -310,7 +398,7 @@ describe("secretMaterial.redactGenericSecrets", () => {
       cookie: "session-value",
     });
     assert.deepStrictEqual(out.value, {
-      note: "[REDACTED]",
+      note: "credential=[REDACTED]",
       authorization: "[REDACTED]",
       cookie: "[REDACTED]",
     });
@@ -352,6 +440,25 @@ describe("secretMaterial.redactGenericSecrets", () => {
       () => redactGenericSecrets({ raw: fakePkcs12Buffer() }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
     );
+  });
+
+  it("hard-rejects encrypted PKCS#8 material before generic redaction", () => {
+    const encrypted = fakeEncryptedPkcs8Buffer();
+    for (const value of [
+      encrypted,
+      encrypted.toString("base64"),
+      encrypted.toString("hex"),
+      { attachment: encrypted },
+    ]) {
+      assert.throws(
+        () => assertNoPrivateKeyMaterial(value),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+      assert.throws(
+        () => redactGenericSecrets(value),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
   });
 
   it("hard-rejects incomplete PEM headers and private-key-shaped fields", () => {

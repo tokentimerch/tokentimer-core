@@ -577,7 +577,6 @@ describe("CertOps M2 contract skeletons", () => {
                 "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             },
           ],
-          output: "[REDACTED]",
           redactionApplied: true,
         },
       ],
@@ -591,6 +590,14 @@ describe("CertOps M2 contract skeletons", () => {
     const privateKeyShapedEmbeddedField = clone(publicEmbeddedEvidence);
     privateKeyShapedEmbeddedField.evidence[0].privateKey = "not allowed";
     assert.equal(validateEvent(privateKeyShapedEmbeddedField), false);
+
+    const deferredOutput = clone(publicEmbeddedEvidence);
+    deferredOutput.evidence[0].output = "not supported in M2-A9";
+    assert.equal(
+      validateEvent(deferredOutput),
+      false,
+      "raw executor output is deferred to the M2-A10 evidence-output slice",
+    );
 
     assert.equal(
       validateStandaloneEvidence({ eventType: "certificate.observed" }),
@@ -766,6 +773,11 @@ describe("CertOps M2 contract skeletons", () => {
       certOpsExecutorRoutesSource,
       /item\.eventType \|\| item\.evidenceType/,
       "executor event evidence items must use the OpenAPI eventType field",
+    );
+    assert.doesNotMatch(
+      certOpsExecutorRoutesSource,
+      /EVIDENCE_ITEM_FIELDS[\s\S]*?"output"/,
+      "M2-A9 runtime must reject executor output until M2-A10 owns storage",
     );
   });
 
