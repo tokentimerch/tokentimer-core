@@ -68,6 +68,10 @@ const UUID_PATTERN =
 const METADATA_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const METADATA_VALUE_TYPES = new Set(["string", "number", "boolean"]);
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const RFC3339_TIMESTAMP_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const MIN_EXECUTOR_TIMESTAMP_MS = Date.UTC(2000, 0, 1);
+const MAX_EXECUTOR_TIMESTAMP_MS = Date.UTC(2100, 0, 1);
 const ARTIFACT_REF_TYPES = new Set([
   "log",
   "report",
@@ -338,8 +342,22 @@ function normalizeOccurredAt(value) {
     "occurredAt",
     CERTOPS_EXECUTOR_EVENT_INVALID,
   );
+  const match = RFC3339_TIMESTAMP_PATTERN.exec(occurredAt);
   const date = new Date(occurredAt);
-  if (Number.isNaN(date.getTime())) {
+  const timestamp = date.getTime();
+  if (
+    !match ||
+    Number.isNaN(timestamp) ||
+    Number(match[2]) < 1 ||
+    Number(match[2]) > 12 ||
+    Number(match[3]) < 1 ||
+    Number(match[3]) > new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).getUTCDate() ||
+    Number(match[4]) > 23 ||
+    Number(match[5]) > 59 ||
+    Number(match[6]) > 59 ||
+    timestamp < MIN_EXECUTOR_TIMESTAMP_MS ||
+    timestamp > MAX_EXECUTOR_TIMESTAMP_MS
+  ) {
     throw executorEventError(
       "occurredAt is invalid",
       CERTOPS_EXECUTOR_EVENT_INVALID,
@@ -776,10 +794,6 @@ function evidenceItemsFromBody(body) {
         summary: idempotencyMetadata.summary || null,
         metadata: idempotencyMetadata.metadata || {},
         artifactRefs: idempotencyMetadata.artifactRefs || [],
-        redactionApplied:
-          typeof item.redactionApplied === "boolean"
-            ? item.redactionApplied
-            : null,
       },
     };
   });
@@ -814,7 +828,6 @@ function executorEventIdempotencyPayload(event) {
       summary: item.idempotency.summary,
       metadata: item.idempotency.metadata,
       artifactRefs: item.idempotency.artifactRefs,
-      redactionApplied: item.idempotency.redactionApplied,
     })),
   };
 }

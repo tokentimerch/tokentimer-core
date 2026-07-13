@@ -125,6 +125,19 @@ describe("CertOps executor event normalization", () => {
     );
   });
 
+  it("does not let a client redaction hint affect idempotency or server redaction state", () => {
+    const marked = eventBody({
+      evidence: [{ ...eventBody().evidence[0], redactionApplied: true }],
+    });
+    const unmarked = eventBody({
+      evidence: [{ ...eventBody().evidence[0], redactionApplied: false }],
+    });
+
+    assert.equal(hash(marked), hash(unmarked));
+    assert.equal(normalize(marked).evidence[0].metadata.redactionApplied, true);
+    assert.equal(normalize(unmarked).evidence[0].metadata.redactionApplied, true);
+  });
+
   it("preserves contract array ordering while canonicalizing object keys", () => {
     const firstEvidence = eventBody().evidence[0];
     const secondEvidence = {

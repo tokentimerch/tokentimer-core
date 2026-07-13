@@ -35,6 +35,12 @@ const CERTOPS_JOB_TABLES = [
 ];
 const PRIVATE_KEY_PEM =
   "-----BEGIN RSA PRIVATE KEY-----\nRkFLRS1OT1QtQS1SRUFMLUtFWQ==\n-----END RSA PRIVATE KEY-----";
+const ENCRYPTED_PKCS8_DER = Buffer.from([
+  0x30, 0x13,
+  0x30, 0x0b,
+  0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d,
+  0x04, 0x04, 0xde, 0xad, 0xbe, 0xef,
+]);
 
 async function createWorkspacePair(label) {
   const ownerEmail = `${label}-${Date.now()}-${crypto.randomUUID()}@example.com`;
@@ -416,19 +422,24 @@ describe("CertOps jobs and evidence persistence", function () {
         "SELECT COUNT(*)::int AS count FROM certificate_evidence WHERE workspace_id = $1",
         [workspaceA],
       );
-      let evidenceError;
-      try {
-        await createCertificateEvidence({
-          workspaceId: workspaceA,
-          jobId: safeJob.id,
-          evidenceType: "certificate.observed",
-          metadata: { output: PRIVATE_KEY_PEM },
-          createdByUserId: ownerId,
-        });
-      } catch (error) {
-        evidenceError = error;
+      for (const metadata of [
+        { output: PRIVATE_KEY_PEM },
+        { attachment: ENCRYPTED_PKCS8_DER },
+      ]) {
+        let evidenceError;
+        try {
+          await createCertificateEvidence({
+            workspaceId: workspaceA,
+            jobId: safeJob.id,
+            evidenceType: "certificate.observed",
+            metadata,
+            createdByUserId: ownerId,
+          });
+        } catch (error) {
+          evidenceError = error;
+        }
+        expect(evidenceError?.code).to.equal(PRIVATE_KEY_MATERIAL_REJECTED);
       }
-      expect(evidenceError?.code).to.equal(PRIVATE_KEY_MATERIAL_REJECTED);
       const afterEvidence = await TestUtils.execQuery(
         "SELECT COUNT(*)::int AS count FROM certificate_evidence WHERE workspace_id = $1",
         [workspaceA],

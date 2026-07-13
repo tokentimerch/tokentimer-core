@@ -4637,7 +4637,7 @@ components:
     CertOpsEvidenceMetadata:
       type: object
       additionalProperties: false
-      description: Strict standalone normalized/persisted evidence metadata skeleton. Raw executor output and key-bearing artifacts are intentionally excluded. M2 runtime rejects private-key material, redacts generic secrets, and stores redacted output separately where output is accepted.
+      description: Strict standalone normalized/persisted evidence metadata. Raw executor output and key-bearing artifacts are intentionally excluded. M2-A10 adds separately stored output after private-key rejection, generic-secret redaction, and byte limits.
       required:
         - schemaVersion
         - evidenceId
@@ -4735,7 +4735,7 @@ components:
     CertOpsEmbeddedExecutorEvidenceItem:
       type: object
       additionalProperties: false
-      description: Relaxed embedded evidence item for the M2 executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata.
+      description: Relaxed embedded evidence item for the M2 executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata. Raw executor output is deferred to M2-A10.
       required: [eventType]
       properties:
         schemaVersion:
@@ -4822,11 +4822,6 @@ components:
                 type: string
                 pattern: "^[a-f0-9]{64}$"
                 nullable: true
-        output:
-          type: string
-          maxLength: 65536
-          nullable: true
-          description: Optional executor output. Runtime rejects private-key material and persists only generic-secret-redacted output under the evidence policy.
         redactionApplied:
           type: boolean
           nullable: true

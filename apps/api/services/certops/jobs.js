@@ -45,12 +45,22 @@ const TERMINAL_JOB_STATUSES = new Set([
 const ACTIVE_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
 );
+const ACTIVE_JOB_STATUS_ORDER = Object.freeze([
+  "pending_approval",
+  "approved",
+  "pending",
+  "claimed",
+  "running",
+]);
+const ACTIVE_JOB_STATUS_RANK = new Map(
+  ACTIVE_JOB_STATUS_ORDER.map((status, index) => [status, index]),
+);
 const JOB_STATUS_TRANSITIONS = Object.freeze({
   pending_approval: new Set(["approved", "rejected", "cancelled"]),
-  approved: new Set(["pending", "cancelled"]),
-  pending: new Set(["claimed", "running", "blocked", "cancelled"]),
-  claimed: new Set(["running", "failed", "blocked", "cancelled"]),
-  running: new Set(["succeeded", "failed", "blocked", "cancelled"]),
+  approved: new Set(["pending", "rejected", "cancelled"]),
+  pending: new Set(["claimed", "running", "rejected", "blocked", "cancelled"]),
+  claimed: new Set(["running", "failed", "rejected", "blocked", "cancelled"]),
+  running: new Set(["succeeded", "failed", "rejected", "blocked", "cancelled"]),
   rejected: new Set(),
   succeeded: new Set(),
   failed: new Set(),
@@ -177,7 +187,8 @@ const FORBIDDEN_PUBLIC_FIELD_FRAGMENTS = Object.freeze([
 ]);
 
 const CREDENTIAL_DUMP_PATTERN =
-  /\b(?:authorization\s*[:=]\s*(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]+|(?:password|passwd|secret|credential|api[_-]?key|api[_-]?secret|passphrase|access[_-]?key(?:id)?|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|token[_-]?secret|private[_-]?key|key[_-]?material)\s*[:=]\s*\S+)/i;
+  /\b(?:authorization\s*[:=]\s*(?:bearer|basic|token)\s+|(?:password|passwd|secret|credential|api[_-]?key|api[_-]?secret|passphrase|access[_-]?key(?:id)?|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|token[_-]?secret|private[_-]?key|key[_-]?material)\s*[:=]\s*)(\S+)/gi;
+const GENERIC_SECRET_REDACTION_PLACEHOLDER = "[REDACTED]";
 
 function serviceError(message, code) {
   const error = new Error(message);
@@ -295,6 +306,15 @@ function fieldNameLooksForbidden(fieldName) {
   );
 }
 
+function containsUnredactedCredentialDump(value) {
+  CREDENTIAL_DUMP_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = CREDENTIAL_DUMP_PATTERN.exec(value))) {
+    if (match[1] !== GENERIC_SECRET_REDACTION_PLACEHOLDER) return true;
+  }
+  return false;
+}
+
 function assertSafePublicValue(value, depth = 0, seen = new WeakSet()) {
   if (depth > MAX_SCAN_DEPTH) throw privateMaterialError();
   if (containsPrivateKeyMaterial(value)) throw privateMaterialError();
@@ -302,7 +322,7 @@ function assertSafePublicValue(value, depth = 0, seen = new WeakSet()) {
   if (value === null || value === undefined) return;
 
   if (typeof value === "string") {
-    if (CREDENTIAL_DUMP_PATTERN.test(value)) throw privateMaterialError();
+    if (containsUnredactedCredentialDump(value)) throw privateMaterialError();
     return;
   }
 
@@ -407,16 +427,44 @@ function isTerminalJobStatus(status) {
 }
 
 function jobStatusTransitionDecision(fromStatus, toStatus) {
+  if (fromStatus === toStatus) {
+    return {
+      applied: false,
+      ignored: true,
+      ignoredReason: isTerminalJobStatus(fromStatus)
+        ? "terminal_replay"
+        : "active_replay",
+    };
+  }
+
   if (isTerminalJobStatus(fromStatus)) {
     return {
       applied: false,
-      ignoredReason:
-        fromStatus === toStatus ? "terminal_replay" : "terminal_regression",
+      ignored: true,
+      ignoredReason: "terminal_regression",
+    };
+  }
+
+  if (JOB_STATUS_TRANSITIONS[fromStatus]?.has(toStatus)) {
+    return { applied: true, ignored: false, ignoredReason: null };
+  }
+
+  // Executor delivery is at-least-once and can be out of order. A stale
+  // active lifecycle event must remain observable in the job log without
+  // rolling the persisted state backward or aborting the event transaction.
+  if (
+    ACTIVE_JOB_STATUSES.has(toStatus) &&
+    ACTIVE_JOB_STATUS_RANK.get(toStatus) < ACTIVE_JOB_STATUS_RANK.get(fromStatus)
+  ) {
+    return {
+      applied: false,
+      ignored: true,
+      ignoredReason: "active_regression",
     };
   }
 
   assertJobStatusTransition(fromStatus, toStatus);
-  return { applied: true, ignoredReason: null };
+  return { applied: true, ignored: false, ignoredReason: null };
 }
 
 function withStatusTransitionOutcome(job, decision) {

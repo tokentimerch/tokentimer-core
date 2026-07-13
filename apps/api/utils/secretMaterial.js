@@ -45,9 +45,13 @@ const PRIVATE_KEY_PEM_BLOCK_PATTERN = new RegExp(
 // Conservative Authorization-header / bearer-token redaction for generic
 // secret scrubbing (extended in M2 evidence redaction work).
 const AUTHORIZATION_VALUE_PATTERN =
-  /\b(Authorization\s*[:=]\s*)(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]+/gi;
+  /\b(Authorization\s*[:=]\s*)(?:Bearer|Basic|Token)\s+(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const COOKIE_HEADER_PATTERN =
+  /\b((?:Set-)?Cookie\s*:\s*)[^\r\n]*/gi;
+const API_TOKEN_HEADER_PATTERN =
+  /\b((?:X[\s_-]?(?:API[\s_-]?Key|Auth[\s_-]?Token))\s*:\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const GENERIC_SECRET_ASSIGNMENT_PATTERN =
-  /\b(?:password|passwd|credential|secret|api[_-]?key|api[_-]?secret|token[_-]?secret|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+  /\b((?:password|passwd|credential|secret|api[\s_-]?key|api[\s_-]?secret|token(?:[\s_-]?(?:secret|value))?|bearer[\s_-]?token|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|aws[\s_-]?secret[\s_-]?access[\s_-]?key)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 const PRIVATE_KEY_FIELD_FRAGMENTS = Object.freeze([
   "privatekey",
@@ -84,6 +88,10 @@ const GENERIC_SECRET_FIELD_FRAGMENTS = Object.freeze([
 ]);
 
 const MAX_SCAN_DEPTH = 12;
+const MAX_DER_TLV_LENGTH = 1024 * 1024;
+const MAX_DER_CHILDREN = 16;
+const PKCS5_OID_PREFIX = Buffer.from("2a864886f70d0105", "hex");
+const PKCS12_PBE_OID_PREFIX = Buffer.from("2a864886f70d010c01", "hex");
 
 function normalizeFieldName(value) {
   return String(value || "")
@@ -106,15 +114,15 @@ function fieldNameLooksGenericSecret(fieldName) {
 }
 
 /**
- * Returns true if the string looks like base64 (and is long enough to plausibly
- * wrap a PEM block). Whitespace is tolerated.
+ * Returns true if the string looks like base64 and is long enough to plausibly
+ * wrap a bounded DER envelope or PEM block. Whitespace is tolerated.
  * @param {string} value
  * @returns {boolean}
  */
 function looksBase64(value) {
   if (typeof value !== "string") return false;
   const compact = value.replace(/\s+/g, "");
-  if (compact.length < 64) return false;
+  if (compact.length < 16) return false;
   return /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
 }
 
@@ -133,6 +141,116 @@ function derHeaderLength(value) {
   if (lengthBytes === 0 || lengthBytes > 4) return null;
   if (value.length < 2 + lengthBytes) return null;
   return 2 + lengthBytes;
+}
+
+/**
+ * Reads one bounded, definite-length DER TLV without allocating from the
+ * declared ASN.1 length. This is deliberately not a general ASN.1 parser.
+ * @param {Buffer} value
+ * @param {number} offset
+ * @param {number} boundary
+ * @returns {{tag:number, valueStart:number, valueEnd:number, valueLength:number}|null}
+ */
+function readDerTlv(value, offset = 0, boundary = value?.length || 0) {
+  if (
+    !Buffer.isBuffer(value) ||
+    !Number.isInteger(offset) ||
+    !Number.isInteger(boundary) ||
+    offset < 0 ||
+    boundary < offset ||
+    boundary > value.length ||
+    offset + 2 > boundary
+  ) {
+    return null;
+  }
+
+  const lengthByte = value[offset + 1];
+  let valueLength;
+  let headerLength = 2;
+  if ((lengthByte & 0x80) === 0) {
+    valueLength = lengthByte;
+  } else {
+    const lengthBytes = lengthByte & 0x7f;
+    if (lengthBytes === 0 || lengthBytes > 4 || offset + 2 + lengthBytes > boundary) {
+      return null;
+    }
+    // DER lengths are minimally encoded: long form cannot start with zero or
+    // describe a value that short form could represent.
+    if (value[offset + 2] === 0) return null;
+    valueLength = 0;
+    for (let index = 0; index < lengthBytes; index += 1) {
+      valueLength = valueLength * 256 + value[offset + 2 + index];
+      if (valueLength > MAX_DER_TLV_LENGTH) return null;
+    }
+    if (valueLength < 128) return null;
+    headerLength += lengthBytes;
+  }
+
+  if (valueLength > MAX_DER_TLV_LENGTH) return null;
+  const valueStart = offset + headerLength;
+  const valueEnd = valueStart + valueLength;
+  if (valueEnd > boundary || valueEnd < valueStart) return null;
+  return { tag: value[offset], valueStart, valueEnd, valueLength };
+}
+
+function hasKnownPkcs8EncryptionOid(value, oid) {
+  if (oid.valueLength < 2) return false;
+  const encoded = value.subarray(oid.valueStart, oid.valueEnd);
+  return (
+    encoded.subarray(0, PKCS5_OID_PREFIX.length).equals(PKCS5_OID_PREFIX) ||
+    encoded
+      .subarray(0, PKCS12_PBE_OID_PREFIX.length)
+      .equals(PKCS12_PBE_OID_PREFIX)
+  );
+}
+
+function hasPlausibleAlgorithmIdentifier(value, algorithm) {
+  const oid = readDerTlv(value, algorithm.valueStart, algorithm.valueEnd);
+  if (!oid || oid.tag !== 0x06 || !hasKnownPkcs8EncryptionOid(value, oid)) {
+    return false;
+  }
+
+  let cursor = oid.valueEnd;
+  let childCount = 0;
+  while (cursor < algorithm.valueEnd) {
+    const child = readDerTlv(value, cursor, algorithm.valueEnd);
+    if (!child || childCount >= MAX_DER_CHILDREN) return false;
+    cursor = child.valueEnd;
+    childCount += 1;
+  }
+  return cursor === algorithm.valueEnd;
+}
+
+/**
+ * Detects PKCS#8 EncryptedPrivateKeyInfo DER:
+ *   SEQUENCE { AlgorithmIdentifier, OCTET STRING }
+ * The encryption algorithm must use a common PKCS#5/PKCS#12 PBE OID, which
+ * keeps ordinary ASN.1 envelopes and X.509 certificate DER out of scope.
+ * @param {Buffer} value
+ * @returns {boolean}
+ */
+function looksEncryptedPkcs8Der(value) {
+  const outer = readDerTlv(value, 0, value?.length || 0);
+  if (!outer || outer.tag !== 0x30 || outer.valueEnd !== value.length) {
+    return false;
+  }
+
+  const algorithm = readDerTlv(value, outer.valueStart, outer.valueEnd);
+  if (
+    !algorithm ||
+    algorithm.tag !== 0x30 ||
+    !hasPlausibleAlgorithmIdentifier(value, algorithm)
+  ) {
+    return false;
+  }
+
+  const encryptedData = readDerTlv(value, algorithm.valueEnd, outer.valueEnd);
+  return Boolean(
+    encryptedData &&
+      encryptedData.tag === 0x04 &&
+      encryptedData.valueLength > 0 &&
+      encryptedData.valueEnd === outer.valueEnd,
+  );
 }
 
 /**
@@ -200,7 +318,7 @@ function base64DecodeIfLikely(value) {
 function hexDecodeIfLikely(value) {
   if (typeof value !== "string") return null;
   const compact = value.replace(/\s+/g, "");
-  if (compact.length < 64 || compact.length % 2 !== 0) return null;
+  if (compact.length < 16 || compact.length % 2 !== 0) return null;
   if (!/^[a-f0-9]+$/i.test(compact)) return null;
   try {
     return Buffer.from(compact, "hex");
@@ -211,7 +329,13 @@ function hexDecodeIfLikely(value) {
 
 function bufferContainsPrivateKey(value) {
   if (!Buffer.isBuffer(value)) return false;
-  if (looksPkcs12Bundle(value) || looksPrivateKeyDer(value)) return true;
+  if (
+    looksPkcs12Bundle(value) ||
+    looksPrivateKeyDer(value) ||
+    looksEncryptedPkcs8Der(value)
+  ) {
+    return true;
+  }
   return PRIVATE_KEY_PEM_PATTERN.test(value.toString("utf8"));
 }
 
@@ -371,14 +495,24 @@ function finalizeRedactionReport(report, value) {
 }
 
 function redactGenericString(value, report) {
-  let result = value.replace(AUTHORIZATION_VALUE_PATTERN, () => {
+  let result = value.replace(AUTHORIZATION_VALUE_PATTERN, (_match, prefix) => {
     noteRedaction(report, "authorization");
-    return GENERIC_SECRET_REDACTION_PLACEHOLDER;
+    return `${prefix}${GENERIC_SECRET_REDACTION_PLACEHOLDER}`;
   });
 
-  result = result.replace(GENERIC_SECRET_ASSIGNMENT_PATTERN, () => {
+  result = result.replace(COOKIE_HEADER_PATTERN, (_match, prefix) => {
+    noteRedaction(report, "cookie");
+    return `${prefix}${GENERIC_SECRET_REDACTION_PLACEHOLDER}`;
+  });
+
+  result = result.replace(API_TOKEN_HEADER_PATTERN, (_match, prefix) => {
     noteRedaction(report, "generic-secret");
-    return GENERIC_SECRET_REDACTION_PLACEHOLDER;
+    return `${prefix}${GENERIC_SECRET_REDACTION_PLACEHOLDER}`;
+  });
+
+  result = result.replace(GENERIC_SECRET_ASSIGNMENT_PATTERN, (_match, prefix) => {
+    noteRedaction(report, "generic-secret");
+    return `${prefix}${GENERIC_SECRET_REDACTION_PLACEHOLDER}`;
   });
 
   return result;
@@ -464,6 +598,7 @@ module.exports = {
   containsPrivateKeyMaterial,
   assertNoPrivateKeyMaterial,
   looksPrivateKeyDer,
+  looksEncryptedPkcs8Der,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
   looksPkcs12Bundle,
