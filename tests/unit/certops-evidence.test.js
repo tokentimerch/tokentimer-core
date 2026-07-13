@@ -335,6 +335,10 @@ describe("CertOps evidence service", () => {
       { authorization: "Bearer not-allowed" },
       { note: "accessToken=not-allowed" },
       { note: "clientSecret=not-allowed" },
+      { note: "Cookie: session=not-allowed" },
+      { note: "Set-Cookie: session=not-allowed" },
+      { note: "X-API-Key: not-allowed" },
+      { note: "token=not-allowed" },
     ]) {
       await assert.rejects(
         () =>
@@ -349,6 +353,7 @@ describe("CertOps evidence service", () => {
       );
     }
     assert.equal(client.evidence.length, 0);
+    assert.equal(JSON.stringify(client.evidence).includes("not-allowed"), false);
   });
 
   it("rejects secret-looking subject IDs before persistence", async () => {

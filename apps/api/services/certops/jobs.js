@@ -1,7 +1,12 @@
 "use strict";
 
 const { pool } = require("../../db/database");
-const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const {
+  assertNoUnredactedGenericSecretMaterial,
+  containsPrivateKeyMaterial,
+  fieldNameLooksGenericSecret,
+  fieldNameLooksPrivateKeyMaterial,
+} = require("../../utils/secretMaterial");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -148,47 +153,7 @@ const MAX_SCAN_DEPTH = 12;
 const MAX_TEXT_LENGTH = 1024;
 const MAX_SHORT_TEXT_LENGTH = 128;
 
-const FORBIDDEN_PUBLIC_FIELD_FRAGMENTS = Object.freeze([
-  "privatekey",
-  "privatekeypem",
-  "encryptedprivatekey",
-  "keymaterial",
-  "pfxblob",
-  "jksblob",
-  "tlskey",
-  "caprivatekey",
-  "keystorepassword",
-  "privatekeypassword",
-  "keypassword",
-  "password",
-  "credential",
-  "tokensecret",
-  "apisecret",
-  "apikey",
-  "rawsecret",
-  "rawprivatekey",
-  "rawkey",
-  "pemprivatekey",
-  "secret",
-  "keypem",
-  "pem",
-  "pfx",
-  "jks",
-  "keystore",
-  "passphrase",
-  "bearer",
-  "authorization",
-  "accesskey",
-  "accesskeyid",
-  "accesstoken",
-  "refreshtoken",
-  "clientsecret",
-  "secretkey",
-]);
-
-const CREDENTIAL_DUMP_PATTERN =
-  /\b(?:authorization\s*[:=]\s*(?:bearer|basic|token)\s+|(?:password|passwd|secret|credential|api[_-]?key|api[_-]?secret|passphrase|access[_-]?key(?:id)?|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|token[_-]?secret|private[_-]?key|key[_-]?material)\s*[:=]\s*)(\S+)/gi;
-const GENERIC_SECRET_REDACTION_PLACEHOLDER = "[REDACTED]";
+const FORBIDDEN_KEY_BEARING_FIELD_FRAGMENTS = Object.freeze(["pem"]);
 
 function serviceError(message, code) {
   const error = new Error(message);
@@ -301,18 +266,13 @@ function normalizedFieldName(value) {
 
 function fieldNameLooksForbidden(fieldName) {
   const normalized = normalizedFieldName(fieldName);
-  return FORBIDDEN_PUBLIC_FIELD_FRAGMENTS.some((fragment) =>
-    normalized.includes(fragment),
+  return (
+    fieldNameLooksPrivateKeyMaterial(fieldName) ||
+    fieldNameLooksGenericSecret(fieldName) ||
+    FORBIDDEN_KEY_BEARING_FIELD_FRAGMENTS.some((fragment) =>
+      normalized.includes(fragment),
+    )
   );
-}
-
-function containsUnredactedCredentialDump(value) {
-  CREDENTIAL_DUMP_PATTERN.lastIndex = 0;
-  let match;
-  while ((match = CREDENTIAL_DUMP_PATTERN.exec(value))) {
-    if (match[1] !== GENERIC_SECRET_REDACTION_PLACEHOLDER) return true;
-  }
-  return false;
 }
 
 function assertSafePublicValue(value, depth = 0, seen = new WeakSet()) {
@@ -322,7 +282,10 @@ function assertSafePublicValue(value, depth = 0, seen = new WeakSet()) {
   if (value === null || value === undefined) return;
 
   if (typeof value === "string") {
-    if (containsUnredactedCredentialDump(value)) throw privateMaterialError();
+    // Direct persistence callers receive a strict public-metadata boundary.
+    // Executor ingestion redacts first; all other callers must supply content
+    // that is already redacted rather than persisting raw generic secrets.
+    assertNoUnredactedGenericSecretMaterial(value);
     return;
   }
 

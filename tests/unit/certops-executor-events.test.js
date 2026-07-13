@@ -6,12 +6,16 @@ const { describe, it } = require("node:test");
 const {
   _test: {
     executorEventIdempotencyPayload,
+    EVIDENCE_SOURCES,
+    EVIDENCE_STATUSES,
     mergeRedactionReport,
     normalizeExecutorEventBody,
+    normalizeRfc3339Timestamp,
   },
 } = require("../../apps/api/routes/certops-executor");
 const {
-  _test: { requestHash },
+  CERTOPS_EXECUTOR_EVENT_CONFLICT,
+  _test: { requestHash, storedResponseForReplay },
 } = require("../../apps/api/services/certops/executorEvents");
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
@@ -61,6 +65,25 @@ function hash(body) {
 }
 
 describe("CertOps executor event normalization", () => {
+  it("never replays a malformed historical idempotency response as success", () => {
+    const safeResponse = {
+      ok: true,
+      eventId: "event-log-1",
+      logId: "event-log-1",
+      jobId: JOB_ID,
+      status: "running",
+      evidenceIds: [],
+    };
+
+    assert.deepEqual(storedResponseForReplay(JSON.stringify(safeResponse)), safeResponse);
+    for (const response of [null, "{}", "not-json", { ok: true }]) {
+      assert.throws(
+        () => storedResponseForReplay(response),
+        (error) => error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT,
+      );
+    }
+  });
+
   it("hashes only an explicit allowlist of sanitized client semantics", () => {
     const normalized = normalize(eventBody());
     const projection = executorEventIdempotencyPayload(normalized);
@@ -168,5 +191,69 @@ describe("CertOps executor event normalization", () => {
       "authorization",
       "generic-secret",
     ]);
+  });
+
+  it("keeps embedded evidence enums and fingerprints aligned with the public contract", () => {
+    for (const source of EVIDENCE_SOURCES) {
+      const normalized = normalize(
+        eventBody({ evidence: [{ ...eventBody().evidence[0], source }] }),
+      );
+      assert.equal(normalized.evidence[0].metadata.source, source);
+    }
+
+    for (const status of EVIDENCE_STATUSES) {
+      const normalized = normalize(
+        eventBody({ evidence: [{ ...eventBody().evidence[0], status }] }),
+      );
+      assert.equal(normalized.evidence[0].metadata.status, status);
+    }
+
+    for (const evidenceOverrides of [
+      { source: "arbitrary-source" },
+      { status: "unknown-status" },
+      { fingerprintSha256: "not-a-fingerprint" },
+      { fingerprintSha256: "a".repeat(63) },
+      { fingerprintSha256: "a".repeat(65) },
+      { fingerprintSha256: "A".repeat(64) },
+    ]) {
+      assert.throws(
+        () =>
+          normalize(
+            eventBody({
+              evidence: [{ ...eventBody().evidence[0], ...evidenceOverrides }],
+            }),
+          ),
+        (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_INVALID",
+      );
+    }
+  });
+
+  it("accepts contract-valid RFC3339 timestamps and normalizes to milliseconds", () => {
+    const cases = [
+      ["2026-07-12T12:00:00Z", "2026-07-12T12:00:00.000Z"],
+      ["2026-07-12T12:00:00.123Z", "2026-07-12T12:00:00.123Z"],
+      ["2026-07-12T12:00:00.123456Z", "2026-07-12T12:00:00.123Z"],
+      ["2026-07-12T12:00:00.123456789Z", "2026-07-12T12:00:00.123Z"],
+      ["2024-02-29T23:59:59+02:30", "2024-02-29T21:29:59.000Z"],
+      ["2024-02-29T23:59:59-02:30", "2024-03-01T02:29:59.000Z"],
+    ];
+    for (const [input, output] of cases) {
+      assert.equal(normalizeRfc3339Timestamp(input), output);
+    }
+  });
+
+  it("rejects RFC3339 timestamps outside the documented grammar and operational range", () => {
+    for (const value of [
+      "2026-02-29T12:00:00Z",
+      "2026-13-01T12:00:00Z",
+      "2026-07-12T12:00:00+14:01",
+      "1999-12-31T23:59:59Z",
+      "2101-01-01T00:00:00Z",
+    ]) {
+      assert.throws(
+        () => normalizeRfc3339Timestamp(value),
+        (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_INVALID",
+      );
+    }
   });
 });

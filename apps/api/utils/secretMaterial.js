@@ -45,13 +45,13 @@ const PRIVATE_KEY_PEM_BLOCK_PATTERN = new RegExp(
 // Conservative Authorization-header / bearer-token redaction for generic
 // secret scrubbing (extended in M2 evidence redaction work).
 const AUTHORIZATION_VALUE_PATTERN =
-  /\b(Authorization\s*[:=]\s*)(?:Bearer|Basic|Token)\s+(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+  /\b(Authorization\s*[:=]\s*)(?:Bearer|Basic|Token)\s+("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const COOKIE_HEADER_PATTERN =
-  /\b((?:Set-)?Cookie\s*:\s*)[^\r\n]*/gi;
+  /\b((?:Set-)?Cookie\s*:\s*)([^\r\n]*)/gi;
 const API_TOKEN_HEADER_PATTERN =
-  /\b((?:X[\s_-]?(?:API[\s_-]?Key|Auth[\s_-]?Token))\s*:\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+  /\b((?:X[\s_-]?(?:API[\s_-]?Key|Auth[\s_-]?Token))\s*:\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const GENERIC_SECRET_ASSIGNMENT_PATTERN =
-  /\b((?:password|passwd|credential|secret|api[\s_-]?key|api[\s_-]?secret|token(?:[\s_-]?(?:secret|value))?|bearer[\s_-]?token|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|aws[\s_-]?secret[\s_-]?access[\s_-]?key)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+  /\b((?:password|passwd|credential|secret|api[\s_-]?key|api[\s_-]?secret|token(?:[\s_-]?(?:secret|value))?|bearer[\s_-]?token|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|aws[\s_-]?secret[\s_-]?access[\s_-]?key)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 const PRIVATE_KEY_FIELD_FRAGMENTS = Object.freeze([
   "privatekey",
@@ -72,26 +72,54 @@ const PRIVATE_KEY_FIELD_FRAGMENTS = Object.freeze([
   "keystore",
 ]);
 
-const GENERIC_SECRET_FIELD_FRAGMENTS = Object.freeze([
+const GENERIC_SECRET_FIELD_NAMES = Object.freeze([
   "password",
   "passwd",
+  "passphrase",
   "credential",
   "secret",
+  "secretkey",
+  "rawsecret",
   "tokensecret",
+  "tokenvalue",
   "apisecret",
   "apikey",
+  "bearer",
   "authorization",
   "cookie",
+  "accesskey",
+  "accesskeyid",
   "accesstoken",
   "refreshtoken",
   "clientsecret",
 ]);
 
+// Suffix matching recognizes conventional names such as deploymentPassword
+// without treating unrelated words such as secretary or cookiePolicyEnabled as
+// secret-bearing fields. Free-form values are checked separately below.
+const GENERIC_SECRET_FIELD_SUFFIXES = Object.freeze([
+  "password",
+  "passwd",
+  "passphrase",
+  "credential",
+  "credentials",
+  "secret",
+  "secretkey",
+  "rawsecret",
+  "tokensecret",
+  "tokenvalue",
+  "apikey",
+  "apisecret",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+  "awssecretaccesskey",
+]);
+
 const MAX_SCAN_DEPTH = 12;
 const MAX_DER_TLV_LENGTH = 1024 * 1024;
 const MAX_DER_CHILDREN = 16;
-const PKCS5_OID_PREFIX = Buffer.from("2a864886f70d0105", "hex");
-const PKCS12_PBE_OID_PREFIX = Buffer.from("2a864886f70d010c01", "hex");
+const MAX_DER_OID_LENGTH = 128;
 
 function normalizeFieldName(value) {
   return String(value || "")
@@ -108,8 +136,11 @@ function fieldNameLooksPrivateKeyMaterial(fieldName) {
 
 function fieldNameLooksGenericSecret(fieldName) {
   const normalized = normalizeFieldName(fieldName);
-  return GENERIC_SECRET_FIELD_FRAGMENTS.some((fragment) =>
-    normalized.includes(fragment),
+  return (
+    GENERIC_SECRET_FIELD_NAMES.includes(normalized) ||
+    GENERIC_SECRET_FIELD_SUFFIXES.some((suffix) =>
+      normalized.endsWith(suffix),
+    )
   );
 }
 
@@ -193,20 +224,29 @@ function readDerTlv(value, offset = 0, boundary = value?.length || 0) {
   return { tag: value[offset], valueStart, valueEnd, valueLength };
 }
 
-function hasKnownPkcs8EncryptionOid(value, oid) {
-  if (oid.valueLength < 2) return false;
+function isValidDerOid(value, oid) {
+  if (
+    !oid ||
+    oid.valueLength < 1 ||
+    oid.valueLength > MAX_DER_OID_LENGTH
+  ) {
+    return false;
+  }
+
   const encoded = value.subarray(oid.valueStart, oid.valueEnd);
-  return (
-    encoded.subarray(0, PKCS5_OID_PREFIX.length).equals(PKCS5_OID_PREFIX) ||
-    encoded
-      .subarray(0, PKCS12_PBE_OID_PREFIX.length)
-      .equals(PKCS12_PBE_OID_PREFIX)
-  );
+  let atSubidentifierStart = true;
+  for (const octet of encoded) {
+    // Base-128 subidentifiers must be minimally encoded: a continuation byte
+    // cannot begin with a zero seven-bit group.
+    if (atSubidentifierStart && octet === 0x80) return false;
+    atSubidentifierStart = (octet & 0x80) === 0;
+  }
+  return atSubidentifierStart;
 }
 
 function hasPlausibleAlgorithmIdentifier(value, algorithm) {
   const oid = readDerTlv(value, algorithm.valueStart, algorithm.valueEnd);
-  if (!oid || oid.tag !== 0x06 || !hasKnownPkcs8EncryptionOid(value, oid)) {
+  if (!oid || oid.tag !== 0x06 || !isValidDerOid(value, oid)) {
     return false;
   }
 
@@ -224,8 +264,9 @@ function hasPlausibleAlgorithmIdentifier(value, algorithm) {
 /**
  * Detects PKCS#8 EncryptedPrivateKeyInfo DER:
  *   SEQUENCE { AlgorithmIdentifier, OCTET STRING }
- * The encryption algorithm must use a common PKCS#5/PKCS#12 PBE OID, which
- * keeps ordinary ASN.1 envelopes and X.509 certificate DER out of scope.
+ * The algorithm identifier may use any syntactically valid DER OID. Limiting
+ * recognition to known PBE OIDs would allow encrypted PKCS#8 containers using
+ * newer or vendor encryption algorithms to bypass the zero-custody boundary.
  * @param {Buffer} value
  * @returns {boolean}
  */
@@ -518,6 +559,104 @@ function redactGenericString(value, report) {
   return result;
 }
 
+function normalizePossibleRedactedSecret(value) {
+  let normalized = String(value || "").trim();
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1);
+  }
+  if (normalized === GENERIC_SECRET_REDACTION_PLACEHOLDER) {
+    return normalized;
+  }
+
+  // A surrounding log sentence may place ordinary punctuation directly after
+  // the placeholder. That punctuation is not secret material. Do not remove
+  // the placeholder's own closing bracket.
+  if (normalized.startsWith(GENERIC_SECRET_REDACTION_PLACEHOLDER)) {
+    const suffix = normalized.slice(
+      GENERIC_SECRET_REDACTION_PLACEHOLDER.length,
+    );
+    if (/^[)\]}>,.!?]+$/.test(suffix)) {
+      return GENERIC_SECRET_REDACTION_PLACEHOLDER;
+    }
+  }
+  return normalized;
+}
+
+function patternContainsUnredactedSecret(value, pattern) {
+  pattern.lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(value))) {
+    if (
+      normalizePossibleRedactedSecret(match[2]) !==
+      GENERIC_SECRET_REDACTION_PLACEHOLDER
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Returns true only when free-form content still contains an unredacted
+ * generic secret. Field-name policies remain separate because they are schema
+ * decisions; this helper is the single content detector shared by routes and
+ * persistence services.
+ * @param {*} value
+ * @param {number} depth
+ * @param {WeakSet<object>} seen
+ * @returns {boolean}
+ */
+function containsGenericSecretMaterial(value, depth = 0, seen = new WeakSet()) {
+  if (value === null || value === undefined) return false;
+  if (depth > MAX_SCAN_DEPTH) return true;
+
+  if (typeof value === "string") {
+    return [
+      AUTHORIZATION_VALUE_PATTERN,
+      COOKIE_HEADER_PATTERN,
+      API_TOKEN_HEADER_PATTERN,
+      GENERIC_SECRET_ASSIGNMENT_PATTERN,
+    ].some((pattern) => patternContainsUnredactedSecret(value, pattern));
+  }
+
+  if (Buffer.isBuffer(value)) return false;
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return true;
+    seen.add(value);
+    const found = value.some((item) =>
+      containsGenericSecretMaterial(item, depth + 1, seen),
+    );
+    seen.delete(value);
+    return found;
+  }
+
+  if (typeof value === "object") {
+    if (seen.has(value)) return true;
+    seen.add(value);
+    const found = Object.values(value).some((item) =>
+      containsGenericSecretMaterial(item, depth + 1, seen),
+    );
+    seen.delete(value);
+    return found;
+  }
+
+  return false;
+}
+
+function assertNoUnredactedGenericSecretMaterial(value) {
+  if (containsGenericSecretMaterial(value)) {
+    const error = new Error(
+      "Generic secret material is not accepted in CertOps public metadata",
+    );
+    error.code = PRIVATE_KEY_MATERIAL_REJECTED;
+    throw error;
+  }
+}
+
 function redactGenericSecretsInternal(value, report, depth = 0, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
   // Bail with a marker (never the original subtree) so a hostile or accidental
@@ -597,6 +736,8 @@ module.exports = {
   PRIVATE_KEY_PEM_PATTERN,
   containsPrivateKeyMaterial,
   assertNoPrivateKeyMaterial,
+  assertNoUnredactedGenericSecretMaterial,
+  containsGenericSecretMaterial,
   looksPrivateKeyDer,
   looksEncryptedPkcs8Der,
   fieldNameLooksGenericSecret,

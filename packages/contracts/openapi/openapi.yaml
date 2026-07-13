@@ -3692,6 +3692,15 @@ paths:
               example:
                 error: Private key material is not accepted in CertOps requests
                 code: PRIVATE_KEY_MATERIAL_REJECTED
+        "503":
+          description: The security audit sink was unavailable while recording a private-key-material rejection. The endpoint fails closed; the original payload is neither persisted nor echoed and no executor-event side effects occur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps security audit is temporarily unavailable
+                code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE
         "409":
           description: Executor event idempotency key conflicts with a different sanitized payload
           content:
@@ -4697,6 +4706,8 @@ components:
         observedAt:
           type: string
           format: date-time
+          pattern: "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$"
+          description: RFC3339 instant from 2000 through 2100 after time-zone normalization. Any positive fractional-second precision is accepted and normalized to milliseconds by runtime.
         fingerprintSha256:
           type: string
           pattern: "^[a-f0-9]{64}$"
@@ -4789,6 +4800,8 @@ components:
         observedAt:
           type: string
           format: date-time
+          pattern: "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$"
+          description: RFC3339 instant from 2000 through 2100 after time-zone normalization. Any positive fractional-second precision is accepted and normalized to milliseconds by runtime.
           nullable: true
         fingerprintSha256:
           type: string
@@ -4889,6 +4902,8 @@ components:
         occurredAt:
           type: string
           format: date-time
+          pattern: "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$"
+          description: RFC3339 instant from 2000 through 2100 after time-zone normalization. Any positive fractional-second precision is accepted and normalized to milliseconds by runtime.
         message:
           type: string
           maxLength: 1024

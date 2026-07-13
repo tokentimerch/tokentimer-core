@@ -38,7 +38,8 @@ const PRIVATE_KEY_PEM =
 const ENCRYPTED_PKCS8_DER = Buffer.from([
   0x30, 0x13,
   0x30, 0x0b,
-  0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d,
+  0x06, 0x07, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37,
+  0x05, 0x00,
   0x04, 0x04, 0xde, 0xad, 0xbe, 0xef,
 ]);
 
@@ -411,6 +412,35 @@ describe("CertOps jobs and evidence persistence", function () {
       );
       expect(afterJobs.rows[0].count).to.equal(beforeJobs.rows[0].count);
 
+      for (const payload of [
+        { note: "Cookie: session=not-allowed" },
+        { note: "Set-Cookie: session=not-allowed" },
+        { note: "X-API-Key: not-allowed" },
+        { note: "token=not-allowed" },
+      ]) {
+        let genericSecretError;
+        try {
+          await createCertificateJob({
+            workspaceId: workspaceA,
+            operation: "renew",
+            payload,
+            requestedByUserId: ownerId,
+          });
+        } catch (error) {
+          genericSecretError = error;
+        }
+        expect(genericSecretError?.code).to.equal(
+          PRIVATE_KEY_MATERIAL_REJECTED,
+        );
+      }
+      const afterGenericSecretJobs = await TestUtils.execQuery(
+        "SELECT COUNT(*)::int AS count FROM certificate_jobs WHERE workspace_id = $1",
+        [workspaceA],
+      );
+      expect(afterGenericSecretJobs.rows[0].count).to.equal(
+        beforeJobs.rows[0].count,
+      );
+
       const safeJob = await createCertificateJob({
         workspaceId: workspaceA,
         operation: "renew",
@@ -425,6 +455,10 @@ describe("CertOps jobs and evidence persistence", function () {
       for (const metadata of [
         { output: PRIVATE_KEY_PEM },
         { attachment: ENCRYPTED_PKCS8_DER },
+        { note: "Cookie: session=not-allowed" },
+        { note: "Set-Cookie: session=not-allowed" },
+        { note: "X-API-Key: not-allowed" },
+        { note: "token=not-allowed" },
       ]) {
         let evidenceError;
         try {

@@ -32,6 +32,11 @@ const {
   requireWorkspaceMembership,
 } = require("./services/rbac");
 const { createCsrfExemptMiddleware } = require("./middleware/csrf-exempt");
+const {
+  CERTOPS_EXECUTOR_EVENTS_PATH,
+  createCertOpsExecutorEventJsonParser,
+  handleCertOpsExecutorEventBodyParserError,
+} = require("./middleware/certops-executor-body-parser");
 
 const swaggerOptions = {
   definition: {
@@ -252,7 +257,17 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
-// 3. Request size limits
+// 3. Request size limits. The executor parser intentionally runs before the
+// general parser so unauthenticated machine requests cannot consume its 10 MiB
+// allowance before rate limiting and token authentication.
+app.use(
+  CERTOPS_EXECUTOR_EVENTS_PATH,
+  createCertOpsExecutorEventJsonParser(),
+);
+app.use(
+  CERTOPS_EXECUTOR_EVENTS_PATH,
+  handleCertOpsExecutorEventBodyParserError,
+);
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
 
 // Initialize session and Passport BEFORE any routes that require authentication

@@ -69,9 +69,9 @@ const METADATA_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const METADATA_VALUE_TYPES = new Set(["string", "number", "boolean"]);
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const RFC3339_TIMESTAMP_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))$/;
 const MIN_EXECUTOR_TIMESTAMP_MS = Date.UTC(2000, 0, 1);
-const MAX_EXECUTOR_TIMESTAMP_MS = Date.UTC(2100, 0, 1);
+const MAX_EXECUTOR_TIMESTAMP_MS = Date.UTC(2101, 0, 1) - 1;
 const ARTIFACT_REF_TYPES = new Set([
   "log",
   "report",
@@ -97,6 +97,27 @@ const EXECUTOR_EVENT_STATUSES = new Set([
   "rejected",
   "blocked",
   "cancelled",
+]);
+const EVIDENCE_SOURCES = new Set([
+  "executor",
+  "domain-monitor",
+  "endpoint-monitor",
+  "control-plane",
+  "external",
+]);
+const EVIDENCE_STATUSES = new Set([
+  "accepted",
+  "redacted",
+  "rejected",
+  "failed",
+]);
+const EVIDENCE_EVENT_TYPES = new Set([
+  "certificate.observed",
+  "deployment.checked",
+  "deployment.updated",
+  "validation.passed",
+  "validation.failed",
+  "policy.checked",
 ]);
 const EXECUTOR_EVENT_TOP_LEVEL_FIELDS = new Set([
   "schemaVersion",
@@ -336,15 +357,17 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-function normalizeOccurredAt(value) {
-  const occurredAt = requiredTrimmedString(
+function normalizeRfc3339Timestamp(value, fieldName = "occurredAt") {
+  const timestampValue = requiredTrimmedString(
     value,
-    "occurredAt",
+    fieldName,
     CERTOPS_EXECUTOR_EVENT_INVALID,
   );
-  const match = RFC3339_TIMESTAMP_PATTERN.exec(occurredAt);
-  const date = new Date(occurredAt);
+  const match = RFC3339_TIMESTAMP_PATTERN.exec(timestampValue);
+  const date = new Date(timestampValue);
   const timestamp = date.getTime();
+  const offsetHours = Number(match?.[10]);
+  const offsetMinutes = Number(match?.[11]);
   if (
     !match ||
     Number.isNaN(timestamp) ||
@@ -355,15 +378,69 @@ function normalizeOccurredAt(value) {
     Number(match[4]) > 23 ||
     Number(match[5]) > 59 ||
     Number(match[6]) > 59 ||
+    (match[8] !== "Z" &&
+      (offsetHours > 14 ||
+        offsetMinutes > 59 ||
+        (offsetHours === 14 && offsetMinutes !== 0))) ||
     timestamp < MIN_EXECUTOR_TIMESTAMP_MS ||
     timestamp > MAX_EXECUTOR_TIMESTAMP_MS
   ) {
     throw executorEventError(
-      "occurredAt is invalid",
+      `${fieldName} is invalid`,
       CERTOPS_EXECUTOR_EVENT_INVALID,
     );
   }
   return date.toISOString();
+}
+
+function normalizeOccurredAt(value) {
+  return normalizeRfc3339Timestamp(value, "occurredAt");
+}
+
+function optionalEvidenceEnum(value, fieldName, allowedValues) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw executorEventError(
+      `${fieldName} is invalid`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  rejectPrivateKeyMaterial(value);
+  if (!allowedValues.has(value)) {
+    throw executorEventError(
+      `${fieldName} is invalid`,
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  return value;
+}
+
+function optionalFingerprintSha256(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !SHA256_HEX_PATTERN.test(value)) {
+    throw executorEventError(
+      "fingerprintSha256 is invalid",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  rejectPrivateKeyMaterial(value);
+  return value;
+}
+
+function normalizeEvidenceEventType(value) {
+  const eventType = requiredTrimmedString(
+    value,
+    "evidence.eventType",
+    CERTOPS_EVIDENCE_TYPE_INVALID,
+  );
+  rejectPrivateKeyMaterial(eventType);
+  if (!EVIDENCE_EVENT_TYPES.has(eventType)) {
+    throw executorEventError(
+      "Evidence event type is invalid",
+      CERTOPS_EVIDENCE_TYPE_INVALID,
+    );
+  }
+  return eventType;
 }
 
 function normalizeEventType(value) {
@@ -645,15 +722,12 @@ function normalizeArtifactRefs(value, tracker = null) {
 function evidenceMetadataFromItem(item, idempotencyMetadata = null) {
   const tracker = createRedactionTracker();
   const metadata = {};
-  for (const [targetKey, sourceKey] of [
-    ["source", "source"],
-    ["status", "status"],
-    ["fingerprintSha256", "fingerprintSha256"],
-    ["summary", "summary"],
+  for (const [targetKey, value] of [
+    ["source", optionalEvidenceEnum(item.source, "source", EVIDENCE_SOURCES)],
+    ["status", optionalEvidenceEnum(item.status, "status", EVIDENCE_STATUSES)],
+    ["fingerprintSha256", optionalFingerprintSha256(item.fingerprintSha256)],
+    ["summary", optionalPublicText(item.summary, "summary", 1024, tracker)],
   ]) {
-    const maxLength =
-      sourceKey === "summary" ? 1024 : sourceKey === "fingerprintSha256" ? 64 : 128;
-    const value = optionalPublicText(item[sourceKey], sourceKey, maxLength, tracker);
     if (value) {
       metadata[targetKey] = value;
       if (idempotencyMetadata) idempotencyMetadata[targetKey] = value;
@@ -760,16 +834,16 @@ function evidenceItemsFromBody(body) {
         CERTOPS_EXECUTOR_EVENT_INVALID,
       );
     }
-    const evidenceType = requiredTrimmedString(
-      item.eventType,
-      "evidence.eventType",
-      CERTOPS_EVIDENCE_TYPE_INVALID,
-    );
-    rejectPrivateKeyMaterial(evidenceType);
+    const evidenceType = normalizeEvidenceEventType(item.eventType);
     const subject = evidenceSubjectFromItem(item);
     const idempotencyMetadata = {};
     const metadata = evidenceMetadataFromItem(item, idempotencyMetadata);
-    const observedAt = normalizeOccurredAt(item.observedAt || body.occurredAt);
+    const observedAt = normalizeRfc3339Timestamp(
+      item.observedAt === undefined || item.observedAt === null
+        ? body.occurredAt
+        : item.observedAt,
+      "observedAt",
+    );
     return {
       evidenceType,
       subjectType: subject.subjectType,
@@ -1185,7 +1259,7 @@ async function executorEventsHandler(req, res) {
     if (handled) return handled;
 
     logger.error("CertOps executor event ingestion failed", {
-      error: error.message,
+      errorName: error?.name || null,
       code: error.code || null,
       workspaceId: req.apiToken?.workspaceId || null,
       apiTokenId: req.apiToken?.id || null,
@@ -1266,6 +1340,9 @@ module.exports._test = {
   EXECUTOR_EVENT_TYPES,
   EXECUTOR_EVIDENCE_SCOPE,
   EXECUTOR_EVENT_SCOPE,
+  EVIDENCE_SOURCES,
+  EVIDENCE_STATUSES,
+  EVIDENCE_EVENT_TYPES,
   assertEventStatusMatch,
   evidenceMetadataFromItem,
   executorEventIdempotencyPayload,
@@ -1275,5 +1352,7 @@ module.exports._test = {
   metadataEntriesToObject,
   mergeRedactionReport,
   normalizeExecutorEventBody,
+  normalizeRfc3339Timestamp,
+  normalizeEvidenceEventType,
   requestCarriesEvidence,
 };
