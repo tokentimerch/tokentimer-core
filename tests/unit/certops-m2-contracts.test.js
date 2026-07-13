@@ -28,10 +28,17 @@ const certOpsExecutorRoutesSource = fs.readFileSync(
   path.join(repoRoot, "apps/api/routes/certops-executor.js"),
   "utf8",
 );
+const apiIndexSource = fs.readFileSync(
+  path.join(repoRoot, "apps/api/index.js"),
+  "utf8",
+);
 const {
   JOB_STATUSES,
   LOG_STATUSES,
 } = require("../../apps/api/services/certops/jobs.js");
+const {
+  _test: { EVIDENCE_SOURCES, EVIDENCE_STATUSES },
+} = require("../../apps/api/routes/certops-executor.js");
 const { migrations } = require("../../apps/api/migrations/migrate.js");
 
 const FORBIDDEN_FIELD_FRAGMENTS = [
@@ -116,6 +123,8 @@ const PLAN_M2_EXECUTOR_EVENT_STATUSES = [
 ];
 
 const STALE_STATUS_VALUES = ["queued", "dispatched", "canceled", "expired"];
+const M2_RFC3339_TIMESTAMP_PATTERN =
+  "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$";
 
 const m2Schemas = {
   "job-payload.schema.json": jobPayloadSchema,
@@ -781,6 +790,110 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
+  it("keeps embedded evidence enums and fingerprint validation aligned with schemas", () => {
+    const embeddedEvidence =
+      executorEventSchema.definitions.embeddedEvidenceItem.properties;
+    assert.deepEqual(
+      [...EVIDENCE_SOURCES],
+      embeddedEvidence.source.enum.filter((value) => value !== null),
+    );
+    assert.deepEqual(
+      [...EVIDENCE_STATUSES],
+      embeddedEvidence.status.enum.filter((value) => value !== null),
+    );
+    assert.equal(embeddedEvidence.fingerprintSha256.pattern, "^[a-f0-9]{64}$");
+    assert.match(certOpsExecutorRoutesSource, /SHA256_HEX_PATTERN = \/\^\[a-f0-9\]\{64\}\$\//);
+    assert.match(certOpsExecutorRoutesSource, /optionalEvidenceEnum\(item\.source/);
+    assert.match(certOpsExecutorRoutesSource, /optionalEvidenceEnum\(item\.status/);
+    assert.match(certOpsExecutorRoutesSource, /optionalFingerprintSha256\(item\.fingerprintSha256\)/);
+  });
+
+  it("documents the shared M2 executor timestamp policy and fail-closed audit response", () => {
+    const embeddedEvidence =
+      executorEventSchema.definitions.embeddedEvidenceItem.properties;
+    assert.equal(
+      executorEventSchema.properties.occurredAt.pattern,
+      M2_RFC3339_TIMESTAMP_PATTERN,
+    );
+    assert.equal(embeddedEvidence.observedAt.pattern, M2_RFC3339_TIMESTAMP_PATTERN);
+    assert.equal(
+      evidenceSchema.properties.observedAt.pattern,
+      M2_RFC3339_TIMESTAMP_PATTERN,
+    );
+
+    for (const componentName of [
+      "CertOpsEvidenceMetadata",
+      "CertOpsEmbeddedExecutorEvidenceItem",
+      "CertOpsExecutorEventRequest",
+    ]) {
+      const component = openApiComponentBlock(componentName);
+      assert.match(component, /RFC3339 instant from 2000 through 2100/);
+      assert.match(component, /fractional-second precision/);
+    }
+
+    const routeBlock = openApiPathBlock("/api/v1/certops/executor/events");
+    assert.match(routeBlock, /"503":/);
+    assert.match(routeBlock, /CERTOPS_SECURITY_AUDIT_UNAVAILABLE/);
+    assert.match(routeBlock, /fails closed/i);
+    assert.match(routeBlock, /neither persisted nor echoed/i);
+  });
+
+  it("accepts the documented RFC3339 timestamp range and fractional precision", () => {
+    const ajv = createAjv();
+    const validateEvent = ajv.getSchema(executorEventSchema.$id);
+    const validateEvidence = ajv.getSchema(evidenceSchema.$id);
+    for (const timestamp of [
+      "2000-01-01T00:00:00Z",
+      "2026-07-12T12:00:00.123456Z",
+      "2026-07-12T12:00:00.123456789+02:30",
+      "2100-12-31T23:59:59.999999999-00:00",
+    ]) {
+      assert.equal(
+        validateEvent({ ...validExecutorEvent(), occurredAt: timestamp }),
+        true,
+        `${timestamp} must be accepted by executor event schema`,
+      );
+      assert.equal(
+        validateEvidence({ ...validEvidence(), observedAt: timestamp }),
+        true,
+        `${timestamp} must be accepted by evidence schema`,
+      );
+    }
+
+    for (const timestamp of [
+      "1999-12-31T23:59:59Z",
+      "2101-01-01T00:00:00Z",
+      "2026-13-01T00:00:00Z",
+      "2026-07-12T00:00:00+14:01",
+    ]) {
+      assert.equal(
+        validateEvent({ ...validExecutorEvent(), occurredAt: timestamp }),
+        false,
+        `${timestamp} must be rejected by executor event schema`,
+      );
+      assert.equal(
+        validateEvidence({ ...validEvidence(), observedAt: timestamp }),
+        false,
+        `${timestamp} must be rejected by evidence schema`,
+      );
+    }
+  });
+
+  it("mounts the executor-specific body boundary before the general JSON parser", () => {
+    const boundaryIndex = apiIndexSource.indexOf(
+      "createCertOpsExecutorEventJsonParser()",
+    );
+    const generalParserIndex = apiIndexSource.indexOf(
+      'express.json({ limit: "10mb" })',
+    );
+    assert.notEqual(boundaryIndex, -1);
+    assert.notEqual(generalParserIndex, -1);
+    assert.ok(
+      boundaryIndex < generalParserIndex,
+      "executor body boundary must run before the global 10 MiB parser",
+    );
+  });
+
   it("keeps the executor event route aligned between OpenAPI and route compat", () => {
     const routePath = "/api/v1/certops/executor/events";
     const method = "POST";
@@ -1082,6 +1195,7 @@ describe("CertOps M2 contract skeletons", () => {
     const allowedM2Files = new Set([
       "apps/api/migrations/migrate.js",
       "apps/api/middleware/api-token-auth.js",
+      "apps/api/middleware/certops-executor-body-parser.js",
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
       "apps/api/index.js",
@@ -1106,6 +1220,7 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/unit/certops-api-token-auth.test.js",
       "tests/unit/certops-api-tokens.test.js",
       "tests/unit/certops-evidence.test.js",
+      "tests/unit/certops-executor-body-parser.test.js",
       "tests/unit/certops-executor-events.test.js",
       "tests/unit/certops-jobs.test.js",
       "tests/unit/certops-machine-token-rate-limit.test.js",
@@ -1139,6 +1254,7 @@ describe("CertOps M2 contract skeletons", () => {
     const allowedStackedM2Files = new Set([
       "apps/api/migrations/migrate.js",
       "apps/api/middleware/api-token-auth.js",
+      "apps/api/middleware/certops-executor-body-parser.js",
       "apps/api/middleware/csrf-exempt.js",
       "apps/api/middleware/machine-token-rate-limit.js",
       "apps/api/index.js",

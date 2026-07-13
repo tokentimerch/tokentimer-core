@@ -25,12 +25,12 @@ function requestHash(value) {
 }
 
 function parseResponse(value) {
-  if (!value) return {};
+  if (!value) return null;
   if (typeof value === "string") {
     try {
       return JSON.parse(value);
     } catch (_error) {
-      return {};
+      return null;
     }
   }
   return value;
@@ -41,6 +41,27 @@ function idempotencyConflict() {
     "Executor event ID was already used with a different event",
     CERTOPS_EXECUTOR_EVENT_CONFLICT,
   );
+}
+
+function storedResponseForReplay(value) {
+  const response = parseResponse(value);
+  // A committed event always stores this complete, safe response in the same
+  // transaction as its side effects. Never turn a malformed historical row
+  // into a successful replay with an empty response.
+  if (
+    !response ||
+    typeof response !== "object" ||
+    Array.isArray(response) ||
+    response.ok !== true ||
+    typeof response.eventId !== "string" ||
+    typeof response.logId !== "string" ||
+    typeof response.jobId !== "string" ||
+    typeof response.status !== "string" ||
+    !Array.isArray(response.evidenceIds)
+  ) {
+    throw idempotencyConflict();
+  }
+  return response;
 }
 
 async function findExecutorEvent(client, workspaceId, jobId, eventId) {
@@ -121,8 +142,9 @@ async function ingestExecutorEvent({
     const existing = await findExecutorEvent(client, workspaceId, jobId, eventId);
     if (existing) {
       if (existing.request_hash !== hash) throw idempotencyConflict();
+      const response = storedResponseForReplay(existing.response);
       await client.query("COMMIT");
-      return { response: parseResponse(existing.response), duplicate: true };
+      return { response, duplicate: true };
     }
 
     // Serializing event processing on the job also closes the gap between a
@@ -140,8 +162,9 @@ async function ingestExecutorEvent({
     if (!inserted) {
       const replay = await findExecutorEvent(client, workspaceId, jobId, eventId);
       if (!replay || replay.request_hash !== hash) throw idempotencyConflict();
+      const response = storedResponseForReplay(replay.response);
       await client.query("COMMIT");
-      return { response: parseResponse(replay.response), duplicate: true };
+      return { response, duplicate: true };
     }
 
     const response = await process(client, { id: inserted.id });
@@ -166,5 +189,6 @@ module.exports = {
   _test: {
     canonicalize,
     requestHash,
+    storedResponseForReplay,
   },
 };

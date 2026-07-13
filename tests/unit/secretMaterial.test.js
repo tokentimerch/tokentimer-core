@@ -8,6 +8,8 @@ const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   assertNoPrivateKeyMaterial,
+  assertNoUnredactedGenericSecretMaterial,
+  containsGenericSecretMaterial,
   containsPrivateKeyMaterial,
   looksEncryptedPkcs8Der,
   looksPrivateKeyDer,
@@ -57,6 +59,25 @@ function fakeEncryptedPkcs8Buffer() {
   ]);
 }
 
+function fakeEncryptedPkcs8BufferWithOid(oidBytes, parameters = null) {
+  const oid = Buffer.from(oidBytes);
+  const algorithmContents = Buffer.concat([
+    Buffer.from([0x06, oid.length]),
+    oid,
+    parameters || Buffer.alloc(0),
+  ]);
+  const algorithm = Buffer.concat([
+    Buffer.from([0x30, algorithmContents.length]),
+    algorithmContents,
+  ]);
+  const encryptedData = Buffer.from([0x04, 0x04, 0xde, 0xad, 0xbe, 0xef]);
+  const outerContents = Buffer.concat([algorithm, encryptedData]);
+  return Buffer.concat([
+    Buffer.from([0x30, outerContents.length]),
+    outerContents,
+  ]);
+}
+
 function fakeCertificateDerBuffer() {
   return Buffer.from([
     0x30, 0x0a, 0x30, 0x08, 0x02, 0x01, 0x01, 0x30, 0x03, 0x06, 0x01,
@@ -67,9 +88,8 @@ function fakeCertificateDerBuffer() {
 function ordinaryAsn1SequenceBuffer() {
   return Buffer.from([
     0x30, 0x0a,
-    0x30, 0x05,
     0x06, 0x03, 0x2a, 0x03, 0x04,
-    0x04, 0x01, 0x00,
+    0x04, 0x03, 0x70, 0x75, 0x62,
   ]);
 }
 
@@ -180,19 +200,30 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
     );
   });
 
-  it("detects encrypted PKCS#8 DER in raw, base64, hex, and nested values", () => {
-    const encrypted = fakeEncryptedPkcs8Buffer();
-    const base64 = encrypted.toString("base64");
-    const hex = encrypted.toString("hex");
+  it("detects encrypted PKCS#8 DER regardless of encryption OID family", () => {
+    const encryptedFixtures = [
+      fakeEncryptedPkcs8Buffer(), // PBES2
+      fakeEncryptedPkcs8BufferWithOid([
+        0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x0c, 0x01, 0x03,
+      ]), // PKCS#12 PBE
+      fakeEncryptedPkcs8BufferWithOid(
+        [0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37],
+        Buffer.from([0x05, 0x00]),
+      ), // synthetic vendor OID with a complete NULL parameter
+    ];
 
-    assert.strictEqual(looksEncryptedPkcs8Der(encrypted), true);
-    assert.strictEqual(containsPrivateKeyMaterial(encrypted), true);
-    assert.strictEqual(containsPrivateKeyMaterial(base64), true);
-    assert.strictEqual(containsPrivateKeyMaterial(hex), true);
-    assert.strictEqual(
-      containsPrivateKeyMaterial({ attachment: { evidence: encrypted } }),
-      true,
-    );
+    for (const encrypted of encryptedFixtures) {
+      const base64 = encrypted.toString("base64");
+      const hex = encrypted.toString("hex");
+      assert.strictEqual(looksEncryptedPkcs8Der(encrypted), true);
+      assert.strictEqual(containsPrivateKeyMaterial(encrypted), true);
+      assert.strictEqual(containsPrivateKeyMaterial(base64), true);
+      assert.strictEqual(containsPrivateKeyMaterial(hex), true);
+      assert.strictEqual(
+        containsPrivateKeyMaterial({ attachment: { evidence: encrypted } }),
+        true,
+      );
+    }
   });
 
   it("does not classify certificate DER or ordinary ASN.1 envelopes as encrypted PKCS#8", () => {
@@ -201,11 +232,16 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
     assert.strictEqual(containsPrivateKeyMaterial(ordinaryAsn1SequenceBuffer()), false);
   });
 
-  it("handles malformed DER lengths without throwing or allocating from declarations", () => {
+  it("rejects malformed encrypted PKCS#8 DER without throwing or allocating from declarations", () => {
     for (const malformed of [
       Buffer.from([0x30, 0x82, 0xff, 0xff]),
       Buffer.from([0x30, 0x84, 0x7f, 0xff, 0xff, 0xff]),
       Buffer.from([0x30, 0x13, 0x30, 0x0b, 0x06, 0x09, 0x2a]),
+      Buffer.from([0x30, 0x80, 0x30, 0x00, 0x04, 0x00]), // indefinite length
+      Buffer.from([0x30, 0x08, 0x30, 0x03, 0x06, 0x01, 0x80, 0x04, 0x01, 0x01]), // malformed OID
+      Buffer.from([0x30, 0x05, 0x30, 0x03, 0x06, 0x01, 0x2a]), // no OCTET STRING
+      Buffer.from([0x30, 0x07, 0x30, 0x03, 0x06, 0x01, 0x2a, 0x04, 0x00]), // empty OCTET STRING
+      Buffer.from([0x30, 0x0a, 0x30, 0x03, 0x06, 0x01, 0x2a, 0x04, 0x01, 0x01, 0x05, 0x00]), // trailing child
     ]) {
       assert.doesNotThrow(() => looksEncryptedPkcs8Der(malformed));
       assert.strictEqual(containsPrivateKeyMaterial(malformed), false);
@@ -443,7 +479,9 @@ describe("secretMaterial.redactGenericSecrets", () => {
   });
 
   it("hard-rejects encrypted PKCS#8 material before generic redaction", () => {
-    const encrypted = fakeEncryptedPkcs8Buffer();
+    const encrypted = fakeEncryptedPkcs8BufferWithOid([
+      0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37,
+    ]);
     for (const value of [
       encrypted,
       encrypted.toString("base64"),
@@ -482,6 +520,22 @@ describe("secretMaterial.redactGenericSecrets", () => {
       redactGenericSecrets("renewal succeeded for example.com"),
       "renewal succeeded for example.com",
     );
+  });
+
+  it("recognizes already-redacted generic secrets with surrounding punctuation", () => {
+    for (const value of [
+      "password=[REDACTED]",
+      "password=[REDACTED]; retrying",
+      "password=[REDACTED], retrying",
+      "password=[REDACTED]] public context",
+      "Authorization: [REDACTED]",
+      "Cookie: [REDACTED]",
+      "Set-Cookie: [REDACTED]",
+      "X-API-Key: [REDACTED]",
+    ]) {
+      assert.strictEqual(containsGenericSecretMaterial(value), false);
+      assert.doesNotThrow(() => assertNoUnredactedGenericSecretMaterial(value));
+    }
   });
 
   it("fails closed on cyclic objects", () => {

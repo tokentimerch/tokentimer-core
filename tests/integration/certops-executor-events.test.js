@@ -28,6 +28,12 @@ const {
 const {
   createCertOpsExecutorRouter,
 } = require("../../apps/api/routes/certops-executor");
+const {
+  CERTOPS_EXECUTOR_EVENTS_PATH,
+  CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES,
+  createCertOpsExecutorEventJsonParser,
+  handleCertOpsExecutorEventBodyParserError,
+} = require("../../apps/api/middleware/certops-executor-body-parser");
 
 const apiRequire = createRequire(
   require.resolve("../../apps/api/package.json"),
@@ -39,7 +45,8 @@ const PRIVATE_KEY_PEM =
 const ENCRYPTED_PKCS8_DER = Buffer.from([
   0x30, 0x13,
   0x30, 0x0b,
-  0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d,
+  0x06, 0x07, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37,
+  0x05, 0x00,
   0x04, 0x04, 0xde, 0xad, 0xbe, 0xef,
 ]);
 
@@ -113,6 +120,11 @@ function buildExecutorApp({
   certOpsEnabledMiddleware,
 } = {}) {
   const app = express();
+  app.use(CERTOPS_EXECUTOR_EVENTS_PATH, createCertOpsExecutorEventJsonParser());
+  app.use(
+    CERTOPS_EXECUTOR_EVENTS_PATH,
+    handleCertOpsExecutorEventBodyParserError,
+  );
   app.use(express.json());
 
   if (csrf) {
@@ -316,6 +328,21 @@ describe("CertOps executor event ingestion", function () {
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
+  });
+
+  it("rejects oversized executor JSON before authentication or route handling", async () => {
+    const response = await supertest(buildExecutorApp())
+      .post(CERTOPS_EXECUTOR_EVENTS_PATH)
+      .set("Content-Type", "application/json")
+      .send(
+        `{"payload":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`,
+      );
+
+    expect(response.status).to.equal(413);
+    expect(response.body).to.deep.equal({
+      error: "Executor event payload is too large",
+      code: "CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE",
+    });
   });
 
   it("hides executor ingestion when CertOps is disabled before token validation or persistence", async () => {
@@ -1859,6 +1886,27 @@ describe("CertOps executor event ingestion", function () {
         code: "PRIVATE_KEY_MATERIAL_REJECTED",
         forbidden: ["privateKeyPem", "not-allowed"],
       });
+
+      for (const evidenceOverrides of [
+        { source: "arbitrary-source" },
+        { status: "unknown-status" },
+        { fingerprintSha256: "not-a-fingerprint" },
+        { fingerprintSha256: "a".repeat(63) },
+        { fingerprintSha256: "a".repeat(65) },
+        { fingerprintSha256: "A".repeat(64) },
+      ]) {
+        await expectRejectedWithoutPersistence({
+          body: eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [validEvidenceItem(evidenceOverrides)],
+          }),
+          status: 400,
+          code: "CERTOPS_EXECUTOR_EVENT_INVALID",
+        });
+      }
 
       await expectRejectedWithoutPersistence({
         body: eventPayload({

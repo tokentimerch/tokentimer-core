@@ -846,6 +846,10 @@ describe("CertOps jobs service", () => {
       { authorization: "Bearer not-allowed" },
       { note: "accessToken=not-allowed" },
       { note: "clientSecret=not-allowed" },
+      { note: "Cookie: session=not-allowed" },
+      { note: "Set-Cookie: session=not-allowed" },
+      { note: "X-API-Key: not-allowed" },
+      { note: "token=not-allowed" },
     ]) {
       await assert.rejects(
         () =>
@@ -859,6 +863,51 @@ describe("CertOps jobs service", () => {
         (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
       );
     }
+
+    for (const message of [
+      "Cookie: session=not-allowed",
+      "Set-Cookie: session=not-allowed",
+      "X-API-Key: not-allowed",
+      "token=not-allowed",
+    ]) {
+      await assert.rejects(
+        () =>
+          appendCertificateJobLog({
+            client,
+            workspaceId: WORKSPACE_A,
+            jobId: job.id,
+            eventType: "job.progress",
+            message,
+            metadata: {},
+          }),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          payload: { note: "Cookie: session=not-allowed" },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+
+    await assert.rejects(
+      () =>
+        updateCertificateJobStatus({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          status: "running",
+          errorMessage: "X-API-Key: not-allowed",
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+    assert.equal(JSON.stringify(client.logs).includes("not-allowed"), false);
+    assert.equal(JSON.stringify(client.jobs).includes("not-allowed"), false);
 
     const redactedLog = await appendCertificateJobLog({
       client,
