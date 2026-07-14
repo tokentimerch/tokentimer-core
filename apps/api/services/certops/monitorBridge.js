@@ -60,6 +60,15 @@ function rejectPrivateMaterial(value) {
   throw error;
 }
 
+// Infra handles (pg Pool/Client instances, the env bag) are not certificate
+// data and their object graphs are deep enough to trip the detector's
+// fail-closed max-scan-depth guard, which would misreport a false-positive
+// private-key rejection. Scan only the caller-supplied observation fields.
+function dataFieldsForPrivateMaterialScan(options) {
+  const { dbPool: _dbPool, client: _client, env: _env, ...rest } = options;
+  return rest;
+}
+
 function certificateFromObservation(options) {
   const input = options.certificate || {};
   rejectPrivateMaterial(input);
@@ -447,7 +456,7 @@ async function upsertCertificateInstance(
 }
 
 async function bridgeEndpointCertificateObservation(options = {}) {
-  rejectPrivateMaterial(options);
+  rejectPrivateMaterial(dataFieldsForPrivateMaterialScan(options));
 
   if (!options.workspaceId || !options.domainMonitorId) {
     throw new Error("workspaceId and domainMonitorId are required");

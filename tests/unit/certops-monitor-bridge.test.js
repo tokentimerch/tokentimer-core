@@ -81,6 +81,43 @@ describe("CertOps monitor bridge zero-custody", () => {
     );
   });
 
+  it("does not false-positive-reject on deeply nested infra handles (dbPool/client/env)", async () => {
+    // Regression for a bug where scanning the *entire* options bag (including
+    // dbPool/client driver internals, which nest far deeper than
+    // MAX_SCAN_DEPTH) tripped the detector's fail-closed max-depth branch and
+    // incorrectly threw PRIVATE_KEY_MATERIAL_REJECTED for legitimate,
+    // key-free observations. Infra handles must be excluded from the scan.
+    function deeplyNested(depth) {
+      let node = { leaf: true };
+      for (let index = 0; index < depth; index += 1) {
+        node = { child: node };
+      }
+      return node;
+    }
+    const fakeDbPool = {
+      connect: async () => ({
+        query: async () => ({ rows: [] }),
+        release: () => {},
+      }),
+      deep: deeplyNested(30),
+    };
+
+    const result = await bridgeEndpointCertificateObservation({
+      dbPool: fakeDbPool,
+      env: { CERTOPS_ENABLED: "false" },
+      workspaceId: WORKSPACE_ID,
+      domainMonitorId: MONITOR_ID,
+      certificate: {
+        issuer: "Probe CA",
+        subject: "CN=probe.example.com",
+        fingerprintSha256: "a".repeat(64),
+        notAfter: "2099-01-01",
+      },
+    });
+    assert.equal(result.skipped, true);
+    assert.equal(result.reason, "certops_disabled");
+  });
+
   it("does not emit private-key-looking fields from certificateFromObservation", () => {
     const certificate = certificateFromObservation({
       hostname: "www.example.com",
