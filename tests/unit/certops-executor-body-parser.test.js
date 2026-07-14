@@ -122,49 +122,53 @@ describe("CertOps executor body parser", () => {
     assert.ok(response.body.bytes > CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES);
   });
 
-  it("applies the pre-parser boundary once to trailing-slash executor POSTs", async () => {
-    let parserCalls = 0;
-    let authCalls = 0;
-    const app = buildBoundaryApp({
-      rateLimitOptions: { windowMs: 60_000, max: 3 },
-      onParser: () => { parserCalls += 1; },
-      onAuth: () => { authCalls += 1; },
-    });
-    const trailingSlashRoute = `${CERTOPS_EXECUTOR_EVENTS_PATH}/`;
+  it("applies the pre-parser boundary once to mixed-case executor path variants", async () => {
+    for (const executorRoute of [
+      "/API/v1/CertOps/Executor/Events",
+      "/API/v1/CertOps/Executor/Events/",
+    ]) {
+      let parserCalls = 0;
+      let authCalls = 0;
+      const app = buildBoundaryApp({
+        rateLimitOptions: { windowMs: 60_000, max: 3 },
+        onParser: () => { parserCalls += 1; },
+        onAuth: () => { authCalls += 1; },
+      });
 
-    await supertest(app)
-      .post(trailingSlashRoute)
-      .set("Content-Type", "application/json")
-      .send('{"filler":')
-      .expect(400);
-    assert.equal(parserCalls, 1);
-    assert.equal(authCalls, 0);
+      await supertest(app)
+        .post(executorRoute)
+        .set("Content-Type", "application/json")
+        .send('{"filler":')
+        .expect(400);
+      assert.equal(parserCalls, 1);
+      assert.equal(authCalls, 0);
 
-    await supertest(app)
-      .post(trailingSlashRoute)
-      .set("Content-Type", "application/json")
-      .send(`{"filler":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`)
-      .expect(413);
-    assert.equal(parserCalls, 2);
-    assert.equal(authCalls, 0);
+      await supertest(app)
+        .post(executorRoute)
+        .set("Content-Type", "application/json")
+        .send(`{"filler":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`)
+        .expect(413);
+      assert.equal(parserCalls, 2);
+      assert.equal(authCalls, 0);
 
-    await supertest(app)
-      .post(trailingSlashRoute)
-      .send({ public: true })
-      .expect(202);
+      await supertest(app)
+        .post(executorRoute)
+        .send({ public: true })
+        .expect(202);
 
-    const blocked = await supertest(app)
-      .post(trailingSlashRoute)
-      .send({ public: true })
-      .expect(429);
+      const blocked = await supertest(app)
+        .post(executorRoute)
+        .send({ public: true })
+        .expect(429);
 
-    // A valid body larger than four MiB returns the dedicated 413, proving it
-    // did not reach the later general ten MiB parser first.
-    assert.equal(parserCalls, 3);
-    assert.equal(authCalls, 1);
-    assert.equal(blocked.body.code, "CERTOPS_MACHINE_RATE_LIMITED");
-    assert.equal(blocked.body.retryAfterSeconds > 0, true);
-    assert.equal(JSON.stringify(blocked.body).includes("filler"), false);
+      // A valid body larger than four MiB returns the dedicated 413, proving it
+      // did not reach the later general ten MiB parser first.
+      assert.equal(parserCalls, 3);
+      assert.equal(authCalls, 1);
+      assert.equal(blocked.body.code, "CERTOPS_MACHINE_RATE_LIMITED");
+      assert.equal(blocked.body.retryAfterSeconds > 0, true);
+      assert.equal(JSON.stringify(blocked.body).includes("filler"), false);
+    }
   });
 
   it("does not parse, authenticate, or intercept non-exact executor requests", async () => {
@@ -179,6 +183,8 @@ describe("CertOps executor body parser", () => {
     await supertest(app).get(CERTOPS_EXECUTOR_EVENTS_PATH).expect(404);
     await supertest(app).post(`${CERTOPS_EXECUTOR_EVENTS_PATH}/extra`).send({ ok: true }).expect(404);
     await supertest(app).post(`${CERTOPS_EXECUTOR_EVENTS_PATH}//`).send({ ok: true }).expect(404);
+    await supertest(app).post("/API/v1/CertOps/Executor/Events/extra").send({ ok: true }).expect(404);
+    await supertest(app).post("/API/v1/CertOps/Executor/Events//").send({ ok: true }).expect(404);
     await supertest(app).post("/unrelated").send({ ok: true }).expect(200);
     const blocked = await supertest(app)
       .post(CERTOPS_EXECUTOR_EVENTS_PATH)
@@ -211,10 +217,15 @@ describe("CertOps executor body parser", () => {
       }),
     );
 
-    await supertest(app)
-      .post(`${CERTOPS_EXECUTOR_EVENTS_PATH}/`)
-      .send({ schemaVersion: 1 })
-      .expect(404);
-    assert.equal(limiterCalls, 1);
+    for (const executorRoute of [
+      "/API/v1/CertOps/Executor/Events",
+      "/API/v1/CertOps/Executor/Events/",
+    ]) {
+      await supertest(app)
+        .post(executorRoute)
+        .send({ schemaVersion: 1 })
+        .expect(404);
+    }
+    assert.equal(limiterCalls, 2);
   });
 });

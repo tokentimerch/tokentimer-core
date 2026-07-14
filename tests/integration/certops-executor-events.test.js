@@ -370,43 +370,47 @@ describe("CertOps executor event ingestion", function () {
     });
   });
 
-  it("applies the dedicated pre-parser boundary to the trailing-slash executor route", async () => {
-    let authCalls = 0;
-    const app = buildExecutorApp({
-      rateLimitOptions: { windowMs: 60_000, max: 2 },
-      authMiddleware: (_req, _res, next) => {
-        authCalls += 1;
-        return next();
-      },
-    });
-    const trailingSlashRoute = `${CERTOPS_EXECUTOR_EVENTS_PATH}/`;
+  it("applies the dedicated pre-parser boundary to mixed-case executor path variants", async () => {
+    for (const executorRoute of [
+      "/API/v1/CertOps/Executor/Events",
+      "/API/v1/CertOps/Executor/Events/",
+    ]) {
+      let authCalls = 0;
+      const app = buildExecutorApp({
+        rateLimitOptions: { windowMs: 60_000, max: 2 },
+        authMiddleware: (_req, _res, next) => {
+          authCalls += 1;
+          return next();
+        },
+      });
 
-    const malformed = await supertest(app)
-      .post(trailingSlashRoute)
-      .set("Content-Type", "application/json")
-      .send('{"payload":');
-    expect(malformed.status).to.equal(400);
-    expect(malformed.body.code).to.equal("CERTOPS_EXECUTOR_EVENT_INVALID");
-    expect(authCalls).to.equal(0);
+      const malformed = await supertest(app)
+        .post(executorRoute)
+        .set("Content-Type", "application/json")
+        .send('{"payload":');
+      expect(malformed.status).to.equal(400);
+      expect(malformed.body.code).to.equal("CERTOPS_EXECUTOR_EVENT_INVALID");
+      expect(authCalls).to.equal(0);
 
-    const oversized = await supertest(app)
-      .post(trailingSlashRoute)
-      .set("Content-Type", "application/json")
-      .send(
-        `{"payload":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`,
+      const oversized = await supertest(app)
+        .post(executorRoute)
+        .set("Content-Type", "application/json")
+        .send(
+          `{"payload":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`,
+        );
+      expect(oversized.status).to.equal(413);
+      expect(oversized.body.code).to.equal(
+        "CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE",
       );
-    expect(oversized.status).to.equal(413);
-    expect(oversized.body.code).to.equal(
-      "CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE",
-    );
-    expect(authCalls).to.equal(0);
+      expect(authCalls).to.equal(0);
 
-    const blocked = await supertest(app)
-      .post(trailingSlashRoute)
-      .send({ public: true });
-    expect(blocked.status).to.equal(429);
-    expect(blocked.body.code).to.equal("CERTOPS_MACHINE_RATE_LIMITED");
-    expect(authCalls).to.equal(0);
+      const blocked = await supertest(app)
+        .post(executorRoute)
+        .send({ public: true });
+      expect(blocked.status).to.equal(429);
+      expect(blocked.body.code).to.equal("CERTOPS_MACHINE_RATE_LIMITED");
+      expect(authCalls).to.equal(0);
+    }
   });
 
   it("hides executor ingestion when CertOps is disabled before token validation or persistence", async () => {
