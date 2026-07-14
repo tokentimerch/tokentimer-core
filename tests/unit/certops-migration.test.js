@@ -101,6 +101,56 @@ const BASELINE_CERTOPS_COLUMNS = {
   ],
 };
 
+const BASELINE_M2_COLUMNS = {
+  api_tokens: [
+    "id",
+    "workspace_id",
+    "name",
+    "token_prefix",
+    "token_hash",
+    "scopes",
+    "status",
+    "created_at",
+    "updated_at",
+  ],
+  certificate_jobs: [
+    "id",
+    "workspace_id",
+    "operation",
+    "status",
+    "source",
+    "payload",
+    "result_metadata",
+    "created_at",
+    "updated_at",
+  ],
+  certificate_job_log: [
+    "id",
+    "workspace_id",
+    "job_id",
+    "event_type",
+    "metadata",
+    "created_at",
+  ],
+  certificate_evidence: [
+    "id",
+    "workspace_id",
+    "job_id",
+    "evidence_type",
+    "metadata",
+    "created_at",
+  ],
+  certificate_executor_events: [
+    "id",
+    "workspace_id",
+    "job_id",
+    "executor_event_id",
+    "request_hash",
+    "status",
+    "created_at",
+  ],
+};
+
 const BASELINE_TOKEN_COLUMNS = [
   "id",
   "workspace_id",
@@ -582,6 +632,46 @@ describe("CertOps inventory migration", () => {
       const resolvedTableSchema = resolveBaselineSchema(tableSchema[tableName]);
       const requiredColumns =
         resolvedTableSchema.properties.requiredColumns;
+      for (const columnName of expectedColumns) {
+        assert.match(
+          JSON.stringify(requiredColumns),
+          new RegExp(`"const":"${columnName}"`),
+          `${tableName} must require ${columnName}`,
+        );
+      }
+
+      const forbiddenHit = FORBIDDEN_CUSTODY_COLUMNS.find((columnName) =>
+        JSON.stringify(requiredColumns)
+          .toLowerCase()
+          .includes(`"${columnName.toLowerCase()}"`),
+      );
+      assert.equal(
+        forbiddenHit,
+        undefined,
+        `${tableName} baseline contract allows ${forbiddenHit}`,
+      );
+    }
+  });
+
+  it("includes the CertOps M2 job/token/evidence tables in the baseline DB contract", () => {
+    // Regression for M2-29: migrations 12-14 ship api_tokens, certificate_jobs,
+    // certificate_job_log, certificate_evidence, and certificate_executor_events,
+    // so the baseline DB shape contract must require them (with the same
+    // no-private-key-custody guard as the M1 tables) for variants to mirror.
+    const tableSchema = baselineMinimumSchema.properties.tables.properties;
+    const requiredTables = baselineMinimumSchema.properties.tables.required;
+
+    for (const [tableName, expectedColumns] of Object.entries(
+      BASELINE_M2_COLUMNS,
+    )) {
+      assert.ok(
+        requiredTables.includes(tableName),
+        `${tableName} must be required by the baseline contract`,
+      );
+      assert.ok(tableSchema[tableName], `${tableName} schema is missing`);
+
+      const resolvedTableSchema = resolveBaselineSchema(tableSchema[tableName]);
+      const requiredColumns = resolvedTableSchema.properties.requiredColumns;
       for (const columnName of expectedColumns) {
         assert.match(
           JSON.stringify(requiredColumns),
