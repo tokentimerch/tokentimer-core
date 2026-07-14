@@ -4274,7 +4274,7 @@ components:
       type: object
       additionalProperties: false
       description: Public metadata only. Names colliding after case/separator normalization with server-owned executor, evidence, lifecycle, or redaction fields are rejected.
-      x-certops-reservedMetadataNames: [executorEventId, executorEventType, executorStatus, occurredAt, certificateId, executorId, evidenceId, certificateInstanceId, targetId, source, status, fingerprintSha256, summary, artifactRefs, redactionApplied, redactionCount, redactedFields, jobStatusTransitionApplied, jobStatusTransitionIgnored, jobStatusTransitionIgnoredReason]
+      x-certops-reservedMetadataNames: [executorEventId, executorEventType, executorStatus, occurredAt, certificateId, executorId, evidenceId, certificateInstanceId, targetId, source, status, fingerprintSha256, summary, artifactRefs, redactionApplied, redactionCount, redactedFields, redactedSecretCategories, jobStatusTransitionApplied, jobStatusTransitionIgnored, jobStatusTransitionIgnoredReason]
       required: [name, value]
       properties:
         name:

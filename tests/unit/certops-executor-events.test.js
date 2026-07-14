@@ -133,22 +133,50 @@ describe("CertOps executor event normalization", () => {
     const retry = eventBody({
       message: "password=second-value",
       metadata: [
-        { name: "credential", value: "second-value" },
+        { name: "api_token", value: "second-value" },
         { name: "issuer", value: "TokenTimer Test CA" },
       ],
       evidence: [
         {
           ...eventBody().evidence[0],
           summary: "credential=second-value",
-          metadata: [{ value: "TokenTimer Test CA", name: "issuer" }],
+          metadata: [
+            { name: "cookie_header", value: "second-value" },
+            { value: "TokenTimer Test CA", name: "issuer" },
+          ],
+        },
+      ],
+    });
+    const first = eventBody({
+      metadata: [
+        { name: "issuer", value: "TokenTimer Test CA" },
+        { name: "apiToken", value: "first-value" },
+      ],
+      evidence: [
+        {
+          ...eventBody().evidence[0],
+          metadata: [
+            { name: "issuer", value: "TokenTimer Test CA" },
+            { name: "cookieHeader", value: "first-value" },
+          ],
         },
       ],
     });
 
-    assert.equal(hash(eventBody()), hash(retry));
+    assert.equal(hash(first), hash(retry));
     assert.notEqual(
-      hash(eventBody()),
-      hash(eventBody({ certificateId: "cert-2" })),
+      hash(first),
+      hash({ ...first, certificateId: "cert-2" }),
+    );
+    assert.notEqual(
+      hash(first),
+      hash({
+        ...first,
+        metadata: [
+          { name: "issuer", value: "Different public metadata" },
+          { name: "apiToken", value: "first-value" },
+        ],
+      }),
     );
   });
 
@@ -205,6 +233,9 @@ describe("CertOps executor event normalization", () => {
       "redactionApplied",
       "redaction_count",
       "REDACTED-FIELDS",
+      "redactedSecretCategories",
+      "redacted_secret_categories",
+      "REDACTED-SECRET-CATEGORIES",
       "executorEventId",
       "job_status_transition_ignored_reason",
       "source",
@@ -213,6 +244,20 @@ describe("CertOps executor event normalization", () => {
       assert.equal(isReservedMetadataName(name), true);
       assert.throws(
         () => normalize(eventBody({ metadata: [{ name, value: "public" }] })),
+        (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_INVALID",
+      );
+      assert.throws(
+        () =>
+          normalize(
+            eventBody({
+              evidence: [
+                {
+                  ...eventBody().evidence[0],
+                  metadata: [{ name, value: "public" }],
+                },
+              ],
+            }),
+          ),
         (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_INVALID",
       );
     }

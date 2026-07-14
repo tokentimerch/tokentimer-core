@@ -991,6 +991,10 @@ describe("CertOps M2 contract skeletons", () => {
 
   it("documents and keeps normalized server-owned metadata names in parity with runtime", () => {
     const expected = [...RESERVED_METADATA_NAMES].sort();
+    assert.ok(
+      expected.includes("redactedSecretCategories"),
+      "the idempotency-only redacted secret categories must remain reserved",
+    );
     const executorReserved =
       executorEventSchema.definitions.publicMetadataEntry[
         "x-certops-reservedMetadataNames"
