@@ -1461,6 +1461,14 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/inventory.js",
       "apps/api/services/certops/jobs.js",
+      // Post-M2 hardening fixes stacked on feature/certops (worker SKIP LOCKED
+      // transaction wrap, monitor-bridge infra-handle scan fix, ADR label
+      // cleanup) reviewed in the backend-fixes PR:
+      "apps/api/services/certops/monitorBridge.js",
+      "apps/worker/src/delivery-worker.js",
+      "apps/worker/src/endpoint-check-worker.js",
+      "docs/adr/0007-certops-certificate-removal-lifecycle.md",
+      "tests/unit/certops-monitor-bridge.test.js",
       "apps/api/utils/secretMaterial.js",
       "tests/integration/certops-api-token-auth.test.js",
       "tests/integration/certops-api-token-routes.test.js",
