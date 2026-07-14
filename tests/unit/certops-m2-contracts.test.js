@@ -1489,6 +1489,12 @@ describe("CertOps M2 contract skeletons", () => {
         file.startsWith("packages/contracts/") ||
         file === "tests/unit/certops-m2-contracts.test.js" ||
         file === "tests/unit/certops-routes-hardening.test.js" ||
+        // M2-B dashboard/UI work (this PR) rides on top of the M2-A backend:
+        // the whole dashboard app plus its docs are in scope by construction.
+        file.startsWith("apps/dashboard/") ||
+        file === ".gitignore" ||
+        file === "docs/adr/0006-certops-dashboard-ux-split.md" ||
+        file === "docs/certops/CONTEXT.md" ||
         allowedM2Files.has(file),
     );
 
