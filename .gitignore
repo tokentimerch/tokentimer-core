@@ -77,6 +77,6 @@ reports/
 /AGENTS.md
 /docs/agents/
 # Keep .scratch local-only, EXCEPT shared CertOps program docs (issue map,
-# cloud overlay verification) that dev B needs from git.
+# cloud overlay verification) that the cloud overlay work needs from git.
 /.scratch/*
 !/.scratch/certops/

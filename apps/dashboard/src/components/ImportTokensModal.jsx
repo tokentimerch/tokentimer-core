@@ -1,5 +1,4 @@
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
 import {
   Modal,
   ModalOverlay,
@@ -31,7 +30,6 @@ import {
   Tooltip,
   IconButton,
   useColorMode,
-  Link,
   Link as ChakraLink,
   Code,
   InputGroup,
@@ -2159,8 +2157,7 @@ export default function ImportTokensModal({
                     },
                   ].map(card => {
                     const isCertPemCard = card.key === 'cert-pem';
-                    const isIntegration =
-                      card.key !== 'file' && !isCertPemCard;
+                    const isIntegration = card.key !== 'file' && !isCertPemCard;
                     const hasQuotaRemaining =
                       integrationQuota.remaining === null ||
                       integrationQuota.remaining > 0;
@@ -2570,8 +2567,8 @@ export default function ImportTokensModal({
                   ) : (
                     <>
                       <Text fontSize='sm' color={muted} mb={3}>
-                        Paste PEM public material. TokenTimer rejects private keys
-                        at the boundary and never stores them.
+                        Paste PEM public material. TokenTimer rejects private
+                        keys at the boundary and never stores them.
                       </Text>
                       <ImportCertificateForm
                         ref={certPemFormRef}
@@ -3371,7 +3368,10 @@ export default function ImportTokensModal({
               <Button {...outlineButtonProps} onClick={onCloseInternal}>
                 Close
               </Button>
-              {source !== 'file' && source !== 'cert-pem' && !isViewer && !hasAutoSync ? (
+              {source !== 'file' &&
+              source !== 'cert-pem' &&
+              !isViewer &&
+              !hasAutoSync ? (
                 <Tooltip
                   label={
                     !isAutoSyncAllowed
