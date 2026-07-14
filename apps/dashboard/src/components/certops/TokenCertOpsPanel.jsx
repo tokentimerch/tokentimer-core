@@ -10,8 +10,14 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
+import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
-import { expiryDescriptor, formatDate, isCertToken, statusScheme } from './certopsFormat';
+import {
+  expiryDescriptor,
+  formatDate,
+  isCertToken,
+  statusScheme,
+} from './certopsFormat';
 import { useCertOpsForToken } from './useCertOps.js';
 
 function Field({ label, children, colSpan = { base: 1, md: 1 } }) {
@@ -176,6 +182,16 @@ function CertOpsPanelBody({ tokenId }) {
         <CertificateInstances
           instances={instances}
           available={instancesAvailable}
+        />
+      </GridItem>
+
+      <GridItem colSpan={{ base: 1, md: 2 }}>
+        <Text fontSize='sm' fontWeight='semibold' color={muted} mb={2}>
+          Job history
+        </Text>
+        <CertificateTimeline
+          subjectType='managed_certificate'
+          subjectId={certificate.id}
         />
       </GridItem>
     </>

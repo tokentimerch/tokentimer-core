@@ -113,7 +113,7 @@ export async function importCertificateMaterial(
  * status is `revoked` or `decommissioned` (plan D7 / section 10.1). The backend
  * keeps the certificate row and its evidence and mirrors the status onto the
  * linked token; nothing is purged. The endpoint may not exist yet in the current
- * core build (Dev A / PR #47), so callers should handle a 404 gracefully.
+ * core build (see PR #47), so callers should handle a 404 gracefully.
  * @returns {Promise<{ certificate: object }>}
  */
 export async function retireCertificate(

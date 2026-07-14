@@ -412,13 +412,7 @@ function InsightListShell({ children, emptyMessage }) {
 
 function InsightPanelBody({ children }) {
   return (
-    <Box
-      display='flex'
-      flexDirection='column'
-      w='100%'
-      flex='0 0 auto'
-      gap={3}
-    >
+    <Box display='flex' flexDirection='column' w='100%' flex='0 0 auto' gap={3}>
       {children}
     </Box>
   );
@@ -1016,8 +1010,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     useWorkspaceCertOps();
 
   const activeManagedCerts = useMemo(
-    () =>
-      managedCertItems.filter(cert => !isRetiredStatus(cert.status)),
+    () => managedCertItems.filter(cert => !isRetiredStatus(cert.status)),
     [managedCertItems]
   );
 
@@ -1345,241 +1338,252 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                       alignItems='stretch'
                       data-tour='control-center-insights'
                     >
-                    <ControlCenterPanel
-                      title='Scopes & privileges'
-                      description={
-                        <Tooltip
-                          label={PRIVILEGE_LEVEL_TOOLTIP}
-                          fontSize='xs'
-                          maxW='320px'
-                        >
-                          <Text as='span' cursor='help'>
-                            Credentials ranked by scope count and privilege
-                            keywords
-                          </Text>
-                        </Tooltip>
-                      }
-                      action={
-                        <DashboardActionButton
-                          size='sm'
-                          variant='outline'
-                          borderColor={border}
-                          leftIcon={<ArrowDownUp size={14} />}
-                          onClick={() => setPrivilegeSortDesc(prev => !prev)}
-                          isDisabled={privilegeHighlights.length === 0}
-                        >
-                          {privilegeSortDesc ? 'Highest first' : 'Lowest first'}
-                        </DashboardActionButton>
-                      }
-                    >
-                      <InsightPanelBody>
-                        <InsightPanelSummary
-                          icon={KeyRound}
-                          accent='#8b5cf6'
-                          label='Scoped credentials'
-                          value={privilegeHighlights.length}
-                          detail={
-                            privilegeHighlights.filter(
-                              item => item.level === 'high'
-                            ).length
-                              ? `${
-                                  privilegeHighlights.filter(
-                                    item => item.level === 'high'
-                                  ).length
-                                } high-privilege asset(s) need review`
-                              : 'Review API keys with the broadest scopes'
-                          }
-                        />
-                        <InsightListShell emptyMessage='No scopes or privileges recorded on assets yet.'>
-                          {sortedPrivilegeHighlights.length > 0
-                            ? sortedPrivilegeHighlights.map(item => (
-                                <InsightListRow
-                                  key={item.id}
-                                  accent={getPrivilegeAccent(item.level)}
-                                  icon={KeyRound}
-                                  title={item.name}
-                                  titleTo={buildDashboardTokenPath(
-                                    item.id,
-                                    alertData.selectedWorkspaceId
-                                  )}
-                                  subtitle={item.type || 'Credential'}
-                                  trailing={getPrivilegeLevelBadge(item.level)}
-                                >
-                                  <PrivilegeScopePreview
-                                    text={item.preview || item.privileges}
-                                  />
-                                  <HStack spacing={2} mt={2}>
-                                    <Badge variant='outline' fontSize='xs'>
-                                      {item.scopeCount || 0} scope(s)
-                                    </Badge>
-                                    <Badge
-                                      variant='subtle'
-                                      colorScheme='purple'
-                                      fontSize='xs'
-                                    >
-                                      Score {item.score || 0}
-                                    </Badge>
-                                  </HStack>
-                                </InsightListRow>
-                              ))
-                            : null}
-                        </InsightListShell>
-                      </InsightPanelBody>
-                    </ControlCenterPanel>
-
-                    <ControlCenterPanel
-                      title='Auto-sync'
-                      description='Integration schedules and last run health'
-                    >
-                      <InsightPanelBody>
-                        <InsightPanelSummary
-                          icon={RefreshCw}
-                          accent='#22c55e'
-                          label='Active jobs'
-                          value={autoSyncRows.length}
-                          detail={
-                            autoSyncRows.length
-                              ? `${autoSyncHealthSummary.healthy} healthy · ${autoSyncHealthSummary.failed} failed · ${autoSyncHealthSummary.paused} paused`
-                              : 'Connect imports to keep inventory fresh'
-                          }
-                        />
-                        <InsightListShell emptyMessage='No auto-sync jobs configured for this workspace.'>
-                          {autoSyncRows.length > 0
-                            ? autoSyncRows.map(row => (
-                                <InsightListRow
-                                  key={row.id || row.provider}
-                                  accent={getAutoSyncAccent(row.health)}
-                                  icon={RefreshCw}
-                                  title={formatProviderLabel(row.provider)}
-                                  subtitle={row.scheduleLabel}
-                                  trailing={getAutoSyncHealthBadge(row.health)}
-                                  meta={
-                                    row.lastSyncAt
-                                      ? `Last sync ${formatRelativeTime(row.lastSyncAt)}${
-                                          row.lastSyncItemsCount != null
-                                            ? ` · ${row.lastSyncItemsCount} item(s)`
-                                            : ''
-                                        }`
-                                      : 'No successful sync yet'
-                                  }
-                                >
-                                  {row.nextSyncAt ? (
-                                    <Text color={muted} fontSize='xs' mt={2}>
-                                      Next run {formatDate(row.nextSyncAt)}
-                                    </Text>
-                                  ) : null}
-                                  {row.lastSyncError &&
-                                  row.health === 'failed' ? (
-                                    <Text
-                                      color={blockedValueColor}
-                                      fontSize='xs'
-                                      mt={1}
-                                      noOfLines={2}
-                                    >
-                                      {row.lastSyncError}
-                                    </Text>
-                                  ) : null}
-                                  {row.provider ? (
-                                    <InsightPanelFooterLink
-                                      to={buildImportAutoSyncManagePath(
-                                        row.provider,
-                                        alertData.selectedWorkspaceId
-                                      )}
-                                    >
-                                      Manage auto-sync in Import tokens
-                                    </InsightPanelFooterLink>
-                                  ) : null}
-                                </InsightListRow>
-                              ))
-                            : null}
-                        </InsightListShell>
-                      </InsightPanelBody>
-                    </ControlCenterPanel>
-
-                    <ControlCenterPanel
-                      title='Certificate operations'
-                      description='Managed certificates linked to your token inventory'
-                    >
-                      {!certOpsReady ? (
-                        <InsightPanelBody>
-                          <CompactEmptyState>
-                            Checking certificate operations availability...
-                          </CompactEmptyState>
-                        </InsightPanelBody>
-                      ) : certOpsEnabled ? (
+                      <ControlCenterPanel
+                        title='Scopes & privileges'
+                        description={
+                          <Tooltip
+                            label={PRIVILEGE_LEVEL_TOOLTIP}
+                            fontSize='xs'
+                            maxW='320px'
+                          >
+                            <Text as='span' cursor='help'>
+                              Credentials ranked by scope count and privilege
+                              keywords
+                            </Text>
+                          </Tooltip>
+                        }
+                        action={
+                          <DashboardActionButton
+                            size='sm'
+                            variant='outline'
+                            borderColor={border}
+                            leftIcon={<ArrowDownUp size={14} />}
+                            onClick={() => setPrivilegeSortDesc(prev => !prev)}
+                            isDisabled={privilegeHighlights.length === 0}
+                          >
+                            {privilegeSortDesc
+                              ? 'Highest first'
+                              : 'Lowest first'}
+                          </DashboardActionButton>
+                        }
+                      >
                         <InsightPanelBody>
                           <InsightPanelSummary
-                            icon={Shield}
-                            accent='#6366f1'
-                            label='Managed certificates'
-                            value={managedCertCount}
-                            detail={managedCertSummaryDetail}
+                            icon={KeyRound}
+                            accent='#8b5cf6'
+                            label='Scoped credentials'
+                            value={privilegeHighlights.length}
+                            detail={
+                              privilegeHighlights.filter(
+                                item => item.level === 'high'
+                              ).length
+                                ? `${
+                                    privilegeHighlights.filter(
+                                      item => item.level === 'high'
+                                    ).length
+                                  } high-privilege asset(s) need review`
+                                : 'Review API keys with the broadest scopes'
+                            }
                           />
-                          <InsightListShell emptyMessage='No managed certificates registered in this workspace yet.'>
-                            {managedCertHighlights.length > 0
-                              ? managedCertHighlights.map(cert => {
-                                  const expiry = expiryDescriptor(cert.notAfter);
-                                  return (
-                                    <InsightListRow
-                                      key={cert.id}
-                                      accent='#6366f1'
-                                      icon={Shield}
-                                      title={cert.commonName || 'Certificate'}
-                                      titleTo={
-                                        cert.tokenId != null
-                                          ? buildDashboardTokenPath(
-                                              cert.tokenId,
-                                              alertData.selectedWorkspaceId
-                                            )
-                                          : undefined
-                                      }
-                                      subtitle={
-                                        keyModeLabel(cert.keyMode) ||
-                                        cert.source ||
-                                        'Managed certificate'
-                                      }
-                                      trailing={
-                                        <HStack spacing={2}>
-                                          <Badge
-                                            colorScheme={statusScheme(
-                                              cert.status
-                                            )}
-                                            variant='subtle'
-                                            fontSize='xs'
-                                            textTransform='capitalize'
-                                          >
-                                            {statusLabel(cert.status)}
-                                          </Badge>
-                                          <Badge
-                                            colorScheme={expiry.scheme}
-                                            variant='subtle'
-                                            fontSize='xs'
-                                          >
-                                            {expiry.label}
-                                          </Badge>
-                                        </HStack>
-                                      }
-                                      meta={
-                                        cert.notAfter
-                                          ? `Expires ${formatDate(cert.notAfter)}`
-                                          : undefined
-                                      }
+                          <InsightListShell emptyMessage='No scopes or privileges recorded on assets yet.'>
+                            {sortedPrivilegeHighlights.length > 0
+                              ? sortedPrivilegeHighlights.map(item => (
+                                  <InsightListRow
+                                    key={item.id}
+                                    accent={getPrivilegeAccent(item.level)}
+                                    icon={KeyRound}
+                                    title={item.name}
+                                    titleTo={buildDashboardTokenPath(
+                                      item.id,
+                                      alertData.selectedWorkspaceId
+                                    )}
+                                    subtitle={item.type || 'Credential'}
+                                    trailing={getPrivilegeLevelBadge(
+                                      item.level
+                                    )}
+                                  >
+                                    <PrivilegeScopePreview
+                                      text={item.preview || item.privileges}
                                     />
-                                  );
-                                })
+                                    <HStack spacing={2} mt={2}>
+                                      <Badge variant='outline' fontSize='xs'>
+                                        {item.scopeCount || 0} scope(s)
+                                      </Badge>
+                                      <Badge
+                                        variant='subtle'
+                                        colorScheme='purple'
+                                        fontSize='xs'
+                                      >
+                                        Score {item.score || 0}
+                                      </Badge>
+                                    </HStack>
+                                  </InsightListRow>
+                                ))
                               : null}
                           </InsightListShell>
                         </InsightPanelBody>
-                      ) : (
+                      </ControlCenterPanel>
+
+                      <ControlCenterPanel
+                        title='Auto-sync'
+                        description='Integration schedules and last run health'
+                      >
                         <InsightPanelBody>
-                          <CompactEmptyState>
-                            Certificate operations is not enabled for this
-                            workspace yet.
-                          </CompactEmptyState>
+                          <InsightPanelSummary
+                            icon={RefreshCw}
+                            accent='#22c55e'
+                            label='Active jobs'
+                            value={autoSyncRows.length}
+                            detail={
+                              autoSyncRows.length
+                                ? `${autoSyncHealthSummary.healthy} healthy · ${autoSyncHealthSummary.failed} failed · ${autoSyncHealthSummary.paused} paused`
+                                : 'Connect imports to keep inventory fresh'
+                            }
+                          />
+                          <InsightListShell emptyMessage='No auto-sync jobs configured for this workspace.'>
+                            {autoSyncRows.length > 0
+                              ? autoSyncRows.map(row => (
+                                  <InsightListRow
+                                    key={row.id || row.provider}
+                                    accent={getAutoSyncAccent(row.health)}
+                                    icon={RefreshCw}
+                                    title={formatProviderLabel(row.provider)}
+                                    subtitle={row.scheduleLabel}
+                                    trailing={getAutoSyncHealthBadge(
+                                      row.health
+                                    )}
+                                    meta={
+                                      row.lastSyncAt
+                                        ? `Last sync ${formatRelativeTime(row.lastSyncAt)}${
+                                            row.lastSyncItemsCount != null
+                                              ? ` · ${row.lastSyncItemsCount} item(s)`
+                                              : ''
+                                          }`
+                                        : 'No successful sync yet'
+                                    }
+                                  >
+                                    {row.nextSyncAt ? (
+                                      <Text color={muted} fontSize='xs' mt={2}>
+                                        Next run {formatDate(row.nextSyncAt)}
+                                      </Text>
+                                    ) : null}
+                                    {row.lastSyncError &&
+                                    row.health === 'failed' ? (
+                                      <Text
+                                        color={blockedValueColor}
+                                        fontSize='xs'
+                                        mt={1}
+                                        noOfLines={2}
+                                      >
+                                        {row.lastSyncError}
+                                      </Text>
+                                    ) : null}
+                                    {row.provider ? (
+                                      <InsightPanelFooterLink
+                                        to={buildImportAutoSyncManagePath(
+                                          row.provider,
+                                          alertData.selectedWorkspaceId
+                                        )}
+                                      >
+                                        Manage auto-sync in Import tokens
+                                      </InsightPanelFooterLink>
+                                    ) : null}
+                                  </InsightListRow>
+                                ))
+                              : null}
+                          </InsightListShell>
                         </InsightPanelBody>
-                      )}
-                    </ControlCenterPanel>
-                  </SimpleGrid>
+                      </ControlCenterPanel>
+
+                      <ControlCenterPanel
+                        title='Certificate operations'
+                        description='Managed certificates linked to your token inventory'
+                      >
+                        {!certOpsReady ? (
+                          <InsightPanelBody>
+                            <CompactEmptyState>
+                              Checking certificate operations availability...
+                            </CompactEmptyState>
+                          </InsightPanelBody>
+                        ) : certOpsEnabled ? (
+                          <InsightPanelBody>
+                            <InsightPanelSummary
+                              icon={Shield}
+                              accent='#6366f1'
+                              label='Managed certificates'
+                              value={managedCertCount}
+                              detail={managedCertSummaryDetail}
+                            />
+                            <InsightListShell emptyMessage='No managed certificates registered in this workspace yet.'>
+                              {managedCertHighlights.length > 0
+                                ? managedCertHighlights.map(cert => {
+                                    const expiry = expiryDescriptor(
+                                      cert.notAfter
+                                    );
+                                    return (
+                                      <InsightListRow
+                                        key={cert.id}
+                                        accent='#6366f1'
+                                        icon={Shield}
+                                        title={cert.commonName || 'Certificate'}
+                                        titleTo={
+                                          cert.tokenId != null
+                                            ? buildDashboardTokenPath(
+                                                cert.tokenId,
+                                                alertData.selectedWorkspaceId
+                                              )
+                                            : undefined
+                                        }
+                                        subtitle={
+                                          keyModeLabel(cert.keyMode) ||
+                                          cert.source ||
+                                          'Managed certificate'
+                                        }
+                                        trailing={
+                                          <HStack spacing={2}>
+                                            <Badge
+                                              colorScheme={statusScheme(
+                                                cert.status
+                                              )}
+                                              variant='subtle'
+                                              fontSize='xs'
+                                              textTransform='capitalize'
+                                            >
+                                              {statusLabel(cert.status)}
+                                            </Badge>
+                                            <Badge
+                                              colorScheme={expiry.scheme}
+                                              variant='subtle'
+                                              fontSize='xs'
+                                            >
+                                              {expiry.label}
+                                            </Badge>
+                                          </HStack>
+                                        }
+                                        meta={
+                                          cert.notAfter
+                                            ? `Expires ${formatDate(cert.notAfter)}`
+                                            : undefined
+                                        }
+                                      />
+                                    );
+                                  })
+                                : null}
+                            </InsightListShell>
+                            <InsightPanelFooterLink to='/certops/operations'>
+                              View executor jobs and machine tokens
+                            </InsightPanelFooterLink>
+                          </InsightPanelBody>
+                        ) : (
+                          <InsightPanelBody>
+                            <CompactEmptyState>
+                              Certificate operations is not enabled for this
+                              workspace yet.
+                            </CompactEmptyState>
+                          </InsightPanelBody>
+                        )}
+                      </ControlCenterPanel>
+                    </SimpleGrid>
                   </Box>
                 </SectionState>
               </Box>
