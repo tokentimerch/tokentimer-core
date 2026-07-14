@@ -9,6 +9,10 @@ const routesSource = fs.readFileSync(
   path.resolve(__dirname, "../../apps/api/routes/certops.js"),
   "utf8",
 );
+const executorRoutesSource = fs.readFileSync(
+  path.resolve(__dirname, "../../apps/api/routes/certops-executor.js"),
+  "utf8",
+);
 const routeCompatContract = require("../../packages/contracts/api/certops-route-compat.contract.json");
 const openApiSource = fs.readFileSync(
   path.resolve(__dirname, "../../packages/contracts/openapi/openapi.yaml"),
@@ -74,8 +78,24 @@ function routeBlock(method, routePath) {
   return routesSource.slice(start, end);
 }
 
-describe("CertOps M1 route hardening", () => {
-  it("implements only the frozen M1 workspace inventory routes", () => {
+function executorRouteBlock(routePath) {
+  const start = executorRoutesSource.indexOf(`"${routePath}"`);
+  assert.notEqual(start, -1, `POST ${routePath} not found`);
+
+  const nextRoute = executorRoutesSource.indexOf(
+    "\n  certOpsExecutorRouter.post(",
+    start + 1,
+  );
+  const end =
+    nextRoute === -1
+      ? executorRoutesSource.indexOf("\n  return certOpsExecutorRouter", start)
+      : nextRoute;
+  assert.notEqual(end, -1, `POST ${routePath} block end not found`);
+  return executorRoutesSource.slice(start, end);
+}
+
+describe("CertOps route hardening", () => {
+  it("implements only the frozen workspace inventory and M2 read routes", () => {
     const routeMatches = Array.from(
       routesSource.matchAll(/router\.(get|post)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
@@ -84,16 +104,23 @@ describe("CertOps M1 route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/certificates",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
+      "GET /api/v1/workspaces/:id/certops/jobs",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
+      "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
+      "GET /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
+      "POST /api/v1/workspaces/:id/certops/tokens",
+      "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ].sort());
 
     assert.equal(routesSource.includes("/api/v1/certops/executor"), false);
     assert.equal(routesSource.includes("/api/v1/certops/agent"), false);
   });
 
-  it("gates every inventory route with certops.enabled", () => {
+  it("gates every workspace CertOps route with certops.enabled", () => {
     for (const [method, routePath] of [
       ["get", "/api/v1/workspaces/:id/certops/certificates"],
       ["post", "/api/v1/workspaces/:id/certops/certificates"],
@@ -107,12 +134,19 @@ describe("CertOps M1 route hardening", () => {
       ],
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
+      ["get", "/api/v1/workspaces/:id/certops/tokens"],
+      ["post", "/api/v1/workspaces/:id/certops/tokens"],
+      ["post", "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke"],
     ]) {
       assert.match(routeBlock(method, routePath), /requireCertOpsEnabled/);
     }
   });
 
-  it("declares specific certificate child routes before generic certificate detail", () => {
+  it("declares specific child routes before generic detail routes", () => {
     const instancesIndex = routesSource.indexOf(
       '"/api/v1/workspaces/:id/certops/certificates/:certId/instances"',
     );
@@ -134,6 +168,27 @@ describe("CertOps M1 route hardening", () => {
       retireIndex < detailIndex,
       "retire route must be declared before generic certificate detail",
     );
+
+    const logIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/jobs/:jobId/log"',
+    );
+    const evidenceIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"',
+    );
+    const jobDetailIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/jobs/:jobId"',
+    );
+    assert.notEqual(logIndex, -1);
+    assert.notEqual(evidenceIndex, -1);
+    assert.notEqual(jobDetailIndex, -1);
+    assert.ok(
+      logIndex < jobDetailIndex,
+      "job log route must be declared before generic job detail",
+    );
+    assert.ok(
+      evidenceIndex < jobDetailIndex,
+      "job evidence route must be declared before generic job detail",
+    );
   });
 
   it("runs private-key rejection before feature gating on write routes", () => {
@@ -141,6 +196,8 @@ describe("CertOps M1 route hardening", () => {
       "/api/v1/workspaces/:id/certops/certificates",
       "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "/api/v1/workspaces/:id/certops/imports",
+      "/api/v1/workspaces/:id/certops/tokens",
+      "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ]) {
       const block = routeBlock("post", routePath);
       assert.ok(
@@ -148,9 +205,12 @@ describe("CertOps M1 route hardening", () => {
           block.indexOf("requireCertOpsEnabled"),
         `${routePath} must reject private key material before the rollout gate`,
       );
+      const authorizationMiddleware = routePath.includes("/certops/tokens")
+        ? "requireCertOpsTokenManager"
+        : "requireCertOpsWriteRole";
       assert.ok(
         block.indexOf("requireCertOpsEnabled") <
-          block.indexOf("requireCertOpsWriteRole"),
+          block.indexOf(authorizationMiddleware),
         `${routePath} must check the rollout gate before write authorization`,
       );
     }
@@ -206,5 +266,50 @@ describe("CertOps M1 route hardening", () => {
       "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire",
       "POST",
     );
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs", "GET");
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/jobs/{jobId}", "GET");
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log",
+      "GET",
+    );
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence",
+      "GET",
+    );
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/tokens", "GET");
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/tokens", "POST");
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke",
+      "POST",
+    );
+    assertOpenApiRoute("/api/v1/certops/executor/events", "POST");
+    assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/events", "POST");
+    assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/evidence", "POST");
+  });
+
+  it("keeps machine-token executor writes in the executor router", () => {
+    const aggregateBlock = executorRouteBlock(
+      "/api/v1/certops/executor/events",
+    );
+    const perJobEventsBlock = executorRouteBlock(
+      "/api/v1/certops/jobs/:jobId/events",
+    );
+    const perJobEvidenceBlock = executorRouteBlock(
+      "/api/v1/certops/jobs/:jobId/evidence",
+    );
+
+    assert.match(aggregateBlock, /authMiddleware/);
+    assert.match(aggregateBlock, /rateLimitMiddleware/);
+    assert.match(perJobEventsBlock, /perJobEventAuthMiddleware/);
+    assert.match(perJobEventsBlock, /rateLimitMiddleware/);
+    assert.match(perJobEventsBlock, /mode: "event"/);
+    assert.match(perJobEvidenceBlock, /perJobEvidenceAuthMiddleware/);
+    assert.match(perJobEvidenceBlock, /rateLimitMiddleware/);
+    assert.match(perJobEvidenceBlock, /mode: "evidence"/);
+    assert.match(executorRoutesSource, /allowTokenWorkspace: true/);
+    assert.match(executorRoutesSource, /certops:events:write/);
+    assert.match(executorRoutesSource, /certops:evidence:write/);
+
+    assert.equal(routesSource.includes("/api/v1/certops/jobs/:jobId"), false);
   });
 });
