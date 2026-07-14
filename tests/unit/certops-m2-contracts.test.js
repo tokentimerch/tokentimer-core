@@ -37,7 +37,11 @@ const {
   LOG_STATUSES,
 } = require("../../apps/api/services/certops/jobs.js");
 const {
-  _test: { EVIDENCE_SOURCES, EVIDENCE_STATUSES },
+  _test: {
+    EVIDENCE_SOURCES,
+    EVIDENCE_STATUSES,
+    RESERVED_METADATA_NAMES,
+  },
 } = require("../../apps/api/routes/certops-executor.js");
 const { migrations } = require("../../apps/api/migrations/migrate.js");
 
@@ -63,7 +67,7 @@ const FORBIDDEN_FIELD_FRAGMENTS = [
   "keypem",
 ];
 
-const FORBIDDEN_METADATA_NAMES = [
+const PRIVATE_KEY_METADATA_NAMES = [
   "privateKey",
   "privateKeyPem",
   "encryptedPrivateKey",
@@ -72,14 +76,22 @@ const FORBIDDEN_METADATA_NAMES = [
   "jksBlob",
   "tlsKey",
   "caPrivateKey",
+  "rawPrivateKey",
+  "keyPem",
+];
+
+const SCHEMA_REJECTED_GENERIC_METADATA_NAMES = [
   "password",
   "secret",
   "credential",
   "tokenSecret",
   "apiSecret",
   "rawSecret",
-  "rawPrivateKey",
-  "keyPem",
+];
+
+const GENERIC_SECRET_ALIAS_METADATA_NAMES = [
+  "apiToken",
+  "cookieHeader",
 ];
 
 const SAFE_METADATA_NAMES = [
@@ -538,11 +550,27 @@ describe("CertOps M2 contract skeletons", () => {
         `${schemaId} must reject custody-shaped extra fields`,
       );
 
-      for (const metadataName of FORBIDDEN_METADATA_NAMES) {
+      for (const metadataName of PRIVATE_KEY_METADATA_NAMES) {
         assert.equal(
           validate(withMetadataName(metadataName)),
           false,
           `${schemaId} must reject custody-shaped metadata name ${metadataName}`,
+        );
+      }
+
+      for (const metadataName of SCHEMA_REJECTED_GENERIC_METADATA_NAMES) {
+        assert.equal(
+          validate(withMetadataName(metadataName)),
+          schemaId === executorEventSchema.$id,
+          `${schemaId} must ${schemaId === executorEventSchema.$id ? "accept generic secret names for executor redaction" : "reject generic secret metadata name"} ${metadataName}`,
+        );
+      }
+
+      for (const metadataName of GENERIC_SECRET_ALIAS_METADATA_NAMES) {
+        assert.equal(
+          validate(withMetadataName(metadataName)),
+          true,
+          `${schemaId} must permit generic secret alias ${metadataName} for route redaction or direct-service rejection`,
         );
       }
 
@@ -827,8 +855,8 @@ describe("CertOps M2 contract skeletons", () => {
       "CertOpsExecutorEventRequest",
     ]) {
       const component = openApiComponentBlock(componentName);
-      assert.match(component, /RFC3339 instant from 2000 through 2100/);
-      assert.match(component, /fractional-second precision/);
+      assert.match(component, /supplied RFC3339 timestamp must use a year from 2000 through 2100/i);
+      assert.match(component, /normalizes accepted values to UTC milliseconds/i);
     }
 
     const routeBlock = openApiPathBlock("/api/v1/certops/executor/events");
@@ -847,6 +875,8 @@ describe("CertOps M2 contract skeletons", () => {
       "2026-07-12T12:00:00.123456Z",
       "2026-07-12T12:00:00.123456789+02:30",
       "2100-12-31T23:59:59.999999999-00:00",
+      "2000-01-01T00:00:00+14:00",
+      "2100-12-31T23:59:59-14:00",
     ]) {
       assert.equal(
         validateEvent({ ...validExecutorEvent(), occurredAt: timestamp }),
@@ -881,7 +911,7 @@ describe("CertOps M2 contract skeletons", () => {
 
   it("mounts the executor-specific body boundary before the general JSON parser", () => {
     const boundaryIndex = apiIndexSource.indexOf(
-      "createCertOpsExecutorEventJsonParser()",
+      "createCertOpsExecutorEventPreParserBoundary()",
     );
     const generalParserIndex = apiIndexSource.indexOf(
       'express.json({ limit: "10mb" })',
@@ -927,6 +957,11 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(routeBlock, /certops:executor:events/);
     assert.match(routeBlock, /"404":/);
     assert.match(routeBlock, /"409":/);
+    assert.match(routeBlock, /"413":/);
+    assert.match(routeBlock, /CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE/);
+    assert.match(routeBlock, /"429":/);
+    assert.match(routeBlock, /CERTOPS_MACHINE_RATE_LIMITED/);
+    assert.match(routeBlock, /Retry-After/);
     assert.match(routeBlock, /PRIVATE_KEY_MATERIAL_REJECTED/);
   });
 
@@ -942,7 +977,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(certOpsExecutorRoutesSource, /certops:executor:events/);
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitMiddleware,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
     );
     assert.match(
       certOpsExecutorRoutesSource,
@@ -952,6 +987,26 @@ describe("CertOps M2 contract skeletons", () => {
       certOpsExecutorRoutesSource,
       /CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH/,
     );
+  });
+
+  it("documents and keeps normalized server-owned metadata names in parity with runtime", () => {
+    const expected = [...RESERVED_METADATA_NAMES].sort();
+    const executorReserved =
+      executorEventSchema.definitions.publicMetadataEntry[
+        "x-certops-reservedMetadataNames"
+      ];
+    const evidenceReserved =
+      evidenceSchema.definitions.publicMetadataEntry[
+        "x-certops-reservedMetadataNames"
+      ];
+
+    assert.deepEqual([...executorReserved].sort(), expected);
+    assert.deepEqual([...evidenceReserved].sort(), expected);
+    const metadataComponent = openApiComponentBlock("CertOpsMetadataEntry");
+    for (const name of expected) {
+      assert.match(metadataComponent, new RegExp(name));
+    }
+    assert.match(metadataComponent, /case\/separator normalization/i);
   });
 
   it("uses only v1.7 job and executor event statuses", () => {

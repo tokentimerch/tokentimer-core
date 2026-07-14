@@ -73,10 +73,23 @@ const PRIVATE_KEY_FIELD_FRAGMENTS = Object.freeze([
 ]);
 
 const GENERIC_SECRET_FIELD_NAMES = Object.freeze([
+  "token",
+  "apitoken",
+  "authtoken",
+  "authorizationtoken",
+  "bearertoken",
+  "sessiontoken",
+  "secrettoken",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "xauthtoken",
+  "xapikey",
   "password",
   "passwd",
   "passphrase",
   "credential",
+  "credentials",
   "secret",
   "secretkey",
   "rawsecret",
@@ -87,17 +100,36 @@ const GENERIC_SECRET_FIELD_NAMES = Object.freeze([
   "bearer",
   "authorization",
   "cookie",
+  "setcookie",
+  "cookieheader",
   "accesskey",
   "accesskeyid",
   "accesstoken",
   "refreshtoken",
   "clientsecret",
+  "awssecretaccesskey",
 ]);
 
 // Suffix matching recognizes conventional names such as deploymentPassword
 // without treating unrelated words such as secretary or cookiePolicyEnabled as
 // secret-bearing fields. Free-form values are checked separately below.
 const GENERIC_SECRET_FIELD_SUFFIXES = Object.freeze([
+  // A suffix is intentional for common names such as deploymentToken. It does
+  // not match tokenization, tokenCount, tokenExpiry, tokenType, secretary,
+  // cookiePolicyEnabled, or passwordResetRequired because none end in a
+  // secret-bearing semantic token.
+  "token",
+  "apitoken",
+  "authtoken",
+  "authorizationtoken",
+  "bearertoken",
+  "sessiontoken",
+  "secrettoken",
+  "idtoken",
+  "xauthtoken",
+  "xapikey",
+  "setcookie",
+  "cookieheader",
   "password",
   "passwd",
   "passphrase",
@@ -117,9 +149,18 @@ const GENERIC_SECRET_FIELD_SUFFIXES = Object.freeze([
 ]);
 
 const MAX_SCAN_DEPTH = 12;
+// These are inspection limits, not acceptance limits. A complete
+// EncryptedPrivateKeyInfo that exceeds either limit is suspicious and is
+// rejected rather than treated as public data. The parser never allocates from
+// a DER length declaration.
 const MAX_DER_TLV_LENGTH = 1024 * 1024;
 const MAX_DER_CHILDREN = 16;
 const MAX_DER_OID_LENGTH = 128;
+const DER_CLASSIFICATION = Object.freeze({
+  NOT_MATCH: "not_match",
+  MATCH: "match",
+  SUSPICIOUS_OR_LIMIT_EXCEEDED: "suspicious_or_limit_exceeded",
+});
 
 function normalizeFieldName(value) {
   return String(value || "")
@@ -180,7 +221,7 @@ function derHeaderLength(value) {
  * @param {Buffer} value
  * @param {number} offset
  * @param {number} boundary
- * @returns {{tag:number, valueStart:number, valueEnd:number, valueLength:number}|null}
+ * @returns {{tag:number, valueStart:number, valueEnd:number, valueLength:number, exceedsInspectionLimit:boolean}|null}
  */
 function readDerTlv(value, offset = 0, boundary = value?.length || 0) {
   if (
@@ -211,54 +252,87 @@ function readDerTlv(value, offset = 0, boundary = value?.length || 0) {
     valueLength = 0;
     for (let index = 0; index < lengthBytes; index += 1) {
       valueLength = valueLength * 256 + value[offset + 2 + index];
-      if (valueLength > MAX_DER_TLV_LENGTH) return null;
     }
     if (valueLength < 128) return null;
     headerLength += lengthBytes;
   }
 
-  if (valueLength > MAX_DER_TLV_LENGTH) return null;
   const valueStart = offset + headerLength;
   const valueEnd = valueStart + valueLength;
   if (valueEnd > boundary || valueEnd < valueStart) return null;
-  return { tag: value[offset], valueStart, valueEnd, valueLength };
+  return {
+    tag: value[offset],
+    valueStart,
+    valueEnd,
+    valueLength,
+    exceedsInspectionLimit: valueLength > MAX_DER_TLV_LENGTH,
+  };
 }
 
-function isValidDerOid(value, oid) {
-  if (
-    !oid ||
-    oid.valueLength < 1 ||
-    oid.valueLength > MAX_DER_OID_LENGTH
-  ) {
-    return false;
-  }
+function classifyDerOid(value, oid) {
+  if (!oid || oid.valueLength < 1) return DER_CLASSIFICATION.NOT_MATCH;
 
-  const encoded = value.subarray(oid.valueStart, oid.valueEnd);
+  // Inspect a bounded prefix only. An OID that is syntactically plausible but
+  // longer than this defensive bound remains a private-key suspicion; reading
+  // the declared value in full is neither needed nor safe.
+  const inspectionEnd = Math.min(
+    oid.valueEnd,
+    oid.valueStart + MAX_DER_OID_LENGTH,
+  );
   let atSubidentifierStart = true;
-  for (const octet of encoded) {
+  for (let index = oid.valueStart; index < inspectionEnd; index += 1) {
+    const octet = value[index];
     // Base-128 subidentifiers must be minimally encoded: a continuation byte
     // cannot begin with a zero seven-bit group.
-    if (atSubidentifierStart && octet === 0x80) return false;
+    if (atSubidentifierStart && octet === 0x80) {
+      return DER_CLASSIFICATION.NOT_MATCH;
+    }
     atSubidentifierStart = (octet & 0x80) === 0;
   }
-  return atSubidentifierStart;
+  if (oid.valueLength > MAX_DER_OID_LENGTH) {
+    return DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED;
+  }
+  return atSubidentifierStart
+    ? DER_CLASSIFICATION.MATCH
+    : DER_CLASSIFICATION.NOT_MATCH;
 }
 
-function hasPlausibleAlgorithmIdentifier(value, algorithm) {
+function classifyAlgorithmIdentifier(value, algorithm) {
   const oid = readDerTlv(value, algorithm.valueStart, algorithm.valueEnd);
-  if (!oid || oid.tag !== 0x06 || !isValidDerOid(value, oid)) {
-    return false;
+  if (!oid || oid.tag !== 0x06) {
+    return DER_CLASSIFICATION.NOT_MATCH;
   }
+
+  const oidClassification = classifyDerOid(value, oid);
+  if (oidClassification === DER_CLASSIFICATION.NOT_MATCH) {
+    return DER_CLASSIFICATION.NOT_MATCH;
+  }
+  let suspicious =
+    algorithm.exceedsInspectionLimit ||
+    oid.exceedsInspectionLimit ||
+    oidClassification === DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED;
 
   let cursor = oid.valueEnd;
   let childCount = 0;
   while (cursor < algorithm.valueEnd) {
+    // The outer encrypted-key shape has already been established by the
+    // caller. Do not walk arbitrarily many parameter TLVs: exceeding the
+    // inspection budget is suspicious and therefore fails closed.
+    if (childCount >= MAX_DER_CHILDREN) {
+      return DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED;
+    }
     const child = readDerTlv(value, cursor, algorithm.valueEnd);
-    if (!child || childCount >= MAX_DER_CHILDREN) return false;
+    if (!child) return DER_CLASSIFICATION.NOT_MATCH;
+    if (child.exceedsInspectionLimit) {
+      return DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED;
+    }
     cursor = child.valueEnd;
     childCount += 1;
   }
-  return cursor === algorithm.valueEnd;
+  if (cursor !== algorithm.valueEnd) return DER_CLASSIFICATION.NOT_MATCH;
+  return suspicious
+    ? DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED
+    : DER_CLASSIFICATION.MATCH;
 }
 
 /**
@@ -268,30 +342,46 @@ function hasPlausibleAlgorithmIdentifier(value, algorithm) {
  * recognition to known PBE OIDs would allow encrypted PKCS#8 containers using
  * newer or vendor encryption algorithms to bypass the zero-custody boundary.
  * @param {Buffer} value
- * @returns {boolean}
+ * @returns {"not_match"|"match"|"suspicious_or_limit_exceeded"}
  */
-function looksEncryptedPkcs8Der(value) {
+function classifyEncryptedPkcs8Der(value) {
   const outer = readDerTlv(value, 0, value?.length || 0);
   if (!outer || outer.tag !== 0x30 || outer.valueEnd !== value.length) {
-    return false;
+    return DER_CLASSIFICATION.NOT_MATCH;
   }
 
   const algorithm = readDerTlv(value, outer.valueStart, outer.valueEnd);
-  if (
-    !algorithm ||
-    algorithm.tag !== 0x30 ||
-    !hasPlausibleAlgorithmIdentifier(value, algorithm)
-  ) {
-    return false;
+  if (!algorithm || algorithm.tag !== 0x30) {
+    return DER_CLASSIFICATION.NOT_MATCH;
   }
 
   const encryptedData = readDerTlv(value, algorithm.valueEnd, outer.valueEnd);
-  return Boolean(
-    encryptedData &&
-      encryptedData.tag === 0x04 &&
-      encryptedData.valueLength > 0 &&
-      encryptedData.valueEnd === outer.valueEnd,
-  );
+  if (
+    !encryptedData ||
+    encryptedData.tag !== 0x04 ||
+    encryptedData.valueLength === 0 ||
+    encryptedData.valueEnd !== outer.valueEnd
+  ) {
+    return DER_CLASSIFICATION.NOT_MATCH;
+  }
+
+  const algorithmClassification = classifyAlgorithmIdentifier(value, algorithm);
+  if (algorithmClassification === DER_CLASSIFICATION.NOT_MATCH) {
+    return DER_CLASSIFICATION.NOT_MATCH;
+  }
+
+  if (
+    outer.exceedsInspectionLimit ||
+    encryptedData.exceedsInspectionLimit ||
+    algorithmClassification === DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED
+  ) {
+    return DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED;
+  }
+  return DER_CLASSIFICATION.MATCH;
+}
+
+function looksEncryptedPkcs8Der(value) {
+  return classifyEncryptedPkcs8Der(value) !== DER_CLASSIFICATION.NOT_MATCH;
 }
 
 /**
@@ -738,7 +828,11 @@ module.exports = {
   assertNoPrivateKeyMaterial,
   assertNoUnredactedGenericSecretMaterial,
   containsGenericSecretMaterial,
+  DER_CLASSIFICATION,
+  MAX_DER_OID_LENGTH,
+  MAX_DER_TLV_LENGTH,
   looksPrivateKeyDer,
+  classifyEncryptedPkcs8Der,
   looksEncryptedPkcs8Der,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,

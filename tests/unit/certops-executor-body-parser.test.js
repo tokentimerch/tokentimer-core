@@ -8,6 +8,9 @@ const apiRequire = createRequire(
   require.resolve("../../apps/api/package.json"),
 );
 const express = apiRequire("express");
+const {
+  createCertOpsExecutorRouter,
+} = require("../../apps/api/routes/certops-executor");
 
 const {
   CERTOPS_EXECUTOR_EVENTS_PATH,
@@ -15,6 +18,7 @@ const {
   CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE,
   CERTOPS_EXECUTOR_EVENT_INVALID,
   createCertOpsExecutorEventJsonParser,
+  createCertOpsExecutorEventPreParserBoundary,
   handleCertOpsExecutorEventBodyParserError,
 } = require("../../apps/api/middleware/certops-executor-body-parser");
 
@@ -39,6 +43,28 @@ function buildApp({ onAuth = () => {} } = {}) {
   app.use((error, _req, res, _next) =>
     res.status(500).json({ error: error?.message || "unexpected" }),
   );
+  return app;
+}
+
+function buildBoundaryApp({ rateLimitOptions, onParser = () => {}, onAuth = () => {} } = {}) {
+  const app = express();
+  const parser = createCertOpsExecutorEventJsonParser();
+  app.use(
+    createCertOpsExecutorEventPreParserBoundary({
+      rateLimitOptions,
+      parser: (req, res, next) => {
+        onParser();
+        return parser(req, res, next);
+      },
+    }),
+  );
+  app.use(express.json({ limit: "10mb" }));
+  app.post(CERTOPS_EXECUTOR_EVENTS_PATH, (_req, _res, next) => {
+    onAuth();
+    next();
+  });
+  app.post(CERTOPS_EXECUTOR_EVENTS_PATH, (_req, res) => res.status(202).json({ ok: true }));
+  app.all("/unrelated", (_req, res) => res.status(200).json({ ok: true }));
   return app;
 }
 
@@ -94,5 +120,86 @@ describe("CertOps executor body parser", () => {
       .expect(200);
 
     assert.ok(response.body.bytes > CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES);
+  });
+
+  it("charges malformed, oversized, and valid exact-path POSTs before parsing or auth", async () => {
+    let parserCalls = 0;
+    let authCalls = 0;
+    const app = buildBoundaryApp({
+      rateLimitOptions: { windowMs: 60_000, max: 2 },
+      onParser: () => { parserCalls += 1; },
+      onAuth: () => { authCalls += 1; },
+    });
+
+    await supertest(app)
+      .post(CERTOPS_EXECUTOR_EVENTS_PATH)
+      .set("Content-Type", "application/json")
+      .send('{"filler":')
+      .expect(400);
+    await supertest(app)
+      .post(CERTOPS_EXECUTOR_EVENTS_PATH)
+      .set("Content-Type", "application/json")
+      .send(`{"filler":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`)
+      .expect(413);
+    const blocked = await supertest(app)
+      .post(CERTOPS_EXECUTOR_EVENTS_PATH)
+      .send({ public: true })
+      .expect(429);
+
+    assert.equal(parserCalls, 2);
+    assert.equal(authCalls, 0);
+    assert.equal(blocked.body.code, "CERTOPS_MACHINE_RATE_LIMITED");
+    assert.equal(blocked.body.retryAfterSeconds > 0, true);
+    assert.equal(JSON.stringify(blocked.body).includes("filler"), false);
+  });
+
+  it("does not parse, authenticate, or intercept non-exact executor requests", async () => {
+    let parserCalls = 0;
+    let authCalls = 0;
+    const app = buildBoundaryApp({
+      rateLimitOptions: { windowMs: 60_000, max: 0 },
+      onParser: () => { parserCalls += 1; },
+      onAuth: () => { authCalls += 1; },
+    });
+
+    await supertest(app).get(CERTOPS_EXECUTOR_EVENTS_PATH).expect(404);
+    await supertest(app).post(`${CERTOPS_EXECUTOR_EVENTS_PATH}/extra`).send({ ok: true }).expect(404);
+    await supertest(app).post("/unrelated").send({ ok: true }).expect(200);
+    const blocked = await supertest(app)
+      .post(CERTOPS_EXECUTOR_EVENTS_PATH)
+      .send({ ok: true })
+      .expect(429);
+
+    assert.equal(parserCalls, 0);
+    assert.equal(authCalls, 0);
+    assert.equal(blocked.body.code, "CERTOPS_MACHINE_RATE_LIMITED");
+  });
+
+  it("marks production-boundary requests so the router does not double-charge pre-auth", async () => {
+    let limiterCalls = 0;
+    const preAuthRateLimitMiddleware = (_req, _res, next) => {
+      limiterCalls += 1;
+      return next();
+    };
+    const app = express();
+    app.use(
+      createCertOpsExecutorEventPreParserBoundary({
+        preAuthRateLimitMiddleware,
+      }),
+    );
+    app.use(express.json());
+    app.use(
+      createCertOpsExecutorRouter({
+        preAuthRateLimitMiddleware,
+        certOpsEnabledMiddleware: (_req, res) =>
+          res.status(404).json({ code: "NOT_FOUND" }),
+      }),
+    );
+
+    await supertest(app)
+      .post(CERTOPS_EXECUTOR_EVENTS_PATH)
+      .send({ schemaVersion: 1 })
+      .expect(404);
+    assert.equal(limiterCalls, 1);
   });
 });

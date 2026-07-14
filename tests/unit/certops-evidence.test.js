@@ -21,6 +21,11 @@ const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
 const PRIVATE_KEY_PEM =
   "-----BEGIN EC PRIVATE KEY-----\nRkFLRS1OT1QtQS1SRUFMLUtFWQ==\n-----END EC PRIVATE KEY-----";
+const SUSPICIOUS_ENCRYPTED_PKCS8_DER = Buffer.concat([
+  Buffer.from([0x30, 0x81, 0x8b, 0x30, 0x81, 0x85, 0x06, 0x81, 0x82, 0x2a]),
+  Buffer.alloc(128, 0x81),
+  Buffer.from([0x01, 0x04, 0x01, 0x01]),
+]);
 
 function json(value) {
   return typeof value === "string" ? JSON.parse(value) : value;
@@ -331,6 +336,20 @@ describe("CertOps evidence service", () => {
 
     for (const metadata of [
       { apiKey: "not-allowed" },
+      { token: "not-allowed" },
+      { apiToken: "not-allowed" },
+      { auth_token: "not-allowed" },
+      { "bearer-token": "not-allowed" },
+      { sessionToken: "not-allowed" },
+      { secretToken: "not-allowed" },
+      { accessToken: "not-allowed" },
+      { refreshToken: "not-allowed" },
+      { idToken: "not-allowed" },
+      { xAuthToken: "not-allowed" },
+      { xApiKey: "not-allowed" },
+      { cookieHeader: "not-allowed" },
+      { setCookie: "not-allowed" },
+      { awsSecretAccessKey: "not-allowed" },
       { passphrase: "not-allowed" },
       { authorization: "Bearer not-allowed" },
       { note: "accessToken=not-allowed" },
@@ -354,6 +373,21 @@ describe("CertOps evidence service", () => {
     }
     assert.equal(client.evidence.length, 0);
     assert.equal(JSON.stringify(client.evidence).includes("not-allowed"), false);
+
+    await assert.rejects(
+      () =>
+        createCertificateEvidence({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          evidenceType: "certificate.observed",
+          metadata: {
+            attachment: SUSPICIOUS_ENCRYPTED_PKCS8_DER.toString("base64"),
+          },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+    assert.equal(client.evidence.length, 0);
   });
 
   it("rejects secret-looking subject IDs before persistence", async () => {
