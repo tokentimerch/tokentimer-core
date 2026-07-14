@@ -184,7 +184,12 @@ const SECURITY_METADATA_RESERVED_NAMES = Object.freeze([
   "redactionApplied",
   "redactionCount",
   "redactedFields",
+  "redactedSecretCategories",
 ]);
+// Server-owned persisted and idempotency-projection names must be listed here
+// (or matched by the dynamic redactedMetadata family below) before clients can
+// submit public metadata. Matching is normalized so case and separators cannot
+// create a colliding client key.
 const RESERVED_METADATA_NAMES = Object.freeze([
   ...new Set([
     ...EVENT_METADATA_RESERVED_NAMES,

@@ -248,6 +248,7 @@
         "redactionApplied",
         "redactionCount",
         "redactedFields",
+        "redactedSecretCategories",
         "jobStatusTransitionApplied",
         "jobStatusTransitionIgnored",
         "jobStatusTransitionIgnoredReason"

@@ -370,6 +370,45 @@ describe("CertOps executor event ingestion", function () {
     });
   });
 
+  it("applies the dedicated pre-parser boundary to the trailing-slash executor route", async () => {
+    let authCalls = 0;
+    const app = buildExecutorApp({
+      rateLimitOptions: { windowMs: 60_000, max: 2 },
+      authMiddleware: (_req, _res, next) => {
+        authCalls += 1;
+        return next();
+      },
+    });
+    const trailingSlashRoute = `${CERTOPS_EXECUTOR_EVENTS_PATH}/`;
+
+    const malformed = await supertest(app)
+      .post(trailingSlashRoute)
+      .set("Content-Type", "application/json")
+      .send('{"payload":');
+    expect(malformed.status).to.equal(400);
+    expect(malformed.body.code).to.equal("CERTOPS_EXECUTOR_EVENT_INVALID");
+    expect(authCalls).to.equal(0);
+
+    const oversized = await supertest(app)
+      .post(trailingSlashRoute)
+      .set("Content-Type", "application/json")
+      .send(
+        `{"payload":"${"a".repeat(CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES)}"}`,
+      );
+    expect(oversized.status).to.equal(413);
+    expect(oversized.body.code).to.equal(
+      "CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE",
+    );
+    expect(authCalls).to.equal(0);
+
+    const blocked = await supertest(app)
+      .post(trailingSlashRoute)
+      .send({ public: true });
+    expect(blocked.status).to.equal(429);
+    expect(blocked.body.code).to.equal("CERTOPS_MACHINE_RATE_LIMITED");
+    expect(authCalls).to.equal(0);
+  });
+
   it("hides executor ingestion when CertOps is disabled before token validation or persistence", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-disabled",
@@ -1091,6 +1130,45 @@ describe("CertOps executor event ingestion", function () {
       expect(afterConflict).to.deep.equal(beforeConflict);
       expectNoSensitiveValues(conflict.body, token.plaintextToken);
 
+      const metadataConflictJob = await createJob({
+        workspaceId: workspaceA,
+        ownerId,
+      });
+      const metadataConflictPayload = eventPayload({
+        workspaceId: workspaceA,
+        jobId: metadataConflictJob.id,
+        eventType: "job.progress",
+        status: "running",
+        metadata: [{ name: "observation", value: "first public value" }],
+      });
+      const metadataConflictFirst = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(metadataConflictPayload);
+      const beforeMetadataConflict = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: metadataConflictJob.id,
+      });
+      const metadataConflict = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send({
+          ...metadataConflictPayload,
+          metadata: [{ name: "observation", value: "different public value" }],
+        });
+      const afterMetadataConflict = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: metadataConflictJob.id,
+      });
+
+      expect(metadataConflictFirst.status).to.equal(202);
+      expect(metadataConflict.status).to.equal(409);
+      expect(metadataConflict.body.code).to.equal(
+        "CERTOPS_EXECUTOR_EVENT_CONFLICT",
+      );
+      expect(afterMetadataConflict).to.deep.equal(beforeMetadataConflict);
+      expectNoSensitiveValues(metadataConflict.body, token.plaintextToken);
+
       const evidenceJob = await createJob({ workspaceId: workspaceA, ownerId });
       const evidencePayload = eventPayload({
         workspaceId: workspaceA,
@@ -1237,6 +1315,7 @@ describe("CertOps executor event ingestion", function () {
             source: "executor",
             observedAt: occurredAt,
             summary: "credential=first-value",
+            metadata: [{ name: "cookieHeader", value: "first-value" }],
             redactionApplied: true,
           },
         ],
@@ -1254,6 +1333,7 @@ describe("CertOps executor event ingestion", function () {
           {
             ...payload.evidence[0],
             summary: "credential=second-value",
+            metadata: [{ name: "cookie_header", value: "second-value" }],
             redactionApplied: false,
           },
         ],
@@ -1313,12 +1393,17 @@ describe("CertOps executor event ingestion", function () {
         "authorization",
         "generic-secret",
       ]);
+      expect(evidence.items[0].metadata.redactedFields).to.deep.equal([
+        "cookie",
+        "generic-secret",
+      ]);
       const redactionAudit = audits.rows.find(
         (row) =>
           row.action === "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
       );
       expect(redactionAudit.metadata.redactedFields).to.deep.equal([
         "authorization",
+        "cookie",
         "generic-secret",
       ]);
       expectNoSensitiveValues(retry.body, token.plaintextToken, [
@@ -2193,6 +2278,17 @@ describe("CertOps executor event ingestion", function () {
           jobId: job.id,
           metadata: [{ name: "redaction_count", value: -100 }],
         }),
+        ...[
+          "redactedSecretCategories",
+          "redacted_secret_categories",
+          "REDACTED-SECRET-CATEGORIES",
+        ].map((name) =>
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            metadata: [{ name, value: "forged" }],
+          }),
+        ),
         eventPayload({
           workspaceId: workspaceA,
           jobId: job.id,
@@ -2202,6 +2298,20 @@ describe("CertOps executor event ingestion", function () {
             {
               eventType: "certificate.observed",
               metadata: [{ name: "source", value: "forged" }],
+            },
+          ],
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+          evidence: [
+            {
+              eventType: "certificate.observed",
+              metadata: [
+                { name: "redacted_secret_categories", value: "forged" },
+              ],
             },
           ],
         }),

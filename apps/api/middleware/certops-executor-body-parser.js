@@ -19,10 +19,11 @@ const CERTOPS_EXECUTOR_PRE_AUTH_LIMITER_APPLIED = Symbol(
 );
 
 function isExactExecutorEventPost(req) {
+  const requestPath = req.path || req.originalUrl?.split("?", 1)[0];
   return (
     req.method === "POST" &&
-    (req.path || req.originalUrl?.split("?", 1)[0]) ===
-      CERTOPS_EXECUTOR_EVENTS_PATH
+    (requestPath === CERTOPS_EXECUTOR_EVENTS_PATH ||
+      requestPath === `${CERTOPS_EXECUTOR_EVENTS_PATH}/`)
   );
 }
 
