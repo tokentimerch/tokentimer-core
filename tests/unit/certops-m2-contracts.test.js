@@ -1474,6 +1474,8 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/integration/certops-api-token-routes.test.js",
       "tests/integration/certops-api-tokens.test.js",
       "tests/integration/certops-executor-events.test.js",
+      "tests/integration/certops-fake-executor.test.js",
+      "tests/integration/fake-executor.js",
       "tests/integration/certops-inventory-import-helpers.test.js",
       "tests/integration/certops-job-read-apis.test.js",
       "tests/integration/certops-jobs-evidence.test.js",
