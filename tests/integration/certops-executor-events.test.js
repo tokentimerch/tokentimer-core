@@ -805,6 +805,181 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("preserves private-key rejection precedence over empty evidence on every machine route", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-empty-evidence-key-material",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const auth = `Bearer ${token.plaintextToken}`;
+      const requests = [
+        {
+          route: "/api/v1/certops/executor/events",
+          body: eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            evidence: [],
+            message: PRIVATE_KEY_PEM,
+          }),
+        },
+        {
+          route: `/api/v1/certops/jobs/${job.id}/events`,
+          body: {
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "evidence.attached",
+            status: "accepted",
+            occurredAt: new Date().toISOString(),
+            evidence: [],
+            message: PRIVATE_KEY_PEM,
+          },
+        },
+        {
+          route: `/api/v1/certops/jobs/${job.id}/evidence`,
+          body: {
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            occurredAt: new Date().toISOString(),
+            evidence: [],
+            message: PRIVATE_KEY_PEM,
+          },
+        },
+      ];
+
+      for (const request of requests) {
+        const beforeArtifacts = await countJobArtifacts({
+          workspaceId: workspaceA,
+          jobId: job.id,
+        });
+        const beforeStatus = (
+          await getCertificateJobById({ workspaceId: workspaceA, jobId: job.id })
+        ).status;
+        const beforeAudits = await auditActionCounts({ workspaceId: workspaceA });
+
+        const response = await supertest(app)
+          .post(request.route)
+          .set("Authorization", auth)
+          .send(request.body);
+
+        const afterAudits = await auditActionCounts({ workspaceId: workspaceA });
+        expect(response.status).to.equal(422);
+        expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+        expectNoSensitiveValues(response.body, token.plaintextToken, [PRIVATE_KEY_PEM]);
+        expect(
+          await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id }),
+        ).to.deep.equal(beforeArtifacts);
+        expect(
+          (
+            await getCertificateJobById({ workspaceId: workspaceA, jobId: job.id })
+          ).status,
+        ).to.equal(beforeStatus);
+        expect(afterAudits.CERTOPS_KEY_MATERIAL_REJECTED || 0).to.equal(
+          (beforeAudits.CERTOPS_KEY_MATERIAL_REJECTED || 0) + 1,
+        );
+        for (const action of [
+          "CERTOPS_EXECUTOR_EVENT_ACCEPTED",
+          "CERTOPS_EVIDENCE_ACCEPTED",
+          "CERTOPS_EVIDENCE_REJECTED",
+          "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
+        ]) {
+          expect(afterAudits[action] || 0).to.equal(beforeAudits[action] || 0);
+        }
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("fails closed when a combined empty-evidence key-material audit cannot be written", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-empty-evidence-key-audit-failure",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const body = eventPayload({
+        workspaceId: workspaceA,
+        jobId: job.id,
+        eventType: "evidence.attached",
+        status: "accepted",
+        evidence: [],
+        message: PRIVATE_KEY_PEM,
+      });
+      const beforeArtifacts = await countJobArtifacts({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      const beforeStatus = (
+        await getCertificateJobById({ workspaceId: workspaceA, jobId: job.id })
+      ).status;
+      const beforeAudits = await auditActionCounts({ workspaceId: workspaceA });
+
+      await TestUtils.execQuery(`
+        CREATE OR REPLACE FUNCTION fail_certops_executor_key_material_audit_for_test()
+        RETURNS trigger AS $$
+        BEGIN
+          IF NEW.action = 'CERTOPS_KEY_MATERIAL_REJECTED' THEN
+            RAISE EXCEPTION 'forced CertOps executor key-material audit failure';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `);
+      await TestUtils.execQuery(`
+        CREATE TRIGGER fail_certops_executor_key_material_audit_for_test_trigger
+        BEFORE INSERT ON audit_events
+        FOR EACH ROW
+        EXECUTE FUNCTION fail_certops_executor_key_material_audit_for_test();
+      `);
+
+      try {
+        const response = await supertest(app)
+          .post("/api/v1/certops/executor/events")
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send(body);
+
+        expect(response.status).to.equal(503);
+        expect(response.body.code).to.equal("CERTOPS_SECURITY_AUDIT_UNAVAILABLE");
+        expectNoSensitiveValues(response.body, token.plaintextToken, [PRIVATE_KEY_PEM]);
+        expect(
+          await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id }),
+        ).to.deep.equal(beforeArtifacts);
+        expect(
+          (
+            await getCertificateJobById({ workspaceId: workspaceA, jobId: job.id })
+          ).status,
+        ).to.equal(beforeStatus);
+        expect(
+          await auditActionCounts({ workspaceId: workspaceA }),
+        ).to.deep.equal(beforeAudits);
+      } finally {
+        await TestUtils.execQuery(
+          "DROP TRIGGER IF EXISTS fail_certops_executor_key_material_audit_for_test_trigger ON audit_events",
+        );
+        await TestUtils.execQuery(
+          "DROP FUNCTION IF EXISTS fail_certops_executor_key_material_audit_for_test()",
+        );
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("applies the machine-token rate limiter", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-rate-limit",
@@ -3387,10 +3562,10 @@ describe("CertOps executor event ingestion", function () {
         "CERTOPS_EVIDENCE_ACCEPTED",
         "CERTOPS_GENERIC_SECRET_REDACTION_APPLIED",
         "CERTOPS_KEY_MATERIAL_REJECTED",
-        "CERTOPS_EVIDENCE_REJECTED",
       ]) {
         expect(actions).to.include(action);
       }
+      expect(actions).to.not.include("CERTOPS_EVIDENCE_REJECTED");
 
       const serialized = JSON.stringify(auditEvents);
       for (const forbidden of [

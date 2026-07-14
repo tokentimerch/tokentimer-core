@@ -350,7 +350,23 @@ function assertRequiredEvidenceItems(body, mode = null) {
 
 function requireEvidenceItems(req, res, next, options = {}) {
   try {
-    assertRequiredEvidenceItems(req.body, options.mode || null);
+    const mode = options.mode || null;
+    let containsPrivateKeyMaterial = false;
+
+    if (requiresNonEmptyEvidence(req.body, mode)) {
+      try {
+        // Preserve the global fail-closed precedence for key material. The
+        // handler owns the canonical 422 response and synchronous audit.
+        rejectPrivateKeyMaterial(req.body);
+      } catch (error) {
+        if (error?.code !== PRIVATE_KEY_MATERIAL_REJECTED) throw error;
+        containsPrivateKeyMaterial = true;
+      }
+    }
+
+    if (!containsPrivateKeyMaterial) {
+      assertRequiredEvidenceItems(req.body, mode);
+    }
     return next();
   } catch (error) {
     if (error?.code !== CERTOPS_EVIDENCE_INVALID) return next(error);
@@ -1647,7 +1663,9 @@ async function executorEventsHandler(req, res, options = {}) {
       idempotent: result.duplicate,
     });
   } catch (error) {
-    if (error?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
+    const privateKeyMaterialRejected =
+      error?.code === PRIVATE_KEY_MATERIAL_REJECTED;
+    if (privateKeyMaterialRejected) {
       try {
         await recordExecutorKeyMaterialRejection(req);
       } catch (auditError) {
@@ -1664,7 +1682,9 @@ async function executorEventsHandler(req, res, options = {}) {
       }
     }
     try {
-      await auditExecutorRejection(req, error, options.mode);
+      if (!privateKeyMaterialRejected) {
+        await auditExecutorRejection(req, error, options.mode);
+      }
     } catch (auditError) {
       logger.warn("CertOps executor audit write failed", {
         error: auditError.message,
