@@ -8,6 +8,9 @@ const {
     executorEventIdempotencyPayload,
     EVIDENCE_SOURCES,
     EVIDENCE_STATUSES,
+    createRedactionTracker,
+    immutableRedactionReport,
+    isReservedMetadataName,
     mergeRedactionReport,
     normalizeExecutorEventBody,
     normalizeRfc3339Timestamp,
@@ -121,8 +124,9 @@ describe("CertOps executor event normalization", () => {
     assert.doesNotMatch(JSON.stringify(projection), /first-value/);
     assert.doesNotMatch(
       JSON.stringify(projection),
-      /redactionCount|redactedFields|redactedMetadata|jobStatus|logStatus/,
+      /redactionCount|redactedFields|jobStatus|logStatus/,
     );
+    assert.match(JSON.stringify(projection), /redactedSecretCategories/);
   });
 
   it("keeps sanitized retries and metadata key ordering idempotent", () => {
@@ -175,7 +179,7 @@ describe("CertOps executor event normalization", () => {
   });
 
   it("preserves redaction categories from nested reports", () => {
-    const tracker = { count: 0, fields: new Set() };
+    const tracker = createRedactionTracker();
     mergeRedactionReport(
       tracker,
       {
@@ -183,14 +187,55 @@ describe("CertOps executor event normalization", () => {
         redactionCount: 2,
         redactedFields: ["authorization", "generic-secret"],
       },
-      "metadata",
     );
 
     assert.equal(tracker.count, 2);
-    assert.deepEqual(Array.from(tracker.fields).sort(), [
+    assert.deepEqual(Array.from(tracker.categories).sort(), [
       "authorization",
       "generic-secret",
     ]);
+    assert.deepEqual(immutableRedactionReport(tracker), {
+      count: 2,
+      categories: ["authorization", "generic-secret"],
+    });
+  });
+
+  it("rejects normalized server-owned metadata names before they can forge state", () => {
+    for (const name of [
+      "redactionApplied",
+      "redaction_count",
+      "REDACTED-FIELDS",
+      "executorEventId",
+      "job_status_transition_ignored_reason",
+      "source",
+      "artifactRefs",
+    ]) {
+      assert.equal(isReservedMetadataName(name), true);
+      assert.throws(
+        () => normalize(eventBody({ metadata: [{ name, value: "public" }] })),
+        (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_INVALID",
+      );
+    }
+  });
+
+  it("keeps client redaction hints and collidable metadata out of reports and hashes", () => {
+    const withSecret = normalize(eventBody({ message: "password=first-value" }));
+    assert.deepEqual(withSecret.redactionReport, {
+      count: 2,
+      categories: ["generic-secret"],
+    });
+    assert.throws(
+      () =>
+        normalize(
+          eventBody({
+            metadata: [
+              { name: "redactionApplied", value: true },
+              { name: "redactionCount", value: -100 },
+            ],
+          }),
+        ),
+      (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_INVALID",
+    );
   });
 
   it("keeps embedded evidence enums and fingerprints aligned with the public contract", () => {
@@ -236,6 +281,8 @@ describe("CertOps executor event normalization", () => {
       ["2026-07-12T12:00:00.123456789Z", "2026-07-12T12:00:00.123Z"],
       ["2024-02-29T23:59:59+02:30", "2024-02-29T21:29:59.000Z"],
       ["2024-02-29T23:59:59-02:30", "2024-03-01T02:29:59.000Z"],
+      ["2000-01-01T00:00:00+14:00", "1999-12-31T10:00:00.000Z"],
+      ["2100-12-31T23:59:59-14:00", "2101-01-01T13:59:59.000Z"],
     ];
     for (const [input, output] of cases) {
       assert.equal(normalizeRfc3339Timestamp(input), output);

@@ -6,11 +6,15 @@ const path = require("path");
 
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
+  DER_CLASSIFICATION,
+  MAX_DER_OID_LENGTH,
+  MAX_DER_TLV_LENGTH,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   assertNoPrivateKeyMaterial,
   assertNoUnredactedGenericSecretMaterial,
   containsGenericSecretMaterial,
   containsPrivateKeyMaterial,
+  classifyEncryptedPkcs8Der,
   looksEncryptedPkcs8Der,
   looksPrivateKeyDer,
   fieldNameLooksGenericSecret,
@@ -76,6 +80,27 @@ function fakeEncryptedPkcs8BufferWithOid(oidBytes, parameters = null) {
     Buffer.from([0x30, outerContents.length]),
     outerContents,
   ]);
+}
+
+function derLength(length) {
+  if (length < 128) return Buffer.from([length]);
+  const bytes = [];
+  for (let remaining = length; remaining > 0; remaining >>>= 8) {
+    bytes.unshift(remaining & 0xff);
+  }
+  return Buffer.from([0x80 | bytes.length, ...bytes]);
+}
+
+function derTlv(tag, content) {
+  return Buffer.concat([Buffer.from([tag]), derLength(content.length), content]);
+}
+
+function encryptedPkcs8WithContents({ oid, parameters, encryptedData }) {
+  const algorithm = derTlv(
+    0x30,
+    Buffer.concat([derTlv(0x06, oid), parameters || Buffer.alloc(0)]),
+  );
+  return derTlv(0x30, Buffer.concat([algorithm, derTlv(0x04, encryptedData)]));
 }
 
 function fakeCertificateDerBuffer() {
@@ -224,6 +249,54 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
         true,
       );
     }
+  });
+
+  it("fails closed when a structurally plausible encrypted PKCS#8 exceeds bounded OID inspection", () => {
+    const longValidOid = Buffer.concat([
+      Buffer.from([0x2a]),
+      Buffer.alloc(MAX_DER_OID_LENGTH, 0x81),
+      Buffer.from([0x01]),
+    ]);
+    const encrypted = encryptedPkcs8WithContents({
+      oid: longValidOid,
+      encryptedData: Buffer.from([0xde, 0xad, 0xbe, 0xef]),
+    });
+
+    assert.equal(
+      classifyEncryptedPkcs8Der(encrypted),
+      DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED,
+    );
+    for (const value of [
+      encrypted,
+      encrypted.toString("base64"),
+      encrypted.toString("hex"),
+      { innocent: { attachment: encrypted } },
+    ]) {
+      assert.equal(containsPrivateKeyMaterial(value), true);
+      assert.throws(
+        () => assertNoPrivateKeyMaterial(value),
+        (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+      );
+    }
+  });
+
+  it("fails closed when plausible encrypted PKCS#8 data exceeds bounded TLV inspection", () => {
+    const encrypted = encryptedPkcs8WithContents({
+      oid: Buffer.from([0x2a, 0x03, 0x04]),
+      encryptedData: Buffer.alloc(MAX_DER_TLV_LENGTH + 1, 0x5a),
+    });
+    const wrapped = encrypted.toString("base64");
+
+    assert.equal(
+      classifyEncryptedPkcs8Der(encrypted),
+      DER_CLASSIFICATION.SUSPICIOUS_OR_LIMIT_EXCEEDED,
+    );
+    assert.equal(containsPrivateKeyMaterial(encrypted), true);
+    assert.equal(containsPrivateKeyMaterial(wrapped), true);
+    assert.throws(
+      () => redactGenericSecretsWithReport({ nested: wrapped }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
   });
 
   it("does not classify certificate DER or ordinary ASN.1 envelopes as encrypted PKCS#8", () => {
@@ -561,5 +634,42 @@ describe("secretMaterial.redactGenericSecrets", () => {
     assert.strictEqual(fieldNameLooksPrivateKeyMaterial("credential"), false);
     assert.strictEqual(fieldNameLooksGenericSecret("credential"), true);
     assert.strictEqual(fieldNameLooksGenericSecret("publicMetadata"), false);
+  });
+
+  it("classifies bounded token, auth, cookie, and cloud-secret field aliases without false positives", () => {
+    for (const name of [
+      "token",
+      "apiToken",
+      "api_token",
+      "api-token",
+      "API TOKEN",
+      "authToken",
+      "bearerToken",
+      "sessionToken",
+      "secretToken",
+      "accessToken",
+      "refreshToken",
+      "idToken",
+      "xAuthToken",
+      "xApiKey",
+      "cookie",
+      "setCookie",
+      "cookieHeader",
+      "clientSecret",
+      "awsSecretAccessKey",
+    ]) {
+      assert.equal(fieldNameLooksGenericSecret(name), true, name);
+    }
+    for (const name of [
+      "tokenization",
+      "tokenCount",
+      "tokenExpiry",
+      "tokenType",
+      "secretary",
+      "cookiePolicyEnabled",
+      "passwordResetRequired",
+    ]) {
+      assert.equal(fieldNameLooksGenericSecret(name), false, name);
+    }
   });
 });

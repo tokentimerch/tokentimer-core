@@ -31,8 +31,7 @@ const {
 const {
   CERTOPS_EXECUTOR_EVENTS_PATH,
   CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES,
-  createCertOpsExecutorEventJsonParser,
-  handleCertOpsExecutorEventBodyParserError,
+  createCertOpsExecutorEventPreParserBoundary,
 } = require("../../apps/api/middleware/certops-executor-body-parser");
 
 const apiRequire = createRequire(
@@ -49,6 +48,32 @@ const ENCRYPTED_PKCS8_DER = Buffer.from([
   0x05, 0x00,
   0x04, 0x04, 0xde, 0xad, 0xbe, 0xef,
 ]);
+
+function derLength(length) {
+  if (length < 128) return Buffer.from([length]);
+  const bytes = [];
+  for (let remaining = length; remaining > 0; remaining >>>= 8) {
+    bytes.unshift(remaining & 0xff);
+  }
+  return Buffer.from([0x80 | bytes.length, ...bytes]);
+}
+
+function derTlv(tag, content) {
+  return Buffer.concat([Buffer.from([tag]), derLength(content.length), content]);
+}
+
+function longOidEncryptedPkcs8Der() {
+  const oid = Buffer.concat([
+    Buffer.from([0x2a]),
+    Buffer.alloc(128, 0x81),
+    Buffer.from([0x01]),
+  ]);
+  const algorithm = derTlv(0x30, derTlv(0x06, oid));
+  return derTlv(
+    0x30,
+    Buffer.concat([algorithm, derTlv(0x04, Buffer.from([0xde, 0xad]))]),
+  );
+}
 
 async function createWorkspacePair(label) {
   const ownerEmail = `${label}-${Date.now()}-${crypto.randomUUID()}@example.com`;
@@ -120,10 +145,10 @@ function buildExecutorApp({
   certOpsEnabledMiddleware,
 } = {}) {
   const app = express();
-  app.use(CERTOPS_EXECUTOR_EVENTS_PATH, createCertOpsExecutorEventJsonParser());
   app.use(
-    CERTOPS_EXECUTOR_EVENTS_PATH,
-    handleCertOpsExecutorEventBodyParserError,
+    createCertOpsExecutorEventPreParserBoundary({
+      rateLimitOptions: rateLimitOptions || { windowMs: 60_000, max: 100 },
+    }),
   );
   app.use(express.json());
 
@@ -2040,7 +2065,7 @@ describe("CertOps executor event ingestion", function () {
       const token = await createScopedToken({
         workspaceId: workspaceA,
         ownerId,
-        scopes: ["certops:events:write"],
+        scopes: ["certops:events:write", "certops:evidence:write"],
       });
       const app = buildExecutorApp();
       const route = "/api/v1/certops/executor/events";
@@ -2092,6 +2117,21 @@ describe("CertOps executor event ingestion", function () {
             },
           ],
         }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          message: longOidEncryptedPkcs8Der().toString("base64"),
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          evidence: [
+            {
+              eventType: "certificate.observed",
+              summary: longOidEncryptedPkcs8Der().toString("hex"),
+            },
+          ],
+        }),
       ];
 
       for (const body of dangerousBodies) {
@@ -2122,6 +2162,66 @@ describe("CertOps executor event ingestion", function () {
         );
         expectNoSensitiveValues(response.body, token.plaintextToken);
       }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("rejects server-owned metadata collisions before logs, evidence, audits, or idempotency records", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-reserved-metadata",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const bodies = [
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: [{ name: "redactionApplied", value: true }],
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          metadata: [{ name: "redaction_count", value: -100 }],
+        }),
+        eventPayload({
+          workspaceId: workspaceA,
+          jobId: job.id,
+          eventType: "evidence.attached",
+          status: "accepted",
+          evidence: [
+            {
+              eventType: "certificate.observed",
+              metadata: [{ name: "source", value: "forged" }],
+            },
+          ],
+        }),
+      ];
+
+      for (const body of bodies) {
+        const before = await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id });
+        const response = await supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(body);
+        expect(response.status).to.equal(400);
+        expect(response.body.code).to.equal("CERTOPS_EXECUTOR_EVENT_INVALID");
+        expect(await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id })).to.deep.equal(before);
+        expectNoSensitiveValues(response.body, token.plaintextToken);
+      }
+
+      const auditCounts = await auditActionCounts({ workspaceId: workspaceA, jobId: job.id });
+      expect(auditCounts.CERTOPS_GENERIC_SECRET_REDACTION_APPLIED || 0).to.equal(0);
+      expect(await countExecutorEventRecords({ workspaceId: workspaceA, jobId: job.id })).to.equal(0);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
@@ -2222,6 +2322,71 @@ describe("CertOps executor event ingestion", function () {
       expect(serialized).to.not.include("credential=abc");
       expect(serialized).to.not.include("abc123tokenvalue");
       expect(serialized).to.not.include(token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("redacts generic-secret field-name aliases without persisting client names or values", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-secret-aliases",
+    );
+
+    try {
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const response = await supertest(buildExecutorApp())
+        .post("/api/v1/certops/executor/events")
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "evidence.attached",
+            status: "accepted",
+            metadata: [{ name: "apiToken", value: "event-token-value" }],
+            evidence: [
+              {
+                eventType: "certificate.observed",
+                metadata: [
+                  { name: "cookie_header", value: "evidence-cookie-value" },
+                ],
+              },
+            ],
+          }),
+        );
+      expect(response.status).to.equal(202);
+
+      const logs = await listCertificateJobLog({ workspaceId: workspaceA, jobId: job.id });
+      const evidence = await listCertificateEvidence({ workspaceId: workspaceA, jobId: job.id });
+      const audits = await TestUtils.execQuery(
+        "SELECT action, metadata FROM audit_events WHERE workspace_id = $1",
+        [workspaceA],
+      );
+      const persisted = JSON.stringify({
+        logMetadata: logs.items.map((item) => item.metadata),
+        evidenceMetadata: evidence.items.map((item) => item.metadata),
+        auditMetadata: audits.rows.map((item) => item.metadata),
+      });
+
+      expect(logs.items[0].metadata.redactedMetadata1).to.equal("[REDACTED]");
+      expect(evidence.items[0].metadata.redactedMetadata1).to.equal("[REDACTED]");
+      for (const raw of [
+        "event-token-value",
+        "evidence-cookie-value",
+        '"apiToken"',
+        '"cookie_header"',
+      ]) {
+        expect(persisted).to.not.include(raw);
+      }
+      expectNoSensitiveValues(response.body, token.plaintextToken, [
+        "event-token-value",
+        "evidence-cookie-value",
+      ]);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

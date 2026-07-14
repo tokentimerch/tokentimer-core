@@ -10,6 +10,9 @@ const {
   createCertOpsMachineTokenRateLimit,
 } = require("../middleware/machine-token-rate-limit");
 const {
+  hasCertOpsExecutorPreAuthLimit,
+} = require("../middleware/certops-executor-body-parser");
+const {
   requireCertOpsEnabled,
 } = require("../middleware/require-certops-enabled");
 const { logger } = require("../utils/logger");
@@ -70,8 +73,6 @@ const METADATA_VALUE_TYPES = new Set(["string", "number", "boolean"]);
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const RFC3339_TIMESTAMP_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))$/;
-const MIN_EXECUTOR_TIMESTAMP_MS = Date.UTC(2000, 0, 1);
-const MAX_EXECUTOR_TIMESTAMP_MS = Date.UTC(2101, 0, 1) - 1;
 const ARTIFACT_REF_TYPES = new Set([
   "log",
   "report",
@@ -152,6 +153,50 @@ const EVIDENCE_ITEM_FIELDS = new Set([
   "redactionApplied",
 ]);
 const LOG_STATUSES_SET = new Set(LOG_STATUSES);
+const REDACTION_CATEGORIES = new Set([
+  "authorization",
+  "cookie",
+  "generic-secret",
+]);
+const EVENT_METADATA_RESERVED_NAMES = Object.freeze([
+  "executorEventId",
+  "executorEventType",
+  "executorStatus",
+  "occurredAt",
+  "certificateId",
+  "executorId",
+  "jobStatusTransitionApplied",
+  "jobStatusTransitionIgnored",
+  "jobStatusTransitionIgnoredReason",
+]);
+const EVIDENCE_METADATA_RESERVED_NAMES = Object.freeze([
+  "evidenceId",
+  "certificateId",
+  "certificateInstanceId",
+  "targetId",
+  "source",
+  "status",
+  "fingerprintSha256",
+  "summary",
+  "artifactRefs",
+]);
+const SECURITY_METADATA_RESERVED_NAMES = Object.freeze([
+  "redactionApplied",
+  "redactionCount",
+  "redactedFields",
+]);
+const RESERVED_METADATA_NAMES = Object.freeze([
+  ...new Set([
+    ...EVENT_METADATA_RESERVED_NAMES,
+    ...EVIDENCE_METADATA_RESERVED_NAMES,
+    ...SECURITY_METADATA_RESERVED_NAMES,
+  ]),
+]);
+const RESERVED_METADATA_NORMALIZED_NAMES = new Set(
+  RESERVED_METADATA_NAMES.map((value) =>
+    String(value).toLowerCase().replace(/[^a-z0-9]/g, ""),
+  ),
+);
 
 const ALLOWED_STATUSES_BY_EVENT_TYPE = Object.freeze({
   "job.accepted": new Set(["claimed"]),
@@ -238,15 +283,22 @@ function optionalPublicId(value, fieldName, maxLength = 128) {
 function createRedactionTracker() {
   return {
     count: 0,
-    fields: new Set(),
+    categories: new Set(),
   };
 }
 
-function noteRedaction(tracker, fields = []) {
+function noteRedaction(tracker, categories = []) {
   if (!tracker) return;
+  const safeCategories = Array.isArray(categories) ? categories : [categories];
+  if (!safeCategories.every((category) => REDACTION_CATEGORIES.has(category))) {
+    throw executorEventError(
+      "Executor redaction report is invalid",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
   tracker.count += 1;
-  for (const field of fields) tracker.fields.add(field);
-  if (fields.length === 0) tracker.fields.add("generic");
+  for (const category of safeCategories) tracker.categories.add(category);
+  if (safeCategories.length === 0) tracker.categories.add("generic-secret");
 }
 
 function genericSecretCategory(fieldName) {
@@ -258,26 +310,68 @@ function genericSecretCategory(fieldName) {
   return "generic-secret";
 }
 
-function mergeRedactionReport(tracker, report, fallbackField) {
+function mergeRedactionReport(tracker, report) {
   if (!tracker || !report?.redactionApplied) return;
-  tracker.count += report.redactionCount || 1;
-  const fields = Array.isArray(report.redactedFields)
-    ? report.redactedFields
-    : [];
-  if (fields.length === 0) {
-    tracker.fields.add(fallbackField || "generic");
-    return;
+  const count = report.redactionCount;
+  const categories = report.redactedFields;
+  if (
+    !Number.isInteger(count) ||
+    count < 1 ||
+    !Array.isArray(categories) ||
+    !categories.length ||
+    !categories.every((category) => REDACTION_CATEGORIES.has(category))
+  ) {
+    throw executorEventError(
+      "Executor redaction report is invalid",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
   }
-  for (const field of fields) tracker.fields.add(field);
+  tracker.count += count;
+  for (const category of categories) tracker.categories.add(category);
 }
 
-function redactionMetadata(tracker) {
-  if (!tracker || tracker.count <= 0) return {};
+function immutableRedactionReport(tracker) {
+  const count = tracker?.count || 0;
+  const categories = Array.from(tracker?.categories || []).sort();
+  if (
+    !Number.isInteger(count) ||
+    count < 0 ||
+    !categories.every((category) => REDACTION_CATEGORIES.has(category)) ||
+    (count === 0 && categories.length > 0)
+  ) {
+    throw executorEventError(
+      "Executor redaction report is invalid",
+      CERTOPS_EXECUTOR_EVENT_INVALID,
+    );
+  }
+  return Object.freeze({
+    count,
+    categories: Object.freeze(categories),
+  });
+}
+
+function redactionMetadata(report) {
+  const normalized = immutableRedactionReport(report);
+  if (normalized.count === 0) return {};
   return {
     redactionApplied: true,
-    redactionCount: tracker.count,
-    redactedFields: Array.from(tracker.fields).sort(),
+    redactionCount: normalized.count,
+    redactedFields: normalized.categories,
   };
+}
+
+function normalizedMetadataName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function isReservedMetadataName(value) {
+  const normalized = normalizedMetadataName(value);
+  return (
+    RESERVED_METADATA_NORMALIZED_NAMES.has(normalized) ||
+    /^redactedmetadata\d+$/.test(normalized)
+  );
 }
 
 function rejectPrivateKeyMaterial(value) {
@@ -314,7 +408,7 @@ function redactGenericText(value, fieldName, tracker, maxLength = 1024) {
   if (report.value.length > maxLength) {
     throw executorEventError(`${fieldName} is too long`, CERTOPS_EXECUTOR_EVENT_INVALID);
   }
-  mergeRedactionReport(tracker, report, fieldName);
+  mergeRedactionReport(tracker, report);
   return report.value;
 }
 
@@ -371,6 +465,8 @@ function normalizeRfc3339Timestamp(value, fieldName = "occurredAt") {
   if (
     !match ||
     Number.isNaN(timestamp) ||
+    Number(match[1]) < 2000 ||
+    Number(match[1]) > 2100 ||
     Number(match[2]) < 1 ||
     Number(match[2]) > 12 ||
     Number(match[3]) < 1 ||
@@ -381,9 +477,7 @@ function normalizeRfc3339Timestamp(value, fieldName = "occurredAt") {
     (match[8] !== "Z" &&
       (offsetHours > 14 ||
         offsetMinutes > 59 ||
-        (offsetHours === 14 && offsetMinutes !== 0))) ||
-    timestamp < MIN_EXECUTOR_TIMESTAMP_MS ||
-    timestamp > MAX_EXECUTOR_TIMESTAMP_MS
+        (offsetHours === 14 && offsetMinutes !== 0)))
   ) {
     throw executorEventError(
       `${fieldName} is invalid`,
@@ -501,6 +595,7 @@ function metadataEntriesToObject(
   }
 
   const metadata = {};
+  const idempotencySecretCategories = [];
   entries.forEach((entry, index) => {
     if (!isPlainObject(entry)) {
       throw executorEventError(
@@ -534,6 +629,12 @@ function metadataEntriesToObject(
       );
     }
     if (fieldNameLooksPrivateKeyMaterial(name)) throw privateKeyMaterialError();
+    if (isReservedMetadataName(name)) {
+      throw executorEventError(
+        `${fieldName}.name is reserved`,
+        CERTOPS_EXECUTOR_EVENT_INVALID,
+      );
+    }
     if (!Object.prototype.hasOwnProperty.call(entry, "value")) {
       throw executorEventError(
         `${fieldName}.value is required`,
@@ -563,11 +664,17 @@ function metadataEntriesToObject(
     }
 
     if (fieldNameLooksGenericSecret(name)) {
-      metadata[`redactedMetadata${index + 1}`] =
+      const redactedMetadataKey = `redactedMetadata${index + 1}`;
+      const category = genericSecretCategory(name);
+      metadata[redactedMetadataKey] =
         GENERIC_SECRET_REDACTION_PLACEHOLDER;
-      noteRedaction(tracker, [genericSecretCategory(name)]);
+      noteRedaction(tracker, [category]);
       if (idempotencyMetadata) {
-        idempotencyMetadata[name] = GENERIC_SECRET_REDACTION_PLACEHOLDER;
+        // The raw client field name may itself be sensitive. The idempotency
+        // projection keeps only stable server categories, so equivalent secret
+        // values, aliases, and metadata-entry ordering do not conflict on
+        // retry. This is not a client redaction report.
+        idempotencySecretCategories.push(category);
       }
       return;
     }
@@ -580,6 +687,11 @@ function metadataEntriesToObject(
     metadata[name] = normalizedValue;
     if (idempotencyMetadata) idempotencyMetadata[name] = normalizedValue;
   });
+
+  if (idempotencyMetadata && idempotencySecretCategories.length > 0) {
+    idempotencyMetadata.redactedSecretCategories =
+      idempotencySecretCategories.sort();
+  }
 
   return normalizePublicObject(metadata, fieldName);
 }
@@ -611,14 +723,18 @@ function eventMetadataFromBody(
     tracker,
     idempotencyMetadata,
   );
-  return normalizePublicObject(
-    {
-      ...metadata,
-      ...entries,
-      ...redactionMetadata(tracker),
-    },
-    "metadata",
-  );
+  const report = immutableRedactionReport(tracker);
+  return {
+    metadata: normalizePublicObject(
+      {
+        ...metadata,
+        ...entries,
+        ...redactionMetadata(report),
+      },
+      "metadata",
+    ),
+    redactionReport: report,
+  };
 }
 
 function evidenceSubjectFromItem(item) {
@@ -763,14 +879,18 @@ function evidenceMetadataFromItem(item, idempotencyMetadata = null) {
   if (idempotencyMetadata && Object.keys(customMetadata).length > 0) {
     idempotencyMetadata.metadata = customMetadata;
   }
-  return normalizePublicObject(
-    {
-      ...metadata,
-      ...entries,
-      ...redactionMetadata(tracker),
-    },
-    "metadata",
-  );
+  const report = immutableRedactionReport(tracker);
+  return {
+    metadata: normalizePublicObject(
+      {
+        ...metadata,
+        ...entries,
+        ...redactionMetadata(report),
+      },
+      "metadata",
+    ),
+    redactionReport: report,
+  };
 }
 
 function evidenceItemsFromBody(body) {
@@ -837,7 +957,10 @@ function evidenceItemsFromBody(body) {
     const evidenceType = normalizeEvidenceEventType(item.eventType);
     const subject = evidenceSubjectFromItem(item);
     const idempotencyMetadata = {};
-    const metadata = evidenceMetadataFromItem(item, idempotencyMetadata);
+    const normalizedMetadata = evidenceMetadataFromItem(
+      item,
+      idempotencyMetadata,
+    );
     const observedAt = normalizeRfc3339Timestamp(
       item.observedAt === undefined || item.observedAt === null
         ? body.occurredAt
@@ -848,7 +971,8 @@ function evidenceItemsFromBody(body) {
       evidenceType,
       subjectType: subject.subjectType,
       subjectId: subject.subjectId,
-      metadata,
+      metadata: normalizedMetadata.metadata,
+      redactionReport: normalizedMetadata.redactionReport,
       observedAt,
       idempotency: {
         schemaVersion: item.schemaVersion || 1,
@@ -907,27 +1031,21 @@ function executorEventIdempotencyPayload(event) {
 }
 
 function executorEventRedactionSummary(event) {
-  let redactionCount = 0;
-  const redactedFields = new Set();
-  for (const metadata of [
-    event.metadata,
-    ...event.evidence.map((item) => item.metadata),
-  ]) {
-    if (!metadata?.redactionApplied) continue;
-    redactionCount += Number.isInteger(metadata.redactionCount)
-      ? metadata.redactionCount
-      : 1;
-    for (const field of metadata.redactedFields || []) {
-      if (typeof field === "string" && field.length <= 64) {
-        redactedFields.add(field);
-      }
-    }
+  const reports = [
+    event.redactionReport,
+    ...event.evidence.map((item) => item.redactionReport),
+  ];
+  const tracker = createRedactionTracker();
+  for (const report of reports) {
+    const normalized = immutableRedactionReport(report);
+    tracker.count += normalized.count;
+    for (const category of normalized.categories) tracker.categories.add(category);
   }
-
+  const normalized = immutableRedactionReport(tracker);
   return {
-    redactionApplied: redactionCount > 0,
-    redactionCount,
-    redactedFields: Array.from(redactedFields).sort(),
+    redactionApplied: normalized.count > 0,
+    redactionCount: normalized.count,
+    redactedFields: normalized.categories,
   };
 }
 
@@ -1010,7 +1128,7 @@ function normalizeExecutorEventBody(body, apiToken) {
   const tracker = createRedactionTracker();
   const message = optionalPublicText(body.message, "message", 1024, tracker);
   const clientMetadata = {};
-  const metadata = eventMetadataFromBody(
+  const normalizedMetadata = eventMetadataFromBody(
     body,
     occurredAt,
     tracker,
@@ -1024,14 +1142,15 @@ function normalizeExecutorEventBody(body, apiToken) {
     eventType,
     jobId,
     workspaceId,
-    certificateId: metadata.certificateId || null,
-    executorId: metadata.executorId || null,
+    certificateId: normalizedMetadata.metadata.certificateId || null,
+    executorId: normalizedMetadata.metadata.executorId || null,
     status,
     message,
     occurredAt,
     logStatus: LOG_STATUSES_SET.has(status) ? status : null,
     jobStatus: JOB_STATUS_BY_EVENT_TYPE[eventType] || null,
-    metadata,
+    metadata: normalizedMetadata.metadata,
+    redactionReport: normalizedMetadata.redactionReport,
     clientMetadata,
     evidence,
   };
@@ -1313,10 +1432,14 @@ function createCertOpsExecutorRouter(options = {}) {
   const rateLimitMiddleware =
     options.rateLimitMiddleware ||
     createCertOpsMachineTokenRateLimit(options.rateLimitOptions || {});
+  const preAuthRateLimitFallback = (req, res, next) => {
+    if (hasCertOpsExecutorPreAuthLimit(req)) return next();
+    return preAuthRateLimitMiddleware(req, res, next);
+  };
 
   certOpsExecutorRouter.post(
     "/api/v1/certops/executor/events",
-    preAuthRateLimitMiddleware,
+    preAuthRateLimitFallback,
     certOpsEnabledMiddleware,
     authMiddleware,
     rateLimitMiddleware,
@@ -1343,7 +1466,13 @@ module.exports._test = {
   EVIDENCE_SOURCES,
   EVIDENCE_STATUSES,
   EVIDENCE_EVENT_TYPES,
+  EVENT_METADATA_RESERVED_NAMES,
+  EVIDENCE_METADATA_RESERVED_NAMES,
+  SECURITY_METADATA_RESERVED_NAMES,
+  RESERVED_METADATA_NAMES,
+  REDACTION_CATEGORIES,
   assertEventStatusMatch,
+  createRedactionTracker,
   evidenceMetadataFromItem,
   executorEventIdempotencyPayload,
   executorEventRedactionSummary,
@@ -1351,6 +1480,8 @@ module.exports._test = {
   handleExecutorEventError,
   metadataEntriesToObject,
   mergeRedactionReport,
+  immutableRedactionReport,
+  isReservedMetadataName,
   normalizeExecutorEventBody,
   normalizeRfc3339Timestamp,
   normalizeEvidenceEventType,

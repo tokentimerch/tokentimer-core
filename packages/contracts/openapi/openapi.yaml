@@ -3710,6 +3710,38 @@ paths:
               example:
                 error: Executor event idempotency key conflicts with a different payload
                 code: CERTOPS_EXECUTOR_EVENT_CONFLICT
+        "413":
+          description: Executor event body exceeds the dedicated 4 MiB boundary. This is returned before authentication and business processing; the payload is not echoed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Executor event payload is too large
+                code: CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE
+        "429":
+          description: The exact-path executor pre-auth or authenticated machine-token limiter rejected the request. The response never includes bearer-token material or request content.
+          headers:
+            Retry-After:
+              description: Seconds until the caller may retry.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - type: object
+                    required: [retryAfterSeconds]
+                    properties:
+                      retryAfterSeconds:
+                        type: integer
+                        minimum: 1
+              example:
+                error: CertOps machine-token rate limit exceeded
+                code: CERTOPS_MACHINE_RATE_LIMITED
+                retryAfterSeconds: 60
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/register:
@@ -4241,12 +4273,15 @@ components:
     CertOpsMetadataEntry:
       type: object
       additionalProperties: false
+      description: Public metadata only. Names colliding after case/separator normalization with server-owned executor, evidence, lifecycle, or redaction fields are rejected.
+      x-certops-reservedMetadataNames: [executorEventId, executorEventType, executorStatus, occurredAt, certificateId, executorId, evidenceId, certificateInstanceId, targetId, source, status, fingerprintSha256, summary, artifactRefs, redactionApplied, redactionCount, redactedFields, jobStatusTransitionApplied, jobStatusTransitionIgnored, jobStatusTransitionIgnoredReason]
       required: [name, value]
       properties:
         name:
           type: string
           maxLength: 64
-          pattern: "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+          description: Public metadata name. Private-key-bearing names are prohibited. Generic-secret-bearing names are accepted only for server-side redaction and persist under server-owned redacted metadata keys. Names colliding with x-certops-reservedMetadataNames are rejected.
+          pattern: "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]))[A-Za-z0-9_.:-]{1,64}$"
         value:
           oneOf:
             - type: string
@@ -4707,7 +4742,7 @@ components:
           type: string
           format: date-time
           pattern: "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$"
-          description: RFC3339 instant from 2000 through 2100 after time-zone normalization. Any positive fractional-second precision is accepted and normalized to milliseconds by runtime.
+          description: The supplied RFC3339 timestamp must use a year from 2000 through 2100. Runtime normalizes accepted values to UTC milliseconds; offsets may move the normalized instant outside that lexical-year range.
         fingerprintSha256:
           type: string
           pattern: "^[a-f0-9]{64}$"
@@ -4801,7 +4836,7 @@ components:
           type: string
           format: date-time
           pattern: "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$"
-          description: RFC3339 instant from 2000 through 2100 after time-zone normalization. Any positive fractional-second precision is accepted and normalized to milliseconds by runtime.
+          description: The supplied RFC3339 timestamp must use a year from 2000 through 2100. Runtime normalizes accepted values to UTC milliseconds; offsets may move the normalized instant outside that lexical-year range.
           nullable: true
         fingerprintSha256:
           type: string
@@ -4903,7 +4938,7 @@ components:
           type: string
           format: date-time
           pattern: "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$"
-          description: RFC3339 instant from 2000 through 2100 after time-zone normalization. Any positive fractional-second precision is accepted and normalized to milliseconds by runtime.
+          description: The supplied RFC3339 timestamp must use a year from 2000 through 2100. Runtime normalizes accepted values to UTC milliseconds; offsets may move the normalized instant outside that lexical-year range.
         message:
           type: string
           maxLength: 1024

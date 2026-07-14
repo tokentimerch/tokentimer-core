@@ -24,6 +24,11 @@ const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
 const PRIVATE_KEY_PEM =
   "-----BEGIN RSA PRIVATE KEY-----\nRkFLRS1OT1QtQS1SRUFMLUtFWQ==\n-----END RSA PRIVATE KEY-----";
+const SUSPICIOUS_ENCRYPTED_PKCS8_DER = Buffer.concat([
+  Buffer.from([0x30, 0x81, 0x8b, 0x30, 0x81, 0x85, 0x06, 0x81, 0x82, 0x2a]),
+  Buffer.alloc(128, 0x81),
+  Buffer.from([0x01, 0x04, 0x01, 0x01]),
+]);
 
 function json(value) {
   return typeof value === "string" ? JSON.parse(value) : value;
@@ -705,6 +710,17 @@ describe("CertOps jobs service", () => {
           client,
           workspaceId: WORKSPACE_A,
           operation: "renew",
+          payload: { attachment: SUSPICIOUS_ENCRYPTED_PKCS8_DER.toString("base64") },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
           payload: { certificateId: "cert-1" },
           resultMetadata: { apiKey: "not-allowed" },
         }),
@@ -717,6 +733,20 @@ describe("CertOps jobs service", () => {
       operation: "renew",
       payload: { certificateId: "cert-1" },
     });
+
+    await assert.rejects(
+      () =>
+        updateCertificateJobStatus({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          status: "running",
+          resultMetadata: {
+            attachment: SUSPICIOUS_ENCRYPTED_PKCS8_DER.toString("hex"),
+          },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
 
     await assert.rejects(
       () =>
@@ -842,6 +872,19 @@ describe("CertOps jobs service", () => {
 
     for (const metadata of [
       { apiKey: "not-allowed" },
+      { token: "not-allowed" },
+      { apiToken: "not-allowed" },
+      { auth_token: "not-allowed" },
+      { "bearer-token": "not-allowed" },
+      { sessionToken: "not-allowed" },
+      { secretToken: "not-allowed" },
+      { refreshToken: "not-allowed" },
+      { idToken: "not-allowed" },
+      { xAuthToken: "not-allowed" },
+      { xApiKey: "not-allowed" },
+      { cookieHeader: "not-allowed" },
+      { setCookie: "not-allowed" },
+      { awsSecretAccessKey: "not-allowed" },
       { passphrase: "not-allowed" },
       { authorization: "Bearer not-allowed" },
       { note: "accessToken=not-allowed" },
