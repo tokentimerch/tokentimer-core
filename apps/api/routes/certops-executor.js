@@ -11,6 +11,7 @@ const {
 } = require("../middleware/machine-token-rate-limit");
 const {
   hasCertOpsExecutorPreAuthLimit,
+  certOpsMachineWriteRouteFamilyFromRequest,
 } = require("../middleware/certops-executor-body-parser");
 const {
   requireCertOpsEnabled,
@@ -40,6 +41,7 @@ const {
   CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
   CERTOPS_EVIDENCE_TYPE_INVALID,
   createCertificateEvidence,
+  normalizeRedactedOutput,
 } = require("../services/certops/evidence");
 const {
   CERTOPS_EXECUTOR_EVENT_CONFLICT,
@@ -259,6 +261,7 @@ async function writeExecutorRejectionAudit({
   redactionApplied = null,
   redactionCount = null,
   rejectionCode = null,
+  routeFamily = null,
 }) {
   if (!workspaceId) return;
   await writeAudit({
@@ -283,6 +286,7 @@ async function writeExecutorRejectionAudit({
           : undefined,
       rejectionCode: safeAuditString(rejectionCode),
       createdByApiTokenId: safeAuditUuid(apiTokenId),
+      routeFamily: safeAuditString(routeFamily),
     },
   });
 }
@@ -294,6 +298,7 @@ function safeAuditHintsFromRequest(req) {
     jobId: safeAuditUuid(req.params?.jobId) || safeAuditUuid(req.body?.jobId),
     eventId: safeAuditString(req.body?.eventId),
     eventType: safeAuditString(req.body?.eventType),
+    routeFamily: certOpsMachineWriteRouteFamilyFromRequest(req),
   };
 }
 
@@ -1121,6 +1126,7 @@ function evidenceItemsFromBody(body) {
         : item.observedAt,
       "observedAt",
     );
+    const normalizedOutput = normalizeRedactedOutput(item.output);
     return {
       evidenceType,
       subjectType: subject.subjectType,
@@ -1147,6 +1153,14 @@ function evidenceItemsFromBody(body) {
         summary: idempotencyMetadata.summary || null,
         metadata: idempotencyMetadata.metadata || {},
         artifactRefs: idempotencyMetadata.artifactRefs || [],
+        output:
+          normalizedOutput.redactedOutput === null
+            ? null
+            : {
+                redactedOutput: normalizedOutput.redactedOutput,
+                outputSha256: normalizedOutput.outputSha256,
+                outputSizeBytes: normalizedOutput.outputSizeBytes,
+              },
       },
     };
   });
@@ -1181,6 +1195,7 @@ function executorEventIdempotencyPayload(event) {
       summary: item.idempotency.summary,
       metadata: item.idempotency.metadata,
       artifactRefs: item.idempotency.artifactRefs,
+      output: item.idempotency.output,
     })),
   };
 }
@@ -1229,7 +1244,7 @@ async function recordExecutorKeyMaterialRejection(req) {
     metadata: {
       code: PRIVATE_KEY_MATERIAL_REJECTED,
       method: req.method || null,
-      path: "/api/v1/certops/executor/events",
+      routeFamily: certOpsMachineWriteRouteFamilyFromRequest(req),
       apiTokenId: req.apiToken?.id || null,
     },
   });
@@ -1458,8 +1473,13 @@ async function executorEventsHandler(req, res, options = {}) {
   try {
     const workspaceId = req.apiToken.workspaceId;
     const eventBody = bodyWithPathJobContext(req, options.mode);
-    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    // The scope middleware lets a private-key detection reach this handler so
+    // the canonical 422 response is coupled to its synchronous security audit.
+    // Keep that lightweight scan ahead of scope enforcement without invoking
+    // full event normalization for an otherwise unauthorized evidence payload.
+    rejectPrivateKeyMaterial(eventBody);
     requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
+    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
     const result = await ingestExecutorEvent({
       workspaceId,
       jobId: event.jobId,
@@ -1584,7 +1604,7 @@ async function executorEventsHandler(req, res, options = {}) {
         logger.warn("Failed to record CertOps key-material rejection audit", {
           code: auditError?.code || null,
           errorName: auditError?.name || null,
-          path: "/api/v1/certops/executor/events",
+          routeFamily: certOpsMachineWriteRouteFamilyFromRequest(req),
           method: req.method || null,
         });
         return res.status(503).json({
@@ -1694,6 +1714,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     perJobEventAuthMiddleware,
     rateLimitMiddleware,
+    requireExecutorEvidenceScope,
     (req, res) => executorEventsHandler(req, res, { mode: "event" }),
   );
 

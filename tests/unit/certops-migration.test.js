@@ -141,9 +141,6 @@ const certOpsJobsEvidenceMigration = migrations.find(
 const certOpsExecutorEventMigration = migrations.find(
   (migration) => migration.name === "certops_executor_event_idempotency",
 );
-const certOpsM2PlanAlignmentMigration = migrations.find(
-  (migration) => migration.name === "certops_m2_plan_alignment",
-);
 
 function getTableBlock(tableName, migration = certOpsMigration) {
   const marker = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
@@ -198,8 +195,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-6).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15],
+      migrations.slice(-5).map((migration) => migration.version),
+      [10, 11, 12, 13, 14],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -239,11 +236,11 @@ describe("CertOps inventory migration", () => {
     assert.match(certOpsApiTokensMigration.sql, /scopes TEXT\[\] NOT NULL/);
     assert.match(
       certOpsApiTokensMigration.sql,
-      /api_tokens_token_prefix_check/,
+      /token_prefix ~ '\^ttx_\[a-f0-9\]\{16\}\$'/,
     );
-    assert.match(
+    assert.doesNotMatch(
       certOpsApiTokensMigration.sql,
-      /token_prefix ~ '\^ttx_\[A-Za-z0-9\]\+\$'/,
+      /certops_m2_plan_alignment/,
     );
     assert.doesNotMatch(
       certOpsApiTokensMigration.sql,
@@ -328,76 +325,28 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("defines the CertOps M2 plan alignment migration after executor idempotency", () => {
-    assert.ok(
-      certOpsM2PlanAlignmentMigration,
-      "expected certops_m2_plan_alignment migration",
-    );
-    assert.equal(certOpsM2PlanAlignmentMigration.version, 15);
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /WHEN 'certops:executor:events' THEN 'certops:events:write'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /WHEN 'certops:jobs:write' THEN 'certops:read'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /api_tokens_scopes_plan_check/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /scopes <@ ARRAY\[\s+'certops:read',\s+'certops:events:write',\s+'certops:jobs:read',\s+'certops:evidence:write'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /WHEN 'queued' THEN 'pending'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /WHEN 'canceled' THEN 'cancelled'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /WHEN 'job.canceled' THEN 'job.cancelled'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /certificate_jobs_status_plan_check/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /ALTER COLUMN status SET DEFAULT 'pending'/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /ADD COLUMN IF NOT EXISTS redacted_output TEXT NULL/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /ADD COLUMN IF NOT EXISTS output_truncated BOOLEAN NOT NULL DEFAULT FALSE/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /ADD COLUMN IF NOT EXISTS output_sha256 TEXT NULL/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /ADD COLUMN IF NOT EXISTS output_size_bytes INTEGER NULL/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /certificate_evidence_redacted_output_check/,
-    );
-    assert.match(
-      certOpsM2PlanAlignmentMigration.sql,
-      /output_size_bytes IS NULL OR output_size_bytes BETWEEN 0 AND 65536/,
+  it("creates the final canonical M2 schema without an unshipped compatibility migration", () => {
+    assert.equal(
+      migrations.some((migration) => migration.version === 15),
+      false,
     );
     assert.doesNotMatch(
-      certOpsM2PlanAlignmentMigration.sql,
-      /request_body|authorization|plaintext|token_secret|raw_secret|private_key|key_material|pfx_blob|jks_blob/i,
+      certOpsApiTokensMigration.sql,
+      /certops:executor:events|certops:jobs:write|certops:jobs:claim/,
     );
+    assert.doesNotMatch(
+      certOpsJobsEvidenceMigration.sql,
+      /'queued'|'canceled'|ADD COLUMN IF NOT EXISTS|UPDATE certificate_jobs|UPDATE api_tokens/,
+    );
+    for (const field of [
+      "redacted_output",
+      "output_truncated",
+      "output_sha256",
+      "output_size_bytes",
+      "certificate_evidence_output_consistency_check",
+    ]) {
+      assert.match(certOpsJobsEvidenceMigration.sql, new RegExp(field));
+    }
   });
 
   it("defines the CertOps executor event idempotency migration after jobs and evidence", () => {

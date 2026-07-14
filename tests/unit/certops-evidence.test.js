@@ -14,6 +14,7 @@ const {
   createCertificateEvidence,
   getCertificateEvidenceById,
   listCertificateEvidence,
+  normalizeRedactedOutput,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/evidence.js"),
 );
@@ -398,10 +399,36 @@ describe("CertOps evidence service", () => {
       "deployment ok password=[REDACTED]",
     );
     assert.equal(evidence.outputTruncated, false);
-    assert.equal(evidence.outputSizeBytes, Buffer.byteLength("deployment ok password=swordfish"));
+    assert.equal(
+      evidence.outputSizeBytes,
+      Buffer.byteLength("deployment ok password=[REDACTED]"),
+    );
     assert.match(evidence.outputSha256, /^[a-f0-9]{64}$/);
     assert.equal(evidence.outputRedactionApplied, true);
     assert.equal(JSON.stringify(evidence).includes("swordfish"), false);
+  });
+
+  it("hashes and sizes the exact Unicode redacted output that it stores", () => {
+    const normalized = normalizeRedactedOutput(
+      "deployment \u2713 password=swordfish",
+    );
+
+    assert.equal(normalized.redactedOutput, "deployment \u2713 password=[REDACTED]");
+    assert.equal(
+      normalized.outputSizeBytes,
+      Buffer.byteLength(normalized.redactedOutput, "utf8"),
+    );
+    assert.equal(
+      normalized.outputSha256,
+      require("crypto")
+        .createHash("sha256")
+        .update(normalized.redactedOutput, "utf8")
+        .digest("hex"),
+    );
+    assert.notEqual(
+      normalized.outputSizeBytes,
+      Buffer.byteLength("deployment \u2713 password=swordfish", "utf8"),
+    );
   });
 
   it("rejects private-key and oversized evidence output before persistence", async () => {

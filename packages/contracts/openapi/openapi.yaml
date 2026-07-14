@@ -3698,7 +3698,7 @@ paths:
                 error: Executor event idempotency key conflicts with a different payload
                 code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "413":
-          description: Evidence output exceeded the M2 size limit
+          description: The machine request body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded the M2 stored-output limit (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
           content:
             application/json:
               schema:
@@ -3770,7 +3770,7 @@ paths:
                 error: Executor event idempotency key conflicts with a different payload
                 code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "413":
-          description: Evidence output exceeded the M2 size limit
+          description: The machine request body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded the M2 stored-output limit (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
           content:
             application/json:
               schema:
@@ -4013,7 +4013,7 @@ components:
     certOpsTokenAuth:
       type: http
       scheme: bearer
-      description: Scoped CertOps API token (bearer) used by the executor. Never a cookie; CSRF-exempt.
+      description: Scoped CertOps API token (bearer) used by M2 machine routes. Allowed M2 scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope. Bearer-only and non-cookie; CSRF-exempt only for the exact planned POST machine routes. Empty required-scope configuration is invalid.
     agentBootstrapTokenAuth:
       type: http
       scheme: bearer
@@ -5144,11 +5144,6 @@ components:
           maxLength: 128
           pattern: "^[A-Za-z0-9_.:-]+$"
           nullable: true
-        attemptId:
-          type: string
-          maxLength: 128
-          pattern: "^[A-Za-z0-9_.:-]+$"
-          nullable: true
         status:
           type: string
           enum: [accepted, claimed, running, succeeded, failed, rejected, blocked, cancelled]
@@ -5207,7 +5202,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [accepted, redacted, failed, rejected]
+          enum: [accepted]
           nullable: true
         eventType:
           type: string

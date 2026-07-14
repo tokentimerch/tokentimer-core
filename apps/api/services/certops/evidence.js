@@ -130,6 +130,13 @@ function normalizeRedactedOutput(value) {
   if (typeof value !== "string") {
     throw serviceError("evidence output is invalid", CERTOPS_EVIDENCE_INVALID);
   }
+  const rawOutputSizeBytes = Buffer.byteLength(value, "utf8");
+  if (rawOutputSizeBytes > MAX_REDACTED_OUTPUT_BYTES) {
+    throw serviceError(
+      "CertOps evidence output is too large",
+      CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
+    );
+  }
   if (containsPrivateKeyMaterial(value)) {
     throw serviceError(
       "Private key material is not accepted in CertOps evidence output",
@@ -137,17 +144,16 @@ function normalizeRedactedOutput(value) {
     );
   }
 
-  const outputSizeBytes = Buffer.byteLength(value, "utf8");
+  const report = redactGenericSecretsWithReport(value);
+  if (typeof report.value !== "string") {
+    throw serviceError("evidence output is invalid", CERTOPS_EVIDENCE_INVALID);
+  }
+  const outputSizeBytes = Buffer.byteLength(report.value, "utf8");
   if (outputSizeBytes > MAX_REDACTED_OUTPUT_BYTES) {
     throw serviceError(
       "CertOps evidence output is too large",
       CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE,
     );
-  }
-
-  const report = redactGenericSecretsWithReport(value);
-  if (typeof report.value !== "string") {
-    throw serviceError("evidence output is invalid", CERTOPS_EVIDENCE_INVALID);
   }
 
   return {
@@ -354,6 +360,7 @@ module.exports = {
   evidenceFromRow,
   getCertificateEvidenceById,
   listCertificateEvidence,
+  normalizeRedactedOutput,
   _test: {
     evidenceFromRow,
     normalizeRedactedOutput,

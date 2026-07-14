@@ -153,9 +153,9 @@ async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerpri
       consuming += 1;
       continue;
     }
-    if (isRetiredCertificateStatus(status)) {
-      consuming += 1;
-    }
+    // Existing fingerprints are idempotent regardless of lifecycle status.
+    // A retired certificate stays retired on re-import and cannot consume a
+    // second managed-certificate quota slot.
   }
   return consuming;
 }

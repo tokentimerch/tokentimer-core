@@ -459,6 +459,7 @@ describe("CertOps API token auth middleware", () => {
     for (const sessionIdentity of [
       { user: { id: 1 } },
       { session: { userId: 1 } },
+      { session: { passport: { user: 1 } } },
       { isAdmin: true },
       { authenticated: true },
       { isAuthenticated: () => true },
@@ -485,6 +486,26 @@ describe("CertOps API token auth middleware", () => {
       assert.equal(validationCalled, false);
       assert.equal(req.apiToken, undefined);
     }
+  });
+
+  it("allows a bearer token when Express provides an otherwise empty session container", async () => {
+    let validationCalled = false;
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      validateApiToken: async () => {
+        validationCalled = true;
+        return successfulValidation();
+      },
+    });
+    const req = Object.assign(
+      createRequest({ authorization: `Bearer ${RAW_TOKEN}` }),
+      { session: {} },
+    );
+    const result = await runMiddleware(middleware, req);
+
+    assert.equal(result.nextCalled, true);
+    assert.equal(result.res.statusCode, null);
+    assert.equal(validationCalled, true);
   });
 
   it("does not expose custody-looking fields in req.apiToken or responses", async () => {
@@ -534,9 +555,13 @@ describe("CertOps machine-token CSRF exemption", () => {
   it("allows only exact planned machine-token paths when explicitly requested", () => {
     for (const requestPath of [
       "/v1/certops/executor/events",
+      "/v1/certops/executor/events/",
       "/api/v1/certops/executor/events",
+      "/API/v1/CertOps/Executor/Events/",
       "/v1/certops/jobs/1/events",
+      "/v1/certops/jobs/1/events/",
       "/api/v1/certops/jobs/1/evidence",
+      "/API/v1/CertOps/Jobs/1/Evidence/",
     ]) {
       assert.equal(isCertOpsMachineTokenCsrfExemptPath(requestPath), true);
     }
@@ -548,11 +573,29 @@ describe("CertOps machine-token CSRF exemption", () => {
       "/v1/certops/executor/jobs/1/events",
       "/v1/certops/jobs/1/events/extra",
       "/v1/certops/jobs//events",
+      "/v1/certops/jobs/1/events//",
       "/v1/workspaces/111/certops/certificates",
       "/v1/certops/agent/register",
     ]) {
       assert.equal(isCertOpsMachineTokenCsrfExemptPath(requestPath), false);
     }
+  });
+
+  it("keeps the explicit CSRF exemption POST-only", () => {
+    assert.equal(
+      isCertOpsMachineTokenCsrfExemptPath(
+        "/v1/certops/jobs/1/events",
+        { method: "GET" },
+      ),
+      false,
+    );
+    assert.equal(
+      isCertOpsMachineTokenCsrfExemptPath(
+        "/v1/certops/jobs/1/events",
+        { method: "POST" },
+      ),
+      true,
+    );
   });
 
   it("defaults fail-closed and permits exact paths only with an explicit allowlist", async () => {

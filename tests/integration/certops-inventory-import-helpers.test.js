@@ -134,6 +134,7 @@ describe("CertOps inventory import transaction helpers", function () {
   let leafFingerprint;
   let caFingerprint;
   let retiredFingerprint;
+  let revokedFingerprint;
 
   before(async () => {
     await runMigrations();
@@ -146,9 +147,11 @@ describe("CertOps inventory import transaction helpers", function () {
     );
     [leafFingerprint, caFingerprint] = fingerprintsFromCertificates(certificates);
     retiredFingerprint = `${"b".repeat(64)}`;
+    revokedFingerprint = `${"c".repeat(64)}`;
 
     await seedManagedCertificate(workspaceId, leafFingerprint, "active");
     await seedManagedCertificate(workspaceId, retiredFingerprint, "decommissioned");
+    await seedManagedCertificate(workspaceId, revokedFingerprint, "revoked");
   });
 
   after(async () => {
@@ -231,7 +234,7 @@ describe("CertOps inventory import transaction helpers", function () {
     }
   });
 
-  it("countQuotaConsumingNewFingerprints counts retired fingerprint re-imports", async () => {
+  it("countQuotaConsumingNewFingerprints treats decommissioned fingerprints as idempotent", async () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -240,7 +243,23 @@ describe("CertOps inventory import transaction helpers", function () {
         workspaceId,
         [retiredFingerprint],
       );
-      expect(consuming).to.equal(1);
+      expect(consuming).to.equal(0);
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+  });
+
+  it("countQuotaConsumingNewFingerprints treats revoked fingerprints as idempotent", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const consuming = await countQuotaConsumingNewFingerprints(
+        client,
+        workspaceId,
+        [revokedFingerprint],
+      );
+      expect(consuming).to.equal(0);
       await client.query("ROLLBACK");
     } finally {
       client.release();
@@ -270,9 +289,9 @@ describe("CertOps inventory import transaction helpers", function () {
       const consuming = await countQuotaConsumingNewFingerprints(
         client,
         workspaceId,
-        [leafFingerprint, retiredFingerprint, caFingerprint],
+        [leafFingerprint, retiredFingerprint, revokedFingerprint, caFingerprint],
       );
-      expect(consuming).to.equal(2);
+      expect(consuming).to.equal(1);
       await client.query("ROLLBACK");
     } finally {
       client.release();
@@ -368,6 +387,39 @@ describe("CertOps inventory import transaction helpers", function () {
     );
     expect(activeCount).to.equal(1);
 
+    await cleanupWorkspace(isolated.ownerId, isolated.workspaceId);
+  });
+
+  it("keeps a decommissioned certificate retired on re-import without consuming quota", async () => {
+    const isolated = await createWorkspace("CertOps import retired re-import");
+    await seedManagedCertificate(
+      isolated.workspaceId,
+      leafFingerprint,
+      "decommissioned",
+    );
+
+    const items = await importPublicCertificates({
+      workspaceId: isolated.workspaceId,
+      createdBy: isolated.ownerId,
+      certificatePem: PUBLIC_LEAF_CERT,
+      validateImport: async (client, certificates) => {
+        expect(
+          await countQuotaConsumingNewFingerprints(
+            client,
+            isolated.workspaceId,
+            fingerprintsFromCertificates(certificates),
+          ),
+        ).to.equal(0);
+      },
+    });
+
+    expect(items).to.have.length(1);
+    const persisted = await TestUtils.execQuery(
+      `SELECT status FROM managed_certificates
+       WHERE workspace_id = $1 AND fingerprint_sha256 = $2`,
+      [isolated.workspaceId, leafFingerprint],
+    );
+    expect(persisted.rows[0].status).to.equal("decommissioned");
     await cleanupWorkspace(isolated.ownerId, isolated.workspaceId);
   });
 });

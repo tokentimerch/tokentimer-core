@@ -10,6 +10,7 @@ const {
   CERTOPS_API_TOKEN_MALFORMED,
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
+  CERTOPS_API_TOKEN_SCOPE_REQUIRED,
   PRIVATE_KEY_MATERIAL_REJECTED,
   TOKEN_PREFIX,
   createApiToken,
@@ -456,7 +457,7 @@ describe("CertOps API token service", () => {
         client,
         workspaceId: WORKSPACE_A,
         rawToken,
-        requiredScopes: [],
+        requiredScopes: ["certops:events:write"],
       });
       assert.equal(result.valid, false);
       assert.equal(result.code, CERTOPS_API_TOKEN_MALFORMED);
@@ -486,7 +487,7 @@ describe("CertOps API token service", () => {
         client,
         workspaceId: WORKSPACE_A,
         rawToken,
-        requiredScopes: [],
+        requiredScopes: ["certops:events:write"],
       });
       assert.equal(result.valid, false);
       assert.equal(result.code, CERTOPS_API_TOKEN_MALFORMED);
@@ -500,6 +501,23 @@ describe("CertOps API token service", () => {
       requiredScopes: ["certops:events:write"],
     });
     assert.equal(exactToken.valid, true);
+  });
+
+  it("fails closed when direct validation is configured without a required scope", async () => {
+    const client = createMemoryClient();
+    for (const requiredScopes of [undefined, null, [], "", " ", [" "]]) {
+      await assert.rejects(
+        () =>
+          validateApiToken({
+            client,
+            workspaceId: WORKSPACE_A,
+            rawToken: "ttx_0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            requiredScopes,
+          }),
+        (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+      );
+    }
+    assert.equal(client.queries.length, 0);
   });
 
   it("atomically rejects a token revoked after lookup and before use", async () => {

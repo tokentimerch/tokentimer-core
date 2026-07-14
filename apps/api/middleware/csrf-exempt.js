@@ -1,22 +1,14 @@
 const { isInternalWorkerRequest } = require("./internal-worker-auth");
+const {
+  certOpsMachineWriteRouteFamily,
+} = require("./certops-executor-body-parser");
 
-// Add a route here only when its machine-token middleware is explicitly mounted.
-const CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS = new Set([
-  "/v1/certops/executor/events",
-  "/api/v1/certops/executor/events",
-]);
-
-const CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATTERNS = [
-  /^\/v1\/certops\/jobs\/[^/]+\/(?:events|evidence)$/,
-  /^\/api\/v1\/certops\/jobs\/[^/]+\/(?:events|evidence)$/,
-];
-
-function isCertOpsMachineTokenCsrfExemptPath(requestPath) {
-  return (
-    CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS.has(requestPath) ||
-    CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATTERNS.some((pattern) =>
-      pattern.test(requestPath),
-    )
+// Keep the CSRF decision aligned with the pre-parser boundary. The mounted
+// /api middleware sees /v1/... while direct test/router use sees /api/v1/....
+function isCertOpsMachineTokenCsrfExemptPath(requestPath, req = null) {
+  if (req && String(req.method || "").toUpperCase() !== "POST") return false;
+  return Boolean(
+    certOpsMachineWriteRouteFamily(requestPath, { allowMountedPath: true }),
   );
 }
 
@@ -43,8 +35,6 @@ function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
 }
 
 module.exports = {
-  CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATHS,
-  CERTOPS_MACHINE_TOKEN_CSRF_EXEMPT_PATTERNS,
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
 };

@@ -914,9 +914,9 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("mounts the executor-specific body boundary before the general JSON parser", () => {
+  it("mounts the exact machine-write body boundary before the general JSON parser", () => {
     const boundaryIndex = apiIndexSource.indexOf(
-      "createCertOpsExecutorEventPreParserBoundary()",
+      "createCertOpsMachineWritePreParserBoundary()",
     );
     const generalParserIndex = apiIndexSource.indexOf(
       'express.json({ limit: "10mb" })',
@@ -925,7 +925,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.notEqual(generalParserIndex, -1);
     assert.ok(
       boundaryIndex < generalParserIndex,
-      "executor body boundary must run before the global 10 MiB parser",
+      "machine-write body boundary must run before the global 10 MiB parser",
     );
   });
 
@@ -964,6 +964,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(routeBlock, /"409":/);
     assert.match(routeBlock, /"413":/);
     assert.match(routeBlock, /CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE/);
+    assert.match(routeBlock, /CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE/);
     assert.match(routeBlock, /"429":/);
     assert.match(routeBlock, /CERTOPS_MACHINE_RATE_LIMITED/);
     assert.match(routeBlock, /Retry-After/);
@@ -1107,11 +1108,31 @@ describe("CertOps M2 contract skeletons", () => {
         perJobBlock,
         new RegExp(`\\$ref: "#/components/schemas/${schemaName}"`),
       );
+      assert.match(perJobBlock, /CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE/);
+      assert.match(perJobBlock, /CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE/);
     }
     assert.match(
       routeCompatContract.namespacePolicy.executor.notes.join(" "),
-      /reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior/i,
+      /same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior/i,
     );
+  });
+
+  it("keeps per-job request schemas aligned with the M2 runtime contract", () => {
+    const eventSchema = openApiComponentBlock("CertOpsPerJobExecutorEventRequest");
+    const evidenceSchema = openApiComponentBlock("CertOpsPerJobEvidenceRequest");
+    const authScheme = openApiSource.slice(
+      openApiSource.indexOf("    certOpsTokenAuth:"),
+      openApiSource.indexOf("    agentBootstrapTokenAuth:"),
+    );
+    const executorNotes = routeCompatContract.namespacePolicy.executor.notes.join(" ");
+
+    assert.doesNotMatch(eventSchema, /\n        attemptId:/);
+    assert.match(evidenceSchema, /status:\r?\n          type: string\r?\n          enum: \[accepted\]/);
+    assert.doesNotMatch(evidenceSchema, /redacted, failed, rejected/);
+    assert.match(authScheme, /certops:read implies certops:jobs:read only, never a write scope/i);
+    assert.match(authScheme, /Empty required-scope configuration is invalid/i);
+    assert.match(executorNotes, /bearer auth only; machine routes never use cookies/i);
+    assert.match(executorNotes, /empty required-scope configuration is invalid/i);
   });
 
   it("uses only plan-defined M2 scopes outside migration compatibility code", () => {
@@ -1305,12 +1326,12 @@ describe("CertOps M2 contract skeletons", () => {
     );
     assert.match(createResponse, /minLength: 85/);
     assert.match(createResponse, /maxLength: 85/);
-    assert.match(executorNotes, /aggregate executor ingestion endpoint/i);
-    assert.match(executorNotes, /stable Dev A machine-token aliases/i);
+    assert.match(executorNotes, /aggregate M2 ingestion route/i);
+    assert.match(executorNotes, /stable path-scoped M2 machine routes/i);
     assert.doesNotMatch(executorNotes, /not part of M2/i);
   });
 
-  it("keeps the committed M2-A1 through M2-A9 diff within the stacked scope", () => {
+  it("keeps the committed M2-A1 through M2-A10 diff within the stacked scope", () => {
     const { ref, files } = prChangedFiles();
     const allowedM2Files = new Set([
       "apps/api/migrations/migrate.js",
@@ -1325,12 +1346,14 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/executorEvents.js",
+      "apps/api/services/certops/inventory.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
       "tests/integration/certops-api-token-auth.test.js",
       "tests/integration/certops-api-token-routes.test.js",
       "tests/integration/certops-api-tokens.test.js",
       "tests/integration/certops-executor-events.test.js",
+      "tests/integration/certops-inventory-import-helpers.test.js",
       "tests/integration/certops-job-read-apis.test.js",
       "tests/integration/certops-jobs-evidence.test.js",
       "tests/integration/certops-machine-token-rate-limit.test.js",
@@ -1359,7 +1382,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.deepEqual(
       files.filter((file) => !unexpectedFiles.includes(file)),
       [],
-      `stacked M2-A1 through M2-A9 diff against ${ref} must stay within the allowed scope`,
+      `stacked M2-A1 through M2-A10 diff against ${ref} must stay within the allowed scope`,
     );
     assert.equal(
       certOpsRoutesSource.includes("/api/v1/certops/executor"),
@@ -1370,7 +1393,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.equal(certOpsRoutesSource.includes("api_tokens"), false);
   });
 
-  it("keeps local app changes within the M2-A2 through M2-A9 backend scope", () => {
+  it("keeps local app changes within the M2-A2 through M2-A10 backend scope", () => {
     const allowedStackedM2Files = new Set([
       "apps/api/migrations/migrate.js",
       "apps/api/middleware/api-token-auth.js",
@@ -1384,6 +1407,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/executorEvents.js",
+      "apps/api/services/certops/inventory.js",
       "apps/api/services/certops/jobs.js",
       "apps/api/utils/secretMaterial.js",
     ]);

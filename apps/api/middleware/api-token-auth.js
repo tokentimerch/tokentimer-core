@@ -172,9 +172,16 @@ function workspaceIdFromRequest(req, options = {}) {
 }
 
 function hasSessionIdentity(req) {
+  const sessionUserId = req.session?.userId;
+  const passportUser = req.session?.passport?.user;
+  const hasSessionUserId =
+    sessionUserId !== undefined && sessionUserId !== null && sessionUserId !== "";
+  const hasPassportUser =
+    passportUser !== undefined && passportUser !== null && passportUser !== "";
   return Boolean(
     req.user ||
-      req.session ||
+      hasSessionUserId ||
+      hasPassportUser ||
       req.isAdmin === true ||
       req.authenticated === true ||
       (typeof req.isAuthenticated === "function" && req.isAuthenticated() === true),

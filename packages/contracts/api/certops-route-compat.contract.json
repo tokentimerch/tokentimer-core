@@ -16,11 +16,12 @@
       "prefix": "/api/v1/certops/executor",
       "auth": "certOpsTokenAuth",
       "notes": [
-        "Machine surface for the M2 executor. Scoped API-token (bearer) auth.",
-        "CSRF-exempt (token-authenticated, non-cookie), like internal worker requests.",
+        "Machine surface for M2 executor writes. Scoped API-token bearer auth only; machine routes never use cookies.",
+        "Allowed M2 scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope; empty required-scope configuration is invalid.",
+        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
-        "M2 keeps POST /api/v1/certops/executor/events as the aggregate executor ingestion endpoint.",
-        "POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable Dev A machine-token aliases scoped by path jobId; they reuse the same idempotency, redaction, private-key rejection, rate-limit, and audit behavior."
+        "POST /api/v1/certops/executor/events is the aggregate M2 ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped M2 machine routes.",
+        "All three machine routes reuse the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior."
       ]
     },
     "agent": {

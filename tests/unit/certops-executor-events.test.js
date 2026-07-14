@@ -180,6 +180,47 @@ describe("CertOps executor event normalization", () => {
     );
   });
 
+  it("includes only post-redaction evidence output semantics in idempotency hashes", () => {
+    const first = eventBody({
+      evidence: [
+        {
+          ...eventBody().evidence[0],
+          output: "deployment password=first-value",
+        },
+      ],
+    });
+    const sanitizedRetry = eventBody({
+      evidence: [
+        {
+          ...eventBody().evidence[0],
+          output: "deployment password=second-value",
+        },
+      ],
+    });
+    const publicOutputConflict = eventBody({
+      evidence: [
+        {
+          ...eventBody().evidence[0],
+          output: "different public deployment result",
+        },
+      ],
+    });
+
+    const projection = executorEventIdempotencyPayload(normalize(first));
+    assert.equal(hash(first), hash(sanitizedRetry));
+    assert.notEqual(hash(first), hash(publicOutputConflict));
+    assert.equal(
+      projection.evidence[0].output.redactedOutput,
+      "deployment password=[REDACTED]",
+    );
+    assert.match(projection.evidence[0].output.outputSha256, /^[a-f0-9]{64}$/);
+    assert.equal(
+      projection.evidence[0].output.outputSizeBytes,
+      Buffer.byteLength(projection.evidence[0].output.redactedOutput, "utf8"),
+    );
+    assert.doesNotMatch(JSON.stringify(projection), /first-value|second-value/);
+  });
+
   it("does not let a client redaction hint affect idempotency or server redaction state", () => {
     const marked = eventBody({
       evidence: [{ ...eventBody().evidence[0], redactionApplied: true }],

@@ -11,6 +11,7 @@ const CERTOPS_API_TOKEN_MALFORMED = "CERTOPS_API_TOKEN_MALFORMED";
 const CERTOPS_API_TOKEN_NAME_INVALID = "CERTOPS_API_TOKEN_NAME_INVALID";
 const CERTOPS_API_TOKEN_SCOPE_DENIED = "CERTOPS_API_TOKEN_SCOPE_DENIED";
 const CERTOPS_API_TOKEN_SCOPE_INVALID = "CERTOPS_API_TOKEN_SCOPE_INVALID";
+const CERTOPS_API_TOKEN_SCOPE_REQUIRED = "CERTOPS_API_TOKEN_SCOPE_REQUIRED";
 const CERTOPS_API_TOKEN_WORKSPACE_REQUIRED =
   "CERTOPS_API_TOKEN_WORKSPACE_REQUIRED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
@@ -147,9 +148,19 @@ function normalizeScopes(scopes) {
 }
 
 function normalizeRequiredScopes(requiredScopes) {
-  if (requiredScopes === undefined || requiredScopes === null) return [];
+  if (requiredScopes === undefined || requiredScopes === null) {
+    throw serviceError(
+      "At least one CertOps API token scope is required",
+      CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+    );
+  }
   const scopes = Array.isArray(requiredScopes) ? requiredScopes : [requiredScopes];
-  if (scopes.length === 0) return [];
+  if (scopes.length === 0) {
+    throw serviceError(
+      "At least one CertOps API token scope is required",
+      CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+    );
+  }
 
   const normalized = [];
   for (const scope of scopes) {
@@ -160,6 +171,12 @@ function normalizeRequiredScopes(requiredScopes) {
       );
     }
     const trimmed = scope.trim();
+    if (!trimmed) {
+      throw serviceError(
+        "At least one CertOps API token scope is required",
+        CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+      );
+    }
     if (!ALLOWED_SCOPE_SET.has(trimmed)) {
       throw serviceError(
         "CertOps API token scope is not allowed",
@@ -167,6 +184,12 @@ function normalizeRequiredScopes(requiredScopes) {
       );
     }
     if (!normalized.includes(trimmed)) normalized.push(trimmed);
+  }
+  if (normalized.length === 0) {
+    throw serviceError(
+      "At least one CertOps API token scope is required",
+      CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+    );
   }
   return normalized;
 }
@@ -553,6 +576,7 @@ module.exports = {
   CERTOPS_API_TOKEN_NAME_INVALID,
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
+  CERTOPS_API_TOKEN_SCOPE_REQUIRED,
   CERTOPS_API_TOKEN_WORKSPACE_REQUIRED,
   PRIVATE_KEY_MATERIAL_REJECTED,
   TOKEN_PREFIX,

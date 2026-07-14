@@ -575,7 +575,7 @@ describe("CertOps API token management routes", function () {
         name: "Worker denied",
         scopes: ["certops:events:write"],
       });
-    expect(workerCreate.status).to.equal(403);
+    expect(workerCreate.status).to.equal(401);
     expectNoTokenLeak(workerCreate.body);
     expect(
       await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
@@ -599,7 +599,7 @@ describe("CertOps API token management routes", function () {
       )
       .set("Authorization", `Bearer ${workerKey}`)
       .send({});
-    expect(workerRevoked.status).to.equal(403);
+    expect(workerRevoked.status).to.equal(401);
     expectNoTokenLeak(workerRevoked.body, [adminCreated.body.plaintextToken]);
 
     const persisted = await TestUtils.execQuery(
