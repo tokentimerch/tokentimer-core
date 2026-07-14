@@ -276,7 +276,15 @@ async function runEndpointChecks() {
   logger.info("Endpoint check worker started");
 
   await withClient(async (client) => {
-    // Find endpoints due for check based on their configured interval
+    // Find endpoints due for check based on their configured interval.
+    // Wrap the SELECT FOR UPDATE and the per-domain UPDATEs below in an
+    // explicit transaction (mirrors auto-sync-worker.js): without BEGIN/COMMIT,
+    // Postgres autocommit mode releases the row lock the instant the SELECT
+    // statement finishes, making SKIP LOCKED a no-op against a second
+    // concurrent worker. Currently masked by k8s concurrencyPolicy: Forbid and
+    // the in-process overlap guard in runner.js, but this keeps the guarantee
+    // correct in isolation.
+    await client.query("BEGIN");
     const result = await client.query(
       `SELECT * FROM domain_monitors
        WHERE (
@@ -296,13 +304,15 @@ async function runEndpointChecks() {
     );
 
     if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
       logger.info("No endpoint monitors due for check");
       return;
     }
 
     logger.info(`Checking ${result.rows.length} endpoints`);
 
-    for (const domain of result.rows) {
+    try {
+      for (const domain of result.rows) {
       const {
         id,
         url,
@@ -429,7 +439,15 @@ async function runEndpointChecks() {
 
               if (currentTokenId) {
                 try {
-                  await client.query("BEGIN");
+                  // Use a SAVEPOINT (not BEGIN/COMMIT) for the bridge write: this
+                  // whole domain-check loop now runs inside the outer per-batch
+                  // transaction opened above, and Postgres does not support real
+                  // nested transactions (a plain BEGIN here would be a no-op with
+                  // a warning, and COMMIT/ROLLBACK would end the outer transaction
+                  // early). A savepoint lets a bridge failure roll back just this
+                  // certificate-observation write without discarding progress
+                  // already made on other domains in this batch.
+                  await client.query("SAVEPOINT certops_bridge");
                   try {
                     const bridgeGate = await evaluateCertOpsMonitorBridgeGate({
                       client,
@@ -465,9 +483,9 @@ async function runEndpointChecks() {
                         },
                       });
                     }
-                    await client.query("COMMIT");
+                    await client.query("RELEASE SAVEPOINT certops_bridge");
                   } catch (bridgeTxnErr) {
-                    await client.query("ROLLBACK");
+                    await client.query("ROLLBACK TO SAVEPOINT certops_bridge");
                     throw bridgeTxnErr;
                   }
                 } catch (bridgeErr) {
@@ -586,6 +604,17 @@ async function runEndpointChecks() {
           );
         }
       }
+      }
+      await client.query("COMMIT");
+    } catch (txnErr) {
+      // Release the client back to the pool clean; leaving a transaction open
+      // across pool.connect() calls would corrupt the next borrower's session.
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        logger.debug("Rollback failed", { error: _rollbackErr.message });
+      }
+      throw txnErr;
     }
   });
 

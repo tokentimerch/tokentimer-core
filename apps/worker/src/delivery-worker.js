@@ -601,7 +601,16 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
       }
     }
     // Get pending alerts due today or overdue
-    // Use FOR UPDATE SKIP LOCKED to prevent duplicate processing by concurrent workers
+    // Use FOR UPDATE SKIP LOCKED to prevent duplicate processing by concurrent
+    // workers. Wrap the SELECT and the per-alert status UPDATEs below in an
+    // explicit transaction (mirrors auto-sync-worker.js): without BEGIN/COMMIT,
+    // Postgres autocommit mode releases the row lock the instant the SELECT
+    // statement finishes, making SKIP LOCKED a no-op against a second
+    // concurrent worker. Currently masked by k8s concurrencyPolicy: Forbid and
+    // the in-process overlap guard in runner.js, but this keeps the guarantee
+    // correct in isolation (e.g. a manual second run, or a future deployment
+    // topology change).
+    await client.query("BEGIN");
     const alertsRes = await client.query(
       `SELECT 
          aq.*, 
@@ -653,8 +662,14 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
        FOR UPDATE OF aq SKIP LOCKED`,
     );
 
-    for (const alert of alertsRes.rows) {
-      processed++;
+    if (alertsRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return;
+    }
+
+    try {
+      for (const alert of alertsRes.rows) {
+        processed++;
 
       // Never process alerts that are already blocked
       if (String(alert.status || "").toLowerCase() === "blocked") {
@@ -1917,6 +1932,17 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           },
         });
       }
+      }
+      await client.query("COMMIT");
+    } catch (txnErr) {
+      // Release the client back to the pool clean; leaving a transaction open
+      // across pool.connect() calls would corrupt the next borrower's session.
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        logger.debug("Rollback failed", { error: _rollbackErr.message });
+      }
+      throw txnErr;
     }
   });
 
