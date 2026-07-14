@@ -3688,6 +3688,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the certificate job was not found in the authenticated workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Executor event idempotency key conflicts with a different sanitized payload
           content:
@@ -3698,7 +3704,7 @@ paths:
                 error: Executor event idempotency key conflicts with a different payload
                 code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "413":
-          description: The machine request body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded the M2 stored-output limit (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
+          description: The machine request body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded 65,536 UTF-8 bytes (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
           content:
             application/json:
               schema:
@@ -3715,6 +3721,15 @@ paths:
               example:
                 error: Private key material is not accepted in CertOps requests
                 code: PRIVATE_KEY_MATERIAL_REJECTED
+        "503":
+          description: The security audit sink was unavailable while recording a private-key-material rejection. The endpoint fails closed; the payload is neither persisted nor echoed and no executor-event side effects occur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps security audit is temporarily unavailable
+                code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE
         "429":
           description: CertOps machine-token rate limit exceeded
           content:
@@ -3731,7 +3746,7 @@ paths:
       tags: [CertOps Agent]
       summary: Attach evidence to one CertOps job
       operationId: createCertOpsJobEvidence
-      description: Machine-token route for attaching sanitized evidence to the path jobId. Requires certops:evidence:write. Workspace identity is derived from the authenticated CertOps API token; body workspaceId cannot override it. Private key material is rejected with 422, generic secrets are redacted, and optional output is size-limited and stored only as redacted output.
+      description: Machine-token route for attaching sanitized evidence to the path jobId. Requires certops:evidence:write. Workspace identity is derived from the authenticated CertOps API token; body workspaceId cannot override it. Private key material is rejected with 422, generic secrets are redacted, and optional output is limited to 65,536 UTF-8 bytes and stored only as redacted output.
       security:
         - certOpsTokenAuth: []
       parameters:
@@ -3760,6 +3775,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled or the certificate job was not found in the authenticated workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Executor event idempotency key conflicts with a different sanitized payload
           content:
@@ -3770,7 +3791,7 @@ paths:
                 error: Executor event idempotency key conflicts with a different payload
                 code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "413":
-          description: The machine request body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded the M2 stored-output limit (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
+          description: The machine request body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded 65,536 UTF-8 bytes (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
           content:
             application/json:
               schema:
@@ -3787,6 +3808,15 @@ paths:
               example:
                 error: Private key material is not accepted in CertOps requests
                 code: PRIVATE_KEY_MATERIAL_REJECTED
+        "503":
+          description: The security audit sink was unavailable while recording a private-key-material rejection. The endpoint fails closed; the payload is neither persisted nor echoed and no executor-event side effects occur.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps security audit is temporarily unavailable
+                code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE
         "429":
           description: CertOps machine-token rate limit exceeded
           content:
@@ -3803,7 +3833,19 @@ paths:
       tags: [CertOps Agent]
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
-      description: M2 aggregate executor ingestion endpoint for normalized job and public evidence events. Lifecycle events require `certops:events:write`; evidence-bearing events additionally require `certops:evidence:write`. The route is hidden with 404 when `certops.enabled` is disabled. `eventId` is idempotent within a workspace and job: exact retries return 202 without repeating logs, evidence, audit rows, or status side effects, while a different sanitized envelope using the same key returns 409. Late lifecycle events are recorded in the job log but cannot regress or reopen a terminal job. Payloads containing private key material are rejected with 422. Generic secret material in metadata and bounded evidence output is redacted to `[REDACTED]` before persistence. Per-job event/evidence routes are narrow machine-token aliases that reuse the same hardened ingestion behavior.
+      description: >-
+        M2 aggregate executor ingestion endpoint for normalized job and public
+        evidence events. Lifecycle events require `certops:events:write`;
+        evidence-bearing events additionally require `certops:evidence:write`.
+        The route is hidden with 404 when `certops.enabled` is disabled.
+        `eventId` is idempotent within a workspace and job: exact retries return
+        202 without repeating logs, evidence, audit rows, or status side effects,
+        while a different sanitized envelope using the same key returns 409. Late
+        lifecycle events are recorded in the job log but cannot regress or reopen
+        a terminal job. Payloads containing private key material are rejected with
+        422. Generic secret material in metadata and bounded evidence output is
+        redacted to `[REDACTED]` before persistence. Per-job event/evidence routes
+        are narrow machine-token aliases that reuse the same hardened ingestion behavior.
       security:
         - certOpsTokenAuth: []
       requestBody:
@@ -3855,7 +3897,7 @@ paths:
                 error: Executor event idempotency key conflicts with a different payload
                 code: CERTOPS_EXECUTOR_EVENT_CONFLICT
         "413":
-          description: The executor event body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded the M2 stored-output limit (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
+          description: The executor event body exceeded the dedicated 4 MiB pre-auth boundary (`CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE`), or normalized evidence output exceeded 65,536 UTF-8 bytes (`CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE`). The payload is not echoed.
           content:
             application/json:
               schema:
@@ -4922,8 +4964,9 @@ components:
         output:
           type: string
           maxLength: 65536
+          x-maxBytes: 65536
           nullable: true
-          description: Optional executor output. Runtime rejects private key material, redacts generic secrets to [REDACTED], stores only redacted output separately from normalized metadata, and does not return this field from evidence list responses.
+          description: Optional executor output, limited to 65,536 UTF-8 bytes. Runtime rejects private key material, redacts generic secrets to [REDACTED], stores only redacted output separately from normalized metadata, and does not return this field from evidence list responses.
         redactionApplied:
           type: boolean
           nullable: true
@@ -5022,8 +5065,9 @@ components:
         output:
           type: string
           maxLength: 65536
+          x-maxBytes: 65536
           nullable: true
-          description: Optional executor output. Runtime rejects private key material, redacts generic secrets to [REDACTED], stores only redacted output separately from normalized metadata, and does not return this field from evidence list responses.
+          description: Optional executor output, limited to 65,536 UTF-8 bytes. Runtime rejects private key material, redacts generic secrets to [REDACTED], stores only redacted output separately from normalized metadata, and does not return this field from evidence list responses.
         redactionApplied:
           type: boolean
           nullable: true
@@ -5107,6 +5151,16 @@ components:
           maxItems: 32
           items:
             $ref: "#/components/schemas/CertOpsMetadataEntry"
+      oneOf:
+        - properties:
+            eventType:
+              enum: [job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected]
+        - required: [evidence]
+          properties:
+            eventType:
+              enum: [evidence.attached]
+            evidence:
+              minItems: 1
     CertOpsPerJobExecutorEventRequest:
       type: object
       additionalProperties: false
@@ -5168,16 +5222,26 @@ components:
           type: array
           maxItems: 16
           items:
-            $ref: "#/components/schemas/CertOpsEvidenceMetadata"
+            $ref: "#/components/schemas/CertOpsEmbeddedExecutorEvidenceItem"
         metadata:
           type: array
           maxItems: 32
           items:
             $ref: "#/components/schemas/CertOpsMetadataEntry"
+      oneOf:
+        - properties:
+            eventType:
+              enum: [job.accepted, job.started, job.progress, job.completed, job.failed, job.rejected]
+        - required: [evidence]
+          properties:
+            eventType:
+              enum: [evidence.attached]
+            evidence:
+              minItems: 1
     CertOpsPerJobEvidenceRequest:
       type: object
       additionalProperties: false
-      description: Per-job machine evidence request. The path jobId is authoritative and the server normalizes eventType to evidence.attached. Requires certops:evidence:write. Optional output is private-key rejected, generic-secret redacted, and size-limited to 64 KiB before persistence.
+      description: Per-job machine evidence request. The path jobId is authoritative and the server normalizes eventType to evidence.attached. Requires certops:evidence:write. Optional output is private-key rejected, generic-secret redacted, and limited to 65,536 UTF-8 bytes before persistence.
       required:
         - schemaVersion
         - eventId
@@ -5220,7 +5284,7 @@ components:
           minItems: 1
           maxItems: 16
           items:
-            $ref: "#/components/schemas/CertOpsEvidenceMetadata"
+            $ref: "#/components/schemas/CertOpsEmbeddedExecutorEvidenceItem"
         metadata:
           type: array
           maxItems: 32
@@ -5229,7 +5293,7 @@ components:
     CertOpsExecutorEventAcceptedResponse:
       type: object
       additionalProperties: false
-      required: [ok, eventId, jobId, status]
+      required: [ok, eventId, jobId, status, redactionApplied, redactionCount]
       properties:
         ok:
           type: boolean
@@ -5251,6 +5315,13 @@ components:
         status:
           type: string
           enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+        redactionApplied:
+          type: boolean
+          description: True when generic-secret redaction affected accepted event metadata or evidence output.
+        redactionCount:
+          type: integer
+          minimum: 0
+          description: Count of generic-secret redactions represented by this response.
         evidenceId:
           type: string
           format: uuid

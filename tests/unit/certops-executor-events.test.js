@@ -76,13 +76,35 @@ describe("CertOps executor event normalization", () => {
       jobId: JOB_ID,
       status: "running",
       evidenceIds: [],
+      redactionApplied: false,
+      redactionCount: 0,
     };
 
     assert.deepEqual(storedResponseForReplay(JSON.stringify(safeResponse)), safeResponse);
-    for (const response of [null, "{}", "not-json", { ok: true }]) {
+    for (const response of [
+      null,
+      "{}",
+      "not-json",
+      { ok: true },
+      { ...safeResponse, redactionApplied: undefined },
+      { ...safeResponse, redactionCount: -1 },
+    ]) {
       assert.throws(
         () => storedResponseForReplay(response),
         (error) => error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT,
+      );
+    }
+  });
+
+  it("rejects missing, null, and empty evidence for evidence-attached events", () => {
+    for (const evidence of [undefined, null, [], "   "]) {
+      const body = eventBody();
+      if (evidence === undefined) delete body.evidence;
+      else body.evidence = evidence;
+
+      assert.throws(
+        () => normalize(body),
+        (error) => error?.code === "CERTOPS_EVIDENCE_INVALID",
       );
     }
   });

@@ -87,6 +87,26 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["eventType"],
+        "properties": {
+          "eventType": {
+            "const": "evidence.attached"
+          }
+        }
+      },
+      "then": {
+        "required": ["evidence"],
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
   "definitions": {
     "embeddedEvidenceItem": {
       "type": "object",
@@ -193,6 +213,12 @@
               }
             }
           }
+        },
+        "output": {
+          "type": ["string", "null"],
+          "maxLength": 65536,
+          "x-maxBytes": 65536,
+          "description": "Optional executor output, limited to 65,536 UTF-8 bytes. Runtime rejects private key material, redacts generic secrets, and stores only redacted output separately from normalized metadata."
         },
         "redactionApplied": {
           "type": ["boolean", "null"]

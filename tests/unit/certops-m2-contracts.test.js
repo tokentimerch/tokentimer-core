@@ -3,6 +3,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
+const { createRequire } = require("node:module");
 const fs = require("node:fs");
 const path = require("node:path");
 const Ajv = require("ajv");
@@ -20,6 +21,12 @@ const openApiSource = fs.readFileSync(
   path.join(repoRoot, "packages/contracts/openapi/openapi.yaml"),
   "utf8",
 );
+const apiRequire = createRequire(
+  require.resolve("../../apps/api/package.json"),
+);
+const swaggerJsdocRequire = createRequire(apiRequire.resolve("swagger-jsdoc"));
+const yaml = swaggerJsdocRequire("yaml");
+const openApiDocument = yaml.parse(openApiSource);
 const certOpsRoutesSource = fs.readFileSync(
   path.join(repoRoot, "apps/api/routes/certops.js"),
   "utf8",
@@ -213,6 +220,18 @@ function createAjv() {
     ajv.addSchema(schema);
   }
 
+  return ajv;
+}
+
+function openApiComponentSchema(componentName) {
+  const schema = openApiDocument.components?.schemas?.[componentName];
+  assert.ok(schema, `${componentName} missing from parsed OpenAPI`);
+  return schema;
+}
+
+function createOpenApiAjv() {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  addFormats(ajv);
   return ajv;
 }
 
@@ -632,18 +651,66 @@ describe("CertOps M2 contract skeletons", () => {
     privateKeyShapedEmbeddedField.evidence[0].privateKey = "not allowed";
     assert.equal(validateEvent(privateKeyShapedEmbeddedField), false);
 
-    const deferredOutput = clone(publicEmbeddedEvidence);
-    deferredOutput.evidence[0].output = "not supported in M2-A9";
+    const boundedOutput = clone(publicEmbeddedEvidence);
+    boundedOutput.evidence[0].output = "public executor output";
     assert.equal(
-      validateEvent(deferredOutput),
-      false,
-      "raw executor output is deferred to the M2-A10 evidence-output slice",
+      validateEvent(boundedOutput),
+      true,
+      "M2-A10 embedded evidence output must be bounded and redacted before persistence",
     );
 
     assert.equal(
       validateStandaloneEvidence({ eventType: "certificate.observed" }),
       false,
       "standalone evidence schema must keep normalized persisted fields required",
+    );
+  });
+
+  it("requires non-empty evidence only for evidence-attached executor events", () => {
+    const ajv = createAjv();
+    const validateEvent = ajv.getSchema(executorEventSchema.$id);
+
+    for (const evidence of [undefined, null, []]) {
+      const event = {
+        ...validExecutorEvent(),
+        eventType: "evidence.attached",
+        status: "accepted",
+      };
+      if (evidence === undefined) delete event.evidence;
+      else event.evidence = evidence;
+      assert.equal(
+        validateEvent(event),
+        false,
+        "evidence.attached must require a non-empty evidence array",
+      );
+    }
+
+    assert.equal(
+      validateEvent({
+        ...validExecutorEvent(),
+        eventType: "job.progress",
+        status: "running",
+        evidence: [],
+      }),
+      true,
+      "lifecycle events may omit evidence or carry an empty optional array",
+    );
+  });
+
+  it("documents the 65,536-byte executor output limit consistently", () => {
+    const embedded = executorEventSchema.definitions.embeddedEvidenceItem;
+    assert.equal(evidenceSchema.properties.output["x-maxBytes"], 65536);
+    assert.equal(embedded.properties.output["x-maxBytes"], 65536);
+    assert.equal(
+      openApiComponentSchema("CertOpsEvidenceMetadata").properties.output[
+        "x-maxBytes"
+      ],
+      65536,
+    );
+    assert.equal(
+      openApiComponentSchema("CertOpsEmbeddedExecutorEvidenceItem").properties
+        .output["x-maxBytes"],
+      65536,
     );
   });
 
@@ -682,7 +749,10 @@ describe("CertOps M2 contract skeletons", () => {
       "CertOpsExecutorEventAcceptedResponse",
     );
 
-    assert.match(schemaBlock, /required: \[ok, eventId, jobId, status\]/);
+    assert.match(
+      schemaBlock,
+      /required: \[ok, eventId, jobId, status, redactionApplied, redactionCount\]/,
+    );
     assert.doesNotMatch(schemaBlock, /required: \[accepted, code\]/);
     assert.doesNotMatch(schemaBlock, /\n        accepted:/);
     assert.doesNotMatch(schemaBlock, /\n        code:/);
@@ -696,6 +766,11 @@ describe("CertOps M2 contract skeletons", () => {
       schemaBlock,
       /\n        status:\r?\n          type: string\r?\n          enum: \[pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled\]/,
     );
+    assert.match(schemaBlock, /\n        redactionApplied:\r?\n          type: boolean/);
+    assert.match(
+      schemaBlock,
+      /\n        redactionCount:\r?\n          type: integer\r?\n          minimum: 0/,
+    );
     assert.match(schemaBlock, /\n        evidenceId:\r?\n          type: string\r?\n          format: uuid\r?\n          nullable: true/);
     assert.match(schemaBlock, /\n        evidenceIds:\r?\n          type: array/);
     assert.match(schemaBlock, /\n        executorEventRecordId:\r?\n          type: string\r?\n          format: uuid/);
@@ -704,6 +779,27 @@ describe("CertOps M2 contract skeletons", () => {
       /\n        duplicate:\r?\n          type: boolean\r?\n          default: false/,
     );
     assert.match(schemaBlock, /\n        idempotent:\r?\n          type: boolean/);
+
+    const validate = createOpenApiAjv().compile(
+      openApiComponentSchema("CertOpsExecutorEventAcceptedResponse"),
+    );
+    const response = {
+      ok: true,
+      eventId: "event-log-1",
+      logId: "33333333-3333-4333-8333-333333333333",
+      jobId: "22222222-2222-4222-8222-222222222222",
+      status: "running",
+      evidenceId: null,
+      evidenceIds: [],
+      executorEventRecordId: "44444444-4444-4444-8444-444444444444",
+      redactionApplied: false,
+      redactionCount: 0,
+      duplicate: false,
+      idempotent: false,
+    };
+    assert.equal(validate(response), true, JSON.stringify(validate.errors));
+    delete response.redactionCount;
+    assert.equal(validate(response), false);
   });
 
   it("keeps executor event requests closed and runtime top-level validation strict", () => {
@@ -947,7 +1043,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(routeBlock, /certOpsTokenAuth:/);
     assert.match(routeBlock, /operationId: createCertOpsExecutorEvent/);
     assert.match(routeBlock, /idempotency key/i);
-    assert.match(routeBlock, /Generic secret material.*redacted/i);
+    assert.match(routeBlock, /Generic secret material[\s\S]*?redacted/i);
     assert.match(routeBlock, /CERTOPS_EXECUTOR_EVENT_CONFLICT/);
     assert.match(
       routeBlock,
@@ -983,7 +1079,11 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(certOpsExecutorRoutesSource, /certops:executor:events/);
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/jobs\/:jobId\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*perJobEventAuthMiddleware,\s*rateLimitMiddleware,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,/s,
     );
     assert.match(
       certOpsExecutorRoutesSource,
@@ -1110,6 +1210,9 @@ describe("CertOps M2 contract skeletons", () => {
       );
       assert.match(perJobBlock, /CERTOPS_EXECUTOR_EVENT_BODY_TOO_LARGE/);
       assert.match(perJobBlock, /CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE/);
+      assert.match(perJobBlock, /"404":/);
+      assert.match(perJobBlock, /"503":/);
+      assert.match(perJobBlock, /CERTOPS_SECURITY_AUDIT_UNAVAILABLE/);
     }
     assert.match(
       routeCompatContract.namespacePolicy.executor.notes.join(" "),
@@ -1129,6 +1232,16 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(eventSchema, /\n        attemptId:/);
     assert.match(evidenceSchema, /status:\r?\n          type: string\r?\n          enum: \[accepted\]/);
     assert.doesNotMatch(evidenceSchema, /redacted, failed, rejected/);
+    for (const schema of [eventSchema, evidenceSchema]) {
+      assert.match(
+        schema,
+        /\$ref: "#\/components\/schemas\/CertOpsEmbeddedExecutorEvidenceItem"/,
+        "per-job requests must accept relaxed embedded evidence rather than strict persisted evidence",
+      );
+      assert.doesNotMatch(schema, /\$ref: "#\/components\/schemas\/CertOpsEvidenceMetadata"/);
+    }
+    assert.match(eventSchema, /oneOf:[\s\S]*?required: \[evidence\][\s\S]*?minItems: 1/);
+    assert.match(evidenceSchema, /minItems: 1/);
     assert.match(authScheme, /certops:read implies certops:jobs:read only, never a write scope/i);
     assert.match(authScheme, /Empty required-scope configuration is invalid/i);
     assert.match(executorNotes, /bearer auth only; machine routes never use cookies/i);

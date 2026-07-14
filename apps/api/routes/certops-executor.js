@@ -314,6 +314,53 @@ function requestCarriesEvidence(body) {
     && body.evidence !== null;
 }
 
+function requiresNonEmptyEvidence(body, mode = null) {
+  if (mode === "evidence") return true;
+  return (
+    body &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    body.eventType === "evidence.attached"
+  );
+}
+
+function requiredEvidenceError() {
+  const error = executorEventError(
+    "evidence must contain at least one item",
+    CERTOPS_EVIDENCE_INVALID,
+  );
+  // This is a structural request error, not an executor security event. It
+  // must return before any idempotency, audit, log, evidence, or job writes.
+  error.skipExecutorRejectionAudit = true;
+  return error;
+}
+
+function assertRequiredEvidenceItems(body, mode = null) {
+  if (!requiresNonEmptyEvidence(body, mode)) return;
+  const evidence = body?.evidence;
+  if (
+    evidence === undefined ||
+    evidence === null ||
+    (Array.isArray(evidence) && evidence.length === 0) ||
+    (typeof evidence === "string" && evidence.trim() === "")
+  ) {
+    throw requiredEvidenceError();
+  }
+}
+
+function requireEvidenceItems(req, res, next, options = {}) {
+  try {
+    assertRequiredEvidenceItems(req.body, options.mode || null);
+    return next();
+  } catch (error) {
+    if (error?.code !== CERTOPS_EVIDENCE_INVALID) return next(error);
+    return res.status(400).json({
+      error: "Executor evidence is invalid",
+      code: CERTOPS_EVIDENCE_INVALID,
+    });
+  }
+}
+
 function requireEvidenceWriteScopeForEvidencePayload(req, body) {
   if (!requestCarriesEvidence(body)) return;
   const scopes = Array.isArray(req.apiToken?.scopes) ? req.apiToken.scopes : [];
@@ -1282,6 +1329,7 @@ function normalizeExecutorEventBody(body, apiToken) {
   }
 
   const eventType = normalizeEventType(body.eventType);
+  assertRequiredEvidenceItems(body);
   const status = normalizeStatus(body.status);
   assertEventStatusMatch(eventType, status);
   const jobId = requiredUuid(
@@ -1444,6 +1492,7 @@ function handleExecutorEventError(res, error) {
 }
 
 async function auditExecutorRejection(req, error, mode) {
+  if (error?.skipExecutorRejectionAudit) return;
   const hints = safeAuditHintsFromRequest(req);
   if (error?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
     if (mode === "evidence" || Array.isArray(req.body?.evidence)) {
@@ -1478,6 +1527,7 @@ async function executorEventsHandler(req, res, options = {}) {
     // Keep that lightweight scan ahead of scope enforcement without invoking
     // full event normalization for an otherwise unauthorized evidence payload.
     rejectPrivateKeyMaterial(eventBody);
+    assertRequiredEvidenceItems(eventBody, options.mode || null);
     requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
     const event = normalizeExecutorEventBody(eventBody, req.apiToken);
     const result = await ingestExecutorEvent({
@@ -1704,6 +1754,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     authMiddleware,
     rateLimitMiddleware,
+    requireEvidenceItems,
     requireExecutorEvidenceScope,
     executorEventsHandler,
   );
@@ -1714,6 +1765,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     perJobEventAuthMiddleware,
     rateLimitMiddleware,
+    requireEvidenceItems,
     requireExecutorEvidenceScope,
     (req, res) => executorEventsHandler(req, res, { mode: "event" }),
   );
@@ -1724,6 +1776,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     perJobEvidenceAuthMiddleware,
     rateLimitMiddleware,
+    (req, res, next) => requireEvidenceItems(req, res, next, { mode: "evidence" }),
     (req, res) => executorEventsHandler(req, res, { mode: "evidence" }),
   );
 
@@ -1767,5 +1820,7 @@ module.exports._test = {
   normalizeRfc3339Timestamp,
   normalizeEvidenceEventType,
   requestCarriesEvidence,
+  assertRequiredEvidenceItems,
+  requireEvidenceItems,
   requireExecutorEvidenceScope,
 };

@@ -57,7 +57,10 @@ function storedResponseForReplay(value) {
     typeof response.logId !== "string" ||
     typeof response.jobId !== "string" ||
     typeof response.status !== "string" ||
-    !Array.isArray(response.evidenceIds)
+    !Array.isArray(response.evidenceIds) ||
+    typeof response.redactionApplied !== "boolean" ||
+    !Number.isInteger(response.redactionCount) ||
+    response.redactionCount < 0
   ) {
     throw idempotencyConflict();
   }
