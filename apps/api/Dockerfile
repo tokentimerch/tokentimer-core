@@ -36,8 +36,14 @@ RUN subfinder -version
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
 
-# Copy package files
+# Copy package files. Standalone apps/api context: inject allowBuilds for pnpm 11.
 COPY package.json pnpm-lock.yaml* ./
+RUN printf '%s\n' \
+      'allowBuilds:' \
+      '  "@scarf/scarf": true' \
+      '  esbuild: true' \
+      '  sharp: true' \
+      > pnpm-workspace.yaml
 
 # Ensure production mode for installs/runtime
 ENV NODE_ENV=production

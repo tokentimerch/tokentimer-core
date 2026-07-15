@@ -18,8 +18,14 @@ RUN addgroup -g 1001 -S nodejs && \
 ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable && corepack prepare pnpm@11.13.0 --activate && chmod -R a+rX /opt/corepack
 
-# Copy package files
+# Copy package files. Standalone apps/dashboard context: inject allowBuilds for pnpm 11.
 COPY package.json ./
+RUN printf '%s\n' \
+      'allowBuilds:' \
+      '  "@scarf/scarf": true' \
+      '  esbuild: true' \
+      '  sharp: true' \
+      > pnpm-workspace.yaml
 
 # Install dependencies (including dev dependencies for Vite)
 RUN pnpm install --no-frozen-lockfile

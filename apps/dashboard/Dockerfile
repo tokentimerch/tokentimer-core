@@ -17,8 +17,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
 
-# Copy package files
+# Copy package files. Standalone apps/dashboard context: inject allowBuilds for pnpm 11.
 COPY package.json pnpm-lock.yaml* ./
+RUN printf '%s\n' \
+      'allowBuilds:' \
+      '  "@scarf/scarf": true' \
+      '  esbuild: true' \
+      '  sharp: true' \
+      > pnpm-workspace.yaml
 
 # Install all dependencies with security audit (using frozen lockfile for deterministic builds)
 RUN pnpm install --frozen-lockfile && \

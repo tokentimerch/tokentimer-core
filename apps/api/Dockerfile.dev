@@ -45,8 +45,16 @@ RUN subfinder -version
 ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable && corepack prepare pnpm@11.13.0 --activate && chmod -R a+rX /opt/corepack
 
-# Copy package files
+# Copy package files. apps/api is a standalone Docker context, so write a
+# minimal pnpm-workspace.yaml with allowBuilds (pnpm 11 requires this; the
+# repo-root workspace file is not available in this build context).
 COPY package.json ./
+RUN printf '%s\n' \
+      'allowBuilds:' \
+      '  "@scarf/scarf": true' \
+      '  esbuild: true' \
+      '  sharp: true' \
+      > pnpm-workspace.yaml
 
 # Install all dependencies (including dev dependencies for testing).
 # Never swallow install failures, otherwise runtime can miss required modules.

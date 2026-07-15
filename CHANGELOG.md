@@ -11,7 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **pnpm 11.13.0** — upgraded from 10.33.4 so `pnpm audit` uses npm's bulk advisories endpoint after the legacy audit API was retired (HTTP 410); migrated `onlyBuiltDependencies` to `allowBuilds` for pnpm 11 build-script policy.
+- **pnpm 11.13.0** — upgraded from 10.33.4 so `pnpm audit` uses npm's bulk advisories endpoint after the legacy audit API was retired (HTTP 410); migrated `onlyBuiltDependencies` to `allowBuilds` for pnpm 11 build-script policy; standalone `apps/*/Dockerfile*` builds inject `allowBuilds` because their Docker context lacks the repo-root workspace file.
 
 ### Fixed
 
