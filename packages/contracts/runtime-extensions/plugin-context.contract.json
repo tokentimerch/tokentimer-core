@@ -1,6 +1,6 @@
 {
   "contractName": "runtime-extensions.plugin-context",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Expected plugin context hooks exposed by core to runtime extensions.",
   "hooks": {
     "setAuthFeaturesProvider": {
