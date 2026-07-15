@@ -83,7 +83,7 @@
     "helm:template": "helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml",
     "helm:verify": "bash scripts/helm-template-verify.sh"
   },
-  "packageManager": "pnpm@10.33.4",
+  "packageManager": "pnpm@11.13.0",
   "engines": {
     "node": ">=22.0.0"
   },
