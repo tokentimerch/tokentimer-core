@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **pnpm 11.13.0** — upgraded from 10.33.4 so `pnpm audit` uses npm's bulk advisories endpoint after the legacy audit API was retired (HTTP 410); migrated `onlyBuiltDependencies` to `allowBuilds` for pnpm 11 build-script policy.
+- **Docker builds** — `apps/api` and `apps/dashboard` Dockerfiles now require repo-root build context (same pattern as worker/compose) so they copy the canonical `pnpm-workspace.yaml` `allowBuilds` allowlist; compose test/dev contexts and volume mounts updated accordingly.
+- **Base images** — Node `22.22.2` → `22.23.0` and Go `1.26.4` → `1.26.5` across Dockerfiles to clear Grype high/fixed CVEs in the image binaries.
+
 ### Fixed
 
 - **GitLab auto-sync (#63)** — `ImportGitLabForm.getCredentials()` now maps `includePATs` / `includeSSHKeys` into `scanParams.filters` (matching the scan endpoint's expected shape) instead of the unused `scanParams.include`; auto-sync filter selections for PATs and SSH keys are honored again.
