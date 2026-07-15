@@ -28,8 +28,8 @@ services:
 
   api:
     build:
-      context: ../../apps/api
-      dockerfile: Dockerfile.dev
+      context: ../..
+      dockerfile: apps/api/Dockerfile.dev
       cache_from:
         - node:22-slim
     container_name: tokentimer-core-api-dev
@@ -78,16 +78,18 @@ services:
     networks:
       - tokentimer-network
     volumes:
-      - ../../apps/api:/app
+      - ../../apps/api:/app/apps/api
       - ../../packages/contracts/openapi:/contracts/openapi:ro
       - /app/node_modules
+      - /app/apps/api/node_modules
+    working_dir: /app/apps/api
     restart: unless-stopped
     command: sh -c "pnpm run migrate && pnpm start"
 
   dashboard:
     build:
-      context: ../../apps/dashboard
-      dockerfile: Dockerfile.dev
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile.dev
       cache_from:
         - node:22-alpine
     container_name: tokentimer-core-dashboard-dev
@@ -97,8 +99,10 @@ services:
       - VITE_API_URL=${API_URL:-http://localhost:4000}
       - VITE_ENVIRONMENT=development
     volumes:
-      - ../../apps/dashboard:/app
+      - ../../apps/dashboard:/app/apps/dashboard
       - /app/node_modules
+      - /app/apps/dashboard/node_modules
+    working_dir: /app/apps/dashboard
     depends_on:
       - api
     networks:

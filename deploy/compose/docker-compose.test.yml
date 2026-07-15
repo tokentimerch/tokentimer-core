@@ -31,8 +31,8 @@ services:
   # ---- API (backend) ----------------------------------------
   api:
     build:
-      context: ../../apps/api
-      dockerfile: Dockerfile.dev
+      context: ../..
+      dockerfile: apps/api/Dockerfile.dev
     container_name: tokentimer-core-api-test
     ports:
       - "${TT_TEST_API_PORT:-4000}:4000"
@@ -78,9 +78,11 @@ services:
       - tokentimer-test
     restart: "no"
     volumes:
-      - ../../apps/api:/app
+      - ../../apps/api:/app/apps/api
       - /app/node_modules
+      - /app/apps/api/node_modules
       - ../../.coverage/v8-api:/tmp/v8-coverage
+    working_dir: /app/apps/api
     command: ["node", "coverage-bootstrap.cjs"]
 
   # ---- Worker: endpoint (SSL) checks -----------------------
