@@ -9,17 +9,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-
-- **pnpm 11.13.0** — upgraded from 10.33.4 so `pnpm audit` uses npm's bulk advisories endpoint after the legacy audit API was retired (HTTP 410); migrated `onlyBuiltDependencies` to `allowBuilds` for pnpm 11 build-script policy.
-- **Docker builds** — `apps/api` and `apps/dashboard` Dockerfiles now require repo-root build context (same pattern as worker/compose) so they copy the canonical `pnpm-workspace.yaml` `allowBuilds` allowlist; compose test/dev contexts and volume mounts updated accordingly.
-- **Base images** — Node `22.22.2` → `22.23.0` and Go `1.26.4` → `1.26.5` across Dockerfiles to clear Grype high/fixed CVEs in the image binaries.
+## [0.8.2] - 2026-07-15
 
 ### Fixed
 
 - **GitLab auto-sync (#63)** — `ImportGitLabForm.getCredentials()` now maps `includePATs` / `includeSSHKeys` into `scanParams.filters` (matching the scan endpoint's expected shape) instead of the unused `scanParams.include`; auto-sync filter selections for PATs and SSH keys are honored again.
 - **Auto-sync "Save changes"** — filter changes (`scan_params`) are now sent on every save, even when the PAT/token field is left blank; only `credentials` remain gated behind re-entering a secret, since filters never contain sensitive data.
 - **Auto-sync worker status** — a run is now recorded as `partial` (with a descriptive `last_sync_error`) instead of `success` when items were scanned but none were actually imported, or when the import step reports per-item errors; the dashboard surfaces this via a warning banner and toast instead of a silent success message.
+
+### Changed
+
+- **pnpm 11.13.0** — upgraded from 10.33.4 so `pnpm audit` uses npm's bulk advisories endpoint after the legacy audit API was retired (HTTP 410); migrated `onlyBuiltDependencies` to `allowBuilds` for pnpm 11 build-script policy.
+- **Docker builds** — `apps/api` and `apps/dashboard` Dockerfiles now require repo-root build context (same pattern as worker/compose) so they copy the canonical `pnpm-workspace.yaml` `allowBuilds` allowlist; compose test/dev contexts, coverage flush-hook path, and V8 coverage path remaps updated accordingly.
+- **Base images** — Node `22.22.2` → `22.23.0` and Go `1.26.4` → `1.26.5` across Dockerfiles to clear Grype high/fixed CVEs in the image binaries.
+- **Version metadata bumped to 0.8.2** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
 
 ## [0.8.1] - 2026-06-22
 
