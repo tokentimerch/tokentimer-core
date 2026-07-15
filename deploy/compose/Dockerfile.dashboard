@@ -8,7 +8,7 @@ RUN apk update && apk upgrade --no-cache \
     && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0"
 
 # Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
 
 WORKDIR /app
 
