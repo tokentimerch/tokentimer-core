@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitLab auto-sync (#63)** — `ImportGitLabForm.getCredentials()` now maps `includePATs` / `includeSSHKeys` into `scanParams.filters` (matching the scan endpoint's expected shape) instead of the unused `scanParams.include`; auto-sync filter selections for PATs and SSH keys are honored again.
+- **Auto-sync "Save changes"** — filter changes (`scan_params`) are now sent on every save, even when the PAT/token field is left blank; only `credentials` remain gated behind re-entering a secret, since filters never contain sensitive data.
+- **Auto-sync worker status** — a run is now recorded as `partial` (with a descriptive `last_sync_error`) instead of `success` when items were scanned but none were actually imported, or when the import step reports per-item errors; the dashboard surfaces this via a warning banner and toast instead of a silent success message.
+
 ## [0.8.1] - 2026-06-22
 
 ### Added

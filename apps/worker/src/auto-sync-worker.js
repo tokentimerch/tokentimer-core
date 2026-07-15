@@ -319,31 +319,55 @@ async function runAutoSync() {
           // 2. Import: delegate to the existing import endpoint so deduplication,
           //    sanitization, type validation, and audit logging are identical to
           //    what a user gets when importing manually from the dashboard.
+          let importedCount = 0;
+          let importErrorCount = 0;
           if (itemsCount > 0) {
             const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
-            await axios.post(
+            const importResponse = await axios.post(
               importUrl,
               { items: scanResult.items },
               { timeout: 60000, headers: authHeaders },
             );
+            const importResult = importResponse.data || {};
+            importedCount =
+              (importResult.created_count || 0) + (importResult.updated_count || 0);
+            importErrorCount = importResult.error_count || 0;
           }
 
-          // Update config: success
+          // A run only counts as a real success if items that were scanned
+          // actually made it into the workspace. Otherwise surface a 'partial'
+          // status so the discrepancy between "sync completed" and "no tokens
+          // visible" is visible to the user instead of silently reporting success.
+          const syncStatus =
+            itemsCount > 0 && importedCount === 0
+              ? "partial"
+              : importErrorCount > 0
+                ? "partial"
+                : "success";
+          const syncError =
+            syncStatus === "partial"
+              ? itemsCount > 0 && importedCount === 0
+                ? `Scan found ${itemsCount} item(s) but none were imported (all failed validation or were rejected).`
+                : `${importErrorCount} of ${itemsCount} scanned item(s) failed to import.`
+              : null;
+
+          // Update config: success/partial
           const nextSync = computeNextSync(frequency, schedule_time, schedule_tz);
           await client.query(
             `UPDATE auto_sync_configs
-             SET last_sync_at = NOW(), last_sync_status = 'success', last_sync_error = NULL,
-                 last_sync_items_count = $1, next_sync_at = $2, updated_at = NOW()
-             WHERE id = $3`,
-            [itemsCount, nextSync, id],
+             SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2,
+                 last_sync_items_count = $3, next_sync_at = $4, updated_at = NOW()
+             WHERE id = $5`,
+            [syncStatus, syncError, importedCount, nextSync, id],
           );
 
-          cAutoSync.inc({ provider, status: "success" });
-          cAutoSyncItems.inc({ provider }, itemsCount);
-          gAutoSyncLastRun.set({ provider, status: "success" }, Date.now() / 1000);
-          logger.info(`Auto-sync ${provider} completed: ${itemsCount} items`, {
-            workspace_id,
-          });
+          cAutoSync.inc({ provider, status: syncStatus });
+          cAutoSyncItems.inc({ provider }, importedCount);
+          gAutoSyncLastRun.set({ provider, status: syncStatus }, Date.now() / 1000);
+          logger.info(
+            `Auto-sync ${provider} completed: ${importedCount}/${itemsCount} items imported (${syncStatus})`,
+            { workspace_id },
+          );
         } catch (syncErr) {
           logger.error(`Auto-sync ${provider} failed`, {
             workspace_id,
