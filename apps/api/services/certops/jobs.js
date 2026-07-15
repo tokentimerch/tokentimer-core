@@ -60,11 +60,32 @@ const ACTIVE_JOB_STATUS_ORDER = Object.freeze([
 const ACTIVE_JOB_STATUS_RANK = new Map(
   ACTIVE_JOB_STATUS_ORDER.map((status, index) => [status, index]),
 );
+// A fresh job (pending) or a claimed one can reach a terminal outcome from a
+// single executor event, not just via an intermediate "running" event. The
+// documented minimal executor flow (docs/certops/executor-api.md, section 6)
+// posts exactly one job.completed event against a job that has never been
+// reported as started; requiring job.accepted/job.started first would break
+// that flow for executors that do not report intermediate progress.
 const JOB_STATUS_TRANSITIONS = Object.freeze({
   pending_approval: new Set(["approved", "rejected", "cancelled"]),
   approved: new Set(["pending", "rejected", "cancelled"]),
-  pending: new Set(["claimed", "running", "rejected", "blocked", "cancelled"]),
-  claimed: new Set(["running", "failed", "rejected", "blocked", "cancelled"]),
+  pending: new Set([
+    "claimed",
+    "running",
+    "succeeded",
+    "failed",
+    "rejected",
+    "blocked",
+    "cancelled",
+  ]),
+  claimed: new Set([
+    "running",
+    "succeeded",
+    "failed",
+    "rejected",
+    "blocked",
+    "cancelled",
+  ]),
   running: new Set(["succeeded", "failed", "rejected", "blocked", "cancelled"]),
   rejected: new Set(),
   succeeded: new Set(),

@@ -433,4 +433,26 @@ describe("CertOps machine-token rate limiter", () => {
       true,
     );
   });
+
+  it("allows requests again once the rate-limit window elapses", async () => {
+    // Every other test here uses a fixed 60s window and never advances past
+    // it, so window-reset behavior itself was never exercised (audit gap).
+    // Uses a short real window (100ms) rather than a fake clock since
+    // express-rate-limit's underlying store schedules its own timers.
+    const middleware = createCertOpsMachineTokenRateLimit({
+      windowMs: 100,
+      max: 1,
+    });
+
+    const first = await runMiddleware(middleware, createRequest());
+    assert.equal(first.nextCalled, true);
+
+    const blocked = await runMiddleware(middleware, createRequest());
+    assertRateLimited(blocked);
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const afterWindow = await runMiddleware(middleware, createRequest());
+    assert.equal(afterWindow.nextCalled, true);
+  });
 });

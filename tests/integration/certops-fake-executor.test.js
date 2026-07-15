@@ -217,9 +217,8 @@ describe("CertOps fake executor (B3)", function () {
       });
       const job = await createJob({ workspaceId: workspaceA, ownerId });
 
-      // Upstream (feature/certops) tightened JOB_STATUS_TRANSITIONS: failed is
-      // only reachable from claimed/running (pending -> failed now 409s), so
-      // start the job before failing it.
+      // Exercises the claimed/running intermediate path explicitly, even
+      // though pending -> failed is also a valid direct transition.
       const running = await executor.started(job.id);
       expect(running.status).to.equal(202);
 
