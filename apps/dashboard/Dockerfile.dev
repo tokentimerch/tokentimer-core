@@ -16,7 +16,7 @@ RUN addgroup -g 1001 -S nodejs && \
 # world-readable so the non-root runtime user reuses it instead of
 # downloading pnpm again (or worse, an unpinned latest) at container start.
 ENV COREPACK_HOME=/opt/corepack
-RUN corepack enable && corepack prepare pnpm@11.13.0 --activate && chmod -R a+rX /opt/corepack
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate && chmod -R a+rX /opt/corepack
 
 # Copy package files
 COPY package.json ./

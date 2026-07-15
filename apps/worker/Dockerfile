@@ -13,7 +13,7 @@ RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
 # Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 
 # Ensure production mode
 ENV NODE_ENV=production
