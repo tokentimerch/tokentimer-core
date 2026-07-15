@@ -389,11 +389,19 @@ describe("CertOps evidence service", () => {
       workspaceId: WORKSPACE_A,
       jobId: job.id,
       evidenceType: "deployment.checked",
-      metadata: { target: "endpoint/api.example.com" },
+      metadata: {
+        target: "endpoint/api.example.com",
+        // Client spoof of the server-owned output redaction marker must not stick.
+        redaction: { applied: false, count: 999 },
+      },
       output: "deployment ok password=swordfish",
     });
 
     assert.equal(evidence.metadata.target, "endpoint/api.example.com");
+    assert.deepEqual(evidence.metadata.redaction, {
+      applied: true,
+      count: evidence.outputRedactionCount,
+    });
     assert.equal(
       evidence.redactedOutput,
       "deployment ok password=[REDACTED]",
@@ -405,7 +413,38 @@ describe("CertOps evidence service", () => {
     );
     assert.match(evidence.outputSha256, /^[a-f0-9]{64}$/);
     assert.equal(evidence.outputRedactionApplied, true);
+    assert.ok(evidence.outputRedactionCount >= 1);
     assert.equal(JSON.stringify(evidence).includes("swordfish"), false);
+
+    const listed = await listCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+    });
+    assert.equal(listed.items.length, 1);
+    assert.equal(listed.items[0].outputRedactionApplied, true);
+    assert.equal(
+      listed.items[0].outputRedactionCount,
+      evidence.outputRedactionCount,
+    );
+    assert.deepEqual(listed.items[0].metadata.redaction, {
+      applied: true,
+      count: evidence.outputRedactionCount,
+    });
+    assert.equal(JSON.stringify(listed).includes("swordfish"), false);
+
+    const fetched = await getCertificateEvidenceById({
+      client,
+      workspaceId: WORKSPACE_A,
+      evidenceId: evidence.id,
+    });
+    assert.equal(fetched.outputRedactionApplied, true);
+    assert.equal(fetched.outputRedactionCount, evidence.outputRedactionCount);
+    assert.deepEqual(fetched.metadata.redaction, {
+      applied: true,
+      count: evidence.outputRedactionCount,
+    });
+    assert.equal(JSON.stringify(fetched).includes("swordfish"), false);
   });
 
   it("hashes and sizes the exact Unicode redacted output that it stores", () => {

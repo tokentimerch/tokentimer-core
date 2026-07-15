@@ -495,6 +495,100 @@ describe("CertOps inventory routes", function () {
     );
   });
 
+  it("rolls back certificate import when the inventory audit write fails", async () => {
+    await TestUtils.execQuery(`
+      CREATE OR REPLACE FUNCTION fail_certops_inventory_audit_for_test()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action IN (
+          'CERTOPS_CERTIFICATE_IMPORTED',
+          'CERTOPS_CERTIFICATE_REGISTERED'
+        ) THEN
+          RAISE EXCEPTION 'forced CertOps inventory audit failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    await TestUtils.execQuery(`
+      CREATE TRIGGER fail_certops_inventory_audit_for_test_trigger
+      BEFORE INSERT ON audit_events
+      FOR EACH ROW
+      EXECUTE FUNCTION fail_certops_inventory_audit_for_test();
+    `);
+
+    try {
+      const managedBefore = await TestUtils.execQuery(
+        "SELECT COUNT(*)::int AS count FROM managed_certificates WHERE workspace_id = $1",
+        [outsiderWorkspaceId],
+      );
+      const tokensBefore = await TestUtils.execQuery(
+        `SELECT COUNT(*)::int AS count
+           FROM tokens
+          WHERE workspace_id = $1
+            AND type = 'ssl_cert'
+            AND notes ILIKE $2`,
+        [
+          outsiderWorkspaceId,
+          "%Imported by CertOps public PEM import. Fingerprint:%",
+        ],
+      );
+
+      const failedImport = await request(BASE)
+        .post(`/api/v1/workspaces/${outsiderWorkspaceId}/certops/imports`)
+        .set("Cookie", outsiderSession.cookie)
+        .send({ certificatePem: PUBLIC_LEAF_CERT });
+      expect(failedImport.status).to.equal(500);
+      expect(failedImport.body.code).to.equal("INTERNAL_ERROR");
+      expectNoPrivateKeyFields(failedImport.body);
+
+      const failedRegister = await request(BASE)
+        .post(`/api/v1/workspaces/${outsiderWorkspaceId}/certops/certificates`)
+        .set("Cookie", outsiderSession.cookie)
+        .send({ certificatePem: PUBLIC_CA_CERT });
+      expect(failedRegister.status).to.equal(500);
+      expect(failedRegister.body.code).to.equal("INTERNAL_ERROR");
+      expectNoPrivateKeyFields(failedRegister.body);
+
+      const managedAfter = await TestUtils.execQuery(
+        "SELECT COUNT(*)::int AS count FROM managed_certificates WHERE workspace_id = $1",
+        [outsiderWorkspaceId],
+      );
+      const tokensAfter = await TestUtils.execQuery(
+        `SELECT COUNT(*)::int AS count
+           FROM tokens
+          WHERE workspace_id = $1
+            AND type = 'ssl_cert'
+            AND notes ILIKE $2`,
+        [
+          outsiderWorkspaceId,
+          "%Imported by CertOps public PEM import. Fingerprint:%",
+        ],
+      );
+      expect(managedAfter.rows[0].count).to.equal(managedBefore.rows[0].count);
+      expect(tokensAfter.rows[0].count).to.equal(tokensBefore.rows[0].count);
+
+      const audit = await TestUtils.execQuery(
+        `SELECT action
+           FROM audit_events
+          WHERE workspace_id = $1
+            AND action IN (
+              'CERTOPS_CERTIFICATE_IMPORTED',
+              'CERTOPS_CERTIFICATE_REGISTERED'
+            )`,
+        [outsiderWorkspaceId],
+      );
+      expect(audit.rows).to.have.length(0);
+    } finally {
+      await TestUtils.execQuery(
+        "DROP TRIGGER IF EXISTS fail_certops_inventory_audit_for_test_trigger ON audit_events",
+      );
+      await TestUtils.execQuery(
+        "DROP FUNCTION IF EXISTS fail_certops_inventory_audit_for_test()",
+      );
+    }
+  });
+
   it("allows viewers to list and fetch certificates in their workspace", async () => {
     const list = await request(BASE)
       .get(`/api/v1/workspaces/${workspaceId}/certops/certificates`)

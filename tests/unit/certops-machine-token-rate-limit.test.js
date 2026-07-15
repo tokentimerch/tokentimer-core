@@ -153,15 +153,14 @@ function assertRateLimited(result) {
 }
 
 describe("CertOps machine-token rate limiter", () => {
-  it("keys post-auth requests by workspace, public prefix, and route family", () => {
+  it("keys post-auth requests by workspace and public prefix, without a route segment", () => {
     const key = machineTokenRateLimitKey(createRequest());
-    assert.equal(
-      key,
-      `certops-machine:${WORKSPACE_A}:${TOKEN_PREFIX}:api_v1_certops_executor_events`,
-    );
+    assert.equal(key, `certops-machine:${WORKSPACE_A}:${TOKEN_PREFIX}`);
     assert.equal(key.includes(RAW_TOKEN), false);
     assert.equal(key.includes("Bearer"), false);
     assert.equal(key.includes("token_hash"), false);
+    assert.equal(key.includes("executor_events"), false);
+    assert.equal(key.includes("evidence"), false);
 
     assert.equal(
       machineTokenRateLimitKey(createRequest({ agentId: "agent:one" })),
@@ -191,6 +190,8 @@ describe("CertOps machine-token rate limiter", () => {
     const key = machineTokenRateLimitKey(req);
 
     assert.equal(routeFamily, "api_v1_certops_executor_events_id");
+    // routeFamily is for log metadata only; the rate-limit key has no route segment
+    assert.equal(key, `certops-machine:${WORKSPACE_A}:${TOKEN_PREFIX}`);
     assert.equal(key.includes(RAW_TOKEN), false);
     assert.equal(key.includes("authorization"), false);
     assert.equal(
@@ -226,17 +227,46 @@ describe("CertOps machine-token rate limiter", () => {
     );
   });
 
-  it("separates buckets by route family and shares a bucket within one family", async () => {
+  it("shares one post-auth bucket across executor route families for the same token", async () => {
+    const middleware = createCertOpsMachineTokenRateLimit({ max: 1 });
+    const aggregateEvents = createRequest({
+      route: { path: "/events" },
+      baseUrl: "/api/v1/certops/executor",
+      path: "/api/v1/certops/executor/events",
+    });
+    const jobEvents = createRequest({
+      route: { path: "/:jobId/events" },
+      baseUrl: "/api/v1/certops/jobs",
+      path: `/api/v1/certops/jobs/${WORKSPACE_A}/events`,
+    });
+    const evidence = createRequest({
+      route: { path: "/:jobId/evidence" },
+      baseUrl: "/api/v1/certops/jobs",
+      path: `/api/v1/certops/jobs/${WORKSPACE_A}/evidence`,
+    });
+
+    assert.equal(
+      machineTokenRateLimitKey(aggregateEvents),
+      machineTokenRateLimitKey(jobEvents),
+    );
+    assert.equal(
+      machineTokenRateLimitKey(aggregateEvents),
+      machineTokenRateLimitKey(evidence),
+    );
+
+    assert.equal((await runMiddleware(middleware, aggregateEvents)).nextCalled, true);
+    assertRateLimited(await runMiddleware(middleware, jobEvents));
+    assertRateLimited(await runMiddleware(middleware, evidence));
+  });
+
+  it("shares a bucket within one family and still limits repeat hits on that family", async () => {
     const middleware = createCertOpsMachineTokenRateLimit({ max: 1 });
     const events = createRequest({ route: { path: "/events" } });
     const secondEvents = createRequest({ route: { path: "/events" } });
-    const evidence = createRequest({ route: { path: "/evidence" } });
 
     assert.equal((await runMiddleware(middleware, events)).nextCalled, true);
     assertRateLimited(await runMiddleware(middleware, secondEvents));
-    assert.equal((await runMiddleware(middleware, evidence)).nextCalled, true);
   });
-
   it("keeps different token prefixes, workspaces, and authenticated machine IDs separate", async () => {
     const middleware = createCertOpsMachineTokenRateLimit({ max: 1 });
 
@@ -412,7 +442,7 @@ describe("CertOps machine-token rate limiter", () => {
 
     assert.equal(
       validKey,
-      `certops-machine-preauth:api_v1_certops_executor_events:${WORKSPACE_A}:prefix:${TOKEN_PREFIX}`,
+      `certops-machine-preauth:${WORKSPACE_A}:prefix:${TOKEN_PREFIX}`,
     );
     assert.equal(fallbackKey.endsWith(":ip:198.51.100.9"), true);
     assert.equal(validKey.includes(RAW_TOKEN), false);

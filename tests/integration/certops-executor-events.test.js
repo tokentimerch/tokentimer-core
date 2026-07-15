@@ -23,6 +23,7 @@ const {
   listCertificateJobLog,
 } = require("../../apps/api/services/certops/jobs");
 const {
+  getCertificateEvidenceById,
   listCertificateEvidence,
 } = require("../../apps/api/services/certops/evidence");
 const {
@@ -1263,6 +1264,27 @@ describe("CertOps executor event ingestion", function () {
       expect(outputEvidence.outputSizeBytes).to.equal(
         Buffer.byteLength("executor finished password=[REDACTED]"),
       );
+      expect(outputEvidence.outputRedactionApplied).to.equal(true);
+      expect(outputEvidence.outputRedactionCount).to.be.greaterThan(0);
+      expect(outputEvidence.metadata.redaction).to.deep.equal({
+        applied: true,
+        count: outputEvidence.outputRedactionCount,
+      });
+      expect(JSON.stringify(outputEvidence)).to.not.include("swordfish");
+
+      const fetchedEvidence = await getCertificateEvidenceById({
+        workspaceId: workspaceA,
+        evidenceId: outputEvidence.id,
+      });
+      expect(fetchedEvidence.outputRedactionApplied).to.equal(true);
+      expect(fetchedEvidence.outputRedactionCount).to.equal(
+        outputEvidence.outputRedactionCount,
+      );
+      expect(fetchedEvidence.metadata.redaction).to.deep.equal({
+        applied: true,
+        count: outputEvidence.outputRedactionCount,
+      });
+      expect(JSON.stringify(fetchedEvidence)).to.not.include("swordfish");
 
       const oversizedBefore = await countJobArtifacts({
         workspaceId: workspaceA,

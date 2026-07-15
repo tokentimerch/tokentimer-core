@@ -245,8 +245,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-5).map((migration) => migration.version),
-      [10, 11, 12, 13, 14],
+      migrations.slice(-6).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -375,11 +375,38 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("creates the final canonical M2 schema without an unshipped compatibility migration", () => {
+  it("defines monitor identity index remapping after executor event idempotency", () => {
+    const monitorIdentityMigration = migrations.find(
+      (migration) => migration.name === "certops_managed_certificate_monitor_identity",
+    );
+    assert.ok(
+      monitorIdentityMigration,
+      "expected certops_managed_certificate_monitor_identity migration",
+    );
+    assert.equal(monitorIdentityMigration.version, 15);
+    assert.match(
+      monitorIdentityMigration.sql,
+      /DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint/,
+    );
+    assert.match(
+      monitorIdentityMigration.sql,
+      /uq_managed_certificates_workspace_fingerprint_import/,
+    );
+    assert.match(
+      monitorIdentityMigration.sql,
+      /uq_managed_certificates_workspace_source_ref/,
+    );
+    assert.match(
+      monitorIdentityMigration.sql,
+      /location abstraction \(observation point or[\s\S]*deployment destination\)/,
+    );
     assert.equal(
-      migrations.some((migration) => migration.version === 15),
+      migrations.some((migration) => migration.version === 16),
       false,
     );
+  });
+
+  it("creates the final canonical M2 schema without an unshipped compatibility migration", () => {
     assert.doesNotMatch(
       certOpsApiTokensMigration.sql,
       /certops:executor:events|certops:jobs:write|certops:jobs:claim/,
@@ -744,7 +771,8 @@ describe("CertOps inventory migration", () => {
     for (const indexName of [
       "idx_managed_certificates_workspace",
       "idx_managed_certificates_workspace_expiry",
-      "uq_managed_certificates_workspace_fingerprint",
+      "uq_managed_certificates_workspace_fingerprint_import",
+      "uq_managed_certificates_workspace_source_ref",
       "idx_certificate_instances_certificate",
       "idx_certificate_instances_workspace_fingerprint",
       "idx_certificate_targets_domain_monitor",
@@ -752,6 +780,10 @@ describe("CertOps inventory migration", () => {
     ]) {
       assert.match(certOpsMigration.sql, new RegExp(indexName));
     }
+    assert.doesNotMatch(
+      certOpsMigration.sql,
+      /uq_managed_certificates_workspace_fingerprint\b(?!_import)/,
+    );
   });
 
   it("adds lookup, lifecycle, and idempotency indexes for job/evidence queries", () => {

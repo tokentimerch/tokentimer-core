@@ -3,10 +3,14 @@
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   toInventoryRecord,
-  upsertManagedCertificate,
+  upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
 const { isCertOpsEnabled } = require("./settings");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const {
+  assertSafeHostname,
+  CERTOPS_UNSAFE_IDENTITY,
+} = require("./identitySafety");
 
 const CERTOPS_MONITOR_BRIDGE_SKIPPED = "CERTOPS_MONITOR_BRIDGE_SKIPPED";
 
@@ -127,6 +131,25 @@ function hasPublicObservation(certificate) {
       certificate.notAfter ||
       certificate.certificatePem,
   );
+}
+
+function assertObservationIdentitiesSafe(options, certificate) {
+  const hostname = normalizeText(options.hostname);
+  if (hostname) {
+    assertSafeHostname(hostname, { field: "hostname" });
+  }
+
+  const commonName = normalizeText(certificate?.commonName);
+  if (commonName) {
+    assertSafeHostname(commonName, { field: "commonName" });
+  }
+
+  for (const san of certificate?.subjectAltNames || []) {
+    const text = normalizeText(san);
+    if (text) {
+      assertSafeHostname(text, { field: "subjectAltName" });
+    }
+  }
 }
 
 async function withBridgeClient(options, fn) {
@@ -256,7 +279,7 @@ async function upsertObservedManagedCertificate(client, certificate, options) {
     );
   }
 
-  const managedCertificate = await upsertManagedCertificate(
+  const managedCertificate = await upsertManagedCertificateByMonitorSource(
     client,
     certificate,
     {
@@ -484,6 +507,8 @@ async function bridgeEndpointCertificateObservation(options = {}) {
     };
   }
 
+  assertObservationIdentitiesSafe(options, certificate);
+
   if (!options.tokenId) {
     return {
       skipped: true,
@@ -518,6 +543,7 @@ async function bridgeEndpointCertificateObservation(options = {}) {
 
 module.exports = {
   CERTOPS_MONITOR_BRIDGE_SKIPPED,
+  CERTOPS_UNSAFE_IDENTITY,
   bridgeEndpointCertificateObservation,
   certificateFromObservation,
   normalizeFingerprintSha256,
