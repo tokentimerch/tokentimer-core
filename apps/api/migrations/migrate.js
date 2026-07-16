@@ -670,15 +670,24 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_managed_certificates_serial
         ON managed_certificates(workspace_id, serial_number)
         WHERE serial_number IS NOT NULL;
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint
+      -- Non-monitor rows (import/api/manual/...) dedupe by fingerprint.
+      -- Monitor observations dedupe by (source, source_ref) so two monitors
+      -- can share a fingerprint as separate inventory identities without
+      -- stealing provenance.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
         ON managed_certificates(workspace_id, fingerprint_sha256)
-        WHERE fingerprint_sha256 IS NOT NULL;
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker');
       CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_san
         ON managed_certificates USING GIN(subject_alt_names);
 
-      -- Certificate targets are deployment references. They may point at
-      -- hosts, endpoints, appliances, or cluster references, but never hold key
-      -- material.
+      -- Certificate targets are a location abstraction (observation point or
+      -- deployment destination). They may point at hosts, endpoints, appliances,
+      -- or cluster references, but never hold key material.
       CREATE TABLE IF NOT EXISTS certificate_targets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1044,6 +1053,30 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_api_token
         ON certificate_executor_events(workspace_id, created_by_api_token_id)
         WHERE created_by_api_token_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 15,
+    name: "certops_managed_certificate_monitor_identity",
+    sql: `
+      -- D8: stop merging distinct monitor observations on shared fingerprints.
+      -- Non-monitor rows (import/api/manual/...) keep fingerprint dedupe.
+      -- Monitor identity is (workspace_id, source, source_ref).
+      -- certificate_targets is a location abstraction (observation point or
+      -- deployment destination), not only a deployment reference.
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint;
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker');
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker');
     `,
   },
 ];

@@ -109,6 +109,34 @@ describe("CertOps executor event normalization", () => {
     }
   });
 
+  it("pins evidence.attached log status: spoofed statuses are rejected, accepted never maps to a job-log status", () => {
+    // Regression: a client-supplied `status` (including the default injected by
+    // the per-job /evidence route, `req.body.status || "accepted"`) must never
+    // control the job-log status of an evidence.attached event. The only
+    // status that passes validation is "accepted", and "accepted" is not a
+    // job-log status, so logStatus is pinned to null for these events.
+    for (const spoofedStatus of [
+      "rejected",
+      "failed",
+      "succeeded",
+      "running",
+      "claimed",
+      "blocked",
+      "cancelled",
+    ]) {
+      assert.throws(
+        () => normalize(eventBody({ status: spoofedStatus })),
+        (error) => error?.code === "CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH",
+        `evidence.attached with status "${spoofedStatus}" must be rejected`,
+      );
+    }
+
+    const normalized = normalize(eventBody({ status: "accepted" }));
+    assert.equal(normalized.status, "accepted");
+    assert.equal(normalized.logStatus, null);
+    assert.equal(normalized.jobStatus, null);
+  });
+
   it("hashes only an explicit allowlist of sanitized client semantics", () => {
     const normalized = normalize(eventBody());
     const projection = executorEventIdempotencyPayload(normalized);

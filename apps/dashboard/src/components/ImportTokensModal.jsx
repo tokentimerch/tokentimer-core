@@ -1353,10 +1353,12 @@ export default function ImportTokensModal({
       frequency: enableSyncFrequency,
       schedule_time: enableSyncTime,
       schedule_tz: enableSyncTz,
+      // scan_params (filters) never contain secrets, so they're always sent,
+      // even if the user didn't re-enter the token.
+      scan_params: scanParams,
     };
     if (credentialsHasSecrets(credentials, source)) {
       payload.credentials = credentials;
-      payload.scan_params = scanParams;
     }
     setSavingAutoSync(true);
     try {
@@ -1396,18 +1398,24 @@ export default function ImportTokensModal({
         isCancelled: () => autoSyncPollCancelRef.current,
       });
       if (outcome === 'cancelled') return;
-      if (outcome === 'success' || outcome === 'partial') {
+      if (outcome === 'success') {
         showSuccess(`Auto-sync completed (${outcome})`);
         dispatchNotificationsRefresh();
         return;
       }
-      if (outcome === 'failed') {
+      if (outcome === 'partial' || outcome === 'failed') {
         const res = await apiClient.get(
           `/api/v1/workspaces/${workspaceId}/auto-sync`
         );
         const cfg =
           (res.data?.items || []).find(c => c.provider === source) || null;
-        showWarning(cfg?.last_sync_error || 'Auto-sync failed again');
+        if (outcome === 'partial') {
+          showWarning(
+            cfg?.last_sync_error || 'Auto-sync completed with issues'
+          );
+        } else {
+          showWarning(cfg?.last_sync_error || 'Auto-sync failed again');
+        }
         dispatchNotificationsRefresh();
         return;
       }
@@ -2376,12 +2384,22 @@ export default function ImportTokensModal({
                   p={4}
                 >
                   <VStack align='stretch' spacing={4}>
-                    {autoSyncConfig.last_sync_status === 'failed' ? (
-                      <Alert status='error' borderRadius='md'>
+                    {autoSyncConfig.last_sync_status === 'failed' ||
+                    autoSyncConfig.last_sync_status === 'partial' ? (
+                      <Alert
+                        status={
+                          autoSyncConfig.last_sync_status === 'failed'
+                            ? 'error'
+                            : 'warning'
+                        }
+                        borderRadius='md'
+                      >
                         <AlertIcon />
                         <Box fontSize='sm'>
                           <Text fontWeight='semibold'>
-                            Last auto-sync failed
+                            {autoSyncConfig.last_sync_status === 'failed'
+                              ? 'Last auto-sync failed'
+                              : 'Last auto-sync completed with issues'}
                           </Text>
                           {autoSyncConfig.last_sync_error ? (
                             <Text mt={1}>{autoSyncConfig.last_sync_error}</Text>

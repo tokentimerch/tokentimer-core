@@ -189,16 +189,30 @@ function normalizeSubject(options) {
   return { subjectType, subjectId };
 }
 
+function buildPersistedEvidenceMetadata(clientMetadata, output) {
+  const metadata = { ...clientMetadata };
+  // Server-owned output redaction marker. Never accept a client spoof.
+  delete metadata.redaction;
+  if (output.redactionApplied) {
+    metadata.redaction = {
+      applied: true,
+      count: output.redactionCount,
+    };
+  }
+  return metadata;
+}
+
 function evidenceFromRow(row) {
   if (!row) return null;
-  return {
+  const metadata = parseJsonb(row.metadata);
+  const evidence = {
     id: row.id,
     workspaceId: row.workspace_id,
     jobId: row.job_id,
     evidenceType: row.evidence_type,
     subjectType: row.subject_type,
     subjectId: row.subject_id,
-    metadata: parseJsonb(row.metadata),
+    metadata,
     redactedOutput: row.redacted_output,
     outputTruncated: row.output_truncated,
     outputSha256: row.output_sha256,
@@ -208,6 +222,19 @@ function evidenceFromRow(row) {
     createdByApiTokenId: row.created_by_api_token_id,
     createdAt: dateToIso(row.created_at),
   };
+
+  const redaction =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? metadata.redaction
+      : null;
+  if (redaction && redaction.applied === true) {
+    evidence.outputRedactionApplied = true;
+    evidence.outputRedactionCount = Number.isInteger(redaction.count)
+      ? redaction.count
+      : 0;
+  }
+
+  return evidence;
 }
 
 async function ensureJobExists(db, workspaceId, jobId) {
@@ -237,8 +264,11 @@ async function createCertificateEvidence(options) {
     "evidenceType",
   );
   const { subjectType, subjectId } = normalizeSubject(options);
-  const metadata = normalizePublicObject(options.metadata, "metadata");
   const output = normalizeRedactedOutput(options.output);
+  const metadata = buildPersistedEvidenceMetadata(
+    normalizePublicObject(options.metadata, "metadata"),
+    output,
+  );
   const observedAt = normalizeOptionalDate(options.observedAt, "observedAt");
 
   const result = await db.query(
@@ -276,12 +306,7 @@ async function createCertificateEvidence(options) {
     ],
   );
 
-  const created = evidenceFromRow(result.rows[0]);
-  if (output.redactionApplied) {
-    created.outputRedactionApplied = true;
-    created.outputRedactionCount = output.redactionCount;
-  }
-  return created;
+  return evidenceFromRow(result.rows[0]);
 }
 
 async function getCertificateEvidenceById(options) {

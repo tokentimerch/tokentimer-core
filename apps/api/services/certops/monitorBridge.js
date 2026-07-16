@@ -3,10 +3,14 @@
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
   toInventoryRecord,
-  upsertManagedCertificate,
+  upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
 const { isCertOpsEnabled } = require("./settings");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const {
+  assertSafeHostname,
+  CERTOPS_UNSAFE_IDENTITY,
+} = require("./identitySafety");
 
 const CERTOPS_MONITOR_BRIDGE_SKIPPED = "CERTOPS_MONITOR_BRIDGE_SKIPPED";
 
@@ -58,6 +62,15 @@ function rejectPrivateMaterial(value) {
   error.code = PRIVATE_KEY_MATERIAL_REJECTED;
   error.status = 422;
   throw error;
+}
+
+// Infra handles (pg Pool/Client instances, the env bag) are not certificate
+// data and their object graphs are deep enough to trip the detector's
+// fail-closed max-scan-depth guard, which would misreport a false-positive
+// private-key rejection. Scan only the caller-supplied observation fields.
+function dataFieldsForPrivateMaterialScan(options) {
+  const { dbPool: _dbPool, client: _client, env: _env, ...rest } = options;
+  return rest;
 }
 
 function certificateFromObservation(options) {
@@ -118,6 +131,25 @@ function hasPublicObservation(certificate) {
       certificate.notAfter ||
       certificate.certificatePem,
   );
+}
+
+function assertObservationIdentitiesSafe(options, certificate) {
+  const hostname = normalizeText(options.hostname);
+  if (hostname) {
+    assertSafeHostname(hostname, { field: "hostname" });
+  }
+
+  const commonName = normalizeText(certificate?.commonName);
+  if (commonName) {
+    assertSafeHostname(commonName, { field: "commonName" });
+  }
+
+  for (const san of certificate?.subjectAltNames || []) {
+    const text = normalizeText(san);
+    if (text) {
+      assertSafeHostname(text, { field: "subjectAltName" });
+    }
+  }
 }
 
 async function withBridgeClient(options, fn) {
@@ -247,7 +279,7 @@ async function upsertObservedManagedCertificate(client, certificate, options) {
     );
   }
 
-  const managedCertificate = await upsertManagedCertificate(
+  const managedCertificate = await upsertManagedCertificateByMonitorSource(
     client,
     certificate,
     {
@@ -447,7 +479,7 @@ async function upsertCertificateInstance(
 }
 
 async function bridgeEndpointCertificateObservation(options = {}) {
-  rejectPrivateMaterial(options);
+  rejectPrivateMaterial(dataFieldsForPrivateMaterialScan(options));
 
   if (!options.workspaceId || !options.domainMonitorId) {
     throw new Error("workspaceId and domainMonitorId are required");
@@ -474,6 +506,8 @@ async function bridgeEndpointCertificateObservation(options = {}) {
       reason: "no_public_certificate_observation",
     };
   }
+
+  assertObservationIdentitiesSafe(options, certificate);
 
   if (!options.tokenId) {
     return {
@@ -509,6 +543,7 @@ async function bridgeEndpointCertificateObservation(options = {}) {
 
 module.exports = {
   CERTOPS_MONITOR_BRIDGE_SKIPPED,
+  CERTOPS_UNSAFE_IDENTITY,
   bridgeEndpointCertificateObservation,
   certificateFromObservation,
   normalizeFingerprintSha256,

@@ -354,7 +354,7 @@ function apiTokenAuditMetadata(token, { includeRevocation = false } = {}) {
   return metadata;
 }
 
-async function withCertOpsTokenTransaction(work) {
+async function withCertOpsTransaction(work) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -372,6 +372,9 @@ async function withCertOpsTokenTransaction(work) {
     client.release();
   }
 }
+
+// Alias kept for callers that still name the helper after API-token routes.
+const withCertOpsTokenTransaction = withCertOpsTransaction;
 
 async function recordApiTokenAudit({
   client,
@@ -393,9 +396,10 @@ async function recordApiTokenAudit({
   });
 }
 
-async function recordInventoryAudit(req, source, certificates) {
+async function recordInventoryAudit(req, source, certificates, client = null) {
   const actorUserId = req.user?.id || null;
   await writeAudit({
+    client,
     actorUserId,
     subjectUserId: actorUserId,
     action:
@@ -420,6 +424,9 @@ router.get(
   "/api/v1/workspaces/:id/certops/tokens",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Token metadata enumeration is manager-only, same as create/revoke:
+  // viewers must not see machine-token names, prefixes, or scopes.
+  requireCertOpsWriteRole,
   async (req, res) => {
     try {
       const tokens = await listApiTokens({
@@ -743,8 +750,14 @@ async function importCertificatesHandler(req, res, source, statusCode) {
       });
     }
 
-    const certificates = await importPublicCertificates(options);
-    await recordInventoryAudit(req, source, certificates);
+    const certificates = await withCertOpsTransaction(async (client) => {
+      const imported = await importPublicCertificates({
+        ...options,
+        client,
+      });
+      await recordInventoryAudit(req, source, imported, client);
+      return imported;
+    });
     return res.status(statusCode).json({
       items: certificates,
       count: certificates.length,

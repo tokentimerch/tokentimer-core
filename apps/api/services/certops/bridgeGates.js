@@ -1,10 +1,7 @@
 "use strict";
 
 const { isCertOpsEnabled } = require("./settings");
-const {
-  CERTOPS_MONITOR_BRIDGE_SKIPPED,
-  normalizeFingerprintSha256,
-} = require("./monitorBridge");
+const { CERTOPS_MONITOR_BRIDGE_SKIPPED } = require("./monitorBridge");
 
 async function loadWorkspace(client, workspaceId) {
   const result = await client.query(
@@ -33,34 +30,20 @@ async function existingMonitorManagedCertificate(
   return result.rows[0] || null;
 }
 
-async function activeManagedCertByFingerprint(
-  client,
-  workspaceId,
-  fingerprintSha256,
-) {
-  if (!fingerprintSha256) return null;
-  const result = await client.query(
-    `SELECT id
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND fingerprint_sha256 = $2
-        AND status NOT IN ('revoked', 'decommissioned')
-      LIMIT 1`,
-    [workspaceId, fingerprintSha256],
-  );
-  return result.rows[0] || null;
-}
-
 /**
  * True when bridging would create a new managed certificate row rather than
- * updating an existing monitor or fingerprint match (idempotent paths).
- * Core OSS has no quota enforcement; Cloud overlays add plan/frozen/quota gates.
+ * updating an existing monitor identity (source + source_ref).
+ *
+ * Fingerprint-only matches are NOT idempotent: a second monitor observing a
+ * known fingerprint still inserts a new managed_certificate row and consumes
+ * a new slot. Core OSS has no quota enforcement; Cloud overlays add
+ * plan/frozen/quota gates.
  */
 async function wouldConsumeNewManagedCertificateObservation(
   client,
   workspaceId,
   domainMonitorId,
-  fingerprintSha256,
+  _fingerprintSha256,
 ) {
   const existingForMonitor = await existingMonitorManagedCertificate(
     client,
@@ -68,16 +51,6 @@ async function wouldConsumeNewManagedCertificateObservation(
     domainMonitorId,
   );
   if (existingForMonitor) return false;
-
-  const normalizedFingerprint = normalizeFingerprintSha256(fingerprintSha256);
-  if (normalizedFingerprint) {
-    const existingByFingerprint = await activeManagedCertByFingerprint(
-      client,
-      workspaceId,
-      normalizedFingerprint,
-    );
-    if (existingByFingerprint) return false;
-  }
 
   return true;
 }

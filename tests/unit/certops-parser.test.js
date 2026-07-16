@@ -8,6 +8,8 @@ const {
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   PRIVATE_KEY_MATERIAL_REJECTED,
   parsePublicCertificateMaterial,
+  parseTypedSubjectAltNames,
+  parseSubjectAltNames,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/parser.js"),
 );
@@ -112,6 +114,55 @@ describe("CertOps public certificate parser", () => {
       "certops.example",
       "api.certops.example",
       "127.0.0.1",
+    ]);
+  });
+
+  it("extracts typed SAN entries and keeps IP SANs distinct from DNS", () => {
+    const [certificate] = parsePublicCertificateMaterial(PUBLIC_LEAF_CERT);
+
+    assert.deepEqual(certificate.subjectAltNameEntries, [
+      { type: "dns", value: "certops.example", prefix: "DNS" },
+      { type: "dns", value: "api.certops.example", prefix: "DNS" },
+      { type: "ip", value: "127.0.0.1", prefix: "IP Address" },
+    ]);
+    assert.deepEqual(
+      certificate.subjectAltNameEntries.map((entry) => entry.value),
+      certificate.subjectAltNames,
+    );
+  });
+
+  it("rejects unsafe DNS SAN values as a closed parse failure", () => {
+    const mixedDns = `DNS:p\u0430ypal.com, IP Address:127.0.0.1`;
+    assert.throws(
+      () => parseTypedSubjectAltNames(mixedDns),
+      (error) =>
+        error?.code === CERTOPS_CERTIFICATE_PARSE_FAILED &&
+        /homograph/i.test(error.message),
+    );
+  });
+
+  it("rejects bidirectional override in DNS SAN values", () => {
+    assert.throws(
+      () => parseTypedSubjectAltNames("DNS:evil.com\u202Egoogle.com"),
+      (error) =>
+        error?.code === CERTOPS_CERTIFICATE_PARSE_FAILED &&
+        /bidirectional/i.test(error.message),
+    );
+  });
+
+  it("accepts IP SANs without applying DNS mixed-script rules", () => {
+    assert.deepEqual(parseSubjectAltNames("IP Address:127.0.0.1, IP Address:::1"), [
+      "127.0.0.1",
+      "::1",
+    ]);
+    assert.deepEqual(parseTypedSubjectAltNames("IP Address:2001:db8::1"), [
+      { type: "ip", value: "2001:db8::1", prefix: "IP Address" },
+    ]);
+  });
+
+  it("accepts well-formed punycode DNS SANs", () => {
+    assert.deepEqual(parseTypedSubjectAltNames("DNS:xn--fsq.example"), [
+      { type: "dns", value: "xn--fsq.example", prefix: "DNS" },
     ]);
   });
 

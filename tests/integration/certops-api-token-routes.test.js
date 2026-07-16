@@ -260,7 +260,7 @@ describe("CertOps API token management routes", function () {
 
     const response = await request(BASE)
       .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
-      .set("Cookie", fixture.viewerSession.cookie)
+      .set("Cookie", fixture.managerSession.cookie)
       .expect(200);
 
     const ids = response.body.items.map((token) => token.id);
@@ -273,6 +273,32 @@ describe("CertOps API token management routes", function () {
       created.plaintextToken,
       otherWorkspaceToken.plaintextToken,
     ]);
+  });
+
+  it("denies token list to viewers while workspace managers get 200", async () => {
+    const created = await createApiToken({
+      workspaceId: fixture.workspaceId,
+      name: "Role gate list",
+      scopes: ["certops:events:write"],
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      createdBy: fixture.ownerUser.id,
+    });
+
+    const viewerDenied = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.viewerSession.cookie);
+    expect(viewerDenied.status).to.equal(403);
+    expect(viewerDenied.body.code).to.equal("INSUFFICIENT_ROLE");
+    expect(viewerDenied.body).to.not.have.property("items");
+    expectNoTokenLeak(viewerDenied.body, [created.plaintextToken]);
+
+    const managerAllowed = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .expect(200);
+    const ids = managerAllowed.body.items.map((token) => token.id);
+    expect(ids).to.include(created.token.id);
+    expectNoTokenLeak(managerAllowed.body, [created.plaintextToken]);
   });
 
   it("creates a scoped API token for managers and returns plaintext only once", async () => {
@@ -555,9 +581,16 @@ describe("CertOps API token management routes", function () {
 
     const viewerList = await request(BASE)
       .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
-      .set("Cookie", fixture.viewerSession.cookie)
-      .expect(200);
+      .set("Cookie", fixture.viewerSession.cookie);
+    expect(viewerList.status).to.equal(403);
+    expect(viewerList.body.code).to.equal("INSUFFICIENT_ROLE");
     expectNoTokenLeak(viewerList.body, [tokenA.body.plaintextToken]);
+
+    const managerList = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .expect(200);
+    expectNoTokenLeak(managerList.body, [tokenA.body.plaintextToken]);
   });
 
   it("requires a real session manager or admin for token mutations", async () => {
@@ -575,7 +608,8 @@ describe("CertOps API token management routes", function () {
         name: "Worker denied",
         scopes: ["certops:events:write"],
       });
-    expect(workerCreate.status).to.equal(401);
+    expect(workerCreate.status).to.equal(403);
+    expect(workerCreate.body.code).to.equal("INSUFFICIENT_ROLE");
     expectNoTokenLeak(workerCreate.body);
     expect(
       await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
@@ -599,7 +633,8 @@ describe("CertOps API token management routes", function () {
       )
       .set("Authorization", `Bearer ${workerKey}`)
       .send({});
-    expect(workerRevoked.status).to.equal(401);
+    expect(workerRevoked.status).to.equal(403);
+    expect(workerRevoked.body.code).to.equal("INSUFFICIENT_ROLE");
     expectNoTokenLeak(workerRevoked.body, [adminCreated.body.plaintextToken]);
 
     const persisted = await TestUtils.execQuery(

@@ -402,7 +402,8 @@ describe("CertOps inventory migration", function () {
     for (const indexName of [
       "idx_managed_certificates_workspace",
       "idx_managed_certificates_workspace_expiry",
-      "uq_managed_certificates_workspace_fingerprint",
+      "uq_managed_certificates_workspace_fingerprint_import",
+      "uq_managed_certificates_workspace_source_ref",
       "idx_certificate_instances_certificate",
       "idx_certificate_instances_workspace_fingerprint",
       "idx_certificate_targets_domain_monitor",

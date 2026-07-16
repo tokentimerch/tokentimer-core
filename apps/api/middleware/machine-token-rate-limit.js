@@ -143,7 +143,6 @@ function machineTokenRateLimitKey(req, options = {}) {
   const identity = req.apiToken || {};
   const workspaceId = safeKeyFragment(identity.workspaceId);
   const tokenPrefix = safeKeyFragment(identity.tokenPrefix);
-  const routeFamily = routeFamilyFromRequest(req, options);
 
   if (!workspaceId || !tokenPrefix) return null;
 
@@ -153,7 +152,8 @@ function machineTokenRateLimitKey(req, options = {}) {
     defaultMachineIdResolver;
   const machineId = safeKeyFragment(resolveMachineId(req));
 
-  const baseKey = `certops-machine:${workspaceId}:${tokenPrefix}:${routeFamily}`;
+  // Shared per-token bucket across executor machine-write routes (no route segment).
+  const baseKey = `certops-machine:${workspaceId}:${tokenPrefix}`;
   return machineId ? `${baseKey}:${machineId}` : baseKey;
 }
 
@@ -181,14 +181,14 @@ function preAuthWorkspaceId(req, options = {}) {
 }
 
 function machineTokenPreAuthRateLimitKey(req, options = {}) {
-  const routeFamily = routeFamilyFromRequest(req, options);
   const workspaceId = preAuthWorkspaceId(req, options);
   const tokenPrefix = tokenPrefixFromAuthorization(req);
   const identity = tokenPrefix
     ? `prefix:${tokenPrefix}`
     : `ip:${safeKeyFragment(resolveClientIp(req), "unknown")}`;
 
-  return `certops-machine-preauth:${routeFamily}:${workspaceId}:${identity}`;
+  // Shared pre-auth budget across executor routes (prefix or IP fallback).
+  return `certops-machine-preauth:${workspaceId}:${identity}`;
 }
 
 function retryAfterSeconds(req, windowMs) {

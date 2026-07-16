@@ -146,6 +146,18 @@ describe("CertOps route hardening", () => {
     }
   });
 
+  it("requires manager role for CertOps API token metadata enumeration", () => {
+    // Token metadata enumeration (names, prefixes, scopes, status) must be
+    // manager-only, matching token create/revoke, so viewers cannot enumerate
+    // machine tokens by calling the API directly.
+    const block = routeBlock("get", "/api/v1/workspaces/:id/certops/tokens");
+    assert.ok(
+      block.indexOf("requireCertOpsEnabled") <
+        block.indexOf("requireCertOpsWriteRole"),
+      "GET /certops/tokens must check the rollout gate before manager authorization",
+    );
+  });
+
   it("declares specific child routes before generic detail routes", () => {
     const instancesIndex = routesSource.indexOf(
       '"/api/v1/workspaces/:id/certops/certificates/:certId/instances"',

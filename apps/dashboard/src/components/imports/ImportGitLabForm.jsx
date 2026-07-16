@@ -239,15 +239,14 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       },
       scanParams: {
         baseUrl: gitlabBaseUrl || 'https://gitlab.com',
-        include: {
-          tokens: gitlabIncludePATs,
-          keys: gitlabIncludeSSHKeys,
-        },
+        include: { tokens: true, keys: true },
         filters: {
-          excludeUserPATs: gitlabExcludeUserPATs,
+          includePATs: gitlabIncludePATs,
           includeProjectTokens: gitlabIncludeProjectTokens,
           includeGroupTokens: gitlabIncludeGroupTokens,
           includeDeployTokens: gitlabIncludeDeployTokens,
+          includeSSHKeys: gitlabIncludeSSHKeys,
+          excludeUserPATs: gitlabExcludeUserPATs,
           includeExpired: gitlabIncludeExpired,
           includeRevoked: gitlabIncludeRevoked,
         },

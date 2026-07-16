@@ -116,11 +116,13 @@ describe("wouldConsumeNewManagedCertificateObservation", () => {
     assert.equal(consumes, false);
   });
 
-  it("returns false when fingerprint already exists in workspace", async () => {
+  it("returns true when fingerprint exists for a different monitor", async () => {
+    let queriedFingerprint = false;
     const client = mockClient([
       (sql) => {
         if (sql.includes("source_ref")) return { rows: [] };
         if (sql.includes("fingerprint_sha256 = $2")) {
+          queriedFingerprint = true;
           return { rows: [{ id: "mc-existing" }] };
         }
       },
@@ -132,14 +134,18 @@ describe("wouldConsumeNewManagedCertificateObservation", () => {
       "mon-1",
       VALID_FINGERPRINT,
     );
-    assert.equal(consumes, false);
+    assert.equal(consumes, true);
+    assert.equal(
+      queriedFingerprint,
+      false,
+      "fingerprint-only match must not short-circuit slot consumption",
+    );
   });
 
-  it("returns true for a new monitor and fingerprint", async () => {
+  it("returns true for a new monitor even without a fingerprint", async () => {
     const client = mockClient([
       (sql) => {
         if (sql.includes("source_ref")) return { rows: [] };
-        if (sql.includes("fingerprint_sha256 = $2")) return { rows: [] };
       },
     ]);
 
@@ -147,7 +153,7 @@ describe("wouldConsumeNewManagedCertificateObservation", () => {
       client,
       "ws-1",
       "mon-new",
-      VALID_FINGERPRINT,
+      null,
     );
     assert.equal(consumes, true);
   });
