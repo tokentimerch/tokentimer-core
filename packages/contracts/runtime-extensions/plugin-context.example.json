@@ -1,6 +1,6 @@
 {
   "contractName": "runtime-extensions.plugin-context",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "hooks": {
     "setAuthFeaturesProvider": {
       "signature": "(handler: (req, res) => void) => void",

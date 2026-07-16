@@ -10,6 +10,10 @@ const {
   requireWorkspaceMembership,
 } = require("../services/rbac");
 const { testWebhookUrl } = require("../config/constants");
+const {
+  shouldEnforcePrivateIpCheck,
+  validateResolvedIP,
+} = require("../utils/webhookSafety");
 const systemSettings = require("../services/systemSettings");
 const {
   sendEmail,
@@ -1753,6 +1757,22 @@ router.post(
           return res.status(400).json({
             error: `Webhook host not allowed for provider (${lowerKind}). Use a domain such as hooks.slack.com, discord.com, outlook.office.com/webhook.office.com, office365.com, or events.pagerduty.com`,
             code: "WEBHOOK_HOST_NOT_ALLOWED",
+          });
+        }
+      }
+
+      // SSRF protection aligned with worker delivery (apps/worker notify):
+      // block private/reserved destinations unless the self-hosted escape
+      // hatch WEBHOOK_ALLOW_PRIVATE_IPS=true is set. Without this check the
+      // Test button could succeed while real alert delivery is blocked.
+      // Runs after the provider allowlist so provider kinds keep returning
+      // WEBHOOK_HOST_NOT_ALLOWED for non-allowlisted hosts.
+      if (shouldEnforcePrivateIpCheck()) {
+        const ipSafe = await validateResolvedIP(target.hostname);
+        if (!ipSafe) {
+          return res.status(400).json({
+            error: `Webhook blocked: ${target.hostname} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
+            code: "WEBHOOK_PRIVATE_IP_BLOCKED",
           });
         }
       }

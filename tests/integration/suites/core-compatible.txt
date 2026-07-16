@@ -62,6 +62,7 @@ tests/integration/webhooks-settings.test.js
 tests/integration/webhooks-delivery.test.js
 tests/integration/pagerduty-validation.test.js
 tests/integration/webhook-ssrf-protection.test.js
+tests/integration/webhook-private-ip-blocking.test.js
 
 # Endpoint monitoring
 tests/integration/endpoint-monitor.test.js

@@ -1,5 +1,9 @@
 const { parseLimits } = require("../services/planLimits");
 const { logger } = require("../utils/logger");
+const {
+  shouldEnforcePrivateIpCheck,
+  validateResolvedIP,
+} = require("../utils/webhookSafety");
 
 const normalizeUrl = (value) => String(value || "").replace(/\/$/, "");
 const APP_URL = normalizeUrl(process.env.APP_URL) || "http://localhost:5173";
@@ -70,6 +74,17 @@ async function testWebhookUrl(
       const key = String(routingKey || "").trim();
       if (!key || key.length !== 32 || !/^[A-Za-z0-9]{32}$/.test(key)) {
         return { success: false, error: "Invalid PagerDuty routing key" };
+      }
+    }
+    // SSRF protection aligned with worker delivery: block private/reserved
+    // destinations unless WEBHOOK_ALLOW_PRIVATE_IPS=true (self-hosted only).
+    if (shouldEnforcePrivateIpCheck()) {
+      const ipSafe = await validateResolvedIP(target.hostname);
+      if (!ipSafe) {
+        return {
+          success: false,
+          error: `Webhook blocked: ${target.hostname} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
+        };
       }
     }
     const text = "This is a test message from TokenTimer";
