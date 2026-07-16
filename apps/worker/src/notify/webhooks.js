@@ -25,6 +25,41 @@ function isPrivateOrReservedIP(ip) {
 }
 
 /**
+ * Self-hosted escape hatch for the private/reserved IP block below.
+ * TokenTimer Cloud must never set this; for self-hosted deployments whose
+ * alert targets (e.g. RocketChat) live on RFC1918 addresses, setting
+ * WEBHOOK_ALLOW_PRIVATE_IPS=true permits webhook delivery to private and
+ * reserved IP ranges. Read at call time so tests and runtime config reloads
+ * see the current value.
+ */
+export function allowPrivateWebhookIPs() {
+  return (
+    String(process.env.WEBHOOK_ALLOW_PRIVATE_IPS || "").toLowerCase() ===
+    "true"
+  );
+}
+
+/**
+ * Whether the private/reserved IP check should run at all.
+ *
+ * Enforcement is skipped in test mode (NODE_ENV=test) so integration suites
+ * can post to local mock servers, unless WEBHOOK_ENFORCE_PRIVATE_IP_CHECK=true
+ * explicitly turns it on (used by the integration test stack to exercise the
+ * SSRF guard). WEBHOOK_ALLOW_PRIVATE_IPS=true always disables the check.
+ */
+export function shouldEnforcePrivateIpCheck() {
+  if (allowPrivateWebhookIPs()) return false;
+  if (
+    String(
+      process.env.WEBHOOK_ENFORCE_PRIVATE_IP_CHECK || "",
+    ).toLowerCase() === "true"
+  ) {
+    return true;
+  }
+  return process.env.NODE_ENV !== "test";
+}
+
+/**
  * Resolve a hostname and verify it does not point to a private/reserved IP.
  * Returns true if the host is safe to connect to.
  */
@@ -193,13 +228,15 @@ export async function postJson(webhookUrl, body, kind = "generic") {
       throw new Error("Webhook host not allowed for provider");
     }
 
-    // SSRF protection: verify resolved IP is not private/reserved
-    if (process.env.NODE_ENV !== "test") {
+    // SSRF protection: verify resolved IP is not private/reserved.
+    // Self-hosted deployments can opt out via WEBHOOK_ALLOW_PRIVATE_IPS=true
+    // to deliver alerts to targets on internal networks (e.g. RocketChat).
+    if (shouldEnforcePrivateIpCheck()) {
       const ipSafe = await validateResolvedIP(url.hostname);
       if (!ipSafe) {
         return {
           success: false,
-          error: `Webhook blocked: ${url.hostname} resolves to a private/reserved IP`,
+          error: `Webhook blocked: ${url.hostname} resolves to a private/reserved IP. Self-hosted deployments can set WEBHOOK_ALLOW_PRIVATE_IPS=true to allow private webhook destinations.`,
         };
       }
     }

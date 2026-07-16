@@ -69,6 +69,10 @@ services:
       # Delivery windows (wide open for tests)
       - DELIVERY_WINDOW_DEFAULT_START=00:00
       - DELIVERY_WINDOW_DEFAULT_END=23:59
+      # Exercise the SSRF private-IP guard in integration tests even though
+      # NODE_ENV=test (see apps/api/utils/webhookSafety.js). Only set on the
+      # API: delivery workers post to local mock targets during tests.
+      - WEBHOOK_ENFORCE_PRIVATE_IP_CHECK=true
       - NODE_V8_COVERAGE=${NODE_V8_COVERAGE:+/tmp/v8-coverage}
       - NODE_OPTIONS=${NODE_V8_COVERAGE:+--require=/app/apps/api/coverage-flush-hook.cjs}
     depends_on:

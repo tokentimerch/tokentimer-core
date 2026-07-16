@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-07-16
+
+### Added
+
+- **`WEBHOOK_ALLOW_PRIVATE_IPS` (#63)** — new opt-in env var for self-hosted deployments that allows webhook delivery to private/reserved IP ranges (RFC1918, loopback, link-local, CGN). Defaults to `false` (SSRF protection unchanged). Applies to worker alert delivery, the `/api/test-webhook` endpoint, and save-time webhook validation. Exposed in `docker-compose.yml` for the api, worker-delivery, and worker-weekly-digest services and documented in `docs/CONFIGURATION.md` and `deploy/compose/.env.example`. Note: in production (`NODE_ENV=production`) webhook URLs must still be HTTPS; the flag only lifts the private/reserved-IP block.
+- **`WEBHOOK_ENFORCE_PRIVATE_IP_CHECK`** — test-infrastructure env var that forces the private-IP check even when `NODE_ENV=test`; set on the API service in `docker-compose.test.yml` so the integration suite exercises the SSRF guard (new `webhook-private-ip-blocking.test.js` plus unit coverage in `webhook-private-ip-gate.test.js`).
+
+### Fixed
+
+- **Webhook Test vs delivery parity (#63)** — the Test button and alert-settings save-time validation now run the same private/reserved-IP check as actual alert delivery (shared helpers in `apps/api/utils/webhookSafety.js`), so a webhook that would be blocked at delivery time fails fast with a clear error (`WEBHOOK_PRIVATE_IP_BLOCKED`) instead of a misleading successful test. Blocked-delivery errors now mention the `WEBHOOK_ALLOW_PRIVATE_IPS` remedy.
+
+### Changed
+
+- **Version metadata bumped to 0.8.3** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
 ## [0.8.2] - 2026-07-15
 
 ### Fixed
