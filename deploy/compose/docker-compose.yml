@@ -70,6 +70,10 @@ services:
       API_URL: ${API_URL:-http://localhost:4000}
       ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
 
+      # CertOps rollout flag (env > DB > default false). Leave unset to keep
+      # the DB/system-settings fallback; set true to enable the CertOps layer.
+      CERTOPS_ENABLED: ${CERTOPS_ENABLED:-}
+
       # Auth
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}
@@ -395,6 +399,9 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      # CertOps rollout flag (env > DB > default false). Must match the api
+      # service so the monitor bridge gate resolves consistently.
+      CERTOPS_ENABLED: ${CERTOPS_ENABLED:-}
       WORKER_ENDPOINT_CHECK_CRON: "${WORKER_ENDPOINT_CHECK_CRON:-*/1 * * * *}"
       WORKER_ENDPOINT_CHECK_INTERVAL_MS: ${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-}
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
