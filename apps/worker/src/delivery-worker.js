@@ -702,13 +702,28 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
     for (const alert of claimedAlerts) {
       processed++;
 
-      // Never process alerts that are already blocked
-      if (String(alert.status || "").toLowerCase() === "blocked") {
-        continue;
-      }
-
-      // Never process alerts that have already been sent successfully
-      if (String(alert.status || "").toLowerCase() === "sent") {
+      // Fresh per-row re-check + lease renewal. The snapshot fetched at claim
+      // time goes stale while earlier rows in the batch run external sends
+      // (each recipient can take ~30s), so a batch can outlive the batch-wide
+      // claim marker. Renewing the marker per row means the claim only has to
+      // outlive ONE row's processing, and the atomic status predicate detects
+      // rows that another worker meanwhile sent or blocked (statuses outside
+      // the claimable set) without trusting the stale snapshot.
+      const recheck = await client.query(
+        `UPDATE alert_queue
+            SET next_attempt_at = NOW() + ($2 * INTERVAL '1 millisecond'),
+                updated_at = NOW()
+          WHERE id = $1
+            AND status IN ('pending', 'failed', 'partial')
+        RETURNING id`,
+        [alert.id, CLAIM_MARKER_MS],
+      );
+      if (recheck.rows.length === 0) {
+        // Row is no longer in a deliverable state (sent/blocked by another
+        // worker, or removed). Skip silently.
+        logger.debug("Skipping alert no longer claimable at recheck", {
+          alertId: alert.id,
+        });
         continue;
       }
 

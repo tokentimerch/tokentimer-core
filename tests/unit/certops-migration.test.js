@@ -245,8 +245,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-6).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15],
+      migrations.slice(-7).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15, 16],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -400,8 +400,23 @@ describe("CertOps inventory migration", () => {
       monitorIdentityMigration.sql,
       /location abstraction \(observation point or[\s\S]*deployment destination\)/,
     );
+  });
+
+  it("defines the endpoint check claim lease migration after monitor identity", () => {
+    const checkClaimLeaseMigration = migrations.find(
+      (migration) => migration.name === "endpoint_monitor_check_claim_lease",
+    );
+    assert.ok(
+      checkClaimLeaseMigration,
+      "expected endpoint_monitor_check_claim_lease migration",
+    );
+    assert.equal(checkClaimLeaseMigration.version, 16);
+    assert.match(
+      checkClaimLeaseMigration.sql,
+      /ALTER TABLE domain_monitors\s+ADD COLUMN IF NOT EXISTS check_claimed_until TIMESTAMPTZ NULL/,
+    );
     assert.equal(
-      migrations.some((migration) => migration.version === 16),
+      migrations.some((migration) => migration.version === 17),
       false,
     );
   });
