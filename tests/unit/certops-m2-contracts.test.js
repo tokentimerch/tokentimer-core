@@ -1472,6 +1472,12 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/utils/secretMaterial.js",
       "apps/worker/src/delivery-worker.js",
       "apps/worker/src/endpoint-check-worker.js",
+      // CertOps rollout flag + demo provisioning tooling for local/manual
+      // M2 validation (no runtime code paths; compose env wiring only):
+      "deploy/compose/.env.example",
+      "deploy/compose/docker-compose.dev.yml",
+      "deploy/compose/docker-compose.yml",
+      "scripts/provision-certops-demo.js",
       "docs/adr/0007-certops-certificate-removal-lifecycle.md",
       "docs/certops/CONTEXT.md",
       "docs/certops/executor-api.md",
