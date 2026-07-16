@@ -432,7 +432,16 @@ describe("Endpoint check worker integration", function () {
       expect(firstFingerprint).to.be.a("string");
 
       // Re-observing the SAME certificate refreshes the existing instance row
-      // (last-seen) instead of appending a new one.
+      // (last-seen) instead of appending a new one. The claim/completion path
+      // now advances last_health_check_at (scheduling state), so make the
+      // monitor due again before each re-run.
+      await TestUtils.execQuery(
+        `UPDATE domain_monitors
+            SET last_health_check_at = NOW() - INTERVAL '2 minutes',
+                check_claimed_until = NULL
+          WHERE id = $1`,
+        [localMonitorId],
+      );
       await runBridgeWorker();
       const afterRefresh = await queryBridgeRows();
       expect(afterRefresh.rows).to.have.length(1);
@@ -446,6 +455,13 @@ describe("Endpoint check worker integration", function () {
       // A new fingerprint at the same monitor APPENDS a second instance row, while
       // the single managed_certificate row is updated in place.
       httpsServer.rotateCertificate();
+      await TestUtils.execQuery(
+        `UPDATE domain_monitors
+            SET last_health_check_at = NOW() - INTERVAL '2 minutes',
+                check_claimed_until = NULL
+          WHERE id = $1`,
+        [localMonitorId],
+      );
       await runBridgeWorker();
       const afterRotation = await queryBridgeRows();
       expect(afterRotation.rows).to.have.length(2);

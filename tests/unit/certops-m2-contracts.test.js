@@ -1489,6 +1489,7 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/integration/certops-jobs-evidence.test.js",
       "tests/integration/certops-machine-token-rate-limit.test.js",
       "tests/integration/certops-migration.test.js",
+      "tests/integration/endpoint-check-worker.integration.test.js",
       "tests/integration/helpers/local-https-server.js",
       "tests/integration/worker-claim-lease.test.js",
       "tests/integration/suites/cloud-compatible.txt",
