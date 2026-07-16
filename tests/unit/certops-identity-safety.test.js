@@ -140,6 +140,32 @@ describe("CertOps identitySafety", () => {
     assert.equal(isSafeDnsIdentity(hiraganaHangul), false);
   });
 
+  it("rejects mixed labels of scripts outside the historic hardcoded set", () => {
+    // Bengali KA (U+0995) + Tamil KA (U+0B95): before full Unicode script
+    // coverage both fell into a shared "Unrecognized" bucket and the mix
+    // was accepted.
+    const bengaliTamil = "\u0995\u0b95";
+    assert.equal(isSafeDnsIdentity(bengaliTamil), false);
+    assertRejects(
+      () => assertSafeDnsIdentity(bengaliTamil),
+      /mixes multiple Unicode scripts/,
+    );
+    assertRejects(
+      () => assertSafeDnsIdentity(`${bengaliTamil}.example`),
+      /Bengali, Tamil/,
+    );
+  });
+
+  it("accepts pure single-script labels of previously unlisted scripts", () => {
+    const pureBengali = "\u0995\u0996\u0997"; // ক খ গ
+    const pureTamil = "\u0b95\u0b99\u0b9a"; // க ங ச
+    assert.equal(isSafeDnsIdentity(pureBengali), true);
+    assert.equal(assertSafeDnsIdentity(pureBengali), pureBengali);
+    assert.equal(isSafeDnsIdentity(pureTamil), true);
+    assert.equal(assertSafeDnsIdentity(pureTamil), pureTamil);
+    assert.equal(isSafeDnsIdentity(`${pureTamil}.example`), true);
+  });
+
   it("rejects U+202E bidirectional override", () => {
     const spoofed = `evil.com\u202Egoogle.com`;
     assertRejects(() => assertSafeDnsIdentity(spoofed), /bidirectional/);

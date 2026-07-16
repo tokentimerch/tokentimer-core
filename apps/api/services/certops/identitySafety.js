@@ -59,28 +59,72 @@ const ACE_LABEL_PATTERN = /^xn--[a-z0-9-]+$/i;
 // punctuation, combining marks) never contribute a script of their own.
 const COMMON_OR_INHERITED_SCRIPT = /[\p{Script=Common}\p{Script=Inherited}]/u;
 
-// Scripts distinguished for per-label mixed-script detection. Characters
-// whose script is not listed fall into a single "Unrecognized" bucket, which
-// still catches mixes between listed scripts and anything else.
-const SCRIPT_MATCHERS = [
-  ["Latin", /\p{Script=Latin}/u],
-  ["Cyrillic", /\p{Script=Cyrillic}/u],
-  ["Greek", /\p{Script=Greek}/u],
-  ["Han", /\p{Script=Han}/u],
-  ["Hiragana", /\p{Script=Hiragana}/u],
-  ["Katakana", /\p{Script=Katakana}/u],
-  ["Hangul", /\p{Script=Hangul}/u],
-  ["Bopomofo", /\p{Script=Bopomofo}/u],
-  ["Arabic", /\p{Script=Arabic}/u],
-  ["Hebrew", /\p{Script=Hebrew}/u],
-  ["Armenian", /\p{Script=Armenian}/u],
-  ["Georgian", /\p{Script=Georgian}/u],
-  ["Devanagari", /\p{Script=Devanagari}/u],
-  ["Thai", /\p{Script=Thai}/u],
-  ["Ethiopic", /\p{Script=Ethiopic}/u],
-  ["Cherokee", /\p{Script=Cherokee}/u],
-  ["Canadian_Aboriginal", /\p{Script=Canadian_Aboriginal}/u],
+// Complete list of Unicode Script property values recognized by the Node
+// runtime's RegExp \p{Script=...} escapes (ECMAScript UnicodeScriptValue,
+// Unicode 16 on Node 22: 168 scripts). Enumerated by compiling
+// new RegExp(`\\p{Script=NAME}`, "u") for every candidate name and keeping
+// the ones that compile; verified exhaustive by checking that every
+// script-bearing code point (\p{L}, \p{Nd}, \p{M}) outside Common/Inherited
+// matches exactly one of these scripts. Full coverage means a label mixing
+// any two distinct scripts is detected: there is no shared "other" bucket
+// that unlisted scripts could hide in.
+const UNICODE_SCRIPT_NAMES = [
+  "Adlam", "Ahom", "Anatolian_Hieroglyphs", "Arabic", "Armenian", "Avestan",
+  "Balinese", "Bamum", "Bassa_Vah", "Batak", "Bengali", "Bhaiksuki",
+  "Bopomofo", "Brahmi", "Braille", "Buginese", "Buhid", "Canadian_Aboriginal",
+  "Carian", "Caucasian_Albanian", "Chakma", "Cham", "Cherokee", "Chorasmian",
+  "Coptic", "Cuneiform", "Cypriot", "Cypro_Minoan", "Cyrillic", "Deseret",
+  "Devanagari", "Dives_Akuru", "Dogra", "Duployan", "Egyptian_Hieroglyphs",
+  "Elbasan", "Elymaic", "Ethiopic", "Garay", "Georgian", "Glagolitic",
+  "Gothic", "Grantha", "Greek", "Gujarati", "Gunjala_Gondi", "Gurmukhi",
+  "Gurung_Khema", "Han", "Hangul", "Hanifi_Rohingya", "Hanunoo", "Hatran",
+  "Hebrew", "Hiragana", "Imperial_Aramaic", "Inscriptional_Pahlavi",
+  "Inscriptional_Parthian", "Javanese", "Kaithi", "Kannada", "Katakana",
+  "Kawi", "Kayah_Li", "Kharoshthi", "Khitan_Small_Script", "Khmer", "Khojki",
+  "Khudawadi", "Kirat_Rai", "Lao", "Latin", "Lepcha", "Limbu", "Linear_A",
+  "Linear_B", "Lisu", "Lycian", "Lydian", "Mahajani", "Makasar", "Malayalam",
+  "Mandaic", "Manichaean", "Marchen", "Masaram_Gondi", "Medefaidrin",
+  "Meetei_Mayek", "Mende_Kikakui", "Meroitic_Cursive", "Meroitic_Hieroglyphs",
+  "Miao", "Modi", "Mongolian", "Mro", "Multani", "Myanmar", "Nabataean",
+  "Nag_Mundari", "Nandinagari", "New_Tai_Lue", "Newa", "Nko", "Nushu",
+  "Nyiakeng_Puachue_Hmong", "Ogham", "Ol_Chiki", "Ol_Onal", "Old_Hungarian",
+  "Old_Italic", "Old_North_Arabian", "Old_Permic", "Old_Persian",
+  "Old_Sogdian", "Old_South_Arabian", "Old_Turkic", "Old_Uyghur", "Oriya",
+  "Osage", "Osmanya", "Pahawh_Hmong", "Palmyrene", "Pau_Cin_Hau", "Phags_Pa",
+  "Phoenician", "Psalter_Pahlavi", "Rejang", "Runic", "Samaritan",
+  "Saurashtra", "Sharada", "Shavian", "Siddham", "SignWriting", "Sinhala",
+  "Sogdian", "Sora_Sompeng", "Soyombo", "Sundanese", "Sunuwar",
+  "Syloti_Nagri", "Syriac", "Tagalog", "Tagbanwa", "Tai_Le", "Tai_Tham",
+  "Tai_Viet", "Takri", "Tamil", "Tangsa", "Tangut", "Telugu", "Thaana",
+  "Thai", "Tibetan", "Tifinagh", "Tirhuta", "Todhri", "Toto", "Tulu_Tigalari",
+  "Ugaritic", "Vai", "Vithkuqi", "Wancho", "Warang_Citi", "Yezidi", "Yi",
+  "Zanabazar_Square",
 ];
+
+// Lazily compiled per-script regexes, in UNICODE_SCRIPT_NAMES order. Compiled
+// on first use so module load stays cheap.
+const SCRIPT_MATCHER_CACHE = new Map();
+
+function scriptMatcher(name) {
+  let pattern = SCRIPT_MATCHER_CACHE.get(name);
+  if (!pattern) {
+    pattern = new RegExp(`\\p{Script=${name}}`, "u");
+    SCRIPT_MATCHER_CACHE.set(name, pattern);
+  }
+  return pattern;
+}
+
+// Fail-closed marker for characters whose script cannot be resolved. With the
+// complete script list above this is unreachable on current runtimes, but if
+// a future Unicode version introduces a script this Node build cannot name,
+// any label containing it is REJECTED rather than silently bucketed together
+// with other unknown scripts.
+const UNRESOLVED_SCRIPT = "Unresolved";
+
+// Per-character script memo: label validation revisits the same characters
+// across calls, and a hit avoids the linear scan over ~168 regexes.
+const CHARACTER_SCRIPT_CACHE = new Map();
+const CHARACTER_SCRIPT_CACHE_MAX = 4096;
 
 // Standard legitimate combinations per the UTS #39 "Highly Restrictive"
 // profile. Latin is deliberately NOT allowed alongside these: the ASCII /
@@ -119,10 +163,23 @@ function isScriptBearingCodePoint(codePoint) {
 
 function scriptOfCharacter(char) {
   if (COMMON_OR_INHERITED_SCRIPT.test(char)) return null;
-  for (const [name, pattern] of SCRIPT_MATCHERS) {
-    if (pattern.test(char)) return name;
+
+  const cached = CHARACTER_SCRIPT_CACHE.get(char);
+  if (cached !== undefined) return cached;
+
+  let script = UNRESOLVED_SCRIPT;
+  for (const name of UNICODE_SCRIPT_NAMES) {
+    if (scriptMatcher(name).test(char)) {
+      script = name;
+      break;
+    }
   }
-  return "Unrecognized";
+
+  if (CHARACTER_SCRIPT_CACHE.size >= CHARACTER_SCRIPT_CACHE_MAX) {
+    CHARACTER_SCRIPT_CACHE.clear();
+  }
+  CHARACTER_SCRIPT_CACHE.set(char, script);
+  return script;
 }
 
 function isAllowedScriptCombination(scripts) {
@@ -235,10 +292,18 @@ function validateDnsLabel(label) {
   }
 
   // Pure non-ASCII U-label: allow one script only (Common/Inherited ignored),
-  // except the standard CJK combinations.
+  // except the standard CJK combinations. Characters whose script cannot be
+  // resolved reject the label outright (fail closed).
   const scripts = new Set();
   for (const char of label) {
     const script = scriptOfCharacter(char);
+    if (script === UNRESOLVED_SCRIPT) {
+      return createIdentityError(
+        `DNS label ${JSON.stringify(label)} contains character ` +
+          `${formatCodePoint(char.codePointAt(0))} of unresolved Unicode script: ` +
+          `refuse (potential IDN homograph)`,
+      );
+    }
     if (script) scripts.add(script);
   }
 
