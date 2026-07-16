@@ -316,6 +316,7 @@ const migrations = [
         attempts_whatsapp INTEGER NOT NULL DEFAULT 0,
         last_attempt TIMESTAMP NULL,
         next_attempt_at TIMESTAMP NULL,
+        delivery_claim_id UUID NULL,
         last_error_class TEXT NULL,
         last_error_message TEXT NULL,
         error_message TEXT NULL,
@@ -540,6 +541,7 @@ const migrations = [
         health_check_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         last_health_check_at TIMESTAMPTZ NULL,
         check_claimed_until TIMESTAMPTZ NULL,
+        check_claim_id UUID NULL,
         last_health_status TEXT NULL CHECK (last_health_status IN ('healthy','unhealthy','error','pending')),
         last_health_status_code INTEGER NULL,
         last_health_error TEXT NULL,
@@ -1172,6 +1174,24 @@ const migrations = [
       -- lease expiry. Mirrors the auto-sync worker's claimed-until idiom.
       ALTER TABLE domain_monitors
         ADD COLUMN IF NOT EXISTS check_claimed_until TIMESTAMPTZ NULL;
+    `,
+  },
+  {
+    version: 17,
+    name: "worker_owner_scoped_claim_ids",
+    sql: `
+      -- Owner identity for the claim-then-commit workers. A time-based marker
+      -- (next_attempt_at / check_claimed_until) alone cannot distinguish two
+      -- workers racing on the same row after a lease expires: both renewals
+      -- match a status-only predicate and both perform external side effects.
+      -- Each worker run generates one claim UUID; renewals, terminal writes,
+      -- and lease releases are conditional on still owning that claim id, so
+      -- a superseded worker's writes no-op instead of double-sending or
+      -- clearing another worker's lease.
+      ALTER TABLE alert_queue
+        ADD COLUMN IF NOT EXISTS delivery_claim_id UUID NULL;
+      ALTER TABLE domain_monitors
+        ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL;
     `,
   },
 ];

@@ -245,8 +245,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-7).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15, 16],
+      migrations.slice(-8).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15, 16, 17],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -415,8 +415,27 @@ describe("CertOps inventory migration", () => {
       checkClaimLeaseMigration.sql,
       /ALTER TABLE domain_monitors\s+ADD COLUMN IF NOT EXISTS check_claimed_until TIMESTAMPTZ NULL/,
     );
+  });
+
+  it("defines the worker owner-scoped claim id migration after the check claim lease", () => {
+    const ownerClaimIdMigration = migrations.find(
+      (migration) => migration.name === "worker_owner_scoped_claim_ids",
+    );
+    assert.ok(
+      ownerClaimIdMigration,
+      "expected worker_owner_scoped_claim_ids migration",
+    );
+    assert.equal(ownerClaimIdMigration.version, 17);
+    assert.match(
+      ownerClaimIdMigration.sql,
+      /ALTER TABLE alert_queue\s+ADD COLUMN IF NOT EXISTS delivery_claim_id UUID NULL/,
+    );
+    assert.match(
+      ownerClaimIdMigration.sql,
+      /ALTER TABLE domain_monitors\s+ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL/,
+    );
     assert.equal(
-      migrations.some((migration) => migration.version === 17),
+      migrations.some((migration) => migration.version === 18),
       false,
     );
   });
