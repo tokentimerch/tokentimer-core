@@ -1,39 +1,33 @@
-FROM node:22.22.2-slim AS build
+# Build context must be the repo root.
+# Prefer deploy/compose/Dockerfile.dashboard for production Compose/CI images.
+FROM node:22.23.0-slim AS build
 
-# Build arguments (leave empty by default so production uses relative /api)
 ARG VITE_API_URL=
 ARG API_URL=
 ARG REACT_APP_ENVIRONMENT=production
 
 WORKDIR /app
 
-# Install essential packages for building
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
 
-# Copy package files
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY apps/dashboard/package.json ./apps/dashboard/
 
-# Install all dependencies with security audit (using frozen lockfile for deterministic builds)
-RUN pnpm install --frozen-lockfile && \
-    pnpm audit --audit-level=high || true
+RUN pnpm install --frozen-lockfile --filter @tokentimer/dashboard... && \
+    (pnpm audit --audit-level=high || true)
 
-# Copy source code
-COPY . .
+COPY apps/dashboard ./apps/dashboard
 
-# Set environment variables for build and keep API_URL fallback compatibility
 ENV REACT_APP_ENVIRONMENT=$REACT_APP_ENVIRONMENT
 
-# Build the application
-RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm run build
+RUN VITE_API_URL="${VITE_API_URL:-$API_URL}" pnpm --filter @tokentimer/dashboard run build
 
-# Production stage with Nginx
 FROM nginx:1.28.3-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
@@ -50,34 +44,23 @@ RUN apk update && apk upgrade --no-cache \
     && apk add --no-cache nginx=1.28.3-r4 \
     && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0" \
     && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r4" \
-    # Alpine's nginx build defaults to pid /run/nginx/nginx.pid (the official image
-    # used /var/run/nginx.pid); the directory only exists when created here.
     && mkdir -p /run/nginx
 
-# Create non-root user for Nginx
 RUN mkdir -p /usr/share/nginx/html && \
     addgroup -g 1001 -S nginx-user && \
     adduser -S nginx-user -u 1001
 
-# Copy built application
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/apps/dashboard/dist /usr/share/nginx/html
 
-# Copy custom Nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
-
-# Runtime env injection for SPA
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY apps/dashboard/nginx.conf /etc/nginx/nginx.conf
+COPY apps/dashboard/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Change ownership of web files
 RUN chown -R nginx-user:nginx-user /usr/share/nginx/html
 
-# Expose unprivileged port
 EXPOSE 8080
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
 
-# Start via entrypoint to generate /usr/share/nginx/html/env.js from env vars
 ENTRYPOINT ["/docker-entrypoint.sh"]

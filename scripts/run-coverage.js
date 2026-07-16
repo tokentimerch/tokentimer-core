@@ -18,7 +18,7 @@ const collectOnly = process.argv.includes("--collect-only");
 const containerCoverageDirs = [
   {
     dir: path.join(coverageRoot, "v8-api"),
-    pathMap: [["file:///app/", `file://${repoRoot}/apps/api/`]],
+    pathMap: [["file:///app/apps/api/", `file://${repoRoot}/apps/api/`]],
   },
   {
     dir: path.join(coverageRoot, "v8-worker-delivery"),
