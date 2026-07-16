@@ -25,6 +25,10 @@ const CERTOPS_MIGRATION = migrations.find(
 const CERTOPS_TOKEN_LIFECYCLE_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_token_lifecycle_status",
 );
+const CERTOPS_MONITOR_IDENTITY_MIGRATION = migrations.find(
+  (migration) =>
+    migration.name === "certops_managed_certificate_monitor_identity",
+);
 
 function quoteIdentifier(identifier) {
   return `"${String(identifier).replace(/"/g, '""')}"`;
@@ -383,6 +387,132 @@ describe("CertOps inventory migration", function () {
           workspace_id: workspaceA,
           profile_id: null,
         });
+      });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("dedupes pre-v15 duplicate monitor identities before the unique index", async () => {
+    expect(CERTOPS_MONITOR_IDENTITY_MIGRATION).to.exist;
+
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-monitor-dedup",
+    );
+
+    try {
+      await withScratchCertOpsSchema(async (schema) => {
+        // Recreate the pre-v15 uniqueness model: the only unique index was
+        // (workspace_id, fingerprint_sha256) over all non-null fingerprints,
+        // so duplicate (workspace_id, source, source_ref) monitor rows were
+        // legal (TOCTOU race in the old bridge / NULL-fingerprint bypass).
+        // The search_path is scratch-only so the unqualified DROP INDEX
+        // statements (here and inside migration 15) never touch public.
+        await TestUtils.execQuery(
+          `SET search_path TO ${schema};
+           DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+           DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+           CREATE UNIQUE INDEX uq_managed_certificates_workspace_fingerprint
+             ON managed_certificates(workspace_id, fingerprint_sha256)
+             WHERE fingerprint_sha256 IS NOT NULL;
+           RESET search_path;`,
+        );
+
+        const loser = crypto.randomUUID();
+        const keeper = crypto.randomUUID();
+        const otherWorkspaceRow = crypto.randomUUID();
+        const sourceRef = "endpoint:dedup-monitor";
+
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.managed_certificates
+             (id, workspace_id, source, source_ref, fingerprint_sha256, updated_at)
+           VALUES
+             ($1, $4, 'endpoint_monitor', $5, 'aa11', NOW() - INTERVAL '1 day'),
+             ($2, $4, 'endpoint_monitor', $5, 'bb22', NOW()),
+             ($3, $6, 'endpoint_monitor', $5, 'cc33', NOW() - INTERVAL '2 days')`,
+          [loser, keeper, otherWorkspaceRow, workspaceA, sourceRef, workspaceB],
+        );
+
+        const target = await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_targets
+             (workspace_id, name, target_type, source)
+           VALUES ($1, 'Dedup target', 'endpoint', 'endpoint_monitor')
+           RETURNING id`,
+          [workspaceA],
+        );
+        const targetId = target.rows[0].id;
+
+        // One child observation only the loser knows about (must be
+        // re-pointed) and one the keeper already has (must be dropped as a
+        // same-observation collision).
+        const repointedInstance = crypto.randomUUID();
+        const collidingInstance = crypto.randomUUID();
+        const keeperInstance = crypto.randomUUID();
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_instances
+             (id, workspace_id, managed_certificate_id, target_id,
+              observed_fingerprint_sha256)
+           VALUES
+             ($1, $4, $5, $6, 'aa11'),
+             ($2, $4, $5, $6, 'bb22'),
+             ($3, $4, $7, $6, 'bb22')`,
+          [
+            repointedInstance,
+            collidingInstance,
+            keeperInstance,
+            workspaceA,
+            loser,
+            targetId,
+            keeper,
+          ],
+        );
+
+        await TestUtils.execQuery(
+          `SET search_path TO ${schema}; ${CERTOPS_MONITOR_IDENTITY_MIGRATION.sql}; RESET search_path;`,
+        );
+
+        const survivors = await TestUtils.execQuery(
+          `SELECT id::text AS id, workspace_id::text AS workspace_id
+             FROM ${schema}.managed_certificates
+            WHERE source = 'endpoint_monitor' AND source_ref = $1
+            ORDER BY workspace_id`,
+          [sourceRef],
+        );
+        expect(
+          survivors.rows.map((row) => row.id).sort(),
+        ).to.deep.equal([keeper, otherWorkspaceRow].sort());
+
+        const instances = await TestUtils.execQuery(
+          `SELECT id::text AS id, managed_certificate_id::text AS managed_certificate_id
+             FROM ${schema}.certificate_instances
+            ORDER BY id`,
+          [],
+        );
+        const byId = new Map(
+          instances.rows.map((row) => [row.id, row.managed_certificate_id]),
+        );
+        expect(byId.get(repointedInstance)).to.equal(keeper);
+        expect(byId.get(keeperInstance)).to.equal(keeper);
+        expect(byId.has(collidingInstance)).to.equal(false);
+
+        const schemaName = schema.replace(/"/g, "");
+        const indexes = await TestUtils.execQuery(
+          `SELECT indexname
+             FROM pg_indexes
+            WHERE schemaname = $1
+              AND tablename = 'managed_certificates'`,
+          [schemaName],
+        );
+        const indexNames = new Set(indexes.rows.map((row) => row.indexname));
+        expect(
+          indexNames.has("uq_managed_certificates_workspace_source_ref"),
+        ).to.equal(true);
+        expect(
+          indexNames.has("uq_managed_certificates_workspace_fingerprint_import"),
+        ).to.equal(true);
+        expect(
+          indexNames.has("uq_managed_certificates_workspace_fingerprint"),
+        ).to.equal(false);
       });
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);

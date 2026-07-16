@@ -1068,6 +1068,88 @@ const migrations = [
       DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
       DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
 
+      -- Pre-v15 databases could hold duplicate monitor identities
+      -- (workspace_id, source, source_ref): the old SELECT-then-INSERT
+      -- monitor bridge raced (TOCTOU) and NULL-fingerprint rows bypassed
+      -- the old fingerprint unique index. Deduplicate deterministically
+      -- before creating the monitor identity unique index: keep the newest
+      -- row per identity (updated_at DESC, created_at DESC, id DESC), the
+      -- same resolution the old bridge converged on (latest observation).
+      -- certificate_instances children of losing rows are re-pointed to the
+      -- keeper so rotation history survives; only instances that would
+      -- collide with an equivalent keeper instance under
+      -- uq_certificate_instances_target_cert_fingerprint are deleted
+      -- (they describe the same observation). No dedup is needed for
+      -- uq_managed_certificates_workspace_fingerprint_import: the pre-v15
+      -- index uq_managed_certificates_workspace_fingerprint was unique over
+      -- ALL rows with fingerprint_sha256 IS NOT NULL, a superset of the new
+      -- import predicate's row set.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      colliding_instances AS (
+        SELECT ci.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ci.workspace_id, ci.target_id, k.keeper_id,
+                              ci.observed_fingerprint_sha256
+                 ORDER BY (ci.managed_certificate_id = k.keeper_id) DESC,
+                          ci.updated_at DESC, ci.created_at DESC, ci.id DESC
+               ) AS rn
+          FROM certificate_instances ci
+          JOIN managed_certificates mc
+            ON mc.workspace_id = ci.workspace_id
+           AND mc.id = ci.managed_certificate_id
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE ci.observed_fingerprint_sha256 IS NOT NULL
+      )
+      DELETE FROM certificate_instances
+       WHERE id IN (SELECT id FROM colliding_instances WHERE rn > 1);
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      )
+      UPDATE certificate_instances ci
+         SET managed_certificate_id = k.keeper_id
+        FROM managed_certificates mc
+        JOIN monitor_identity_keepers k
+          ON k.workspace_id = mc.workspace_id
+         AND k.source = mc.source
+         AND k.source_ref = mc.source_ref
+       WHERE ci.workspace_id = mc.workspace_id
+         AND ci.managed_certificate_id = mc.id
+         AND mc.id <> k.keeper_id;
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      )
+      DELETE FROM managed_certificates mc
+       USING monitor_identity_keepers k
+       WHERE mc.workspace_id = k.workspace_id
+         AND mc.source = k.source
+         AND mc.source_ref = k.source_ref
+         AND mc.id <> k.keeper_id;
+
       CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
         ON managed_certificates(workspace_id, fingerprint_sha256)
         WHERE fingerprint_sha256 IS NOT NULL
