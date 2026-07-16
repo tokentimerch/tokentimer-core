@@ -3,11 +3,12 @@ import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import {
   getCertificateInstances,
-  getManagedCertificateForToken,
+  getManagedCertificatesForToken,
   invalidateCertOpsInventoryCache,
   loadCertOpsInventoryIndex,
   probeCertOpsEnabled,
 } from './certopsApi';
+import { pickPrimaryCertificate } from './certopsFormat';
 
 /**
  * Resolves CertOps availability for the active workspace.
@@ -117,7 +118,8 @@ export function useCertOpsCanManage() {
  * managed certificate lookup, so the asset list can tell which token rows are
  * backed by a managed certificate (delete gating + retired filtering, plan D7).
  *
- * Returns a stable `byTokenId` Map (empty when CertOps is disabled/resolving),
+ * Returns a stable `byTokenId` Map of tokenId -> certificate[] (empty when
+ * CertOps is disabled/resolving; D8 allows several certificates per token),
  * the enabled flag, a loading flag, and a `refresh()` that re-fetches after a
  * retire so the list reflects the new lifecycle status.
  */
@@ -175,11 +177,17 @@ export function useWorkspaceCertOps() {
 /**
  * Loads CertOps enrichment (managed certificate + deployment history) for an
  * existing cert token row, keyed by tokens.id via managed_certificates.token_id.
+ *
+ * D8: several managed certificates can reference the same token. `certificate`
+ * is the deterministic primary pick (active preferred, most recently updated);
+ * `certificates` and `certificateCount` expose the full set so callers can
+ * surface a multi-cert notice.
  */
 export function useCertOpsForToken(tokenId) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [certificate, setCertificate] = useState(null);
+  const [certificates, setCertificates] = useState([]);
   const [instances, setInstances] = useState([]);
   const [instancesAvailable, setInstancesAvailable] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -188,6 +196,7 @@ export function useCertOpsForToken(tokenId) {
   useEffect(() => {
     if (!workspaceId || !tokenId || enabled !== true) {
       setCertificate(null);
+      setCertificates([]);
       setInstances([]);
       setInstancesAvailable(true);
       setLoading(false);
@@ -202,12 +211,14 @@ export function useCertOpsForToken(tokenId) {
 
     (async () => {
       try {
-        const managed = await getManagedCertificateForToken(
+        const linked = await getManagedCertificatesForToken(
           workspaceId,
           tokenId,
           { signal: controller.signal }
         );
         if (cancelled) return;
+        const managed = pickPrimaryCertificate(linked);
+        setCertificates(Array.isArray(linked) ? linked : []);
         setCertificate(managed);
         if (!managed?.id) {
           setInstances([]);
@@ -233,6 +244,7 @@ export function useCertOpsForToken(tokenId) {
       } catch (err) {
         if (!cancelled) {
           setCertificate(null);
+          setCertificates([]);
           setInstances([]);
           setError(
             err?.response?.data?.error ||
@@ -253,6 +265,8 @@ export function useCertOpsForToken(tokenId) {
   return {
     enabled,
     certificate,
+    certificates,
+    certificateCount: certificates.length,
     instances,
     instancesAvailable,
     loading,

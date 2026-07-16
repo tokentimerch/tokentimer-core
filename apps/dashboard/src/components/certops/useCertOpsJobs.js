@@ -112,14 +112,16 @@ export function useCertOpsJobs(filters = {}) {
  * outage). Other failures surface a user-readable error string.
  *
  * @param {string|null|undefined} jobId
- * @returns {{ enabled: boolean|null, job: object|null, logEntries: object[], evidence: object[], loading: boolean, error: string, refresh: function }}
+ * @returns {{ enabled: boolean|null, job: object|null, logEntries: object[], logPagination: object|null, evidence: object[], evidencePagination: object|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsJobTimeline(jobId) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [job, setJob] = useState(null);
   const [logEntries, setLogEntries] = useState([]);
+  const [logPagination, setLogPagination] = useState(null);
   const [evidence, setEvidence] = useState([]);
+  const [evidencePagination, setEvidencePagination] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -132,7 +134,9 @@ export function useCertOpsJobTimeline(jobId) {
     if (!workspaceId || enabled !== true || !jobId) {
       setJob(null);
       setLogEntries([]);
+      setLogPagination(null);
       setEvidence([]);
+      setEvidencePagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -153,21 +157,27 @@ export function useCertOpsJobTimeline(jobId) {
         if (cancelled) return;
         setJob(jobData?.job || null);
         setLogEntries(Array.isArray(logData?.items) ? logData.items : []);
+        setLogPagination(logData?.pagination || null);
         setEvidence(
           Array.isArray(evidenceData?.items) ? evidenceData.items : []
         );
+        setEvidencePagination(evidenceData?.pagination || null);
       } catch (err) {
         if (cancelled) return;
         if (err?.response?.status === 404) {
           setJob(null);
           setLogEntries([]);
+          setLogPagination(null);
           setEvidence([]);
+          setEvidencePagination(null);
           setError('');
           return;
         }
         setJob(null);
         setLogEntries([]);
+        setLogPagination(null);
         setEvidence([]);
+        setEvidencePagination(null);
         setError(
           err?.response?.data?.error ||
             err?.message ||
@@ -184,7 +194,17 @@ export function useCertOpsJobTimeline(jobId) {
     };
   }, [workspaceId, enabled, jobId, reloadTick]);
 
-  return { enabled, job, logEntries, evidence, loading, error, refresh };
+  return {
+    enabled,
+    job,
+    logEntries,
+    logPagination,
+    evidence,
+    evidencePagination,
+    loading,
+    error,
+    refresh,
+  };
 }
 
 /**

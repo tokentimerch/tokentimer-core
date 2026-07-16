@@ -56,6 +56,7 @@ function CertOpsPanelBody({ tokenId }) {
   const {
     enabled,
     certificate,
+    certificateCount,
     instances,
     instancesAvailable,
     loading,
@@ -115,6 +116,12 @@ function CertOpsPanelBody({ tokenId }) {
             {expiry.label}
           </Badge>
         </HStack>
+        {certificateCount > 1 ? (
+          <Text fontSize='xs' color={muted} mb={3}>
+            {certificateCount} certificates reference this token. Showing the
+            most recently updated active certificate.
+          </Text>
+        ) : null}
       </GridItem>
 
       <Field label='Key locality'>

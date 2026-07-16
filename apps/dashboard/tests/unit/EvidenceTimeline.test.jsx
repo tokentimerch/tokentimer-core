@@ -303,4 +303,83 @@ describe('EvidenceTimeline', () => {
       screen.getByRole('button', { name: 'Close timeline' })
     ).toBeInTheDocument();
   });
+
+  it('shows "Showing X of Y" indicators when log/evidence pagination reports more items', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'job.started',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      logPagination: { limit: 100, offset: 0, total: 240 },
+      evidence: [
+        {
+          id: 'ev-1',
+          evidenceType: 'validation.passed',
+          observedAt: '2026-01-02T00:00:00.000Z',
+        },
+      ],
+      evidencePagination: { limit: 100, offset: 0, total: 130 },
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getByText(/Showing 1 of 240 log entries/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Showing 1 of 130 evidence items/)
+    ).toBeInTheDocument();
+  });
+
+  it('shows a "first N" indicator when a full page is returned without a total', () => {
+    const logEntries = Array.from({ length: 100 }, (_, i) => ({
+      id: `log-${i}`,
+      eventType: 'job.started',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }));
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries,
+      logPagination: { limit: 100, offset: 0 },
+      evidence: [],
+      evidencePagination: { limit: 100, offset: 0 },
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getByText(/Showing first 100 log entries/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/evidence items/)).not.toBeInTheDocument();
+  });
+
+  it('hides truncation indicators when everything fits in one page', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'job.started',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      logPagination: { limit: 100, offset: 0 },
+      evidence: [],
+      evidencePagination: { limit: 100, offset: 0 },
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
 });

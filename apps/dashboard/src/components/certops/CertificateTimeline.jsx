@@ -19,6 +19,7 @@ import {
   jobOperationLabel,
 } from './certopsJobsFormat';
 import { useCertOpsJobs } from './useCertOpsJobs.js';
+import { truncationSummary } from './certopsPagination.js';
 
 /**
  * Compact expandable job history for one managed certificate subject.
@@ -33,7 +34,7 @@ export default function CertificateTimeline({
   const { muted, border } = useDashboardTheme();
   const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
   const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const { enabled, jobs, loading, error } = useCertOpsJobs({
+  const { enabled, jobs, pagination, loading, error } = useCertOpsJobs({
     subjectType,
     subjectId,
     limit,
@@ -68,6 +69,12 @@ export default function CertificateTimeline({
       </Text>
     );
   }
+
+  const jobsTruncation = truncationSummary({
+    shown: jobs?.length || 0,
+    pagination,
+    noun: 'jobs',
+  });
 
   return (
     <VStack align='stretch' spacing={1}>
@@ -127,6 +134,11 @@ export default function CertificateTimeline({
           </Box>
         );
       })}
+      {jobsTruncation ? (
+        <Text fontSize='xs' color={muted} px={2} pt={1}>
+          {jobsTruncation}
+        </Text>
+      ) : null}
     </VStack>
   );
 }

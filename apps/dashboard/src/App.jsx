@@ -80,9 +80,10 @@ import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
+import RequireManagerRoute from './components/RequireManagerRoute.jsx';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificate } from './components/certops/certopsApi.js';
-import { isRetiredStatus } from './components/certops/certopsFormat.js';
+import { isRetiredStatus, pickPrimaryCertificate } from './components/certops/certopsFormat.js';
 import {
   DashboardModalFrame,
   DashboardModalDescription,
@@ -154,39 +155,6 @@ function VerifyEmailWrapper({ session }) {
 
   // Allow unverified users to navigate to landing or logout from verify page via UI controls
   return <VerifyEmail />;
-}
-
-function RequireManagerRoute({ session, children }) {
-  const [isAllowed, setIsAllowed] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!session) {
-        if (!cancelled) setIsAllowed(false);
-        return;
-      }
-      const isSystemAdmin = session?.isAdmin === true;
-      try {
-        const ws = await workspaceAPI.list(50, 0);
-        const items = ws?.items || [];
-        const roles = items.map(w => String(w.role || '').toLowerCase());
-        const hasManagerOrAdmin =
-          roles.includes('admin') || roles.includes('workspace_manager');
-        if (!cancelled) setIsAllowed(isSystemAdmin || hasManagerOrAdmin);
-      } catch (_) {
-        if (!cancelled) setIsAllowed(isSystemAdmin);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [session]);
-
-  if (!session) return <Navigate to='/login' replace />;
-  if (isAllowed === null) return null;
-  if (!isAllowed) return <Navigate to='/dashboard' replace />;
-  return children;
 }
 
 function AdminOnlyRoute({ session, children }) {
@@ -2966,7 +2934,10 @@ function App() {
                         <Route
                           path='/certops/*'
                           element={
-                            <RequireManagerRoute session={session}>
+                            <RequireManagerRoute
+                              session={session}
+                              scope='active-workspace'
+                            >
                               <CertOpsRoutes
                                 session={session}
                                 onLogout={handleLogout}
@@ -3626,13 +3597,15 @@ function DashboardView({
   }, [navigate]);
   const { workspaceId, selectWorkspace } = useWorkspace();
 
-  // CertOps: workspace-wide managed-certificate index (tokenId -> cert), used to
-  // gate deletion of managed cert tokens and to hide retired certs by default
-  // (plan D7). Empty/no-op when CertOps is disabled for the workspace.
+  // CertOps: workspace-wide managed-certificate index (tokenId -> cert[]), used
+  // to gate deletion of managed cert tokens and to hide retired certs by default
+  // (plan D7). Empty/no-op when CertOps is disabled for the workspace. D8 allows
+  // several certificates per token; single-cert contexts use the deterministic
+  // primary pick (active preferred, most recently updated).
   const { byTokenId: managedByTokenId, refresh: refreshCertOps } =
     useWorkspaceCertOps();
   const getManagedCertForToken = useCallback(
-    id => managedByTokenId.get(Number(id)) || null,
+    id => pickPrimaryCertificate(managedByTokenId.get(Number(id))),
     [managedByTokenId]
   );
   const [showRetired, setShowRetired] = useState(false);
@@ -4743,7 +4716,9 @@ function DashboardView({
 
   const isTokenRetired = useCallback(
     token => {
-      const cert = managedByTokenId.get(Number(token?.id));
+      const cert = pickPrimaryCertificate(
+        managedByTokenId.get(Number(token?.id))
+      );
       return Boolean(cert && isRetiredStatus(cert.status));
     },
     [managedByTokenId]
@@ -4789,7 +4764,9 @@ function DashboardView({
         sectionParam
       );
       for (const token of categoryTokens) {
-        const managedCert = managedByTokenId.get(Number(token.id)) || null;
+        const managedCert = pickPrimaryCertificate(
+          managedByTokenId.get(Number(token.id))
+        );
         const retired = Boolean(
           managedCert && isRetiredStatus(managedCert.status)
         );

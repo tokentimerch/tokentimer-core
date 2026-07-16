@@ -260,4 +260,56 @@ describe('CertOpsOperations', () => {
     fireEvent.click(row);
     expect(row).toHaveAttribute('aria-expanded', 'true');
   });
+
+  it('shows a truncation indicator when pagination reports more jobs than shown', () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            id: 'job-1',
+            operation: 'renew',
+            status: 'succeeded',
+            source: 'scheduler',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        pagination: { limit: 20, offset: 0, total: 57 },
+      })
+    );
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    expect(screen.getByText('Showing 1 of 57 jobs')).toBeInTheDocument();
+  });
+
+  it('hides the truncation indicator when all jobs fit in one page', () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            id: 'job-1',
+            operation: 'renew',
+            status: 'succeeded',
+            source: 'scheduler',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        pagination: { limit: 20, offset: 0, total: 1 },
+      })
+    );
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    expect(screen.queryByText(/Showing .* jobs/)).not.toBeInTheDocument();
+  });
 });

@@ -34,6 +34,7 @@ import {
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
+import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
 
@@ -187,8 +188,15 @@ export default function EvidenceTimeline({ jobId, onClose }) {
   const { muted, border } = useDashboardTheme();
   const failureBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.28)');
   const failureBorder = useColorModeValue('red.200', 'red.700');
-  const { job, logEntries, evidence, loading, error } =
-    useCertOpsJobTimeline(jobId);
+  const {
+    job,
+    logEntries,
+    logPagination,
+    evidence,
+    evidencePagination,
+    loading,
+    error,
+  } = useCertOpsJobTimeline(jobId);
 
   if (loading) {
     return (
@@ -216,6 +224,19 @@ export default function EvidenceTimeline({ jobId, onClose }) {
 
   const items = mergeTimelineItems(logEntries, evidence);
   let startedCount = 0;
+
+  const truncationNotes = [
+    truncationSummary({
+      shown: Array.isArray(logEntries) ? logEntries.length : 0,
+      pagination: logPagination,
+      noun: 'log entries',
+    }),
+    truncationSummary({
+      shown: Array.isArray(evidence) ? evidence.length : 0,
+      pagination: evidencePagination,
+      noun: 'evidence items',
+    }),
+  ].filter(Boolean);
 
   const subjectInfo = [job.subjectType, job.subjectId]
     .filter(Boolean)
@@ -310,6 +331,12 @@ export default function EvidenceTimeline({ jobId, onClose }) {
           })}
         </Box>
       )}
+
+      {truncationNotes.length > 0 ? (
+        <Text fontSize='xs' color={muted}>
+          {truncationNotes.join(' · ')}
+        </Text>
+      ) : null}
     </VStack>
   );
 }

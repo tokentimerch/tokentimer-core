@@ -23,6 +23,7 @@ import {
 } from '../../components/certops/certopsJobsFormat';
 import { useCertOpsAvailability } from '../../components/certops/useCertOps.js';
 import { useCertOpsJobs } from '../../components/certops/useCertOpsJobs.js';
+import { truncationSummary } from '../../components/certops/certopsPagination.js';
 import {
   DashboardActionButton,
   DashboardPanel,
@@ -41,10 +42,15 @@ function ExecutorJobsPanel() {
   const { muted, border } = useDashboardTheme();
   const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
   const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const { jobs, loading, error, refresh } = useCertOpsJobs({
+  const { jobs, pagination, loading, error, refresh } = useCertOpsJobs({
     limit: JOB_LIST_LIMIT,
   });
   const [expandedId, setExpandedId] = useState(null);
+  const jobsTruncation = truncationSummary({
+    shown: jobs?.length || 0,
+    pagination,
+    noun: 'jobs',
+  });
 
   return (
     <DashboardPanel>
@@ -141,6 +147,11 @@ function ExecutorJobsPanel() {
               </Box>
             );
           })}
+          {jobsTruncation ? (
+            <Text fontSize='xs' color={muted} px={2} pt={1}>
+              {jobsTruncation}
+            </Text>
+          ) : null}
         </VStack>
       )}
     </DashboardPanel>
