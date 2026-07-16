@@ -9,6 +9,11 @@
 //
 // Usage:
 //   node scripts/provision-certops-demo.js
+//   node scripts/provision-certops-demo.js --print-tokens   # print full plaintext tokens
+//
+// By default created machine API tokens are logged as name, id, and an
+// 8-character prefix only. Pass --print-tokens (or set
+// PRINT_PLAINTEXT_TOKENS=1) to print the full plaintext bearer tokens.
 //
 // Requires a dev server already running (pnpm dev) with CERTOPS_ENABLED=true
 // and ADMIN_EMAIL / ADMIN_PASSWORD set (see .env). Talks over plain HTTP
@@ -27,6 +32,20 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@localhost.local";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "AdminPassword123!";
 const WORKSPACE_NAME =
   process.env.CERTOPS_DEMO_WORKSPACE_NAME || "CertOps Demo Workspace";
+
+// Plaintext bearer tokens are never printed by default: only the token name,
+// id, and a short prefix. Opt in with --print-tokens or
+// PRINT_PLAINTEXT_TOKENS=1 to write full tokens to stdout.
+const PRINT_PLAINTEXT_TOKENS =
+  process.argv.includes("--print-tokens") ||
+  process.env.PRINT_PLAINTEXT_TOKENS === "1";
+
+const TOKEN_DISPLAY_PREFIX_LENGTH = 8;
+
+function tokenDisplay(plaintextToken) {
+  if (PRINT_PLAINTEXT_TOKENS) return plaintextToken;
+  return `${String(plaintextToken).slice(0, TOKEN_DISPLAY_PREFIX_LENGTH)}...`;
+}
 
 // --- Minimal cookie jar so session cookies survive across fetch() calls ---
 class CookieJar {
@@ -180,6 +199,12 @@ const TOKEN_SPECS = [
 ];
 
 async function createApiTokens(jar, workspaceId) {
+  if (PRINT_PLAINTEXT_TOKENS) {
+    console.warn(
+      "[token] WARNING: --print-tokens / PRINT_PLAINTEXT_TOKENS=1 is set; " +
+        "plaintext bearer tokens will be written to stdout below.",
+    );
+  }
   const created = [];
   for (const spec of TOKEN_SPECS) {
     const result = await apiFetch(
@@ -191,7 +216,7 @@ async function createApiTokens(jar, workspaceId) {
       },
     );
     console.log(
-      `[token] created "${spec.name}" (${result.token.id}) -> ${result.plaintextToken}`,
+      `[token] created "${spec.name}" (${result.token.id}) -> ${tokenDisplay(result.plaintextToken)}`,
     );
     created.push({ ...result.token, plaintextToken: result.plaintextToken });
   }
