@@ -152,7 +152,7 @@ describe('ApiTokenPanel', () => {
           {
             id: 'tok-active',
             name: 'active-token',
-            tokenPrefix: 'cop_ab12',
+            tokenPrefix: 'ttx_ab12ab12ab12ab12',
             status: 'active',
             scopes: ['certops:read'],
             createdAt: '2026-01-01T00:00:00.000Z',
@@ -160,7 +160,7 @@ describe('ApiTokenPanel', () => {
           {
             id: 'tok-revoked',
             name: 'revoked-token',
-            tokenPrefix: 'cop_cd34',
+            tokenPrefix: 'ttx_cd34cd34cd34cd34',
             status: 'revoked',
             scopes: ['certops:read'],
             createdAt: '2026-01-01T00:00:00.000Z',
@@ -168,7 +168,7 @@ describe('ApiTokenPanel', () => {
           {
             id: 'tok-expired',
             name: 'expired-token',
-            tokenPrefix: 'cop_ef56',
+            tokenPrefix: 'ttx_ef56ef56ef56ef56',
             status: 'active',
             expiresAt: '2020-01-01T00:00:00.000Z',
             scopes: ['certops:read'],
@@ -215,9 +215,11 @@ describe('ApiTokenPanel', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     const refresh = vi.fn();
     useCertOpsApiTokensMock.mockReturnValue(tokensState({ refresh }));
+    const realisticPlaintext =
+      'ttx_0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
     createApiTokenMock.mockResolvedValue({
       token: { id: 'tok-1', name: 'certbot-prod-hook' },
-      plaintextToken: 'copsk_live_supersecretvalue',
+      plaintextToken: realisticPlaintext,
     });
 
     renderWithProviders(<ApiTokenPanel />);
@@ -235,14 +237,40 @@ describe('ApiTokenPanel', () => {
     });
 
     expect(
-      await screen.findByText('copsk_live_supersecretvalue')
+      await screen.findByText(realisticPlaintext)
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'I stored the token' }));
 
     await waitFor(() =>
       expect(
-        screen.queryByText('copsk_live_supersecretvalue')
+        screen.queryByText(realisticPlaintext)
+      ).not.toBeInTheDocument()
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an error instead of the show-once view when the create response has no token', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const refresh = vi.fn();
+    useCertOpsApiTokensMock.mockReturnValue(tokensState({ refresh }));
+    createApiTokenMock.mockResolvedValue({
+      token: { id: 'tok-1', name: 'certbot-prod-hook' },
+    });
+
+    renderWithProviders(<ApiTokenPanel />);
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'certbot-prod-hook' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+
+    await waitFor(() => expect(createApiTokenMock).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Store this token now')
       ).not.toBeInTheDocument()
     );
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -253,7 +281,8 @@ describe('ApiTokenPanel', () => {
     useCertOpsApiTokensMock.mockReturnValue(tokensState());
     createApiTokenMock.mockResolvedValue({
       token: { id: 'tok-1' },
-      plaintextToken: 'copsk_live_secret',
+      plaintextToken:
+        'ttx_fedcba9876543210_fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
     });
 
     renderWithProviders(<ApiTokenPanel />);
@@ -282,7 +311,7 @@ describe('ApiTokenPanel', () => {
           {
             id: 'tok-1',
             name: 'certbot-prod-hook',
-            tokenPrefix: 'cop_ab12',
+            tokenPrefix: 'ttx_ab12ab12ab12ab12',
             status: 'active',
             scopes: ['certops:read'],
             createdAt: '2026-01-01T00:00:00.000Z',

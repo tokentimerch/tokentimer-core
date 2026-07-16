@@ -209,6 +209,33 @@ describe('EvidenceTimeline', () => {
     expect(screen.getAllByText('Redacted')).toHaveLength(1);
   });
 
+  it('shows the redaction marker for the nested server-owned metadata shape', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [
+        {
+          id: 'ev-1',
+          evidenceType: 'certificate.observed',
+          observedAt: '2026-01-01T00:00:00.000Z',
+          metadata: { redaction: { applied: true, count: 2 } },
+        },
+        {
+          id: 'ev-2',
+          evidenceType: 'certificate.observed',
+          observedAt: '2026-01-02T00:00:00.000Z',
+          metadata: {},
+        },
+      ],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getAllByText('Redacted')).toHaveLength(1);
+  });
+
   it('renders the failure reason for a failed job', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob({

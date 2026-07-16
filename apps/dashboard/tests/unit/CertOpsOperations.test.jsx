@@ -149,6 +149,27 @@ describe('CertOpsOperations', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows an availability error distinct from the disabled empty state', () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: null,
+      error: 'Network Error',
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    expect(
+      screen.getByText('Could not load certificate operations status')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Certificate operations is not enabled')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Machine executor jobs')
+    ).not.toBeInTheDocument();
+  });
+
   it('renders the executor jobs panel and token panel when enabled', () => {
     useCertOpsAvailabilityMock.mockReturnValue({
       ready: true,

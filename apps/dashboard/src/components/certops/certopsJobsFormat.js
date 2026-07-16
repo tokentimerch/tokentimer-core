@@ -103,12 +103,20 @@ export function evidenceTypeScheme(evidenceType) {
 
 /**
  * Detect redaction markers in job-log or evidence metadata.
- * Checks `redactionApplied`, `status === 'redacted'`, `redacted === true`,
- * `redactionCount > 0`, and nested string values containing `[REDACTED]`,
- * with a recursion depth cap.
+ *
+ * The evidence service persists a server-owned nested marker
+ * `metadata.redaction = { applied: true, count: N }` (takes precedence);
+ * older executor-path rows carry flat `redactionApplied` / `redactionCount`.
+ * Also checks `status === 'redacted'`, `redacted === true`, and nested
+ * string values containing `[REDACTED]`, with a recursion depth cap.
  */
 export function hasRedactionMarkers(metadata) {
   if (!metadata || typeof metadata !== 'object') return false;
+  const nested = metadata.redaction;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    if (nested.applied === true) return true;
+    if (typeof nested.count === 'number' && nested.count > 0) return true;
+  }
   if (metadata.redactionApplied === true) return true;
   if (metadata.redacted === true) return true;
   if (String(metadata.status || '').toLowerCase() === 'redacted') return true;
@@ -119,6 +127,34 @@ export function hasRedactionMarkers(metadata) {
     return true;
   }
   return scanForRedactedLiteral(metadata, 0);
+}
+
+/**
+ * Extract the redaction count from metadata, supporting the nested
+ * `metadata.redaction.count` shape (precedence) and the flat legacy
+ * `metadata.redactionCount`. Returns 0 when no count is recorded.
+ */
+export function redactionCount(metadata) {
+  if (!metadata || typeof metadata !== 'object') return 0;
+  const nested = metadata.redaction;
+  if (
+    nested &&
+    typeof nested === 'object' &&
+    !Array.isArray(nested) &&
+    typeof nested.count === 'number' &&
+    Number.isFinite(nested.count) &&
+    nested.count > 0
+  ) {
+    return nested.count;
+  }
+  if (
+    typeof metadata.redactionCount === 'number' &&
+    Number.isFinite(metadata.redactionCount) &&
+    metadata.redactionCount > 0
+  ) {
+    return metadata.redactionCount;
+  }
+  return 0;
 }
 
 function scanForRedactedLiteral(value, depth) {

@@ -175,10 +175,25 @@ export default function ApiTokenPanel() {
       if (expiresAt) payload.expiresAt = expiresAt;
 
       const result = await createApiToken(workspaceId, payload);
+      // Guard: only enter the show-once flow when the create response
+      // actually carries the plaintext secret; a success state without the
+      // token would be unrecoverable for the user.
+      const plaintext =
+        typeof result?.plaintextToken === 'string'
+          ? result.plaintextToken.trim()
+          : '';
+      if (!plaintext) {
+        showError(
+          'Create failed',
+          'The server response did not include the token value. The token may have been created; check the list and revoke it if needed.'
+        );
+        refresh();
+        return;
+      }
       setName('');
       setScopes([]);
       setExpiresLocal('');
-      setPlaintextToken(result?.plaintextToken || '');
+      setPlaintextToken(plaintext);
       setShowOnceOpen(true);
       showSuccess('API token created');
     } catch (err) {
