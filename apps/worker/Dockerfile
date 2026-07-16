@@ -1,4 +1,4 @@
-FROM node:22.22.2-alpine3.23
+FROM node:22.23.0-alpine3.23
 
 # Refresh indexes and upgrade base packages (openssl/musl) so scans see current Alpine 3.23 fixes.
 # Explicit pin avoids stale GHA cache layers reporting pre-fix libcrypto3/libssl3 revisions.
@@ -13,7 +13,7 @@ RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
 # Enable pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
+RUN corepack enable && corepack prepare pnpm@11.13.0 --activate
 
 # Ensure production mode
 ENV NODE_ENV=production

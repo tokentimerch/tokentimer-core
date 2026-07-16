@@ -10,8 +10,8 @@ ignore:
   # brace-expansion: lockfile pins 2.0.3 (patched); Grype reports 2.0.2
   - vulnerability: GHSA-f886-m6hf-6m8v
 
-  # Node 22.22.2 includes all fixes below per nodejs.org/blog/release/v22.22.2
-  # but Grype DB omits 22.x from the fixed-version list
+  # Node 22.23.0 includes all fixes below per nodejs.org/blog/release/v22.23.0
+  # but Grype DB may still omit 22.x from the fixed-version list for older CVEs
   - vulnerability: CVE-2026-21710
   - vulnerability: CVE-2026-21713
   - vulnerability: CVE-2026-21714
