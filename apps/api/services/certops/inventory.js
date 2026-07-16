@@ -917,6 +917,7 @@ module.exports = {
   CERTOPS_KEY_REFERENCE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   RETIRE_STATUSES,
+  RETIRE_STATUS_SQL_LIST,
   acquireManagedCertificateImportLock,
   countActiveManagedCertificates,
   countActiveManagedCertificatesWithClient,

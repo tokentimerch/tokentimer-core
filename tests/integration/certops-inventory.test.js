@@ -8,6 +8,10 @@ const { runMigrations } = requireMigrateModule();
 const {
   countActiveManagedCertificates,
 } = require("../../apps/api/services/certops/inventory");
+const {
+  bridgeEndpointCertificateObservation,
+} = require("../../apps/api/services/certops/monitorBridge");
+const { pool } = require("../../apps/api/db/database");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -824,6 +828,81 @@ describe("CertOps inventory routes", function () {
 
     const linkedToken = await tokenRow(caCertificate.tokenId);
     expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
+  });
+
+  it("does not reset retired status when a monitor observation hits a retired certificate", async () => {
+    for (const retiredStatus of ["revoked", "decommissioned"]) {
+      const monitorRows = await TestUtils.execQuery(
+        `INSERT INTO domain_monitors (workspace_id, url, created_by)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [
+          workspaceId,
+          `https://retired-${retiredStatus}.example`,
+          ownerUser.id,
+        ],
+      );
+      const domainMonitorId = monitorRows.rows[0].id;
+      const linkedToken = await createWorkspaceToken(ownerSession, workspaceId, {
+        name: `CertOps ${retiredStatus} monitor token`,
+      });
+
+      const observation = {
+        dbPool: pool,
+        env: { CERTOPS_ENABLED: "true" },
+        workspaceId,
+        domainMonitorId,
+        tokenId: linkedToken.id,
+        hostname: `retired-${retiredStatus}.example`,
+        url: `https://retired-${retiredStatus}.example`,
+        source: "endpoint_monitor",
+        certificate: {
+          issuer: "Retire Test CA",
+          subject: `CN=retired-${retiredStatus}.example`,
+          serialNumber: "01",
+          fingerprintSha256: "d".repeat(64),
+          notAfter: "2099-01-01",
+        },
+      };
+
+      const first = await bridgeEndpointCertificateObservation(observation);
+      expect(first.skipped).to.equal(false);
+      expect(first.managedCertificate.status).to.equal("discovered");
+
+      await request(BASE)
+        .post(
+          `/api/v1/workspaces/${workspaceId}/certops/certificates/${first.managedCertificate.id}/retire`,
+        )
+        .set("Cookie", ownerSession.cookie)
+        .send({ status: retiredStatus, reason: "retire-first regression" })
+        .expect(200);
+
+      const second = await bridgeEndpointCertificateObservation({
+        ...observation,
+        certificate: {
+          ...observation.certificate,
+          serialNumber: "02",
+          fingerprintSha256: "e".repeat(64),
+        },
+      });
+
+      expect(second.skipped).to.equal(false);
+      expect(second.managedCertificate.id).to.equal(
+        first.managedCertificate.id,
+      );
+      expect(second.managedCertificate.status).to.equal(retiredStatus);
+      expect(second.managedCertificate.serialNumber).to.equal("02");
+      expect(second.managedCertificate.fingerprintSha256).to.equal(
+        "e".repeat(64),
+      );
+
+      const managed = await managedCertificateRow(
+        workspaceId,
+        first.managedCertificate.id,
+      );
+      expect(managed.status).to.equal(retiredStatus);
+      expect(managed.fingerprint_sha256).to.equal("e".repeat(64));
+    }
   });
 
   it("rejects invalid retire status without changing database state", async () => {

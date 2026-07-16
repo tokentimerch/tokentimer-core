@@ -1553,6 +1553,10 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/services/certops/parser.js",
       "apps/api/utils/logger.js",
       "apps/api/utils/secretMaterial.js",
+      // Post-M2 hardening follow-up on this stacked branch: claim-then-commit
+      // restructure so worker row locks never span external network I/O.
+      "apps/worker/src/delivery-worker.js",
+      "apps/worker/src/endpoint-check-worker.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

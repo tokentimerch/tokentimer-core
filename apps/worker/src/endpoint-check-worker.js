@@ -276,43 +276,68 @@ async function runEndpointChecks() {
   logger.info("Endpoint check worker started");
 
   await withClient(async (client) => {
-    // Find endpoints due for check based on their configured interval.
-    // Wrap the SELECT FOR UPDATE and the per-domain UPDATEs below in an
-    // explicit transaction (mirrors auto-sync-worker.js): without BEGIN/COMMIT,
-    // Postgres autocommit mode releases the row lock the instant the SELECT
-    // statement finishes, making SKIP LOCKED a no-op against a second
-    // concurrent worker. Currently masked by k8s concurrencyPolicy: Forbid and
-    // the in-process overlap guard in runner.js, but this keeps the guarantee
-    // correct in isolation.
+    // Claim-then-commit: hold the FOR UPDATE SKIP LOCKED row locks only for a
+    // short claim transaction, mark the claimed rows via last_health_check_at
+    // so a concurrent worker's due-check predicate skips them, then COMMIT
+    // before any network I/O. Without BEGIN/COMMIT, autocommit mode would
+    // release the lock the instant the SELECT finishes (making SKIP LOCKED a
+    // no-op against a second concurrent worker); but one batch-wide
+    // transaction spanning the live TLS/HTTP checks (15s timeouts x 50
+    // domains) would pin row locks for minutes and let one late error roll
+    // back every domain's committed progress. If the process dies after the
+    // claim, the marker only delays the next check by one interval.
+    let claimedMonitors;
     await client.query("BEGIN");
-    const result = await client.query(
-      `SELECT * FROM domain_monitors
-       WHERE (
-         (check_interval = '1min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 minute'))
-         OR
-         (check_interval = '5min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '5 minutes'))
-         OR
-         (check_interval = '30min'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '30 minutes'))
-         OR
-         (check_interval = 'hourly' AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 hour'))
-         OR
-         (check_interval = 'daily'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '24 hours'))
-       )
-       ORDER BY last_health_check_at ASC NULLS FIRST
-       LIMIT 50
-       FOR UPDATE SKIP LOCKED`,
-    );
+    try {
+      const result = await client.query(
+        `SELECT * FROM domain_monitors
+         WHERE (
+           (check_interval = '1min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 minute'))
+           OR
+           (check_interval = '5min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '5 minutes'))
+           OR
+           (check_interval = '30min'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '30 minutes'))
+           OR
+           (check_interval = 'hourly' AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 hour'))
+           OR
+           (check_interval = 'daily'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '24 hours'))
+         )
+         ORDER BY last_health_check_at ASC NULLS FIRST
+         LIMIT 50
+         FOR UPDATE SKIP LOCKED`,
+      );
+      claimedMonitors = result.rows;
+      if (claimedMonitors.length > 0) {
+        await client.query(
+          `UPDATE domain_monitors
+              SET last_health_check_at = NOW(), updated_at = NOW()
+            WHERE id = ANY($1::uuid[])`,
+          [claimedMonitors.map((row) => row.id)],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (claimErr) {
+      // Release the client back to the pool clean; leaving a transaction open
+      // across pool.connect() calls would corrupt the next borrower's session.
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        logger.debug("Rollback failed", { error: _rollbackErr.message });
+      }
+      throw claimErr;
+    }
 
-    if (result.rows.length === 0) {
-      await client.query("ROLLBACK");
+    if (claimedMonitors.length === 0) {
       logger.info("No endpoint monitors due for check");
       return;
     }
 
-    logger.info(`Checking ${result.rows.length} endpoints`);
+    logger.info(`Checking ${claimedMonitors.length} endpoints`);
 
-    try {
-      for (const domain of result.rows) {
+    // From here on we run in autocommit: each per-domain UPDATE persists
+    // immediately, so a failure on domain N cannot roll back the results
+    // already recorded for domains 1..N-1, and no lock spans network I/O.
+    for (const domain of claimedMonitors) {
       const {
         id,
         url,
@@ -439,15 +464,12 @@ async function runEndpointChecks() {
 
               if (currentTokenId) {
                 try {
-                  // Use a SAVEPOINT (not BEGIN/COMMIT) for the bridge write: this
-                  // whole domain-check loop now runs inside the outer per-batch
-                  // transaction opened above, and Postgres does not support real
-                  // nested transactions (a plain BEGIN here would be a no-op with
-                  // a warning, and COMMIT/ROLLBACK would end the outer transaction
-                  // early). A savepoint lets a bridge failure roll back just this
-                  // certificate-observation write without discarding progress
-                  // already made on other domains in this batch.
-                  await client.query("SAVEPOINT certops_bridge");
+                  // Small per-domain transaction just for the CertOps bridge:
+                  // gate evaluation + bridge write commit or roll back as one
+                  // atomic unit, without holding locks across the network I/O
+                  // that surrounds this block (we run in autocommit here, so a
+                  // plain BEGIN/COMMIT is legal again).
+                  await client.query("BEGIN");
                   try {
                     const bridgeGate = await evaluateCertOpsMonitorBridgeGate({
                       client,
@@ -483,9 +505,9 @@ async function runEndpointChecks() {
                         },
                       });
                     }
-                    await client.query("RELEASE SAVEPOINT certops_bridge");
+                    await client.query("COMMIT");
                   } catch (bridgeTxnErr) {
-                    await client.query("ROLLBACK TO SAVEPOINT certops_bridge");
+                    await client.query("ROLLBACK");
                     throw bridgeTxnErr;
                   }
                 } catch (bridgeErr) {
@@ -604,17 +626,6 @@ async function runEndpointChecks() {
           );
         }
       }
-      }
-      await client.query("COMMIT");
-    } catch (txnErr) {
-      // Release the client back to the pool clean; leaving a transaction open
-      // across pool.connect() calls would corrupt the next borrower's session.
-      try {
-        await client.query("ROLLBACK");
-      } catch (_rollbackErr) {
-        logger.debug("Rollback failed", { error: _rollbackErr.message });
-      }
-      throw txnErr;
     }
   });
 

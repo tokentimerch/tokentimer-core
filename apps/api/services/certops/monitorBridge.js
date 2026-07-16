@@ -2,6 +2,7 @@
 
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
+  RETIRE_STATUS_SQL_LIST,
   toInventoryRecord,
   upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
@@ -198,6 +199,11 @@ async function existingManagedCertificate(client, options) {
   const sourceRef = bridgeSourceRef(options);
   if (!sourceRef) return null;
 
+  // Deliberately status-agnostic: a retired (revoked/decommissioned) row must
+  // still be found here so its monitor identity is reused instead of
+  // re-created, which would violate the unique index on
+  // (workspace_id, source, source_ref). Terminal-status preservation happens
+  // in updateManagedCertificateFromObservation, not in this lookup.
   const result = await client.query(
     `SELECT *
        FROM managed_certificates
@@ -225,9 +231,18 @@ async function updateManagedCertificateFromObservation(
     hostname: normalizeText(options.hostname),
     url: normalizeText(options.url),
   });
+  // D7 retire-first lifecycle: revoked/decommissioned are terminal. A monitor
+  // observation still refreshes observation fields on a retired row, but the
+  // status CASE below (mirroring the ON CONFLICT path in
+  // upsertManagedCertificateByMonitorSource) never flips a terminal status
+  // back to an active one.
   const result = await client.query(
     `UPDATE managed_certificates
-        SET status = $3,
+        SET status = CASE
+              WHEN managed_certificates.status IN (${RETIRE_STATUS_SQL_LIST})
+              THEN managed_certificates.status
+              ELSE $3
+            END,
             token_id = COALESCE($4, token_id),
             name = COALESCE($5, name),
             common_name = COALESCE($6, common_name),

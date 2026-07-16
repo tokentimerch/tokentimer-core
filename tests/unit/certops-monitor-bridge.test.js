@@ -94,6 +94,28 @@ function createIdentityStore() {
     };
   }
 
+  function isRetiredStatus(status) {
+    return status === "revoked" || status === "decommissioned";
+  }
+
+  // Emulate the D7 status CASE only when the query text actually contains it,
+  // so tests exercise the production SQL rather than mock behavior.
+  function sqlPreservesRetiredStatus(normalizedSql) {
+    return /status = CASE\s+WHEN managed_certificates\.status IN \('revoked', 'decommissioned'\)\s+THEN managed_certificates\.status\s+ELSE .+? END/.test(
+      normalizedSql,
+    );
+  }
+
+  function nextStatusFor(normalizedSql, currentStatus, requestedStatus) {
+    if (
+      sqlPreservesRetiredStatus(normalizedSql) &&
+      isRetiredStatus(currentStatus)
+    ) {
+      return currentStatus;
+    }
+    return requestedStatus;
+  }
+
   return {
     managed,
     async query(sql, params = []) {
@@ -122,7 +144,7 @@ function createIdentityStore() {
         if (existing) {
           Object.assign(existing, {
             token_id: params[1] ?? existing.token_id,
-            status: params[2],
+            status: nextStatusFor(normalized, existing.status, params[2]),
             name: params[5] ?? existing.name,
             common_name: params[6],
             subject_alt_names: params[7] || [],
@@ -161,7 +183,7 @@ function createIdentityStore() {
         );
         assert.ok(row, "expected managed certificate for observation update");
         Object.assign(row, {
-          status: params[2],
+          status: nextStatusFor(normalized, row.status, params[2]),
           token_id: params[3] ?? row.token_id,
           name: params[4] ?? row.name,
           common_name: params[5] ?? row.common_name,
@@ -541,5 +563,83 @@ describe("CertOps monitor bridge identity (D8)", () => {
     );
     assert.equal(monitorBRow.id, monitorB.managedCertificate.id);
     assert.equal(monitorBRow.fingerprint_sha256, SHARED_FINGERPRINT);
+  });
+});
+
+describe("CertOps monitor bridge retire-first lifecycle (D7)", () => {
+  for (const retiredStatus of ["revoked", "decommissioned"]) {
+    it(`keeps a ${retiredStatus} certificate ${retiredStatus} on re-observation while updating observation fields`, async () => {
+      const store = createIdentityStore();
+      const cert = {
+        issuer: "Probe CA",
+        subject: "CN=www.example.com",
+        fingerprintSha256: SHARED_FINGERPRINT,
+        serialNumber: "01",
+        notAfter: "2099-01-01",
+      };
+
+      const first = await bridgeObservation(store, {
+        domainMonitorId: MONITOR_A,
+        certificate: cert,
+      });
+      assert.equal(first.skipped, false);
+      assert.equal(first.managedCertificate.status, "discovered");
+
+      const managedRow = [...store.managed.values()].find(
+        (row) => row.source_ref === MONITOR_A,
+      );
+      managedRow.status = retiredStatus;
+
+      const second = await bridgeObservation(store, {
+        domainMonitorId: MONITOR_A,
+        certificate: {
+          ...cert,
+          fingerprintSha256: ROTATED_FINGERPRINT,
+          serialNumber: "02",
+        },
+      });
+
+      assert.equal(second.skipped, false);
+      assert.equal(second.managedCertificate.id, first.managedCertificate.id);
+      assert.equal(
+        second.managedCertificate.status,
+        retiredStatus,
+        "monitor observation must not resurrect a retired certificate",
+      );
+      assert.equal(second.managedCertificate.serialNumber, "02");
+      assert.equal(
+        second.managedCertificate.fingerprintSha256,
+        ROTATED_FINGERPRINT,
+      );
+      assert.equal(store.managed.size, 1);
+      assert.equal(managedRow.status, retiredStatus);
+    });
+  }
+
+  it("still applies the requested status when the existing row is not retired", async () => {
+    const store = createIdentityStore();
+    const cert = {
+      issuer: "Probe CA",
+      subject: "CN=www.example.com",
+      fingerprintSha256: SHARED_FINGERPRINT,
+      notAfter: "2099-01-01",
+    };
+
+    await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      certificate: cert,
+    });
+    const managedRow = [...store.managed.values()].find(
+      (row) => row.source_ref === MONITOR_A,
+    );
+    managedRow.status = "expiring";
+
+    const second = await bridgeObservation(store, {
+      domainMonitorId: MONITOR_A,
+      status: "active",
+      certificate: cert,
+    });
+
+    assert.equal(second.managedCertificate.status, "active");
   });
 });

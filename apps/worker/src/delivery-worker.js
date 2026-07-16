@@ -600,19 +600,27 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
         logger.debug("Non-critical operation failed", { error: _err.message });
       }
     }
-    // Get pending alerts due today or overdue
-    // Use FOR UPDATE SKIP LOCKED to prevent duplicate processing by concurrent
-    // workers. Wrap the SELECT and the per-alert status UPDATEs below in an
-    // explicit transaction (mirrors auto-sync-worker.js): without BEGIN/COMMIT,
-    // Postgres autocommit mode releases the row lock the instant the SELECT
-    // statement finishes, making SKIP LOCKED a no-op against a second
-    // concurrent worker. Currently masked by k8s concurrencyPolicy: Forbid and
-    // the in-process overlap guard in runner.js, but this keeps the guarantee
-    // correct in isolation (e.g. a manual second run, or a future deployment
-    // topology change).
+    // Get pending alerts due today or overdue.
+    // Claim-then-commit: hold the FOR UPDATE SKIP LOCKED locks only for a
+    // short claim transaction, mark the claimed rows via next_attempt_at
+    // (the production gating clause skips rows with next_attempt_at > NOW()),
+    // then COMMIT before any external send. Without BEGIN/COMMIT, autocommit
+    // would release the lock the instant the SELECT finishes (making SKIP
+    // LOCKED a no-op against a concurrent worker); but one batch-wide
+    // transaction spanning emails/webhooks/WhatsApp sends would mean a late
+    // error rolls back status='sent' updates and alert_delivery_log rows for
+    // sends that already happened, causing duplicate notifications on the
+    // next run. External sends cannot be rolled back, so each alert's result
+    // must be persisted immediately (autocommit) after its sends complete.
+    // If the process dies after the claim, the marker simply elapses and the
+    // row becomes claimable again (no stuck rows).
+    const CLAIM_MARKER_MS =
+      process.env.NODE_ENV === "test" ? 5 * 1000 : 15 * 60 * 1000;
+    let claimedAlerts;
     await client.query("BEGIN");
-    const alertsRes = await client.query(
-      `SELECT 
+    try {
+      const alertsRes = await client.query(
+        `SELECT 
          aq.*, 
          COALESCE(w.created_by, wf.created_by, wj.created_by, aq.user_id) AS owner_user_id,
          u.email AS owner_email,
@@ -660,16 +668,39 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
        ORDER BY aq.due_date ASC, aq.created_at ASC
        LIMIT 1000
        FOR UPDATE OF aq SKIP LOCKED`,
-    );
+      );
+      claimedAlerts = alertsRes.rows;
+      if (claimedAlerts.length > 0) {
+        await client.query(
+          `UPDATE alert_queue
+              SET next_attempt_at = NOW() + ($2 * INTERVAL '1 millisecond'),
+                  updated_at = NOW()
+            WHERE id = ANY($1::int[])`,
+          [claimedAlerts.map((row) => row.id), CLAIM_MARKER_MS],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (claimErr) {
+      // Release the client back to the pool clean; leaving a transaction open
+      // across pool.connect() calls would corrupt the next borrower's session.
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        logger.debug("Rollback failed", { error: _rollbackErr.message });
+      }
+      throw claimErr;
+    }
 
-    if (alertsRes.rows.length === 0) {
-      await client.query("ROLLBACK");
+    if (claimedAlerts.length === 0) {
       return;
     }
 
-    try {
-      for (const alert of alertsRes.rows) {
-        processed++;
+    // From here on we run in autocommit: each alert's terminal UPDATE
+    // (sent/partial/failed/blocked, all of which set next_attempt_at
+    // explicitly and overwrite the claim marker) persists immediately, so a
+    // crash on alert N cannot roll back results for alerts 1..N-1.
+    for (const alert of claimedAlerts) {
+      processed++;
 
       // Never process alerts that are already blocked
       if (String(alert.status || "").toLowerCase() === "blocked") {
@@ -702,7 +733,14 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               const dm = monitorRes.rows[0];
               const threshold = dm.alert_after_failures || 2;
               if ((dm.consecutive_failures || 0) < threshold) {
-                // Not enough failures yet -- skip for now, will retry next delivery run
+                // Not enough failures yet -- skip for now, will retry next
+                // delivery run. Clear the claim marker so the next run's
+                // gating clause does not defer this alert for the full
+                // claim-marker window.
+                await client.query(
+                  "UPDATE alert_queue SET next_attempt_at = NULL, updated_at = NOW() WHERE id = $1",
+                  [alert.id],
+                );
                 continue;
               }
               // If endpoint recovered (consecutive_failures = 0), discard the stale down alert
@@ -1932,17 +1970,6 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           },
         });
       }
-      }
-      await client.query("COMMIT");
-    } catch (txnErr) {
-      // Release the client back to the pool clean; leaving a transaction open
-      // across pool.connect() calls would corrupt the next borrower's session.
-      try {
-        await client.query("ROLLBACK");
-      } catch (_rollbackErr) {
-        logger.debug("Rollback failed", { error: _rollbackErr.message });
-      }
-      throw txnErr;
     }
   });
 
