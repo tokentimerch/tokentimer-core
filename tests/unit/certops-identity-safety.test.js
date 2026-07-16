@@ -19,6 +19,9 @@ const {
 );
 
 const CYRILLIC_A = "\u0430"; // looks like Latin 'a'
+const GREEK_ALPHA = "\u03b1";
+const GREEK_BETA = "\u03b2";
+const CYRILLIC_VE = "\u0432";
 
 function assertRejects(fn, snippet) {
   assert.throws(fn, (error) => {
@@ -92,6 +95,49 @@ describe("CertOps identitySafety", () => {
     // First label is pure Cyrillic; second is well-formed ACE.
     assert.equal(isSafeDnsIdentity(`${CYRILLIC_A}${CYRILLIC_A}${CYRILLIC_A}`), true);
     assert.equal(isSafeDnsIdentity(pureCyrillic), true);
+  });
+
+  it("rejects Greek+Cyrillic mixed-script single label", () => {
+    const mixed = `${GREEK_ALPHA}${GREEK_BETA}${CYRILLIC_VE}.example`;
+    assert.equal(isSafeDnsIdentity(mixed), false);
+    assertRejects(
+      () => assertSafeDnsIdentity(mixed),
+      /mixes multiple Unicode scripts/,
+    );
+    assertRejects(() => assertSafeHostname(mixed), /homograph/);
+  });
+
+  it("accepts single-script Greek-only labels", () => {
+    const greek = `${GREEK_ALPHA}${GREEK_BETA}${GREEK_ALPHA}.example`;
+    assert.equal(isSafeDnsIdentity(greek), true);
+    assert.equal(assertSafeDnsIdentity(greek), greek);
+  });
+
+  it("accepts Japanese Han+Hiragana+Katakana labels", () => {
+    const japanese = "\u6771\u4eac\u3072\u3089\u30ab\u30bf"; // 東京ひらカタ
+    assert.equal(isSafeDnsIdentity(`${japanese}.example`), true);
+    assert.equal(isSafeDnsIdentity(japanese), true);
+  });
+
+  it("accepts Han+Hangul and Han+Bopomofo labels", () => {
+    const hanHangul = "\u6f22\ud55c\uae00"; // 漢한글
+    const hanBopomofo = "\u6f22\u3105\u3106"; // 漢ㄅㄆ
+    assert.equal(isSafeDnsIdentity(hanHangul), true);
+    assert.equal(isSafeDnsIdentity(hanBopomofo), true);
+  });
+
+  it("rejects non-CJK script combinations with Han", () => {
+    const hanCyrillic = `\u6f22${CYRILLIC_A}`; // Han + Cyrillic
+    assert.equal(isSafeDnsIdentity(hanCyrillic), false);
+    assertRejects(
+      () => assertSafeDnsIdentity(hanCyrillic),
+      /mixes multiple Unicode scripts/,
+    );
+  });
+
+  it("rejects Hiragana+Hangul without Han as a disallowed combination", () => {
+    const hiraganaHangul = "\u3072\ud55c"; // ひ한
+    assert.equal(isSafeDnsIdentity(hiraganaHangul), false);
   });
 
   it("rejects U+202E bidirectional override", () => {
