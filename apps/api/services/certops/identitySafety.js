@@ -10,15 +10,22 @@
  * - Bidirectional override / isolate controls (display-order reversal)
  * - Zero-width / invisible formatting characters (hidden content)
  * - C0 / C1 control characters
- * - Mixed-script DNS labels (ASCII Latin mixed with Cyrillic / Greek / etc.)
+ * - Mixed-script DNS labels: labels mixing ASCII with non-ASCII characters
+ *   are rejected, and labels mixing multiple non-ASCII scripts are rejected
+ *   (per-script detection modelled on the UTS #39 "Highly Restrictive"
+ *   profile), except the standard CJK combinations Han + Hiragana + Katakana
+ *   (Japanese), Han + Bopomofo (Chinese), and Han + Hangul (Korean).
  *
  * Punycode policy (ACE labels):
  * - Labels that begin with "xn--" (case-insensitive) must be well-formed LDH
  *   ACE: xn-- followed by one or more [a-z0-9-], ASCII only.
  * - Well-formed ACE labels are accepted (they are the wire form of IDNs).
  * - Malformed xn-- labels are rejected.
- * - Pure non-ASCII U-labels remain allowed; the attack we refuse is the MIX
- *   of ASCII and non-ASCII script characters in one label.
+ * - Single-script non-ASCII U-labels remain allowed; we refuse the MIX of
+ *   ASCII and non-ASCII characters in one label, and the mix of multiple
+ *   non-ASCII scripts in one label (CJK combinations above excepted).
+ * - DEFERRED hardening: decoding well-formed ACE labels to their underlying
+ *   U-label and applying the script rules to the decoded form.
  *
  * IP identities are not DNS labels: use assertSafeIpIdentity / validate by
  * SAN type so mixed-script DNS rules are not applied to addresses.
@@ -48,6 +55,43 @@ const ZERO_WIDTH_OR_INVISIBLE = new Set([
 
 const ACE_LABEL_PATTERN = /^xn--[a-z0-9-]+$/i;
 
+// Script=Common and Script=Inherited characters (digits, hyphens,
+// punctuation, combining marks) never contribute a script of their own.
+const COMMON_OR_INHERITED_SCRIPT = /[\p{Script=Common}\p{Script=Inherited}]/u;
+
+// Scripts distinguished for per-label mixed-script detection. Characters
+// whose script is not listed fall into a single "Unrecognized" bucket, which
+// still catches mixes between listed scripts and anything else.
+const SCRIPT_MATCHERS = [
+  ["Latin", /\p{Script=Latin}/u],
+  ["Cyrillic", /\p{Script=Cyrillic}/u],
+  ["Greek", /\p{Script=Greek}/u],
+  ["Han", /\p{Script=Han}/u],
+  ["Hiragana", /\p{Script=Hiragana}/u],
+  ["Katakana", /\p{Script=Katakana}/u],
+  ["Hangul", /\p{Script=Hangul}/u],
+  ["Bopomofo", /\p{Script=Bopomofo}/u],
+  ["Arabic", /\p{Script=Arabic}/u],
+  ["Hebrew", /\p{Script=Hebrew}/u],
+  ["Armenian", /\p{Script=Armenian}/u],
+  ["Georgian", /\p{Script=Georgian}/u],
+  ["Devanagari", /\p{Script=Devanagari}/u],
+  ["Thai", /\p{Script=Thai}/u],
+  ["Ethiopic", /\p{Script=Ethiopic}/u],
+  ["Cherokee", /\p{Script=Cherokee}/u],
+  ["Canadian_Aboriginal", /\p{Script=Canadian_Aboriginal}/u],
+];
+
+// Standard legitimate combinations per the UTS #39 "Highly Restrictive"
+// profile. Latin is deliberately NOT allowed alongside these: the ASCII /
+// non-ASCII mixing rule below already rejects it, and we keep that stricter
+// stance rather than loosen existing behavior.
+const ALLOWED_SCRIPT_COMBINATIONS = [
+  ["Han", "Hiragana", "Katakana"], // Japanese
+  ["Han", "Bopomofo"], // Chinese
+  ["Han", "Hangul"], // Korean
+];
+
 class CertOpsIdentitySafetyError extends Error {
   constructor(message, code = CERTOPS_UNSAFE_IDENTITY) {
     super(message);
@@ -71,6 +115,22 @@ function isAsciiCodePoint(codePoint) {
 function isScriptBearingCodePoint(codePoint) {
   const char = String.fromCodePoint(codePoint);
   return /\p{L}|\p{Nd}|\p{M}/u.test(char);
+}
+
+function scriptOfCharacter(char) {
+  if (COMMON_OR_INHERITED_SCRIPT.test(char)) return null;
+  for (const [name, pattern] of SCRIPT_MATCHERS) {
+    if (pattern.test(char)) return name;
+  }
+  return "Unrecognized";
+}
+
+function isAllowedScriptCombination(scripts) {
+  return ALLOWED_SCRIPT_COMBINATIONS.some(
+    (combo) =>
+      scripts.size <= combo.length &&
+      [...scripts].every((script) => combo.includes(script)),
+  );
 }
 
 function formatCodePoint(codePoint) {
@@ -129,7 +189,8 @@ function isWellFormedAceLabel(label) {
 
 /**
  * Per-label script / ACE policy for DNS identities.
- * Pure non-ASCII labels are allowed; ASCII mixed with non-ASCII script is not.
+ * Rejects labels mixing ASCII with non-ASCII characters, and labels mixing
+ * multiple non-ASCII scripts (standard CJK combinations excepted).
  */
 function validateDnsLabel(label) {
   if (!label) return null;
@@ -140,33 +201,52 @@ function validateDnsLabel(label) {
         `DNS label ${JSON.stringify(label)} is not a well-formed punycode ACE label: refuse`,
       );
     }
+    // Accepted as-is. DEFERRED hardening: decode the ACE label and apply the
+    // script rules to the decoded U-label.
     return null;
   }
 
   let hasAscii = false;
+  let hasNonAscii = false;
   for (const char of label) {
-    if (isAsciiCodePoint(char.codePointAt(0))) {
-      hasAscii = true;
-      break;
-    }
+    if (isAsciiCodePoint(char.codePointAt(0))) hasAscii = true;
+    else hasNonAscii = true;
   }
 
-  if (!hasAscii) {
-    // Pure non-ASCII U-label (genuine IDN). Homograph defense targets the mix.
+  if (!hasNonAscii) {
+    // Pure ASCII LDH label: no script mixing possible.
     return null;
   }
 
-  let offset = 0;
-  for (const char of label) {
-    const codePoint = char.codePointAt(0);
-    if (!isAsciiCodePoint(codePoint) && isScriptBearingCodePoint(codePoint)) {
-      return createIdentityError(
-        `DNS label ${JSON.stringify(label)} mixes ASCII with non-ASCII script ` +
-          `character ${formatCodePoint(codePoint)} at offset ${offset}: refuse ` +
-          `(potential IDN homograph)`,
-      );
+  if (hasAscii) {
+    let offset = 0;
+    for (const char of label) {
+      const codePoint = char.codePointAt(0);
+      if (!isAsciiCodePoint(codePoint) && isScriptBearingCodePoint(codePoint)) {
+        return createIdentityError(
+          `DNS label ${JSON.stringify(label)} mixes ASCII with non-ASCII script ` +
+            `character ${formatCodePoint(codePoint)} at offset ${offset}: refuse ` +
+            `(potential IDN homograph)`,
+        );
+      }
+      offset += char.length;
     }
-    offset += char.length;
+    return null;
+  }
+
+  // Pure non-ASCII U-label: allow one script only (Common/Inherited ignored),
+  // except the standard CJK combinations.
+  const scripts = new Set();
+  for (const char of label) {
+    const script = scriptOfCharacter(char);
+    if (script) scripts.add(script);
+  }
+
+  if (scripts.size > 1 && !isAllowedScriptCombination(scripts)) {
+    return createIdentityError(
+      `DNS label ${JSON.stringify(label)} mixes multiple Unicode scripts ` +
+        `(${[...scripts].sort().join(", ")}): refuse (potential IDN homograph)`,
+    );
   }
 
   return null;
