@@ -79,6 +79,19 @@ function timelineIconColor(kind, type) {
   return 'gray';
 }
 
+/**
+ * True attempt number reported by the executor, when present. Log entries may
+ * carry a numeric `metadata.attempt` counter (an allowed public metadata
+ * field); it is authoritative regardless of pagination truncation.
+ */
+function reportedAttemptNumber(entry) {
+  const attempt = entry?.metadata?.attempt;
+  if (typeof attempt === 'number' && Number.isInteger(attempt) && attempt > 0) {
+    return attempt;
+  }
+  return null;
+}
+
 function mergeTimelineItems(logEntries, evidence) {
   const logs = (Array.isArray(logEntries) ? logEntries : []).map(entry => ({
     kind: 'log',
@@ -225,12 +238,15 @@ export default function EvidenceTimeline({ jobId, onClose }) {
   const items = mergeTimelineItems(logEntries, evidence);
   let startedCount = 0;
 
+  const logTruncation = truncationSummary({
+    shown: Array.isArray(logEntries) ? logEntries.length : 0,
+    pagination: logPagination,
+    noun: 'log entries',
+  });
+  const logsTruncated = Boolean(logTruncation);
+
   const truncationNotes = [
-    truncationSummary({
-      shown: Array.isArray(logEntries) ? logEntries.length : 0,
-      pagination: logPagination,
-      noun: 'log entries',
-    }),
+    logTruncation,
     truncationSummary({
       shown: Array.isArray(evidence) ? evidence.length : 0,
       pagination: evidencePagination,
@@ -317,8 +333,17 @@ export default function EvidenceTimeline({ jobId, onClose }) {
             let attemptLabel = null;
             if (item.kind === 'log' && item.entry.eventType === 'job.started') {
               startedCount += 1;
-              if (startedCount > 1) {
-                attemptLabel = `Attempt ${startedCount}`;
+              const reported = reportedAttemptNumber(item.entry);
+              if (reported !== null) {
+                // Executor-reported counter is truncation-proof.
+                if (reported > 1) attemptLabel = `Attempt ${reported}`;
+              } else if (startedCount > 1) {
+                // Older entries may be truncated away, in which case counting
+                // visible job.started entries yields a wrong absolute number;
+                // fall back to a non-absolute label.
+                attemptLabel = logsTruncated
+                  ? 'Later attempt'
+                  : `Attempt ${startedCount}`;
               }
             }
             return (

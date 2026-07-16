@@ -1520,15 +1520,53 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/unit/secretMaterial.test.js",
       "tests/unit/worker-email-ownership-heartbeat.test.js",
     ]);
+    // M2-B dashboard/UI work (this PR) rides on top of the M2-A backend.
+    // Explicit allowlist of the dashboard files actually touched by the
+    // M2-B branch (git diff feature/certops-m2-backend-fixes...HEAD --
+    // apps/dashboard), instead of a blanket apps/dashboard/ prefix:
+    const allowedM2BDashboardFiles = new Set([
+      "apps/dashboard/src/App.jsx",
+      "apps/dashboard/src/components/AssetFilters.jsx",
+      "apps/dashboard/src/components/AssetInventoryTable.jsx",
+      "apps/dashboard/src/components/ImportTokensModal.jsx",
+      "apps/dashboard/src/components/RequireManagerRoute.jsx",
+      "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertOpsPreferencesEntry.jsx",
+      "apps/dashboard/src/components/certops/CertificateInstances.jsx",
+      "apps/dashboard/src/components/certops/CertificateTimeline.jsx",
+      "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
+      "apps/dashboard/src/components/certops/JobStatusBadge.jsx",
+      "apps/dashboard/src/components/certops/TokenCertOpsPanel.jsx",
+      "apps/dashboard/src/components/certops/certopsApi.js",
+      "apps/dashboard/src/components/certops/certopsFormat.js",
+      "apps/dashboard/src/components/certops/certopsJobsApi.js",
+      "apps/dashboard/src/components/certops/certopsJobsFormat.js",
+      "apps/dashboard/src/components/certops/certopsPagination.js",
+      "apps/dashboard/src/components/certops/certopsTokensApi.js",
+      "apps/dashboard/src/components/certops/useCertOps.js",
+      "apps/dashboard/src/components/certops/useCertOpsJobs.js",
+      "apps/dashboard/src/pages/AlertPreferences.jsx",
+      "apps/dashboard/src/pages/Audit.jsx",
+      "apps/dashboard/src/pages/ControlCenter.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsRoutes.jsx",
+      "apps/dashboard/tests/unit/ApiTokenPanel.test.jsx",
+      "apps/dashboard/tests/unit/CertOpsOperations.test.jsx",
+      "apps/dashboard/tests/unit/DashboardPages.smoke.test.jsx",
+      "apps/dashboard/tests/unit/EvidenceTimeline.test.jsx",
+      "apps/dashboard/tests/unit/RequireManagerRoute.test.jsx",
+      "apps/dashboard/tests/unit/TokenCertOpsPanel.test.jsx",
+      "apps/dashboard/tests/unit/certopsJobsFormat.test.js",
+      "apps/dashboard/tests/unit/certopsMultiCert.test.js",
+      "apps/dashboard/tests/unit/certopsPagination.test.js",
+    ]);
     const unexpectedFiles = files.filter(
       (file) =>
         file === "contracts.manifest.json" ||
         file.startsWith("packages/contracts/") ||
         file === "tests/unit/certops-m2-contracts.test.js" ||
         file === "tests/unit/certops-routes-hardening.test.js" ||
-        // M2-B dashboard/UI work (this PR) rides on top of the M2-A backend:
-        // the whole dashboard app plus its docs are in scope by construction.
-        file.startsWith("apps/dashboard/") ||
+        allowedM2BDashboardFiles.has(file) ||
         file === ".gitignore" ||
         file === "docs/adr/0006-certops-dashboard-ux-split.md" ||
         file === "docs/certops/CONTEXT.md" ||

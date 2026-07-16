@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -147,6 +147,17 @@ export default function ApiTokenPanel() {
   const [revoking, setRevoking] = useState(false);
   const revokeCancelRef = useRef(null);
 
+  // The show-once secret and any pending create/revoke belong to a single
+  // workspace: switching workspaces clears the secret from memory and lets
+  // in-flight responses know they are stale.
+  const activeWorkspaceRef = useRef(workspaceId);
+  useEffect(() => {
+    activeWorkspaceRef.current = workspaceId;
+    setPlaintextToken('');
+    setShowOnceOpen(false);
+    setRevokeTarget(null);
+  }, [workspaceId]);
+
   const muted = useColorModeValue('gray.600', 'gray.400');
   const border = useColorModeValue('gray.200', 'gray.700');
   const rowBg = useColorModeValue('gray.50', 'gray.800');
@@ -165,6 +176,7 @@ export default function ApiTokenPanel() {
 
   const handleCreate = async () => {
     if (!canSubmit) return;
+    const requestWorkspaceId = workspaceId;
     setCreating(true);
     try {
       const payload = {
@@ -174,7 +186,11 @@ export default function ApiTokenPanel() {
       const expiresAt = toIsoExpiry(expiresLocal);
       if (expiresAt) payload.expiresAt = expiresAt;
 
-      const result = await createApiToken(workspaceId, payload);
+      const result = await createApiToken(requestWorkspaceId, payload);
+      // Stale-response guard: if the workspace changed while the request was
+      // in flight, discard the result. Never surface another workspace's
+      // secret in the current workspace's UI.
+      if (activeWorkspaceRef.current !== requestWorkspaceId) return;
       // Guard: only enter the show-once flow when the create response
       // actually carries the plaintext secret; a success state without the
       // token would be unrecoverable for the user.
@@ -197,6 +213,7 @@ export default function ApiTokenPanel() {
       setShowOnceOpen(true);
       showSuccess('API token created');
     } catch (err) {
+      if (activeWorkspaceRef.current !== requestWorkspaceId) return;
       showError('Create failed', createErrorMessage(err));
     } finally {
       setCreating(false);
@@ -211,13 +228,16 @@ export default function ApiTokenPanel() {
 
   const handleRevoke = async () => {
     if (!revokeTarget?.id || !workspaceId) return;
+    const requestWorkspaceId = workspaceId;
     setRevoking(true);
     try {
-      await revokeApiToken(workspaceId, revokeTarget.id);
+      await revokeApiToken(requestWorkspaceId, revokeTarget.id);
+      if (activeWorkspaceRef.current !== requestWorkspaceId) return;
       showSuccess('API token revoked');
       setRevokeTarget(null);
       refresh();
     } catch (err) {
+      if (activeWorkspaceRef.current !== requestWorkspaceId) return;
       showError('Revoke failed', revokeErrorMessage(err));
     } finally {
       setRevoking(false);

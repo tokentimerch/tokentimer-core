@@ -154,6 +154,7 @@ describe('CertOpsOperations', () => {
       ready: true,
       enabled: null,
       error: 'Network Error',
+      retry: vi.fn(),
     });
     useCertOpsJobsMock.mockReturnValue(jobsState());
 
@@ -168,6 +169,23 @@ describe('CertOpsOperations', () => {
     expect(
       screen.queryByText('Machine executor jobs')
     ).not.toBeInTheDocument();
+  });
+
+  it('offers a Retry action on the availability error that re-triggers the check', () => {
+    const retry = vi.fn();
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: null,
+      error: 'Network Error',
+      retry,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    fireEvent.click(retryButton);
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 
   it('renders the executor jobs panel and token panel when enabled', () => {

@@ -336,4 +336,79 @@ describe('ApiTokenPanel', () => {
     expect(revokeApiTokenMock).toHaveBeenCalledWith('ws-1', 'tok-1');
     expect(refresh).toHaveBeenCalledTimes(1);
   });
+
+  it('clears the show-once token and closes the modal when the workspace changes', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsApiTokensMock.mockReturnValue(tokensState());
+    const realisticPlaintext =
+      'ttx_0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    createApiTokenMock.mockResolvedValue({
+      token: { id: 'tok-1', name: 'certbot-prod-hook' },
+      plaintextToken: realisticPlaintext,
+    });
+
+    const view = renderWithProviders(<ApiTokenPanel />);
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'certbot-prod-hook' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByText(realisticPlaintext)).toBeInTheDocument();
+
+    // Switch the active workspace: the show-once secret must vanish.
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-2' });
+    view.rerender(<ApiTokenPanel />);
+
+    await waitFor(() =>
+      expect(screen.queryByText(realisticPlaintext)).not.toBeInTheDocument()
+    );
+    expect(screen.queryByText('Store this token now')).not.toBeInTheDocument();
+  });
+
+  it('discards a stale create response that resolves after a workspace switch', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsApiTokensMock.mockReturnValue(tokensState());
+    const realisticPlaintext =
+      'ttx_0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    let resolveCreate;
+    createApiTokenMock.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveCreate = resolve;
+        })
+    );
+
+    const view = renderWithProviders(<ApiTokenPanel />);
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'certbot-prod-hook' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+
+    await waitFor(() => expect(createApiTokenMock).toHaveBeenCalledTimes(1));
+
+    // Workspace changes while the create request is still in flight.
+    useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-2' });
+    view.rerender(<ApiTokenPanel />);
+
+    resolveCreate({
+      token: { id: 'tok-1', name: 'certbot-prod-hook' },
+      plaintextToken: realisticPlaintext,
+    });
+
+    // The stale response must be discarded: no modal, no plaintext.
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Store this token now')
+      ).not.toBeInTheDocument()
+    );
+    expect(screen.queryByText(realisticPlaintext)).not.toBeInTheDocument();
+  });
 });

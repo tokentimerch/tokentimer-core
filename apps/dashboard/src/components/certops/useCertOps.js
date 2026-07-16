@@ -17,7 +17,7 @@ import { pickPrimaryCertificate } from './certopsFormat';
  * its routes (404) while the flag is off. Only 404 means disabled; other
  * failures are surfaced as `error` so outages are not mistaken for "feature off".
  *
- * @returns {{ ready: boolean, enabled: boolean|null, error: string|null }}
+ * @returns {{ ready: boolean, enabled: boolean|null, error: string|null, retry: function }}
  */
 export function useCertOpsAvailability() {
   const { workspaceId } = useWorkspace();
@@ -26,6 +26,11 @@ export function useCertOpsAvailability() {
     enabled: null,
     error: null,
   });
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const retry = useCallback(() => {
+    setReloadTick(tick => tick + 1);
+  }, []);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -60,9 +65,9 @@ export function useCertOpsAvailability() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId]);
+  }, [workspaceId, reloadTick]);
 
-  return state;
+  return { ...state, retry };
 }
 
 /**

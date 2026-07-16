@@ -169,7 +169,12 @@ export default function CertOpsOperations({
   onAccountClick,
 }) {
   const { pageBg, text } = useDashboardTheme();
-  const { ready, enabled, error: availabilityError } = useCertOpsAvailability();
+  const {
+    ready,
+    enabled,
+    error: availabilityError,
+    retry: retryAvailability,
+  } = useCertOpsAvailability();
 
   const shellProps = useDashboardShellProps({
     session,
@@ -203,6 +208,14 @@ export default function CertOpsOperations({
               <DashboardState
                 title='Could not load certificate operations status'
                 description='The availability check failed. This does not mean the feature is disabled. Retry in a moment.'
+                action={
+                  <DashboardActionButton
+                    variant='outline'
+                    onClick={retryAvailability}
+                  >
+                    Retry
+                  </DashboardActionButton>
+                }
               />
             ) : enabled ? (
               <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={3}>

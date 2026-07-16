@@ -24,7 +24,13 @@ export default function RequireManagerRoute({
   scope = 'any-workspace',
   children,
 }) {
-  const [isAllowed, setIsAllowed] = useState(null);
+  // Fail-closed: the authorization result is stored together with the
+  // workspace it was computed for, so a stale grant from workspace A can
+  // never leak through while workspace B's check is in flight.
+  const [authorization, setAuthorization] = useState({
+    workspaceId: null,
+    allowed: null,
+  });
   const activeWorkspace = scope === 'active-workspace';
   const { workspaceId } = useWorkspace();
 
@@ -32,24 +38,35 @@ export default function RequireManagerRoute({
     let cancelled = false;
     (async () => {
       if (!session) {
-        if (!cancelled) setIsAllowed(false);
+        if (!cancelled)
+          setAuthorization({ workspaceId: workspaceId ?? null, allowed: false });
         return;
       }
       const isSystemAdmin = session?.isAdmin === true;
       if (isSystemAdmin) {
-        if (!cancelled) setIsAllowed(true);
+        if (!cancelled)
+          setAuthorization({ workspaceId: workspaceId ?? null, allowed: true });
         return;
       }
       if (activeWorkspace) {
-        // Wait for workspace selection to resolve before deciding.
-        if (!workspaceId) return;
+        // Wait for workspace selection to resolve before deciding. Any prior
+        // grant is stale for a falsy workspaceId, so drop it (fail closed to
+        // the loading state, not to a redirect).
+        if (!workspaceId) {
+          if (!cancelled)
+            setAuthorization({ workspaceId: null, allowed: null });
+          return;
+        }
         try {
           const ws = await workspaceAPI.get(workspaceId);
           const role = String(ws?.role || '').toLowerCase();
           if (!cancelled)
-            setIsAllowed(role === 'admin' || role === 'workspace_manager');
+            setAuthorization({
+              workspaceId,
+              allowed: role === 'admin' || role === 'workspace_manager',
+            });
         } catch (_) {
-          if (!cancelled) setIsAllowed(false);
+          if (!cancelled) setAuthorization({ workspaceId, allowed: false });
         }
         return;
       }
@@ -59,9 +76,14 @@ export default function RequireManagerRoute({
         const roles = items.map(w => String(w.role || '').toLowerCase());
         const hasManagerOrAdmin =
           roles.includes('admin') || roles.includes('workspace_manager');
-        if (!cancelled) setIsAllowed(hasManagerOrAdmin);
+        if (!cancelled)
+          setAuthorization({
+            workspaceId: workspaceId ?? null,
+            allowed: hasManagerOrAdmin,
+          });
       } catch (_) {
-        if (!cancelled) setIsAllowed(false);
+        if (!cancelled)
+          setAuthorization({ workspaceId: workspaceId ?? null, allowed: false });
       }
     })();
     return () => {
@@ -70,7 +92,14 @@ export default function RequireManagerRoute({
   }, [session, activeWorkspace, workspaceId]);
 
   if (!session) return <Navigate to='/login' replace />;
-  if (isAllowed === null) return null;
-  if (!isAllowed) return <Navigate to='/dashboard' replace />;
+
+  // For active-workspace scope, a stored result only counts when it belongs
+  // to the CURRENT workspace; otherwise treat the check as pending (render
+  // the loading state, never stale children and never a redirect-flicker).
+  const isCurrent = activeWorkspace
+    ? authorization.workspaceId === (workspaceId ?? null)
+    : true;
+  if (!isCurrent || authorization.allowed === null) return null;
+  if (!authorization.allowed) return <Navigate to='/dashboard' replace />;
   return children;
 }

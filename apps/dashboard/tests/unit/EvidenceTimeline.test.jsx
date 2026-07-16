@@ -382,4 +382,111 @@ describe('EvidenceTimeline', () => {
 
     expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
   });
+
+  it('shows exact "Attempt N" labels when the log list is not truncated', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        {
+          id: 'log-1',
+          eventType: 'job.started',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'log-2',
+          eventType: 'job.started',
+          createdAt: '2026-01-02T00:00:00.000Z',
+        },
+        {
+          id: 'log-3',
+          eventType: 'job.started',
+          createdAt: '2026-01-03T00:00:00.000Z',
+        },
+      ],
+      logPagination: { limit: 100, offset: 0 },
+      evidence: [],
+      evidencePagination: { limit: 100, offset: 0 },
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Attempt 2')).toBeInTheDocument();
+    expect(screen.getByText('Attempt 3')).toBeInTheDocument();
+    expect(screen.queryByText('Later attempt')).not.toBeInTheDocument();
+  });
+
+  it('does not show absolute attempt numbers derived from a truncated log list', () => {
+    // 100-entry full page (truncated: older entries missing). Two visible
+    // job.started entries are really later attempts of unknown rank.
+    const filler = Array.from({ length: 98 }, (_, i) => ({
+      id: `log-filler-${i}`,
+      eventType: 'job.progress',
+      createdAt: `2026-01-05T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
+    }));
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        ...filler,
+        {
+          id: 'log-started-a',
+          eventType: 'job.started',
+          createdAt: '2026-01-06T00:00:00.000Z',
+        },
+        {
+          id: 'log-started-b',
+          eventType: 'job.started',
+          createdAt: '2026-01-07T00:00:00.000Z',
+        },
+      ],
+      logPagination: { limit: 100, offset: 0 },
+      evidence: [],
+      evidencePagination: { limit: 100, offset: 0 },
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.queryByText(/^Attempt \d+$/)).not.toBeInTheDocument();
+    expect(screen.getByText('Later attempt')).toBeInTheDocument();
+  });
+
+  it('uses the executor-reported metadata.attempt counter even when truncated', () => {
+    const filler = Array.from({ length: 98 }, (_, i) => ({
+      id: `log-filler-${i}`,
+      eventType: 'job.progress',
+      createdAt: `2026-01-05T00:00:${String(i % 60).padStart(2, '0')}.000Z`,
+    }));
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [
+        ...filler,
+        {
+          id: 'log-started-a',
+          eventType: 'job.started',
+          createdAt: '2026-01-06T00:00:00.000Z',
+          metadata: { attempt: 4 },
+        },
+        {
+          id: 'log-started-b',
+          eventType: 'job.started',
+          createdAt: '2026-01-07T00:00:00.000Z',
+          metadata: { attempt: 5 },
+        },
+      ],
+      logPagination: { limit: 100, offset: 0 },
+      evidence: [],
+      evidencePagination: { limit: 100, offset: 0 },
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('Attempt 4')).toBeInTheDocument();
+    expect(screen.getByText('Attempt 5')).toBeInTheDocument();
+    expect(screen.queryByText('Later attempt')).not.toBeInTheDocument();
+  });
 });
