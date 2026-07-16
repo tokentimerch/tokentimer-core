@@ -551,6 +551,11 @@ const shutdown = async (signal) => {
 
 export async function deliveryWorkerJob({ closePool = true } = {}) {
   const startedAt = Date.now();
+  // Owner identity for this run's claims. Every renewal and terminal write
+  // is conditional on still holding this claim id, so if the claim marker
+  // expires mid-batch and another worker re-claims a row, this run's writes
+  // no-op instead of double-sending or overwriting the new owner's state.
+  const claimId = crypto.randomUUID();
   let processed = 0,
     sent = 0,
     failed = 0;
@@ -674,9 +679,10 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
         await client.query(
           `UPDATE alert_queue
               SET next_attempt_at = NOW() + ($2 * INTERVAL '1 millisecond'),
+                  delivery_claim_id = $3,
                   updated_at = NOW()
             WHERE id = ANY($1::int[])`,
-          [claimedAlerts.map((row) => row.id), CLAIM_MARKER_MS],
+          [claimedAlerts.map((row) => row.id), CLAIM_MARKER_MS, claimId],
         );
       }
       await client.query("COMMIT");
@@ -702,25 +708,28 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
     for (const alert of claimedAlerts) {
       processed++;
 
-      // Fresh per-row re-check + lease renewal. The snapshot fetched at claim
-      // time goes stale while earlier rows in the batch run external sends
-      // (each recipient can take ~30s), so a batch can outlive the batch-wide
-      // claim marker. Renewing the marker per row means the claim only has to
-      // outlive ONE row's processing, and the atomic status predicate detects
-      // rows that another worker meanwhile sent or blocked (statuses outside
-      // the claimable set) without trusting the stale snapshot.
+      // Fresh per-row re-check + lease renewal, owner-scoped. The snapshot
+      // fetched at claim time goes stale while earlier rows in the batch run
+      // external sends (each recipient can take ~30s), so a batch can outlive
+      // the batch-wide claim marker. Renewing the marker per row means the
+      // claim only has to outlive ONE row's processing. The predicate also
+      // requires delivery_claim_id = our claimId: if the marker expired and
+      // another worker re-claimed the row (overwriting the claim id), or the
+      // row left the claimable status set, the renewal affects 0 rows and we
+      // skip, guaranteeing at most one owner performs external sends.
       const recheck = await client.query(
         `UPDATE alert_queue
             SET next_attempt_at = NOW() + ($2 * INTERVAL '1 millisecond'),
                 updated_at = NOW()
           WHERE id = $1
+            AND delivery_claim_id = $3
             AND status IN ('pending', 'failed', 'partial')
         RETURNING id`,
-        [alert.id, CLAIM_MARKER_MS],
+        [alert.id, CLAIM_MARKER_MS, claimId],
       );
       if (recheck.rows.length === 0) {
-        // Row is no longer in a deliverable state (sent/blocked by another
-        // worker, or removed). Skip silently.
+        // Row is no longer ours (re-claimed by another worker after our
+        // marker expired) or no longer in a deliverable state. Skip silently.
         logger.debug("Skipping alert no longer claimable at recheck", {
           alertId: alert.id,
         });
@@ -749,21 +758,39 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               const threshold = dm.alert_after_failures || 2;
               if ((dm.consecutive_failures || 0) < threshold) {
                 // Not enough failures yet -- skip for now, will retry next
-                // delivery run. Clear the claim marker so the next run's
-                // gating clause does not defer this alert for the full
-                // claim-marker window.
-                await client.query(
-                  "UPDATE alert_queue SET next_attempt_at = NULL, updated_at = NOW() WHERE id = $1",
-                  [alert.id],
+                // delivery run. Clear the claim marker and release ownership
+                // so the next run's gating clause does not defer this alert
+                // for the full claim-marker window.
+                const deferRes = await client.query(
+                  `UPDATE alert_queue
+                      SET next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
+                    WHERE id = $1 AND delivery_claim_id = $2`,
+                  [alert.id, claimId],
                 );
+                if (deferRes.rowCount === 0) {
+                  logger.warn(
+                    "Skipped endpoint-alert deferral: another worker took ownership",
+                    { alertId: alert.id },
+                  );
+                }
                 continue;
               }
               // If endpoint recovered (consecutive_failures = 0), discard the stale down alert
               if ((dm.consecutive_failures || 0) === 0) {
-                await client.query(
-                  "UPDATE alert_queue SET status = 'sent', last_attempt = NOW(), error_message = 'Discarded: endpoint recovered before threshold', updated_at = NOW() WHERE id = $1",
-                  [alert.id],
+                const discardRes = await client.query(
+                  `UPDATE alert_queue
+                      SET status = 'sent', last_attempt = NOW(),
+                          error_message = 'Discarded: endpoint recovered before threshold',
+                          next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
+                    WHERE id = $1 AND delivery_claim_id = $2`,
+                  [alert.id, claimId],
                 );
+                if (discardRes.rowCount === 0) {
+                  logger.warn(
+                    "Skipped endpoint-alert discard: another worker took ownership",
+                    { alertId: alert.id },
+                  );
+                }
                 continue;
               }
             }
@@ -821,12 +848,18 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             const ts = new Date(
               Date.now() + (Number.isFinite(defMs) ? defMs : 10800000),
             );
-            await client.query(
+            const windowDeferRes = await client.query(
               `UPDATE alert_queue 
-              SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2
-               WHERE id = $1`,
-              [alert.id, ts.toISOString()],
+              SET status = 'pending', last_attempt = NOW(), error_message = 'OUT_OF_WINDOW', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
+               WHERE id = $1 AND delivery_claim_id = $3`,
+              [alert.id, ts.toISOString(), claimId],
             );
+            if (windowDeferRes.rowCount === 0) {
+              logger.warn(
+                "Skipped out-of-window deferral: another worker took ownership",
+                { alertId: alert.id },
+              );
+            }
             // Do not count this as a failure; simply defer
             continue;
           }
@@ -876,12 +909,22 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
       if (!Array.isArray(finalChannels) || finalChannels.length === 0) {
         const minimalCooldown =
           process.env.NODE_ENV === "test" ? new Date(Date.now() + 1000) : null;
-        await client.query(
+        const noContactsRes = await client.query(
           `UPDATE alert_queue 
-           SET status = 'failed', attempts = attempts + 1, last_attempt = NOW(), error_message = 'NO_CONTACTS_DEFINED: No email, webhook, or WhatsApp contacts are configured in the selected contact group', updated_at = NOW(), next_attempt_at = $2
-           WHERE id = $1`,
-          [alert.id, minimalCooldown ? minimalCooldown.toISOString() : null],
+           SET status = 'failed', attempts = attempts + 1, last_attempt = NOW(), error_message = 'NO_CONTACTS_DEFINED: No email, webhook, or WhatsApp contacts are configured in the selected contact group', updated_at = NOW(), next_attempt_at = $2, delivery_claim_id = NULL
+           WHERE id = $1 AND delivery_claim_id = $3`,
+          [
+            alert.id,
+            minimalCooldown ? minimalCooldown.toISOString() : null,
+            claimId,
+          ],
         );
+        if (noContactsRes.rowCount === 0) {
+          logger.warn(
+            "Skipped no-contacts terminal write: another worker took ownership",
+            { alertId: alert.id },
+          );
+        }
         failed++;
         continue;
       }
@@ -1748,11 +1791,12 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
       }
 
       if (newStatus === "sent") {
-        await client.query(
+        const sentRes = await client.query(
           `UPDATE alert_queue 
            SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(),
-               attempts_email = $5, attempts_webhooks = $6, attempts_whatsapp = $7, next_attempt_at = NULL
-           WHERE id = $4`,
+               attempts_email = $5, attempts_webhooks = $6, attempts_whatsapp = $7, next_attempt_at = NULL,
+               delivery_claim_id = NULL
+           WHERE id = $4 AND delivery_claim_id = $8`,
           [
             newStatus,
             attempts,
@@ -1761,8 +1805,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             newAttemptsEmail,
             newAttemptsWebhooks,
             newAttemptsWhatsApp,
+            claimId,
           ],
         );
+        if (sentRes.rowCount === 0) {
+          logger.warn(
+            "Skipped sent terminal write: another worker took ownership",
+            { alertId: alert.id },
+          );
+        }
         // Emit an audit event for partial successes to aid diagnostics
         if (webhookPartialErrors.length > 0) {
           const contactGroupId =
@@ -1881,11 +1932,12 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             logger.warn("WhatsApp operation failed", { error: _err.message });
           }
         }
-        await client.query(
+        const terminalRes = await client.query(
           `UPDATE alert_queue 
            SET status = $1, attempts = $2, last_attempt = NOW(), error_message = $3, updated_at = NOW(), channels = $5,
-               attempts_email = $6, attempts_webhooks = $7, attempts_whatsapp = $8, next_attempt_at = $9
-           WHERE id = $4`,
+               attempts_email = $6, attempts_webhooks = $7, attempts_whatsapp = $8, next_attempt_at = $9,
+               delivery_claim_id = NULL
+           WHERE id = $4 AND delivery_claim_id = $10`,
           [
             reachedMaxAttempts || blockDueToWhatsApp ? "blocked" : newStatus,
             attempts,
@@ -1900,8 +1952,15 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               : finalNextAttempt
                 ? finalNextAttempt.toISOString()
                 : null,
+            claimId,
           ],
         );
+        if (terminalRes.rowCount === 0) {
+          logger.warn(
+            "Skipped failed/blocked terminal write: another worker took ownership",
+            { alertId: alert.id },
+          );
+        }
         if (!reachedMaxAttempts && nextAttemptTimestamp) {
           try {
             const contactGroupId =

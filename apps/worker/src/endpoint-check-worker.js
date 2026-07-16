@@ -13,7 +13,7 @@ import { logger } from "./logger.js";
 import tls from "tls";
 import https from "https";
 import http from "http";
-import { X509Certificate } from "crypto";
+import { X509Certificate, randomUUID } from "node:crypto";
 import { createRequire } from "module";
 import {
   resolveContactGroup,
@@ -275,11 +275,17 @@ async function queueEndpointAlert(
 async function runEndpointChecks() {
   logger.info("Endpoint check worker started");
 
+  // Owner identity for this run's claims. Lease renewals and releases are
+  // conditional on still holding this claim id, so a worker whose lease
+  // expired and was taken over cannot clear or extend the new owner's lease.
+  const claimId = randomUUID();
+
   await withClient(async (client) => {
     // Claim-then-commit: hold the FOR UPDATE SKIP LOCKED locks only for a
     // short claim transaction, mark the claimed rows via check_claimed_until
-    // (a dedicated concurrency lease) so a concurrent worker's claim
-    // predicate skips them, then COMMIT before any network I/O.
+    // (a dedicated concurrency lease) plus check_claim_id (owner identity)
+    // so a concurrent worker's claim predicate skips them, then COMMIT
+    // before any network I/O.
     // last_health_check_at stays pure scheduling state and is only advanced
     // when a check actually completes. Without BEGIN/COMMIT, autocommit mode
     // would release the lock the instant the SELECT finishes (making SKIP
@@ -288,6 +294,9 @@ async function runEndpointChecks() {
     // domains) would pin row locks for minutes and let one late error roll
     // back every domain's committed progress. If the process dies after the
     // claim, the lease simply expires and the row becomes claimable again.
+    // The lease is renewed per row (owner-scoped) right before each monitor
+    // is processed, so it only has to outlive ONE monitor's checks, not the
+    // whole batch (which can exceed the lease with 15s timeouts x 50 rows).
     const CHECK_CLAIM_LEASE_MS =
       process.env.NODE_ENV === "test" ? 5 * 1000 : 10 * 60 * 1000;
     let claimedMonitors;
@@ -313,12 +322,16 @@ async function runEndpointChecks() {
       );
       claimedMonitors = result.rows;
       if (claimedMonitors.length > 0) {
+        // An expired lease is claimable regardless of any stale
+        // check_claim_id left by a crashed/superseded worker; taking the
+        // claim overwrites the owner id.
         await client.query(
           `UPDATE domain_monitors
               SET check_claimed_until = NOW() + ($2 * INTERVAL '1 millisecond'),
+                  check_claim_id = $3,
                   updated_at = NOW()
             WHERE id = ANY($1::uuid[])`,
-          [claimedMonitors.map((row) => row.id), CHECK_CLAIM_LEASE_MS],
+          [claimedMonitors.map((row) => row.id), CHECK_CLAIM_LEASE_MS, claimId],
         );
       }
       await client.query("COMMIT");
@@ -353,6 +366,38 @@ async function runEndpointChecks() {
         consecutive_failures,
       } = domain;
       let currentTokenId = token_id;
+
+      // Owner-scoped per-row lease renewal: the batch-wide lease taken at
+      // claim time can expire before later rows are reached (each row's
+      // TLS/HTTP checks can take ~15s x 50 rows > lease). Renewing right
+      // before processing means the lease only has to outlive this one row.
+      // If another worker meanwhile took over the expired lease (its claim
+      // overwrote check_claim_id), the renewal matches 0 rows and we skip.
+      let renewed;
+      try {
+        renewed = await client.query(
+          `UPDATE domain_monitors
+              SET check_claimed_until = NOW() + ($3 * INTERVAL '1 millisecond'),
+                  updated_at = NOW()
+            WHERE id = $1
+              AND check_claim_id = $2
+          RETURNING id`,
+          [id, claimId, CHECK_CLAIM_LEASE_MS],
+        );
+      } catch (renewErr) {
+        logger.warn(`Failed to renew check claim for ${url}, skipping`, {
+          error: renewErr.message,
+        });
+        continue;
+      }
+      if (renewed.rows.length === 0) {
+        logger.warn(
+          `Skipping monitor ${url}: another worker took over the expired claim`,
+          { monitorId: id },
+        );
+        continue;
+      }
+
       logger.info(`Checking endpoint: ${url}`);
 
       try {
@@ -634,16 +679,20 @@ async function runEndpointChecks() {
       } finally {
         // The check completed (or failed terminally): advance the schedule
         // and release the concurrency lease so the monitor becomes claimable
-        // again at its next interval. If the process dies before reaching
-        // this point, the lease simply expires.
+        // again at its next interval. The release is owner-scoped
+        // (check_claim_id = our claimId) so a superseded worker cannot clear
+        // a lease that another worker meanwhile took over. If the process
+        // dies before reaching this point, the lease simply expires.
         try {
           await client.query(
             `UPDATE domain_monitors
                 SET last_health_check_at = NOW(),
                     check_claimed_until = NULL,
+                    check_claim_id = NULL,
                     updated_at = NOW()
-              WHERE id = $1`,
-            [id],
+              WHERE id = $1
+                AND check_claim_id = $2`,
+            [id, claimId],
           );
         } catch (releaseErr) {
           logger.warn(`Failed to release check claim for ${url}`, {
