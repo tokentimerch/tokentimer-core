@@ -302,6 +302,85 @@ describe("Worker claim leases", function () {
       expect(row.rows[0].delivery_claim_id).to.equal(null);
       expect(row.rows[0].next_attempt_at).to.equal(null);
     });
+
+    it("aborts further side effects when ownership is lost mid-recipient loop", async () => {
+      // Models delivery-worker.js: one row-start heartbeat, then a heartbeat
+      // before every external send. Worker A owns the row and "sends" the
+      // first recipient successfully; its lease then expires; worker B
+      // reclaims; A's next pre-send heartbeat must fail so A does not send
+      // recipient 2 (and A's terminal write no-ops).
+      const alertId = await insertAlert("mid_row_takeover");
+      const claimA = crypto.randomUUID();
+      const claimB = crypto.randomUUID();
+      const sends = [];
+
+      await pool.query(DELIVERY_CLAIM_SQL, [
+        alertId,
+        15 * 60 * 1000,
+        claimA,
+      ]);
+
+      // Row-start heartbeat (A still owns).
+      const startHeartbeat = await pool.query(DELIVERY_RECHECK_SQL, [
+        alertId,
+        15 * 60 * 1000,
+        claimA,
+      ]);
+      expect(startHeartbeat.rows).to.have.length(1);
+
+      // Pre-send heartbeat for recipient 1, then the send itself.
+      const beforeRcpt1 = await pool.query(DELIVERY_RECHECK_SQL, [
+        alertId,
+        15 * 60 * 1000,
+        claimA,
+      ]);
+      expect(beforeRcpt1.rows).to.have.length(1);
+      sends.push("rcpt1");
+
+      // Lease expires mid-loop; worker B reclaims before A's next send.
+      await pool.query(
+        `UPDATE alert_queue
+            SET next_attempt_at = NOW() - INTERVAL '1 second',
+                updated_at = NOW()
+          WHERE id = $1`,
+        [alertId],
+      );
+      const bClaim = await pool.query(DELIVERY_CLAIM_SQL, [
+        alertId,
+        15 * 60 * 1000,
+        claimB,
+      ]);
+      expect(bClaim.rowCount).to.equal(1);
+
+      // A's pre-send heartbeat for recipient 2 must fail (ownership lost).
+      const beforeRcpt2 = await pool.query(DELIVERY_RECHECK_SQL, [
+        alertId,
+        15 * 60 * 1000,
+        claimA,
+      ]);
+      expect(beforeRcpt2.rows).to.have.length(0);
+      // A aborts: no further external send.
+      expect(sends).to.deep.equal(["rcpt1"]);
+
+      // B completes delivery; A's late terminal write no-ops.
+      const bTerminal = await pool.query(DELIVERY_TERMINAL_SENT_SQL, [
+        alertId,
+        claimB,
+      ]);
+      expect(bTerminal.rowCount).to.equal(1);
+      const aTerminal = await pool.query(DELIVERY_TERMINAL_SENT_SQL, [
+        alertId,
+        claimA,
+      ]);
+      expect(aTerminal.rowCount).to.equal(0);
+
+      const row = await pool.query(
+        `SELECT status, delivery_claim_id FROM alert_queue WHERE id = $1`,
+        [alertId],
+      );
+      expect(row.rows[0].status).to.equal("sent");
+      expect(row.rows[0].delivery_claim_id).to.equal(null);
+    });
   });
 
   describe("endpoint check worker claim lease", () => {

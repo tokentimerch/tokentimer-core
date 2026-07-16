@@ -59,15 +59,24 @@ const ACE_LABEL_PATTERN = /^xn--[a-z0-9-]+$/i;
 // punctuation, combining marks) never contribute a script of their own.
 const COMMON_OR_INHERITED_SCRIPT = /[\p{Script=Common}\p{Script=Inherited}]/u;
 
-// Complete list of Unicode Script property values recognized by the Node
-// runtime's RegExp \p{Script=...} escapes (ECMAScript UnicodeScriptValue,
-// Unicode 16 on Node 22: 168 scripts). Enumerated by compiling
-// new RegExp(`\\p{Script=NAME}`, "u") for every candidate name and keeping
-// the ones that compile; verified exhaustive by checking that every
-// script-bearing code point (\p{L}, \p{Nd}, \p{M}) outside Common/Inherited
-// matches exactly one of these scripts. Full coverage means a label mixing
-// any two distinct scripts is detected: there is no shared "other" bucket
-// that unlisted scripts could hide in.
+// Complete list of Unicode Script property values recognized by an
+// up-to-date Node runtime's RegExp \p{Script=...} escapes (ECMAScript
+// UnicodeScriptValue, Unicode 16: 168 scripts). Verified exhaustive on a
+// Unicode 16 runtime by checking that every script-bearing code point
+// (\p{L}, \p{Nd}, \p{M}) outside Common/Inherited matches exactly one of
+// these scripts. Full coverage means a label mixing any two distinct
+// scripts is detected: there is no shared "other" bucket that unlisted
+// scripts could hide in.
+//
+// Runtime compatibility: the declared engines minimum (node >=22.0.0)
+// predates Unicode 16, so the seven scripts added in Unicode 16 (Garay,
+// Gurung_Khema, Kirat_Rai, Ol_Onal, Sunuwar, Todhri, Tulu_Tigalari) do not
+// compile there. compileScriptMatcher() therefore treats an unsupported
+// script name as "no matcher" instead of throwing, and any character the
+// runtime cannot attribute to a supported script falls through to the
+// UNRESOLVED_SCRIPT fail-closed rejection below. Older runtimes are thus
+// strictly MORE restrictive, never unsafe, and validation never surfaces a
+// SyntaxError.
 const UNICODE_SCRIPT_NAMES = [
   "Adlam", "Ahom", "Anatolian_Hieroglyphs", "Arabic", "Armenian", "Avestan",
   "Balinese", "Bamum", "Bassa_Vah", "Batak", "Bengali", "Bhaiksuki",
@@ -102,23 +111,31 @@ const UNICODE_SCRIPT_NAMES = [
 ];
 
 // Lazily compiled per-script regexes, in UNICODE_SCRIPT_NAMES order. Compiled
-// on first use so module load stays cheap.
+// on first use so module load stays cheap. A script name this runtime's
+// Unicode data does not know is cached as null (unsupported) rather than
+// allowed to throw out of validation.
 const SCRIPT_MATCHER_CACHE = new Map();
 
-function scriptMatcher(name) {
+function compileScriptMatcher(name) {
   let pattern = SCRIPT_MATCHER_CACHE.get(name);
-  if (!pattern) {
-    pattern = new RegExp(`\\p{Script=${name}}`, "u");
+  if (pattern === undefined) {
+    try {
+      pattern = new RegExp(`\\p{Script=${name}}`, "u");
+    } catch {
+      // Runtime predates this Unicode script value; characters of this
+      // script resolve to UNRESOLVED_SCRIPT and are rejected fail-closed.
+      pattern = null;
+    }
     SCRIPT_MATCHER_CACHE.set(name, pattern);
   }
   return pattern;
 }
 
-// Fail-closed marker for characters whose script cannot be resolved. With the
-// complete script list above this is unreachable on current runtimes, but if
-// a future Unicode version introduces a script this Node build cannot name,
-// any label containing it is REJECTED rather than silently bucketed together
-// with other unknown scripts.
+// Fail-closed marker for characters whose script cannot be resolved: either
+// a future Unicode version introduces a script this list does not name, or
+// this runtime's Unicode data predates a script in the list (see the
+// engines-minimum note above). Any label containing such a character is
+// REJECTED rather than silently bucketed together with other unknown scripts.
 const UNRESOLVED_SCRIPT = "Unresolved";
 
 // Per-character script memo: label validation revisits the same characters
@@ -169,7 +186,8 @@ function scriptOfCharacter(char) {
 
   let script = UNRESOLVED_SCRIPT;
   for (const name of UNICODE_SCRIPT_NAMES) {
-    if (scriptMatcher(name).test(char)) {
+    const matcher = compileScriptMatcher(name);
+    if (matcher && matcher.test(char)) {
       script = name;
       break;
     }

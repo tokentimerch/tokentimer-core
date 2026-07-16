@@ -42,6 +42,39 @@ function safeJoinList(value) {
   return String(value);
 }
 
+class DeliveryOwnershipLostError extends Error {
+  constructor(alertId) {
+    super(`Lost delivery ownership for alert ${alertId}`);
+    this.name = "DeliveryOwnershipLostError";
+    this.alertId = alertId;
+  }
+}
+
+// Owner-scoped lease heartbeat. Renew before every external side effect so a
+// long recipient/webhook loop cannot outlive the claim marker: if another
+// worker took over after expiry, this UPDATE matches 0 rows and the caller
+// must abort further sends (terminal writes also no-op via claim_id).
+async function assertStillOwnsDelivery(
+  client,
+  alertId,
+  claimId,
+  claimMarkerMs,
+) {
+  const recheck = await client.query(
+    `UPDATE alert_queue
+        SET next_attempt_at = NOW() + ($2 * INTERVAL '1 millisecond'),
+            updated_at = NOW()
+      WHERE id = $1
+        AND delivery_claim_id = $3
+        AND status IN ('pending', 'failed', 'partial')
+    RETURNING id`,
+    [alertId, claimMarkerMs, claimId],
+  );
+  if (recheck.rows.length === 0) {
+    throw new DeliveryOwnershipLostError(alertId);
+  }
+}
+
 function buildEmailContent(alert, resolvedDays) {
   const name = alert.name || "Token";
   const computed = computeDaysLeft(alert.expiration);
@@ -708,33 +741,28 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
     for (const alert of claimedAlerts) {
       processed++;
 
-      // Fresh per-row re-check + lease renewal, owner-scoped. The snapshot
-      // fetched at claim time goes stale while earlier rows in the batch run
-      // external sends (each recipient can take ~30s), so a batch can outlive
-      // the batch-wide claim marker. Renewing the marker per row means the
-      // claim only has to outlive ONE row's processing. The predicate also
-      // requires delivery_claim_id = our claimId: if the marker expired and
-      // another worker re-claimed the row (overwriting the claim id), or the
-      // row left the claimable status set, the renewal affects 0 rows and we
-      // skip, guaranteeing at most one owner performs external sends.
-      const recheck = await client.query(
-        `UPDATE alert_queue
-            SET next_attempt_at = NOW() + ($2 * INTERVAL '1 millisecond'),
-                updated_at = NOW()
-          WHERE id = $1
-            AND delivery_claim_id = $3
-            AND status IN ('pending', 'failed', 'partial')
-        RETURNING id`,
-        [alert.id, CLAIM_MARKER_MS, claimId],
-      );
-      if (recheck.rows.length === 0) {
-        // Row is no longer ours (re-claimed by another worker after our
-        // marker expired) or no longer in a deliverable state. Skip silently.
+      // Owner-scoped lease heartbeats: renew at row start AND before every
+      // external side effect (email/webhook/WhatsApp). Unlimited contact-group
+      // members mean one row's recipient loop can outlive a 15-minute marker
+      // (SMTP alone has repeated 30s timeouts). If the marker expires and
+      // another worker reclaims, assertStillOwnsDelivery throws and we abort
+      // further sends; our terminal write then no-ops on claim_id mismatch.
+      try {
+        await assertStillOwnsDelivery(
+          client,
+          alert.id,
+          claimId,
+          CLAIM_MARKER_MS,
+        );
+      } catch (ownershipErr) {
+        if (!(ownershipErr instanceof DeliveryOwnershipLostError)) throw ownershipErr;
         logger.debug("Skipping alert no longer claimable at recheck", {
           alertId: alert.id,
         });
         continue;
       }
+
+      try {
 
       // For endpoint health "down" alerts, defer until consecutive_failures >= alert_after_failures.
       // The endpoint-check-worker queues the alert on the first state transition; we wait
@@ -1019,6 +1047,12 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 : buildEmailContent(alert, daysLeft);
               let allOk = true;
               for (const rcpt of trimmed) {
+                await assertStillOwnsDelivery(
+                  client,
+                  alert.id,
+                  claimId,
+                  CLAIM_MARKER_MS,
+                );
                 const res = await sendEmailNotification({
                   to: rcpt,
                   subject,
@@ -1237,6 +1271,12 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                         severity: selectedSeverity,
                         title: templateTitle || undefined,
                       });
+                await assertStillOwnsDelivery(
+                  client,
+                  alert.id,
+                  claimId,
+                  CLAIM_MARKER_MS,
+                );
                 const endTimer = hLatency.labels("webhooks", kind).startTimer();
                 const res = await postJson(url, payload, kind);
                 try {
@@ -1504,6 +1544,12 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
 
                 let allOk = true;
                 for (const rcpt of trimmed) {
+                  await assertStillOwnsDelivery(
+                    client,
+                    alert.id,
+                    claimId,
+                    CLAIM_MARKER_MS,
+                  );
                   const endTimerWA = hLatency
                     .labels("whatsapp", "twilio")
                     .startTimer();
@@ -1620,6 +1666,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             }
           }
         } catch (e) {
+          // Ownership loss must abort the whole row, not degrade into a
+          // per-channel failure that still continues other recipients/channels.
+          if (e instanceof DeliveryOwnershipLostError) throw e;
           success = false;
           errorMessage = e.message;
           // Catch-all: if an exception occurred during WhatsApp processing, log it
@@ -2043,6 +2092,18 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             contact_group_name: contactGroupName,
           },
         });
+      }
+      } catch (ownershipErr) {
+        if (!(ownershipErr instanceof DeliveryOwnershipLostError)) {
+          throw ownershipErr;
+        }
+        // Another worker reclaimed mid-row. Abort further external sends;
+        // any terminal write below would also no-op on claim_id mismatch.
+        logger.warn(
+          "Aborting alert delivery: ownership lost mid-row (lease expired / reclaimed)",
+          { alertId: alert.id },
+        );
+        continue;
       }
     }
   });

@@ -166,6 +166,70 @@ describe("CertOps identitySafety", () => {
     assert.equal(isSafeDnsIdentity(`${pureTamil}.example`), true);
   });
 
+  // The declared engines minimum (node >=22.0.0) predates Unicode 16, so the
+  // seven scripts introduced there may not compile as \p{Script=...} on the
+  // oldest supported runtime. Validation must degrade to a controlled
+  // fail-closed rejection, never a SyntaxError.
+  const UNICODE16_SCRIPT_SAMPLES = [
+    ["Garay", 0x10d50],
+    ["Gurung_Khema", 0x16110],
+    ["Kirat_Rai", 0x16d43],
+    ["Ol_Onal", 0x1e5d0],
+    ["Sunuwar", 0x11bc0],
+    ["Todhri", 0x105c0],
+    ["Tulu_Tigalari", 0x11380],
+  ];
+
+  function runtimeSupportsScript(name) {
+    try {
+      new RegExp(`\\p{Script=${name}}`, "u");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("never throws SyntaxError for Unicode 16 script characters on any supported runtime", () => {
+    for (const [name, codePoint] of UNICODE16_SCRIPT_SAMPLES) {
+      const label = String.fromCodePoint(codePoint).repeat(2);
+      const result = checkSafeDnsIdentity(label);
+      if (runtimeSupportsScript(name)) {
+        // Unicode 16 runtime: pure single-script label of a known script.
+        assert.equal(result, null, `${name} single-script label accepted`);
+      } else {
+        // Pre-Unicode-16 runtime: the script cannot be resolved, so the
+        // label is rejected fail-closed with a controlled identity error.
+        assert.equal(result instanceof CertOpsIdentitySafetyError, true);
+        assert.match(result.message, /unresolved Unicode script/);
+      }
+    }
+  });
+
+  it("rejects labels mixing a Unicode 16 script with another script on all runtimes", () => {
+    // Mixed with Bengali: on Unicode 16 runtimes this is a two-script mix;
+    // on older runtimes the unresolved character already rejects the label.
+    for (const [, codePoint] of UNICODE16_SCRIPT_SAMPLES) {
+      const mixed = `\u0995${String.fromCodePoint(codePoint)}`;
+      const result = checkSafeDnsIdentity(mixed);
+      assert.equal(result instanceof CertOpsIdentitySafetyError, true);
+      assert.match(
+        result.message,
+        /mixes multiple Unicode scripts|unresolved Unicode script/,
+      );
+    }
+  });
+
+  it("resolves every known script name without throwing during validation", () => {
+    // Exercise the full matcher list through the public API: a Latin label
+    // forces the linear scan across all compiled matchers at least once,
+    // and no compilation failure may escape as an exception.
+    assert.doesNotThrow(() => checkSafeDnsIdentity("z\u00fcrich"));
+    assert.doesNotThrow(() => checkSafeDnsIdentity("\u4e2d\u6587"));
+    assert.doesNotThrow(() =>
+      checkSafeDnsIdentity(String.fromCodePoint(0x10d50, 0x11380)),
+    );
+  });
+
   it("rejects U+202E bidirectional override", () => {
     const spoofed = `evil.com\u202Egoogle.com`;
     assertRejects(() => assertSafeDnsIdentity(spoofed), /bidirectional/);
