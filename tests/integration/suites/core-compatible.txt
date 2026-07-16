@@ -48,6 +48,7 @@ tests/integration/contact-group-default-fallback.test.js
 tests/integration/channel-selection.test.js
 tests/integration/no-eligible-channels.test.js
 tests/integration/concurrent-delivery-workers.test.js
+tests/integration/worker-claim-lease.test.js
 tests/integration/alert-queue-retry-requeue.test.js
 tests/integration/delivery-window-deferral.test.js
 

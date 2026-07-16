@@ -276,22 +276,27 @@ async function runEndpointChecks() {
   logger.info("Endpoint check worker started");
 
   await withClient(async (client) => {
-    // Claim-then-commit: hold the FOR UPDATE SKIP LOCKED row locks only for a
-    // short claim transaction, mark the claimed rows via last_health_check_at
-    // so a concurrent worker's due-check predicate skips them, then COMMIT
-    // before any network I/O. Without BEGIN/COMMIT, autocommit mode would
-    // release the lock the instant the SELECT finishes (making SKIP LOCKED a
-    // no-op against a second concurrent worker); but one batch-wide
+    // Claim-then-commit: hold the FOR UPDATE SKIP LOCKED locks only for a
+    // short claim transaction, mark the claimed rows via check_claimed_until
+    // (a dedicated concurrency lease) so a concurrent worker's claim
+    // predicate skips them, then COMMIT before any network I/O.
+    // last_health_check_at stays pure scheduling state and is only advanced
+    // when a check actually completes. Without BEGIN/COMMIT, autocommit mode
+    // would release the lock the instant the SELECT finishes (making SKIP
+    // LOCKED a no-op against a second concurrent worker); but one batch-wide
     // transaction spanning the live TLS/HTTP checks (15s timeouts x 50
     // domains) would pin row locks for minutes and let one late error roll
     // back every domain's committed progress. If the process dies after the
-    // claim, the marker only delays the next check by one interval.
+    // claim, the lease simply expires and the row becomes claimable again.
+    const CHECK_CLAIM_LEASE_MS =
+      process.env.NODE_ENV === "test" ? 5 * 1000 : 10 * 60 * 1000;
     let claimedMonitors;
     await client.query("BEGIN");
     try {
       const result = await client.query(
         `SELECT * FROM domain_monitors
-         WHERE (
+         WHERE (check_claimed_until IS NULL OR check_claimed_until < NOW())
+           AND (
            (check_interval = '1min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 minute'))
            OR
            (check_interval = '5min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '5 minutes'))
@@ -310,9 +315,10 @@ async function runEndpointChecks() {
       if (claimedMonitors.length > 0) {
         await client.query(
           `UPDATE domain_monitors
-              SET last_health_check_at = NOW(), updated_at = NOW()
+              SET check_claimed_until = NOW() + ($2 * INTERVAL '1 millisecond'),
+                  updated_at = NOW()
             WHERE id = ANY($1::uuid[])`,
-          [claimedMonitors.map((row) => row.id)],
+          [claimedMonitors.map((row) => row.id), CHECK_CLAIM_LEASE_MS],
         );
       }
       await client.query("COMMIT");
@@ -537,7 +543,7 @@ async function runEndpointChecks() {
 
           await client.query(
             `UPDATE domain_monitors
-             SET last_health_check_at = NOW(), last_health_status = $1,
+             SET last_health_status = $1,
                  last_health_status_code = $2, last_health_error = $3,
                  last_health_response_ms = $4,
                  previous_health_status = last_health_status,
@@ -606,7 +612,7 @@ async function runEndpointChecks() {
 
         await client.query(
           `UPDATE domain_monitors
-           SET last_health_check_at = NOW(), last_health_status = 'error',
+           SET last_health_status = 'error',
                last_health_error = $1,
                previous_health_status = last_health_status,
                consecutive_failures = $2,
@@ -624,6 +630,25 @@ async function runEndpointChecks() {
             { error: domainErr.message, responseMs: null, statusCode: null },
             "down",
           );
+        }
+      } finally {
+        // The check completed (or failed terminally): advance the schedule
+        // and release the concurrency lease so the monitor becomes claimable
+        // again at its next interval. If the process dies before reaching
+        // this point, the lease simply expires.
+        try {
+          await client.query(
+            `UPDATE domain_monitors
+                SET last_health_check_at = NOW(),
+                    check_claimed_until = NULL,
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [id],
+          );
+        } catch (releaseErr) {
+          logger.warn(`Failed to release check claim for ${url}`, {
+            error: releaseErr.message,
+          });
         }
       }
     }

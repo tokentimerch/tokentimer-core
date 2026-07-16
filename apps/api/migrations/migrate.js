@@ -539,6 +539,7 @@ const migrations = [
         token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
         health_check_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         last_health_check_at TIMESTAMPTZ NULL,
+        check_claimed_until TIMESTAMPTZ NULL,
         last_health_status TEXT NULL CHECK (last_health_status IN ('healthy','unhealthy','error','pending')),
         last_health_status_code INTEGER NULL,
         last_health_error TEXT NULL,
@@ -1159,6 +1160,18 @@ const migrations = [
         ON managed_certificates(workspace_id, source, source_ref)
         WHERE source_ref IS NOT NULL
           AND source IN ('endpoint_monitor', 'domain_checker');
+    `,
+  },
+  {
+    version: 16,
+    name: "endpoint_monitor_check_claim_lease",
+    sql: `
+      -- Dedicated concurrency lease for the endpoint check worker so
+      -- last_health_check_at stays pure scheduling state. A claimed monitor
+      -- has check_claimed_until in the future; crash recovery is natural
+      -- lease expiry. Mirrors the auto-sync worker's claimed-until idiom.
+      ALTER TABLE domain_monitors
+        ADD COLUMN IF NOT EXISTS check_claimed_until TIMESTAMPTZ NULL;
     `,
   },
 ];
