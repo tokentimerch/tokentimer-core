@@ -165,6 +165,8 @@ the origins users and integrations actually use in the browser.
 | `TEST_WEBHOOK_RATE_LIMIT_5M_MAX`          | Test webhook max requests in long window                                    | `10`                                  | Alerts/webhooks      |
 | `TEST_WEBHOOK_COOLDOWN_MS`                | Per-user test webhook cooldown after each attempt                           | `5000`                                | Alerts/webhooks      |
 | `WEBHOOK_ALLOW_ALL_HOSTS`                 | Allow all webhook destinations when `true`                                  | `false`                               | Webhook security     |
+| `WEBHOOK_ALLOW_PRIVATE_IPS`               | Allow webhook delivery to private/reserved IPs when `true` (self-hosted)    | `false`                               | Webhook security     |
+| `WEBHOOK_ENFORCE_PRIVATE_IP_CHECK`        | Force the private-IP check even when `NODE_ENV=test` (test infrastructure)  | `false`                               | Webhook security     |
 | `WEBHOOK_PROVIDER_HOSTS`                  | Extra allowed provider hosts                                                | `empty (built-in list still allowed)` | Webhook security     |
 | `WEBHOOK_EXTRA_PROVIDER_HOSTS`            | Additional allowed hosts                                                    | `empty`                               | Webhook security     |
 | `VAULT_ADDRESS_ALLOWLIST`                 | Vault integration host allowlist                                            | `empty (no host restriction)`         | Integration security |
