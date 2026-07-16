@@ -22,6 +22,9 @@ const CERTOPS_EXECUTOR_EVENT_TABLES = [
 const CERTOPS_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_inventory_schema",
 );
+const CERTOPS_JOBS_EVIDENCE_MIGRATION = migrations.find(
+  (migration) => migration.name === "certops_jobs_evidence_schema",
+);
 const CERTOPS_TOKEN_LIFECYCLE_MIGRATION = migrations.find(
   (migration) => migration.name === "certops_token_lifecycle_status",
 );
@@ -81,8 +84,12 @@ async function withScratchCertOpsSchema(callback) {
 
   await TestUtils.execQuery(`CREATE SCHEMA ${quotedSchema}`);
   try {
+    // Migration 15's dedup re-points certificate_jobs/certificate_evidence
+    // history, so the scratch schema needs the jobs/evidence tables too.
+    // Their api_tokens/workspaces/users FKs resolve to public via the
+    // search_path.
     await TestUtils.execQuery(
-      `SET search_path TO ${quotedSchema}, public; ${CERTOPS_MIGRATION.sql}; RESET search_path;`,
+      `SET search_path TO ${quotedSchema}, public; ${CERTOPS_MIGRATION.sql}; ${CERTOPS_JOBS_EVIDENCE_MIGRATION.sql}; RESET search_path;`,
     );
     return await callback(quotedSchema);
   } finally {
@@ -513,6 +520,148 @@ describe("CertOps inventory migration", function () {
         expect(
           indexNames.has("uq_managed_certificates_workspace_fingerprint"),
         ).to.equal(false);
+      });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("preserves job/evidence history and terminal lifecycle state across the v15 dedup", async () => {
+    expect(CERTOPS_MONITOR_IDENTITY_MIGRATION).to.exist;
+    expect(CERTOPS_JOBS_EVIDENCE_MIGRATION).to.exist;
+
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-monitor-dedup-history",
+    );
+
+    try {
+      await withScratchCertOpsSchema(async (schema) => {
+        // Same pre-v15 uniqueness model as the dedup test above.
+        await TestUtils.execQuery(
+          `SET search_path TO ${schema};
+           DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+           DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+           CREATE UNIQUE INDEX uq_managed_certificates_workspace_fingerprint
+             ON managed_certificates(workspace_id, fingerprint_sha256)
+             WHERE fingerprint_sha256 IS NOT NULL;
+           RESET search_path;`,
+        );
+
+        const loser = crypto.randomUUID();
+        const keeper = crypto.randomUUID();
+        const sourceRef = "endpoint:dedup-monitor-history";
+
+        // The keeper-by-recency is active while the loser carries a terminal
+        // status: D7 retire-first must survive the dedup on the keeper.
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.managed_certificates
+             (id, workspace_id, source, source_ref, status, fingerprint_sha256, updated_at)
+           VALUES
+             ($1, $3, 'endpoint_monitor', $4, 'revoked', 'aa11', NOW() - INTERVAL '1 day'),
+             ($2, $3, 'endpoint_monitor', $4, 'active', 'bb22', NOW())`,
+          [loser, keeper, workspaceA, sourceRef],
+        );
+
+        const target = await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_targets
+             (workspace_id, name, target_type, source)
+           VALUES ($1, 'Dedup history target', 'endpoint', 'endpoint_monitor')
+           RETURNING id`,
+          [workspaceA],
+        );
+        const loserInstance = crypto.randomUUID();
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_instances
+             (id, workspace_id, managed_certificate_id, target_id,
+              observed_fingerprint_sha256)
+           VALUES ($1, $2, $3, $4, 'aa11')`,
+          [loserInstance, workspaceA, loser, target.rows[0].id],
+        );
+
+        // FK-less text references to the loser that must be re-pointed, plus
+        // controls that must stay untouched: another subject_type with the
+        // same id text, and a same-shape row in another workspace.
+        const loserJob = crypto.randomUUID();
+        const unrelatedJob = crypto.randomUUID();
+        const otherWorkspaceJob = crypto.randomUUID();
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_jobs
+             (id, workspace_id, operation, status, subject_type, subject_id)
+           VALUES
+             ($1, $4, 'revoke', 'succeeded', 'managed_certificate', $6),
+             ($2, $4, 'noop', 'succeeded', 'external', $6),
+             ($3, $5, 'noop', 'succeeded', 'managed_certificate', $6)`,
+          [loserJob, unrelatedJob, otherWorkspaceJob, workspaceA, workspaceB, loser],
+        );
+
+        const loserEvidence = crypto.randomUUID();
+        const unrelatedEvidence = crypto.randomUUID();
+        await TestUtils.execQuery(
+          `INSERT INTO ${schema}.certificate_evidence
+             (id, workspace_id, evidence_type, subject_type, subject_id)
+           VALUES
+             ($1, $3, 'certificate.observed', 'managed_certificate', $4),
+             ($2, $3, 'certificate.observed', 'external', $4)`,
+          [loserEvidence, unrelatedEvidence, workspaceA, loser],
+        );
+
+        await TestUtils.execQuery(
+          `SET search_path TO ${schema}; ${CERTOPS_MONITOR_IDENTITY_MIGRATION.sql}; RESET search_path;`,
+        );
+
+        const survivors = await TestUtils.execQuery(
+          `SELECT id::text AS id, status
+             FROM ${schema}.managed_certificates
+            WHERE source = 'endpoint_monitor' AND source_ref = $1`,
+          [sourceRef],
+        );
+        expect(survivors.rows).to.have.length(1);
+        expect(survivors.rows[0].id).to.equal(keeper);
+        expect(survivors.rows[0].status).to.equal("revoked");
+
+        const instance = await TestUtils.execQuery(
+          `SELECT managed_certificate_id::text AS managed_certificate_id
+             FROM ${schema}.certificate_instances
+            WHERE id = $1`,
+          [loserInstance],
+        );
+        expect(instance.rows[0].managed_certificate_id).to.equal(keeper);
+
+        const jobs = await TestUtils.execQuery(
+          `SELECT id::text AS id, subject_id
+             FROM ${schema}.certificate_jobs
+            ORDER BY id`,
+          [],
+        );
+        const jobsById = new Map(jobs.rows.map((row) => [row.id, row.subject_id]));
+        expect(jobsById.get(loserJob)).to.equal(keeper);
+        expect(jobsById.get(unrelatedJob)).to.equal(loser);
+        expect(jobsById.get(otherWorkspaceJob)).to.equal(loser);
+
+        const evidence = await TestUtils.execQuery(
+          `SELECT id::text AS id, subject_id
+             FROM ${schema}.certificate_evidence
+            ORDER BY id`,
+          [],
+        );
+        const evidenceById = new Map(
+          evidence.rows.map((row) => [row.id, row.subject_id]),
+        );
+        expect(evidenceById.get(loserEvidence)).to.equal(keeper);
+        expect(evidenceById.get(unrelatedEvidence)).to.equal(loser);
+
+        const schemaName = schema.replace(/"/g, "");
+        const indexes = await TestUtils.execQuery(
+          `SELECT indexname
+             FROM pg_indexes
+            WHERE schemaname = $1
+              AND tablename = 'managed_certificates'`,
+          [schemaName],
+        );
+        const indexNames = new Set(indexes.rows.map((row) => row.indexname));
+        expect(
+          indexNames.has("uq_managed_certificates_workspace_source_ref"),
+        ).to.equal(true);
       });
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);

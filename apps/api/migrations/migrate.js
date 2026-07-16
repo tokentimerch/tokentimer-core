@@ -1082,7 +1082,13 @@ const migrations = [
       -- keeper so rotation history survives; only instances that would
       -- collide with an equivalent keeper instance under
       -- uq_certificate_instances_target_cert_fingerprint are deleted
-      -- (they describe the same observation). No dedup is needed for
+      -- (they describe the same observation). certificate_jobs and
+      -- certificate_evidence history that references losing rows through the
+      -- FK-less text pair (subject_type='managed_certificate', subject_id)
+      -- is re-pointed to the keeper too, and a terminal lifecycle status on
+      -- any losing row ('revoked'/'decommissioned', D7 retire-first) is
+      -- carried onto the keeper before losers are deleted. No dedup is
+      -- needed for
       -- uq_managed_certificates_workspace_fingerprint_import: the pre-v15
       -- index uq_managed_certificates_workspace_fingerprint was unique over
       -- ALL rows with fingerprint_sha256 IS NOT NULL, a superset of the new
@@ -1136,6 +1142,104 @@ const migrations = [
        WHERE ci.workspace_id = mc.workspace_id
          AND ci.managed_certificate_id = mc.id
          AND mc.id <> k.keeper_id;
+
+      -- certificate_jobs and certificate_evidence reference managed
+      -- certificates through the FK-less text pair
+      -- (subject_type = 'managed_certificate', subject_id = mc.id::text).
+      -- Re-point that history from each losing row to its keeper so job and
+      -- evidence trails survive the dedup. audit_events rows that mention
+      -- loser ids inside their metadata are historical records of what
+      -- happened at the time and are intentionally left untouched.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      monitor_identity_losers AS (
+        SELECT mc.workspace_id, mc.id AS loser_id, k.keeper_id
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+      )
+      UPDATE certificate_jobs cj
+         SET subject_id = l.keeper_id::text
+        FROM monitor_identity_losers l
+       WHERE cj.workspace_id = l.workspace_id
+         AND cj.subject_type = 'managed_certificate'
+         AND cj.subject_id = l.loser_id::text;
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      monitor_identity_losers AS (
+        SELECT mc.workspace_id, mc.id AS loser_id, k.keeper_id
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+      )
+      UPDATE certificate_evidence ce
+         SET subject_id = l.keeper_id::text
+        FROM monitor_identity_losers l
+       WHERE ce.workspace_id = l.workspace_id
+         AND ce.subject_type = 'managed_certificate'
+         AND ce.subject_id = l.loser_id::text;
+
+      -- D7 retire-first: a terminal lifecycle status ('revoked' or
+      -- 'decommissioned') must not be discarded just because a different
+      -- duplicate has a newer updated_at. The keeper row is still selected
+      -- by recency (identity and relationships), but if any losing row in
+      -- the group is terminal and the keeper is not, the keeper inherits the
+      -- terminal status. Deterministic choice: the most recently updated
+      -- terminal loser wins (updated_at DESC, created_at DESC, id DESC).
+      -- managed_certificates has no retired_at/decommissioned_at columns;
+      -- status is the only lifecycle column. updated_at is left as-is: the
+      -- keeper already carries the newest updated_at in its group by
+      -- construction.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      terminal_losers AS (
+        SELECT DISTINCT ON (k.workspace_id, k.keeper_id)
+               k.workspace_id, k.keeper_id,
+               mc.status AS terminal_status
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+           AND mc.status IN ('revoked', 'decommissioned')
+         ORDER BY k.workspace_id, k.keeper_id,
+                  mc.updated_at DESC, mc.created_at DESC, mc.id DESC
+      )
+      UPDATE managed_certificates mc
+         SET status = t.terminal_status
+        FROM terminal_losers t
+       WHERE mc.workspace_id = t.workspace_id
+         AND mc.id = t.keeper_id
+         AND mc.status NOT IN ('revoked', 'decommissioned');
 
       WITH monitor_identity_keepers AS (
         SELECT DISTINCT ON (workspace_id, source, source_ref)
