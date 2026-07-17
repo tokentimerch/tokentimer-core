@@ -1472,6 +1472,9 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/utils/secretMaterial.js",
       "apps/worker/src/delivery-worker.js",
       "apps/worker/src/endpoint-check-worker.js",
+      // SMTP provider-loop ownership heartbeat + account-attempt cap so a
+      // single sendEmailNotification cannot outlive the delivery lease:
+      "apps/worker/src/notify/email.js",
       // CertOps rollout flag + demo provisioning tooling for local/manual
       // M2 validation (no runtime code paths; compose env wiring only):
       "deploy/compose/.env.example",
@@ -1515,6 +1518,7 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/unit/certops-parser.test.js",
       "tests/unit/logger-redaction.test.js",
       "tests/unit/secretMaterial.test.js",
+      "tests/unit/worker-email-ownership-heartbeat.test.js",
     ]);
     const unexpectedFiles = files.filter(
       (file) =>
@@ -1565,6 +1569,7 @@ describe("CertOps M2 contract skeletons", () => {
       // restructure so worker row locks never span external network I/O.
       "apps/worker/src/delivery-worker.js",
       "apps/worker/src/endpoint-check-worker.js",
+      "apps/worker/src/notify/email.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),
