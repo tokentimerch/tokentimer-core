@@ -219,6 +219,17 @@ describe("CertOps identitySafety", () => {
     }
   });
 
+  it("rejects ASCII mixed with Unicode 16 Garay even when the runtime cannot classify it as script-bearing", () => {
+    // Node 22.0 ships Unicode 15.1: U+10D50 is not yet \p{L}|\p{Nd}|\p{M},
+    // so an L/Nd/M-gated mix check would silently accept this label. The
+    // ASCII-mix branch must reject every non-ASCII code point.
+    const mixed = `a${String.fromCodePoint(0x10d50)}`;
+    const result = checkSafeDnsIdentity(mixed);
+    assert.equal(result instanceof CertOpsIdentitySafetyError, true);
+    assert.match(result.message, /mixes ASCII with non-ASCII/);
+    assert.equal(isSafeDnsIdentity(mixed), false);
+  });
+
   it("resolves every known script name without throwing during validation", () => {
     // Exercise the full matcher list through the public API: a Latin label
     // forces the linear scan across all compiled matchers at least once,

@@ -173,11 +173,6 @@ function isAsciiCodePoint(codePoint) {
   return codePoint < 0x80;
 }
 
-function isScriptBearingCodePoint(codePoint) {
-  const char = String.fromCodePoint(codePoint);
-  return /\p{L}|\p{Nd}|\p{M}/u.test(char);
-}
-
 function scriptOfCharacter(char) {
   if (COMMON_OR_INHERITED_SCRIPT.test(char)) return null;
 
@@ -294,12 +289,17 @@ function validateDnsLabel(label) {
   }
 
   if (hasAscii) {
+    // Fail closed: any ASCII + non-ASCII mix is refused, including characters
+    // the current Node Unicode tables do not yet classify as L/Nd/M (e.g.
+    // Unicode 16 scripts on Node 22.0 / Unicode 15.1). Do not gate on
+    // isScriptBearingCodePoint here; that would silently accept unknown
+    // non-ASCII code points on older runtimes.
     let offset = 0;
     for (const char of label) {
       const codePoint = char.codePointAt(0);
-      if (!isAsciiCodePoint(codePoint) && isScriptBearingCodePoint(codePoint)) {
+      if (!isAsciiCodePoint(codePoint)) {
         return createIdentityError(
-          `DNS label ${JSON.stringify(label)} mixes ASCII with non-ASCII script ` +
+          `DNS label ${JSON.stringify(label)} mixes ASCII with non-ASCII ` +
             `character ${formatCodePoint(codePoint)} at offset ${offset}: refuse ` +
             `(potential IDN homograph)`,
         );
