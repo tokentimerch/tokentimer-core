@@ -275,6 +275,71 @@ ${getEmailFooterText()}
   return { html, text, useEmbeddedLogo: useEmbeddedLogo !== false };
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      default:
+        return "&#39;";
+    }
+  });
+}
+
+// Email escalation for critical operational_notifications rows (delivery
+// blocked/degraded, auto-sync failures). Category drives the CTA link since
+// delivery incidents surface in Control Center while auto-sync incidents
+// are managed from the integration import panel.
+export function buildOperationalIncidentEmail({
+  category,
+  title,
+  message,
+  metadata,
+}) {
+  const frontendUrl = (process.env.APP_URL || "http://localhost:5173").replace(
+    /\/$/,
+    "",
+  );
+  const meta = metadata || {};
+  const isAutoSync = category === "auto_sync";
+  const buttonUrl = isAutoSync
+    ? `${frontendUrl}/dashboard?import=${encodeURIComponent(meta.provider || "")}&autoSyncManage=1`
+    : `${frontendUrl}/control-center`;
+  const buttonText = isAutoSync ? "Manage Auto-Sync" : "Open Control Center";
+
+  const contextLines = [];
+  if (meta.workspace_name) contextLines.push(`Workspace: ${meta.workspace_name}`);
+  if (meta.token_name) contextLines.push(`Token: ${meta.token_name}`);
+
+  const contentHtml = `
+    <p>${escapeHtml(message || title)}</p>
+    ${
+      contextLines.length > 0
+        ? `<p style="color: #718096; font-size: 14px; margin-top: 8px;">${contextLines.map(escapeHtml).join("<br/>")}</p>`
+        : ""
+    }`;
+
+  const plainTextContent = [title, "", message || "", ...contextLines].join(
+    "\n",
+  );
+
+  const { html, text } = generateEmailTemplate({
+    title,
+    content: contentHtml,
+    buttonText,
+    buttonUrl,
+    plainTextContent,
+  });
+
+  return { subject: title, html, text };
+}
+
 // Cache for logo buffer to avoid reading it on every email
 let logoBufferCache = null;
 
