@@ -140,6 +140,10 @@ export function generateEmailTemplate({
   const logoUrl = getLogoUrl();
   const logoSrc = "cid:logo"; // Use CID reference for embedded attachment
   const frontendUrl = process.env.APP_URL || "http://localhost:5173";
+  // title is rendered directly into <title>/<h1> below; callers pass plain
+  // strings that may embed user-controlled values (e.g. an alert or
+  // integration name), so escape it here rather than trusting every caller.
+  const safeTitle = escapeHtml(title || "TokenTimer");
 
   // Build button HTML if provided
   let buttonHtml = "";
@@ -168,7 +172,7 @@ export function generateEmailTemplate({
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title || "TokenTimer"}</title>
+  <title>${safeTitle}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
   <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5;">
@@ -179,7 +183,7 @@ export function generateEmailTemplate({
           <tr>
             <td style="padding: 40px;">
               <h1 style="color: #1a202c; font-size: 24px; font-weight: 600; margin: 0 0 20px; line-height: 1.3;">
-                ${title || "TokenTimer"}
+                ${safeTitle}
               </h1>
               
               ${greeting ? `<p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 20px;">${greeting}</p>` : ""}
