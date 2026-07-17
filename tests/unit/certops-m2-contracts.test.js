@@ -1583,6 +1583,7 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/dashboard/src/components/AssetInventoryTable.jsx",
       "apps/dashboard/src/components/ImportTokensModal.jsx",
       "apps/dashboard/src/components/RequireManagerRoute.jsx",
+      "apps/dashboard/src/components/DashboardShell.jsx",
       "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
       "apps/dashboard/src/components/certops/CertOpsPreferencesEntry.jsx",
       "apps/dashboard/src/components/certops/CertificateInstances.jsx",

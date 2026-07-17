@@ -150,8 +150,20 @@ function getDashboardLinkTarget() {
   if (typeof window === 'undefined') return '/dashboard';
 
   try {
+    const path = String(window.location.pathname || '');
     const search = new URLSearchParams(window.location.search);
     search.delete('view');
+    // Inventory reuses the `q` query param for asset search. Audit (and other
+    // non-dashboard pages) also use `q` for their own search boxes. Only carry
+    // inventory filters onto /dashboard when already on the inventory route;
+    // otherwise keep workspace context and drop foreign search terms.
+    if (!path.startsWith('/dashboard')) {
+      const workspace = search.get('workspace');
+      const next = new URLSearchParams();
+      if (workspace) next.set('workspace', workspace);
+      const qs = next.toString();
+      return `/dashboard${qs ? `?${qs}` : ''}`;
+    }
     const qs = search.toString();
     return `/dashboard${qs ? `?${qs}` : ''}`;
   } catch (_) {

@@ -261,8 +261,20 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   const [auditPage, setAuditPage] = useState(1);
   const [auditPageSize, setAuditPageSize] = useState(10);
   const [expandedEventIds, setExpandedEventIds] = useState(() => new Set());
+  // Deep links like /audit?q=<jobId> (CertOps "View audit log") target job /
+  // machine-token events that do not appear under "My actions". Prefer workspace
+  // scope whenever the URL carries a search query so the first fetch is useful.
   const [scope, setScope] = useState(() => {
     try {
+      const urlQuery = new URLSearchParams(location.search).get('q');
+      if (urlQuery) {
+        try {
+          localStorage.setItem('tt_audit_scope', 'workspace');
+        } catch (_) {
+          /* ignore */
+        }
+        return 'workspace';
+      }
       return localStorage.getItem('tt_audit_scope') || 'user';
     } catch (_) {
       return 'user';
@@ -358,6 +370,19 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (nextQuery !== query) {
         setQuery(nextQuery);
         setAuditPage(1);
+        // URL-driven job/search deep links need workspace scope; "My actions"
+        // hides machine-token CertOps executor/evidence rows for the job id.
+        if (nextQuery) {
+          setScope(prev => {
+            if (prev === 'workspace' || prev === 'organization') return prev;
+            try {
+              localStorage.setItem('tt_audit_scope', 'workspace');
+            } catch (_) {
+              /* ignore */
+            }
+            return 'workspace';
+          });
+        }
       }
     } catch (_) {
       // ignore malformed search string
