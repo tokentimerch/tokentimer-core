@@ -304,4 +304,28 @@ describe("buildOperationalIncidentEmail", () => {
     });
     expect(html).to.include("Maximum delivery attempts reached");
   });
+
+  it("escapes HTML in the title itself, which producers derive from the alert/token name", async () => {
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const { html } = email.buildOperationalIncidentEmail({
+      category: "delivery",
+      title: 'Delivery blocked: <img src=x onerror=alert(1)>',
+      message: "Maximum delivery attempts reached",
+      metadata: {},
+    });
+    expect(html).to.not.include("<img src=x onerror=alert(1)>");
+    expect(html).to.include("&lt;img src=x onerror=alert(1)&gt;");
+  });
+});
+
+describe("generateEmailTemplate", () => {
+  it("escapes HTML in the title used for <title> and <h1>", async () => {
+    const email = await importFresh("apps/worker/src/notify/email.js");
+    const { html } = email.generateEmailTemplate({
+      title: '<script>alert("xss")</script>',
+      content: "<p>body</p>",
+    });
+    expect(html).to.not.include('<script>alert("xss")</script>');
+    expect(html).to.include("&lt;script&gt;");
+  });
 });
