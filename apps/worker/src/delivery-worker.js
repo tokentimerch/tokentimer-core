@@ -1058,6 +1058,14 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                   subject,
                   text,
                   html,
+                  onBeforeAttempt: async () => {
+                    await assertStillOwnsDelivery(
+                      client,
+                      alert.id,
+                      claimId,
+                      CLAIM_MARKER_MS,
+                    );
+                  },
                 });
                 await client.query(
                   `INSERT INTO alert_delivery_log (alert_queue_id, user_id, token_id, workspace_id, channel, status, error_message, metadata)
