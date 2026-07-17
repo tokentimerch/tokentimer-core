@@ -16,10 +16,13 @@
  *   - other generic secrets -> REDACT (so legitimate operational output is kept)
  *
  * Scope note: PEM private-key blocks (all common variants), base64-wrapped PEM,
- * and PKCS#12/PFX-like DER bundles are detected here. PKCS#12/PFX detection is
+ * PKCS#8/PKCS#1/SEC1 DER private keys, PKCS#12/PFX-like DER bundles, and JKS
+ * keystores (by magic header) are detected here. PKCS#12/PFX detection is
  * intentionally a conservative structural sniff for the PFX version field, not
- * a full ASN.1 parser. Do not weaken these patterns without updating
- * tests/unit/secretMaterial.test.js.
+ * a full ASN.1 parser; JKS detection is likewise a magic-header sniff rather
+ * than a full keystore parser; a JKS container is rejected outright since its
+ * entire purpose is to hold private key material. Do not weaken these
+ * patterns without updating tests/unit/secretMaterial.test.js.
  */
 
 const PRIVATE_KEY_REDACTION_PLACEHOLDER = "[PRIVATE_KEY_REDACTED]";
@@ -437,6 +440,24 @@ function looksPrivateKeyDer(value) {
   );
 }
 
+// Java KeyStore (JKS) magic header: 0xFEEDFEED, followed by a 4-byte format
+// version (1 or 2 for every JKS format in use) and a 4-byte non-negative
+// entry count. JKS containers are rejected outright rather than parsed for a
+// private-key entry tag: a JKS keystore's entire purpose is to hold private
+// key material (and/or trusted certs), and the zero-custody boundary treats
+// the whole container as key material regardless of whether a given instance
+// happens to hold only certificate entries at scan time.
+const JKS_MAGIC = 0xfeedfeed;
+
+function looksJksKeystore(value) {
+  if (!Buffer.isBuffer(value) || value.length < 12) return false;
+  if (value.readUInt32BE(0) !== JKS_MAGIC) return false;
+  const version = value.readUInt32BE(4);
+  if (version !== 1 && version !== 2) return false;
+  const entryCount = value.readInt32BE(8);
+  return entryCount >= 0;
+}
+
 function base64DecodeIfLikely(value) {
   if (!looksBase64(value)) return null;
   try {
@@ -463,7 +484,8 @@ function bufferContainsPrivateKey(value) {
   if (
     looksPkcs12Bundle(value) ||
     looksPrivateKeyDer(value) ||
-    looksEncryptedPkcs8Der(value)
+    looksEncryptedPkcs8Der(value) ||
+    looksJksKeystore(value)
   ) {
     return true;
   }
@@ -834,6 +856,7 @@ module.exports = {
   looksPrivateKeyDer,
   classifyEncryptedPkcs8Der,
   looksEncryptedPkcs8Der,
+  looksJksKeystore,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
   looksPkcs12Bundle,
