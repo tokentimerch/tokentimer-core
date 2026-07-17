@@ -83,7 +83,10 @@ import RetireCertificateModal from './components/certops/RetireCertificateModal.
 import RequireManagerRoute from './components/RequireManagerRoute.jsx';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificate } from './components/certops/certopsApi.js';
-import { isRetiredStatus, pickPrimaryCertificate } from './components/certops/certopsFormat.js';
+import {
+  isRetiredStatus,
+  pickPrimaryCertificate,
+} from './components/certops/certopsFormat.js';
 import {
   DashboardModalFrame,
   DashboardModalDescription,

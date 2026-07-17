@@ -454,6 +454,59 @@ function prChangedFiles() {
     }
   }
 
+  // CI checkouts default to fetch-depth: 1, so origin/feature/certops is
+  // usually missing and even a shallow tip fetch cannot compute the
+  // three-dot merge-base. Fetch the base branch, then unshallow when needed.
+  try {
+    execFileSync(
+      "git",
+      [
+        "fetch",
+        "--no-tags",
+        "origin",
+        "+feature/certops:refs/remotes/origin/feature/certops",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const isShallow = execFileSync(
+      "git",
+      ["rev-parse", "--is-shallow-repository"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ).trim();
+    if (isShallow === "true") {
+      execFileSync("git", ["fetch", "--no-tags", "--unshallow", "origin"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+    const output = execFileSync(
+      "git",
+      ["diff", "--name-only", "origin/feature/certops...HEAD"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    return {
+      ref: "origin/feature/certops",
+      files: output
+        .split(/\r?\n/)
+        .map((file) => file.trim().replace(/\\/g, "/"))
+        .filter(Boolean),
+    };
+  } catch (error) {
+    errors.push(`fetch-origin/feature/certops: ${error.message}`);
+  }
+
   throw new Error(
     `Unable to compare M2-A1 PR diff against feature/certops or origin/feature/certops: ${errors.join("; ")}`,
   );

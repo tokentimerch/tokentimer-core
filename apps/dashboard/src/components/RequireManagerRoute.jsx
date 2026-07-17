@@ -39,7 +39,10 @@ export default function RequireManagerRoute({
     (async () => {
       if (!session) {
         if (!cancelled)
-          setAuthorization({ workspaceId: workspaceId ?? null, allowed: false });
+          setAuthorization({
+            workspaceId: workspaceId ?? null,
+            allowed: false,
+          });
         return;
       }
       const isSystemAdmin = session?.isAdmin === true;
@@ -83,7 +86,10 @@ export default function RequireManagerRoute({
           });
       } catch (_) {
         if (!cancelled)
-          setAuthorization({ workspaceId: workspaceId ?? null, allowed: false });
+          setAuthorization({
+            workspaceId: workspaceId ?? null,
+            allowed: false,
+          });
       }
     })();
     return () => {

@@ -238,6 +238,10 @@ export async function getManagedCertificateForToken(
   tokenId,
   opts = {}
 ) {
-  const certs = await getManagedCertificatesForToken(workspaceId, tokenId, opts);
+  const certs = await getManagedCertificatesForToken(
+    workspaceId,
+    tokenId,
+    opts
+  );
   return pickPrimaryCertificate(certs);
 }
