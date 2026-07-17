@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useDashboardTheme } from './useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
@@ -48,6 +48,7 @@ export function useDashboardShellProps({
   dashboardCanSeeManagerNav: managerNavOverride,
 }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { workspaceId, selectWorkspace } = useWorkspace();
   const theme = useDashboardTheme();
   const { pageBg, surface, text, muted, border, borderStrong, inputBg } = theme;
@@ -69,6 +70,7 @@ export function useDashboardShellProps({
   const [dashboardCanSeeManagerNav, setDashboardCanSeeManagerNav] =
     useState(false);
   const [dashboardNotifications, setDashboardNotifications] = useState([]);
+  const [dashboardUnreadCount, setDashboardUnreadCount] = useState(0);
 
   const useWorkspaceOverrides = workspacesOverride !== undefined;
 
@@ -198,21 +200,29 @@ export function useDashboardShellProps({
           currentRole === 'workspace_manager';
         const list = [];
 
-        if (canManageWorkspaceAlerts) {
-          const operational = Array.isArray(notificationsRes?.items)
-            ? notificationsRes.items
-            : [];
-          for (const item of operational) {
-            const href =
-              item.href === '/usage' ? '/control-center' : item.href || null;
-            list.push({
-              id: item.id,
-              kind: item.kind === 'error' ? 'error' : 'warning',
-              text: item.text,
-              href,
-            });
-          }
+        // Server already scopes items to what this user may see (privileged
+        // roles get workspace-wide items; everyone else gets only
+        // notifications about their own tokens), so no client-side gating.
+        const operational = Array.isArray(notificationsRes?.items)
+          ? notificationsRes.items
+          : [];
+        for (const item of operational) {
+          const href =
+            item.href === '/usage' ? '/control-center' : item.href || null;
+          list.push({
+            id: item.id,
+            kind: item.kind === 'error' ? 'error' : 'warning',
+            text: item.text,
+            href,
+            isRead: item.isRead,
+            persisted: item.persisted === true,
+          });
         }
+        setDashboardUnreadCount(
+          Number.isFinite(notificationsRes?.unreadCount)
+            ? notificationsRes.unreadCount
+            : 0
+        );
 
         if (!canManageWorkspaceAlerts) {
           setDashboardNotifications(list);
@@ -247,7 +257,10 @@ export function useDashboardShellProps({
         }
         setDashboardNotifications(list);
       } catch (_) {
-        if (!cancelled) setDashboardNotifications([]);
+        if (!cancelled) {
+          setDashboardNotifications([]);
+          setDashboardUnreadCount(0);
+        }
       }
     }
 
@@ -259,6 +272,39 @@ export function useDashboardShellProps({
       window.removeEventListener('tt:notifications-refresh', refresh);
     };
   }, [session, activeWorkspace, isSystemAdmin, notificationsOverride]);
+
+  const handleNotificationClick = useCallback(
+    notification => {
+      if (notification?.persisted && activeWorkspace?.id && notification?.id) {
+        workspaceAPI
+          .markNotificationRead(activeWorkspace.id, notification.id)
+          .then(() => {
+            setDashboardNotifications(prev =>
+              prev.map(item =>
+                item.id === notification.id ? { ...item, isRead: true } : item
+              )
+            );
+            setDashboardUnreadCount(prev => Math.max(0, prev - 1));
+          })
+          .catch(() => {});
+      }
+      if (notification?.href) navigate(notification.href);
+    },
+    [activeWorkspace, navigate]
+  );
+
+  const handleMarkAllNotificationsRead = useCallback(() => {
+    if (!activeWorkspace?.id) return;
+    workspaceAPI
+      .markAllNotificationsRead(activeWorkspace.id)
+      .then(() => {
+        setDashboardNotifications(prev =>
+          prev.map(item => ({ ...item, isRead: true }))
+        );
+        setDashboardUnreadCount(0);
+      })
+      .catch(() => {});
+  }, [activeWorkspace]);
 
   return useMemo(
     () => ({
@@ -291,6 +337,16 @@ export function useDashboardShellProps({
         notificationsOverride !== undefined
           ? notificationsOverride
           : dashboardNotifications,
+      dashboardUnreadCount:
+        notificationsOverride !== undefined ? undefined : dashboardUnreadCount,
+      onNotificationClick:
+        notificationsOverride !== undefined
+          ? undefined
+          : handleNotificationClick,
+      onMarkAllNotificationsRead:
+        notificationsOverride !== undefined
+          ? undefined
+          : handleMarkAllNotificationsRead,
       onLogout,
       onAccountClick,
       isViewer,
@@ -323,6 +379,9 @@ export function useDashboardShellProps({
       handleDashboardWorkspaceSelect,
       notificationsOverride,
       dashboardNotifications,
+      dashboardUnreadCount,
+      handleNotificationClick,
+      handleMarkAllNotificationsRead,
       onLogout,
       onAccountClick,
       isViewer,

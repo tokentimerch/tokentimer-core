@@ -1668,6 +1668,18 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/worker/src/delivery-worker.js",
       "apps/worker/src/endpoint-check-worker.js",
       "apps/worker/src/notify/email.js",
+      // feature/operational-failure-notifications: persisted operational
+      // notifications (bell + email escalation) for blocked/failed delivery
+      // and auto-sync failures.
+      "apps/api/routes/admin.js",
+      "apps/api/services/alertQueue.js",
+      "apps/api/services/operationalNotifications.js",
+      "apps/dashboard/src/components/DashboardShell.jsx",
+      "apps/dashboard/src/hooks/useDashboardShellProps.js",
+      "apps/dashboard/src/utils/apiClient.js",
+      "apps/worker/src/auto-sync-worker.js",
+      "apps/worker/src/shared/autoSyncFailure.js",
+      "apps/worker/src/shared/opNotifications.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

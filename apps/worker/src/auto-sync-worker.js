@@ -24,6 +24,7 @@ import { isAutoSyncProviderAllowed } from "./auto-sync-providers.js";
 import {
   formatAutoSyncError,
   recordAutoSyncFailure,
+  recordAutoSyncRecovery,
 } from "./shared/autoSyncFailure.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
@@ -360,6 +361,17 @@ async function runAutoSync() {
              WHERE id = $5`,
             [syncStatus, syncError, importedCount, nextSync, id],
           );
+
+          // A 'success' run fully recovers the integration; reset the
+          // consecutive-failure counter and clear any open bell incident.
+          // 'partial' runs leave the counter untouched (not a full failure,
+          // but not a clean recovery either).
+          if (syncStatus === "success") {
+            await recordAutoSyncRecovery(client, {
+              configId: id,
+              workspaceId: workspace_id,
+            });
+          }
 
           cAutoSync.inc({ provider, status: syncStatus });
           cAutoSyncItems.inc({ provider }, importedCount);
