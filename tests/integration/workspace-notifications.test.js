@@ -298,6 +298,13 @@ describe("Persisted operational notifications (bell)", function () {
     expect(viewerItem).to.be.undefined;
   });
 
+  it("404s when a non-privileged, non-owner member tries to mark a token-scoped notification as read", async () => {
+    // notifId is token-scoped to the admin's own token; the viewer role is
+    // neither privileged nor the token owner, so it must not be able to
+    // mark it as read even by guessing/observing the id out-of-band.
+    await markRead(viewerCookie, notifId).expect(404);
+  });
+
   it("404s when marking a notification from a different workspace as read", async () => {
     const otherWorkspaceId = await TestUtils.ensureDedicatedTestWorkspace(
       adminCookie,
