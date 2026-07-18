@@ -440,6 +440,13 @@ const TestUtils = {
         DB_HOST: RESOLVED_DB_HOST,
         DB_PORT: String(RESOLVED_DB_PORT),
         TT_TEST_DB_PORT: String(RESOLVED_DB_PORT),
+        // Explicitly pinned so a spawned worker's own loadRootEnv() call
+        // (db.js) never gets the chance to backfill these from the repo's
+        // dev .env, which carries local-dev credentials that may not match
+        // the test Postgres container.
+        DB_USER: process.env.DB_USER || (env && env.DB_USER) || "tokentimer",
+        DB_PASSWORD: process.env.DB_PASSWORD || (env && env.DB_PASSWORD) || "password",
+        DB_NAME: process.env.DB_NAME || (env && env.DB_NAME) || "tokentimer",
       };
       const p = spawn(cmd, args, { stdio: "inherit", cwd, env: mergedEnv });
       p.on("close", (code) => {
