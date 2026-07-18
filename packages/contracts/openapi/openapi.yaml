@@ -1749,7 +1749,7 @@ paths:
       tags: [Account]
       summary: Grant or revoke system admin
       operationId: setSystemAdmin
-      description: Sets installation-wide system admin (`users.is_admin`) for a user. Requires an authenticated system admin. The last system admin cannot demote themselves.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Sets installation-wide system admin (`users.is_admin`) for a user. Requires an authenticated system admin. The last system admin cannot demote themselves. On TokenTimer Cloud this route does not exist; TokenTimer operates the instance.
       parameters:
         - $ref: "#/components/parameters/userIdParam"
       requestBody:
@@ -1787,7 +1787,7 @@ paths:
       tags: [Account]
       summary: Get system settings
       operationId: getSystemSettings
-      description: Returns SMTP and WhatsApp system settings for admin users.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Returns SMTP and WhatsApp system settings for admin users. On TokenTimer Cloud this route does not exist; TokenTimer operates SMTP and WhatsApp delivery.
       responses:
         "200":
           description: System settings
@@ -1802,7 +1802,7 @@ paths:
       tags: [Account]
       summary: Update system settings
       operationId: updateSystemSettings
-      description: Updates SMTP and WhatsApp configuration values for admin users.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Updates SMTP and WhatsApp configuration values for admin users. On TokenTimer Cloud this route does not exist; TokenTimer operates SMTP and WhatsApp delivery.
       requestBody:
         required: true
         content:
@@ -1825,7 +1825,7 @@ paths:
       tags: [Account]
       summary: Send SMTP test email
       operationId: testSmtpConfiguration
-      description: Sends a test email using current SMTP settings.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Sends a test email using current SMTP settings. On TokenTimer Cloud this route does not exist; TokenTimer operates SMTP delivery.
       requestBody:
         required: false
         content:
@@ -1853,7 +1853,7 @@ paths:
       tags: [Account]
       summary: Send WhatsApp test message as admin
       operationId: testAdminWhatsAppConfiguration
-      description: Sends a test WhatsApp message using current system settings.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Sends a test WhatsApp message using current system settings. On TokenTimer Cloud this route does not exist; TokenTimer operates WhatsApp delivery.
       requestBody:
         required: true
         content:
@@ -2012,7 +2012,7 @@ paths:
       tags: [Workspaces]
       summary: List auto-sync configs
       operationId: listAutoSyncConfigs
-      description: Lists auto-sync configurations for a workspace.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Lists auto-sync configurations for a workspace. TokenTimer Cloud does not offer auto-sync (this route returns 404); credentials are never stored there.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -2034,7 +2034,7 @@ paths:
       tags: [Workspaces]
       summary: Create auto-sync config
       operationId: createAutoSyncConfig
-      description: Creates a new provider auto-sync configuration for a workspace.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Creates a new provider auto-sync configuration for a workspace. TokenTimer Cloud does not offer auto-sync (this route returns 404); credentials are never stored there.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -2084,7 +2084,7 @@ paths:
       tags: [Workspaces]
       summary: Update auto-sync config
       operationId: updateAutoSyncConfig
-      description: Updates an existing auto-sync configuration.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Updates an existing auto-sync configuration. TokenTimer Cloud does not offer auto-sync (this route returns 404).
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -2117,7 +2117,7 @@ paths:
       tags: [Workspaces]
       summary: Delete auto-sync config
       operationId: deleteAutoSyncConfig
-      description: Deletes an auto-sync configuration from a workspace.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Deletes an auto-sync configuration from a workspace (also deletes stored credentials). TokenTimer Cloud does not offer auto-sync (this route returns 404).
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -2144,7 +2144,7 @@ paths:
       tags: [Workspaces]
       summary: Trigger auto-sync run
       operationId: triggerAutoSyncRun
-      description: Queues an immediate run for an enabled auto-sync configuration.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Queues an immediate run for an enabled auto-sync configuration. TokenTimer Cloud does not offer auto-sync (this route returns 404).
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path

@@ -89,6 +89,40 @@ export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
 }
 
+/**
+ * Deterministic ordering for multiple managed certificates that reference the
+ * same token (backend D8 allows e.g. one imported + one monitor-observed row).
+ * Ordering: active (non-retired) certificates before retired ones, then most
+ * recently updated first (updatedAt, falling back to createdAt), then id
+ * ascending as a stable tie-breaker.
+ */
+export function sortCertificatesForToken(certificates) {
+  const items = Array.isArray(certificates) ? [...certificates] : [];
+  const ts = cert => {
+    const value = cert?.updatedAt || cert?.createdAt || null;
+    const time = value ? new Date(value).getTime() : NaN;
+    return Number.isFinite(time) ? time : 0;
+  };
+  return items.sort((a, b) => {
+    const aRetired = isRetiredStatus(a?.status) ? 1 : 0;
+    const bRetired = isRetiredStatus(b?.status) ? 1 : 0;
+    if (aRetired !== bRetired) return aRetired - bRetired;
+    const diff = ts(b) - ts(a);
+    if (diff !== 0) return diff;
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+  });
+}
+
+/**
+ * Deterministic pick for single-certificate display contexts when a token is
+ * referenced by several managed certificates: first entry of
+ * `sortCertificatesForToken` (active preferred, most recently updated).
+ */
+export function pickPrimaryCertificate(certificates) {
+  const sorted = sortCertificatesForToken(certificates);
+  return sorted.length > 0 ? sorted[0] : null;
+}
+
 /** Matches apps/api/services/certops/inventory.js KEY_REFERENCE_MAX_LENGTH. */
 export const KEY_REFERENCE_MAX_LENGTH = 256;
 

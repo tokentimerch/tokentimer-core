@@ -65,7 +65,12 @@ rather than adding a parallel M1 inventory page. See ADR-0006.
 - **Token detail** - CertOps panel for managed fields and deployment history.
 - **Import tokens** - public PEM import card when `certops.enabled` is on.
 - **CertOps section (M2+)** - orchestration only (agents, jobs, evidence,
-  approvals), not a second certificate list.
+  approvals), not a second certificate list. M2 ships
+  `/certops/operations` (executor jobs, evidence timelines, machine API
+  tokens) mounted via the `/certops/*` splat route. No nav entry: it is
+  reached from the Control Center certificate-operations panel footer link
+  and from a Workspace Preferences entry (last section, shown only when
+  `certops.enabled` is on).
 
 ## Certificate removal (D7)
 

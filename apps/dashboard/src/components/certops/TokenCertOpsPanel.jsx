@@ -10,8 +10,14 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
+import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
-import { expiryDescriptor, formatDate, isCertToken, statusScheme } from './certopsFormat';
+import {
+  expiryDescriptor,
+  formatDate,
+  isCertToken,
+  statusScheme,
+} from './certopsFormat';
 import { useCertOpsForToken } from './useCertOps.js';
 
 function Field({ label, children, colSpan = { base: 1, md: 1 } }) {
@@ -36,7 +42,7 @@ function Field({ label, children, colSpan = { base: 1, md: 1 } }) {
 
 /**
  * CertOps enrichment for an existing cert token in TokenDetailModal: key
- * locality, managed status, fingerprint, and deployment history.
+ * locality, managed status, fingerprint, and observed-location history.
  */
 export default function TokenCertOpsPanel({ token, tokenId }) {
   // Cheap guard before any hooks: only certificate assets get this panel. The
@@ -50,6 +56,7 @@ function CertOpsPanelBody({ tokenId }) {
   const {
     enabled,
     certificate,
+    certificateCount,
     instances,
     instancesAvailable,
     loading,
@@ -109,6 +116,12 @@ function CertOpsPanelBody({ tokenId }) {
             {expiry.label}
           </Badge>
         </HStack>
+        {certificateCount > 1 ? (
+          <Text fontSize='xs' color={muted} mb={3}>
+            {certificateCount} certificates reference this token. Showing the
+            most recently updated active certificate.
+          </Text>
+        ) : null}
       </GridItem>
 
       <Field label='Key locality'>
@@ -171,11 +184,21 @@ function CertOpsPanelBody({ tokenId }) {
 
       <GridItem colSpan={{ base: 1, md: 2 }}>
         <Text fontSize='sm' fontWeight='semibold' color={muted} mb={2}>
-          Deployments
+          Observed locations
         </Text>
         <CertificateInstances
           instances={instances}
           available={instancesAvailable}
+        />
+      </GridItem>
+
+      <GridItem colSpan={{ base: 1, md: 2 }}>
+        <Text fontSize='sm' fontWeight='semibold' color={muted} mb={2}>
+          Job history
+        </Text>
+        <CertificateTimeline
+          subjectType='managed_certificate'
+          subjectId={certificate.id}
         />
       </GridItem>
     </>

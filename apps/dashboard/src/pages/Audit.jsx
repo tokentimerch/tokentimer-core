@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   Text,
@@ -190,6 +190,7 @@ function getAuditEventKey(ev) {
 
 export default function Audit({ session, onLogout, onAccountClick }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const theme = useDashboardTheme();
   const { pageBg, surface, text, muted, border, inputBg, dashboard } = theme;
   const strongBorder = dashboard.border.strong;
@@ -247,15 +248,33 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => {
+    try {
+      return new URLSearchParams(location.search).get('q') || '';
+    } catch (_) {
+      return '';
+    }
+  });
   const [actionFilter, setActionFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [auditPage, setAuditPage] = useState(1);
   const [auditPageSize, setAuditPageSize] = useState(10);
   const [expandedEventIds, setExpandedEventIds] = useState(() => new Set());
+  // Deep links like /audit?q=<jobId> (CertOps "View audit log") target job /
+  // machine-token events that do not appear under "My actions". Prefer workspace
+  // scope whenever the URL carries a search query so the first fetch is useful.
   const [scope, setScope] = useState(() => {
     try {
+      const urlQuery = new URLSearchParams(location.search).get('q');
+      if (urlQuery) {
+        try {
+          localStorage.setItem('tt_audit_scope', 'workspace');
+        } catch (_) {
+          /* ignore */
+        }
+        return 'workspace';
+      }
       return localStorage.getItem('tt_audit_scope') || 'user';
     } catch (_) {
       return 'user';
@@ -339,6 +358,37 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   useEffect(() => {
     load(auditPage);
   }, [load, auditPage]);
+
+  // Keep query in sync with the URL when navigating between /audit?q=... links
+  // (e.g. from CertOps evidence timeline entries) while the component stays mounted.
+  // Intentionally omits `query` from deps: this effect must only react to
+  // external URL changes, not to the user typing in the search box (which
+  // updates `query` but never pushes to the URL), or it would revert typed input.
+  useEffect(() => {
+    try {
+      const nextQuery = new URLSearchParams(location.search).get('q') || '';
+      if (nextQuery !== query) {
+        setQuery(nextQuery);
+        setAuditPage(1);
+        // URL-driven job/search deep links need workspace scope; "My actions"
+        // hides machine-token CertOps executor/evidence rows for the job id.
+        if (nextQuery) {
+          setScope(prev => {
+            if (prev === 'workspace' || prev === 'organization') return prev;
+            try {
+              localStorage.setItem('tt_audit_scope', 'workspace');
+            } catch (_) {
+              /* ignore */
+            }
+            return 'workspace';
+          });
+        }
+      }
+    } catch (_) {
+      // ignore malformed search string
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   // Redirect viewers (no manager/admin role) only when we have workspaces; avoid redirect when list empty (e.g. bootstrap admin)
   useEffect(() => {

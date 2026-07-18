@@ -14,8 +14,9 @@ import { DashboardState } from '../DashboardPrimitives.jsx';
 import { formatDate, statusScheme } from './certopsFormat';
 
 /**
- * Deployment / observation history for a managed certificate. Each instance is
- * a place the certificate was observed (an endpoint, target, or deployment).
+ * Observation history for a managed certificate. Each instance is a
+ * certificate location where the certificate was observed (an endpoint,
+ * target, or other monitored location); monitors are observers.
  */
 export default function CertificateInstances({ instances, available }) {
   const { muted, border } = useDashboardTheme();
@@ -25,7 +26,7 @@ export default function CertificateInstances({ instances, available }) {
       <DashboardState
         type='empty'
         title='History not available yet'
-        description='Deployment history will appear here once instance tracking is enabled for this build.'
+        description='Location history will appear here once instance tracking is enabled for this build.'
         py={6}
       />
     );
@@ -35,8 +36,8 @@ export default function CertificateInstances({ instances, available }) {
     return (
       <DashboardState
         type='empty'
-        title='No deployments observed'
-        description='This certificate has not been observed on any monitored endpoint yet.'
+        title='No locations recorded yet'
+        description='This certificate has not been observed at any monitored location yet.'
         py={6}
       />
     );

@@ -454,6 +454,59 @@ function prChangedFiles() {
     }
   }
 
+  // CI checkouts default to fetch-depth: 1, so origin/feature/certops is
+  // usually missing and even a shallow tip fetch cannot compute the
+  // three-dot merge-base. Fetch the base branch, then unshallow when needed.
+  try {
+    execFileSync(
+      "git",
+      [
+        "fetch",
+        "--no-tags",
+        "origin",
+        "+feature/certops:refs/remotes/origin/feature/certops",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const isShallow = execFileSync(
+      "git",
+      ["rev-parse", "--is-shallow-repository"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ).trim();
+    if (isShallow === "true") {
+      execFileSync("git", ["fetch", "--no-tags", "--unshallow", "origin"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+    const output = execFileSync(
+      "git",
+      ["diff", "--name-only", "origin/feature/certops...HEAD"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    return {
+      ref: "origin/feature/certops",
+      files: output
+        .split(/\r?\n/)
+        .map((file) => file.trim().replace(/\\/g, "/"))
+        .filter(Boolean),
+    };
+  } catch (error) {
+    errors.push(`fetch-origin/feature/certops: ${error.message}`);
+  }
+
   throw new Error(
     `Unable to compare M2-A1 PR diff against feature/certops or origin/feature/certops: ${errors.join("; ")}`,
   );
@@ -1520,12 +1573,57 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/unit/secretMaterial.test.js",
       "tests/unit/worker-email-ownership-heartbeat.test.js",
     ]);
+    // M2-B dashboard/UI work (this PR) rides on top of the M2-A backend.
+    // Explicit allowlist of the dashboard files actually touched by the
+    // M2-B branch (git diff feature/certops-m2-backend-fixes...HEAD --
+    // apps/dashboard), instead of a blanket apps/dashboard/ prefix:
+    const allowedM2BDashboardFiles = new Set([
+      "apps/dashboard/src/App.jsx",
+      "apps/dashboard/src/components/AssetFilters.jsx",
+      "apps/dashboard/src/components/AssetInventoryTable.jsx",
+      "apps/dashboard/src/components/ImportTokensModal.jsx",
+      "apps/dashboard/src/components/RequireManagerRoute.jsx",
+      "apps/dashboard/src/components/DashboardShell.jsx",
+      "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertOpsPreferencesEntry.jsx",
+      "apps/dashboard/src/components/certops/CertificateInstances.jsx",
+      "apps/dashboard/src/components/certops/CertificateTimeline.jsx",
+      "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
+      "apps/dashboard/src/components/certops/JobStatusBadge.jsx",
+      "apps/dashboard/src/components/certops/TokenCertOpsPanel.jsx",
+      "apps/dashboard/src/components/certops/certopsApi.js",
+      "apps/dashboard/src/components/certops/certopsFormat.js",
+      "apps/dashboard/src/components/certops/certopsJobsApi.js",
+      "apps/dashboard/src/components/certops/certopsJobsFormat.js",
+      "apps/dashboard/src/components/certops/certopsPagination.js",
+      "apps/dashboard/src/components/certops/certopsTokensApi.js",
+      "apps/dashboard/src/components/certops/useCertOps.js",
+      "apps/dashboard/src/components/certops/useCertOpsJobs.js",
+      "apps/dashboard/src/pages/AlertPreferences.jsx",
+      "apps/dashboard/src/pages/Audit.jsx",
+      "apps/dashboard/src/pages/ControlCenter.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsRoutes.jsx",
+      "apps/dashboard/tests/unit/ApiTokenPanel.test.jsx",
+      "apps/dashboard/tests/unit/CertOpsOperations.test.jsx",
+      "apps/dashboard/tests/unit/DashboardPages.smoke.test.jsx",
+      "apps/dashboard/tests/unit/EvidenceTimeline.test.jsx",
+      "apps/dashboard/tests/unit/RequireManagerRoute.test.jsx",
+      "apps/dashboard/tests/unit/TokenCertOpsPanel.test.jsx",
+      "apps/dashboard/tests/unit/certopsJobsFormat.test.js",
+      "apps/dashboard/tests/unit/certopsMultiCert.test.js",
+      "apps/dashboard/tests/unit/certopsPagination.test.js",
+    ]);
     const unexpectedFiles = files.filter(
       (file) =>
         file === "contracts.manifest.json" ||
         file.startsWith("packages/contracts/") ||
         file === "tests/unit/certops-m2-contracts.test.js" ||
         file === "tests/unit/certops-routes-hardening.test.js" ||
+        allowedM2BDashboardFiles.has(file) ||
+        file === ".gitignore" ||
+        file === "docs/adr/0006-certops-dashboard-ux-split.md" ||
+        file === "docs/certops/CONTEXT.md" ||
         allowedM2Files.has(file),
     );
 
