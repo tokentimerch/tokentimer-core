@@ -1538,6 +1538,13 @@ describe("CertOps M2 contract skeletons", () => {
       "docs/certops/CONTEXT.md",
       "docs/certops/executor-api.md",
       "tests/fixtures/certops-docs-examples.js",
+      // Unrelated fixes stacked on feature/certops-m2-backend-fixes before
+      // this PR (worker test env isolation, WORKER_AUTO_SYNC_CRON doc fix,
+      // ROADMAP CertOps milestones):
+      ".env.example",
+      "DEVELOPMENT.md",
+      "ROADMAP.md",
+      "tests/integration/setup.js",
       "tests/integration/certops-api-token-auth.test.js",
       "tests/integration/certops-api-token-routes.test.js",
       "tests/integration/certops-api-tokens.test.js",
