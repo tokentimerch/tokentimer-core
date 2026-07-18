@@ -685,9 +685,24 @@ router.post(
   requireWorkspaceMembership,
   async (req, res) => {
     try {
+      const roleRes = await pool.query(
+        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+        [req.workspace.id, req.user.id],
+      );
+      const role = roleRes.rows?.[0]?.role || null;
+      const isPrivileged = role === "admin" || role === "workspace_manager";
+
+      // Same visibility rule as GET /notifications: non-privileged members
+      // may only mark workspace-level notifications or ones scoped to their
+      // own token as read, even if they somehow learn another notification's id.
       const check = await pool.query(
-        `SELECT id FROM operational_notifications WHERE id = $1 AND workspace_id = $2`,
-        [req.params.notificationId, req.workspace.id],
+        `SELECT n.id
+           FROM operational_notifications n
+           LEFT JOIN tokens t ON t.id = n.token_id
+          WHERE n.id = $1
+            AND n.workspace_id = $2
+            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $4)`,
+        [req.params.notificationId, req.workspace.id, isPrivileged, req.user.id],
       );
       if (check.rows.length === 0) {
         return res.status(404).json({ error: "Notification not found" });
