@@ -2866,6 +2866,8 @@ paths:
                           enum: [error, warning, info]
                         text:
                           type: string
+                        message:
+                          type: string
                         href:
                           type: string
                           nullable: true
@@ -2873,6 +2875,83 @@ paths:
                           type: string
                         count:
                           type: integer
+                        category:
+                          type: string
+                        type:
+                          type: string
+                        severity:
+                          type: string
+                        isRead:
+                          type: boolean
+                        createdAt:
+                          type: string
+                        persisted:
+                          type: boolean
+                  unreadCount:
+                    type: integer
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/notifications/{notificationId}/read:
+    post:
+      tags: [Alerts]
+      summary: Mark a persisted operational notification as read
+      operationId: markWorkspaceNotificationRead
+      description: >-
+        Marks a single persisted operational notification (delivery
+        blocked/degraded, auto-sync failed) as read for the current user.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/notifications/read-all:
+    post:
+      tags: [Alerts]
+      summary: Mark all persisted operational notifications as read
+      operationId: markAllWorkspaceNotificationsRead
+      description: >-
+        Marks every open persisted operational notification visible to the
+        current user's role as read.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Notifications marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/alert-settings:

@@ -140,6 +140,10 @@ export function generateEmailTemplate({
   const logoUrl = getLogoUrl();
   const logoSrc = "cid:logo"; // Use CID reference for embedded attachment
   const frontendUrl = process.env.APP_URL || "http://localhost:5173";
+  // title is rendered directly into <title>/<h1> below; callers pass plain
+  // strings that may embed user-controlled values (e.g. an alert or
+  // integration name), so escape it here rather than trusting every caller.
+  const safeTitle = escapeHtml(title || "TokenTimer");
 
   // Build button HTML if provided
   let buttonHtml = "";
@@ -168,7 +172,7 @@ export function generateEmailTemplate({
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title || "TokenTimer"}</title>
+  <title>${safeTitle}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
   <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5;">
@@ -179,7 +183,7 @@ export function generateEmailTemplate({
           <tr>
             <td style="padding: 40px;">
               <h1 style="color: #1a202c; font-size: 24px; font-weight: 600; margin: 0 0 20px; line-height: 1.3;">
-                ${title || "TokenTimer"}
+                ${safeTitle}
               </h1>
               
               ${greeting ? `<p style="color: #4a5568; font-size: 16px; line-height: 1.6; margin: 0 0 20px;">${greeting}</p>` : ""}
@@ -273,6 +277,71 @@ ${getEmailFooterText()}
   }
 
   return { html, text, useEmbeddedLogo: useEmbeddedLogo !== false };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      default:
+        return "&#39;";
+    }
+  });
+}
+
+// Email escalation for critical operational_notifications rows (delivery
+// blocked/degraded, auto-sync failures). Category drives the CTA link since
+// delivery incidents surface in Control Center while auto-sync incidents
+// are managed from the integration import panel.
+export function buildOperationalIncidentEmail({
+  category,
+  title,
+  message,
+  metadata,
+}) {
+  const frontendUrl = (process.env.APP_URL || "http://localhost:5173").replace(
+    /\/$/,
+    "",
+  );
+  const meta = metadata || {};
+  const isAutoSync = category === "auto_sync";
+  const buttonUrl = isAutoSync
+    ? `${frontendUrl}/dashboard?import=${encodeURIComponent(meta.provider || "")}&autoSyncManage=1`
+    : `${frontendUrl}/control-center`;
+  const buttonText = isAutoSync ? "Manage Auto-Sync" : "Open Control Center";
+
+  const contextLines = [];
+  if (meta.workspace_name) contextLines.push(`Workspace: ${meta.workspace_name}`);
+  if (meta.token_name) contextLines.push(`Token: ${meta.token_name}`);
+
+  const contentHtml = `
+    <p>${escapeHtml(message || title)}</p>
+    ${
+      contextLines.length > 0
+        ? `<p style="color: #718096; font-size: 14px; margin-top: 8px;">${contextLines.map(escapeHtml).join("<br/>")}</p>`
+        : ""
+    }`;
+
+  const plainTextContent = [title, "", message || "", ...contextLines].join(
+    "\n",
+  );
+
+  const { html, text } = generateEmailTemplate({
+    title,
+    content: contentHtml,
+    buttonText,
+    buttonUrl,
+    plainTextContent,
+  });
+
+  return { subject: title, html, text };
 }
 
 // Cache for logo buffer to avoid reading it on every email

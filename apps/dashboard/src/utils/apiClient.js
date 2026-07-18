@@ -505,6 +505,10 @@ export const API_ENDPOINTS = {
     `/api/v1/workspaces/${id}/invitations/${invitationId}`,
   WORKSPACE_ALERT_SETTINGS: id => `/api/v1/workspaces/${id}/alert-settings`,
   WORKSPACE_NOTIFICATIONS: id => `/api/v1/workspaces/${id}/notifications`,
+  WORKSPACE_NOTIFICATION_READ: (id, notificationId) =>
+    `/api/v1/workspaces/${id}/notifications/${notificationId}/read`,
+  WORKSPACE_NOTIFICATIONS_READ_ALL: id =>
+    `/api/v1/workspaces/${id}/notifications/read-all`,
   WORKSPACE_CONTROL_CENTER_STATS: id =>
     `/api/v1/workspaces/${id}/control-center/stats`,
   WORKSPACE_TRANSFER_TOKENS: id => `/api/v1/workspaces/${id}/transfer-tokens`,
@@ -1062,6 +1066,26 @@ export const workspaceAPI = {
     try {
       const res = await apiClient.get(
         API_ENDPOINTS.WORKSPACE_NOTIFICATIONS(id)
+      );
+      return res.data;
+    } catch (e) {
+      throw new Error(handleApiError(e));
+    }
+  },
+  markNotificationRead: async (id, notificationId) => {
+    try {
+      const res = await apiClient.post(
+        API_ENDPOINTS.WORKSPACE_NOTIFICATION_READ(id, notificationId)
+      );
+      return res.data;
+    } catch (e) {
+      throw new Error(handleApiError(e));
+    }
+  },
+  markAllNotificationsRead: async id => {
+    try {
+      const res = await apiClient.post(
+        API_ENDPOINTS.WORKSPACE_NOTIFICATIONS_READ_ALL(id)
       );
       return res.data;
     } catch (e) {

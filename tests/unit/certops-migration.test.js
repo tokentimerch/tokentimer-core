@@ -245,8 +245,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-8).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15, 16, 17],
+      migrations.slice(-9).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15, 16, 17, 18],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -434,8 +434,63 @@ describe("CertOps inventory migration", () => {
       ownerClaimIdMigration.sql,
       /ALTER TABLE domain_monitors\s+ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL/,
     );
+  });
+
+  it("defines the operational notifications migration after the owner-scoped claim ids", () => {
+    const opNotificationsMigration = migrations.find(
+      (migration) => migration.name === "operational_notifications_schema",
+    );
+    assert.ok(
+      opNotificationsMigration,
+      "expected operational_notifications_schema migration",
+    );
+    assert.equal(opNotificationsMigration.version, 18);
+    assert.match(
+      opNotificationsMigration.sql,
+      /CREATE TABLE IF NOT EXISTS operational_notifications \(/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /token_id INTEGER NULL REFERENCES tokens\(id\) ON DELETE SET NULL/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /category TEXT NOT NULL CHECK \(category IN \('delivery', 'auto_sync'\)\)/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /severity TEXT NOT NULL CHECK \(severity IN \('info', 'warning', 'critical'\)\)/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_operational_notifications_open_dedupe\s+ON operational_notifications\(workspace_id, dedupe_key\)\s+WHERE resolved_at IS NULL/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /CREATE TABLE IF NOT EXISTS operational_notification_reads \(/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /PRIMARY KEY \(notification_id, user_id\)/,
+    );
+    assert.match(
+      opNotificationsMigration.sql,
+      /ALTER TABLE auto_sync_configs\s+ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0/,
+    );
+    assert.doesNotMatch(
+      opNotificationsMigration.sql,
+      /CREATE TABLE (?!IF NOT EXISTS)/,
+    );
+    assert.doesNotMatch(
+      opNotificationsMigration.sql,
+      /CREATE (?:UNIQUE )?INDEX (?!IF NOT EXISTS)/,
+    );
     assert.equal(
-      migrations.some((migration) => migration.version === 18),
+      migrations.some((migration) => migration.version === 19),
       false,
     );
   });

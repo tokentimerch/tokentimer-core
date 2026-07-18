@@ -1,4 +1,17 @@
 import { logger } from "../logger.js";
+import {
+  raiseOperationalNotification,
+  resolveOperationalNotification,
+  sendOperationalIncidentEmail,
+} from "./opNotifications.js";
+
+// Consecutive failed runs at/above which an auto-sync incident escalates
+// from a bell-only warning to a critical (emailed) incident.
+const AUTO_SYNC_CRITICAL_THRESHOLD = Number.isFinite(
+  Number(process.env.AUTO_SYNC_CRITICAL_THRESHOLD),
+)
+  ? Number(process.env.AUTO_SYNC_CRITICAL_THRESHOLD)
+  : 3;
 
 /**
  * Prefer API error body over generic Axios message for last_sync_error / audit.
@@ -47,7 +60,10 @@ async function writeAutoSyncAudit(
 
 /**
  * Persist auto-sync failure and emit AUTO_SYNC_FAILED audit on first transition
- * into failed state (avoids hourly duplicate audit rows).
+ * into failed state (avoids hourly duplicate audit rows). Also tracks a
+ * consecutive_failures counter and raises a bell notification: warning on the
+ * first failure, escalating to critical once AUTO_SYNC_CRITICAL_THRESHOLD
+ * consecutive failures are reached.
  */
 export async function recordAutoSyncFailure(
   client,
@@ -62,13 +78,49 @@ export async function recordAutoSyncFailure(
     nextSync,
   },
 ) {
-  await client.query(
+  const updateRes = await client.query(
     `UPDATE auto_sync_configs
      SET last_sync_at = NOW(), last_sync_status = 'failed',
-         last_sync_error = $1, next_sync_at = $2, updated_at = NOW()
-     WHERE id = $3`,
+         last_sync_error = $1, next_sync_at = $2, updated_at = NOW(),
+         consecutive_failures = consecutive_failures + 1
+     WHERE id = $3
+     RETURNING consecutive_failures`,
     [errorMessage, nextSync, configId],
   );
+  const consecutiveFailures = updateRes.rows[0]?.consecutive_failures || 1;
+
+  if (workspaceId) {
+    const critical = consecutiveFailures >= AUTO_SYNC_CRITICAL_THRESHOLD;
+    const notifId = await raiseOperationalNotification(client, {
+      workspaceId,
+      tokenId: null,
+      category: "auto_sync",
+      type: "auto_sync_failed",
+      severity: critical ? "critical" : "warning",
+      dedupeKey: `auto_sync_failed:${configId}`,
+      title: critical
+        ? `Auto-sync failing repeatedly: ${provider}`
+        : `Auto-sync failed: ${provider}`,
+      message: errorMessage || "Auto-sync run failed",
+      metadata: {
+        config_id: configId,
+        provider,
+        http_status: httpStatus,
+        consecutive_failures: consecutiveFailures,
+      },
+    });
+    if (notifId && critical) {
+      await sendOperationalIncidentEmail(client, {
+        notificationId: notifId,
+        workspaceId,
+        tokenId: null,
+        category: "auto_sync",
+        title: `Auto-sync failing repeatedly: ${provider}`,
+        message: errorMessage || "Auto-sync run failed",
+        metadata: { provider, consecutive_failures: consecutiveFailures },
+      });
+    }
+  }
 
   if (previousStatus === "failed") return;
 
@@ -87,6 +139,7 @@ export async function recordAutoSyncFailure(
         error: errorMessage,
         http_status: httpStatus,
         config_id: configId,
+        consecutive_failures: consecutiveFailures,
       },
     });
   } catch (err) {
@@ -97,3 +150,33 @@ export async function recordAutoSyncFailure(
     });
   }
 }
+
+/**
+ * Reset the consecutive-failure counter and resolve any open auto-sync
+ * notification for this config. Call on a successful (or partial-success)
+ * sync run so that the bell incident clears once the integration recovers.
+ */
+export async function recordAutoSyncRecovery(client, { configId, workspaceId }) {
+  try {
+    await client.query(
+      `UPDATE auto_sync_configs
+       SET consecutive_failures = 0
+       WHERE id = $1 AND consecutive_failures != 0`,
+      [configId],
+    );
+    if (workspaceId) {
+      await resolveOperationalNotification(
+        client,
+        workspaceId,
+        `auto_sync_failed:${configId}`,
+      );
+    }
+  } catch (err) {
+    logger.warn("recordAutoSyncRecovery failed", {
+      error: err.message,
+      workspace_id: workspaceId,
+      config_id: configId,
+    });
+  }
+}
+

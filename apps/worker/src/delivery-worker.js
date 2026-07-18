@@ -29,6 +29,11 @@ import {
   hasWebhookNames,
   getWebhookNames,
 } from "./shared/contactGroups.js";
+import {
+  raiseOperationalNotification,
+  resolveOperationalNotification,
+  sendOperationalIncidentEmail,
+} from "./shared/opNotifications.js";
 
 function safeJoinList(value) {
   if (!value) return null;
@@ -528,6 +533,23 @@ const MAX_ATTEMPTS_PER_CHANNEL = Number.isFinite(
 )
   ? Number(process.env.ALERT_MAX_ATTEMPTS)
   : 20;
+
+// Attempt count on any channel at/above which a still-retrying alert is
+// surfaced in the bell as a "degraded" warning (bell only, no email).
+const DEGRADED_ATTEMPTS_THRESHOLD = Number.isFinite(
+  Number(process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD),
+)
+  ? Number(process.env.ALERT_DEGRADED_ATTEMPTS_THRESHOLD)
+  : 5;
+
+// Blocks/failures caused by plan limits must not be surfaced as a critical
+// "delivery blocked" incident (that would email owners about a billing
+// limit). tokentimer-core has no plan limits today, but error_message may
+// still carry PLAN_LIMIT/limit_exceeded markers ported from shared logic or
+// set by downstream variants; treat them as informational.
+function isPlanLimitError(errorMessage) {
+  return /PLAN_LIMIT|limit_exceeded/i.test(String(errorMessage || ""));
+}
 
 async function writeAudit(
   client,
@@ -1943,6 +1965,43 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
           } catch (_err) {
             logger.warn("WhatsApp operation failed", { error: _err.message });
           }
+          if (alert.workspace_id) {
+            const planLimited = isPlanLimitError(errorMessages);
+            const notifId = await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: planLimited ? "delivery_plan_limited" : "delivery_blocked",
+              severity: planLimited ? "info" : "critical",
+              dedupeKey: `delivery_blocked:${alert.id}`,
+              title: planLimited
+                ? `Delivery paused (plan limit): ${alert.name || `Token #${alert.token_id}`}`
+                : `Delivery blocked: ${alert.name || `Token #${alert.token_id}`}`,
+              message: errorMessages || "Maximum delivery attempts reached",
+              metadata: {
+                alert_queue_id: alert.id,
+                attempts_email: newAttemptsEmail,
+                attempts_webhooks: newAttemptsWebhooks,
+                attempts_whatsapp: newAttemptsWhatsApp,
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
+            if (notifId && !planLimited) {
+              await sendOperationalIncidentEmail(client, {
+                notificationId: notifId,
+                workspaceId: alert.workspace_id,
+                tokenId: alert.token_id,
+                category: "delivery",
+                title: `Delivery blocked: ${alert.name || `Token #${alert.token_id}`}`,
+                message: errorMessages || "Maximum delivery attempts reached",
+                metadata: {
+                  workspace_name: alert.workspace_name,
+                  token_name: alert.name,
+                },
+              });
+            }
+          }
         }
         // Keep only failed channels for retry to avoid resending successful ones
         const failedChannels = Array.from(
@@ -1987,6 +2046,42 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
             });
           } catch (_err) {
             logger.warn("WhatsApp operation failed", { error: _err.message });
+          }
+          if (alert.workspace_id) {
+            const planLimited = isPlanLimitError(errorMessages);
+            const notifId = await raiseOperationalNotification(client, {
+              workspaceId: alert.workspace_id,
+              tokenId: alert.token_id,
+              category: "delivery",
+              type: planLimited ? "delivery_plan_limited" : "delivery_blocked",
+              severity: planLimited ? "info" : "critical",
+              dedupeKey: `delivery_blocked:${alert.id}`,
+              title: planLimited
+                ? `Delivery paused (plan limit): ${alert.name || `Token #${alert.token_id}`}`
+                : `Delivery blocked: ${alert.name || `Token #${alert.token_id}`}`,
+              message: errorMessages || "WhatsApp delivery failed permanently",
+              metadata: {
+                alert_queue_id: alert.id,
+                channel: "whatsapp",
+                workspace_name: alert.workspace_name,
+                token_name: alert.name,
+              },
+            });
+            if (notifId && !planLimited) {
+              await sendOperationalIncidentEmail(client, {
+                notificationId: notifId,
+                workspaceId: alert.workspace_id,
+                tokenId: alert.token_id,
+                category: "delivery",
+                title: `Delivery blocked: ${alert.name || `Token #${alert.token_id}`}`,
+                message: errorMessages || "WhatsApp delivery failed permanently",
+                metadata: {
+                  channel: "whatsapp",
+                  workspace_name: alert.workspace_name,
+                  token_name: alert.name,
+                },
+              });
+            }
           }
         }
         const terminalRes = await client.query(
@@ -2048,11 +2143,54 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               error: _err.message,
             });
           }
+          // Surface a bell-only warning once any channel's retry attempts
+          // cross the degraded threshold, without waiting for MAX_ATTEMPTS.
+          if (
+            alert.workspace_id &&
+            (newAttemptsEmail >= DEGRADED_ATTEMPTS_THRESHOLD ||
+              newAttemptsWebhooks >= DEGRADED_ATTEMPTS_THRESHOLD ||
+              newAttemptsWhatsApp >= DEGRADED_ATTEMPTS_THRESHOLD)
+          ) {
+            const planLimited = isPlanLimitError(errorMessages);
+            if (!planLimited) {
+              await raiseOperationalNotification(client, {
+                workspaceId: alert.workspace_id,
+                tokenId: alert.token_id,
+                category: "delivery",
+                type: "delivery_degraded",
+                severity: "warning",
+                dedupeKey: `delivery_degraded:${alert.id}`,
+                title: `Delivery retrying: ${alert.name || `Token #${alert.token_id}`}`,
+                message: errorMessages || "Delivery attempts are still failing",
+                metadata: {
+                  alert_queue_id: alert.id,
+                  attempts_email: newAttemptsEmail,
+                  attempts_webhooks: newAttemptsWebhooks,
+                  attempts_whatsapp: newAttemptsWhatsApp,
+                  next_attempt_at: nextAttemptTimestamp.toISOString(),
+                  workspace_name: alert.workspace_name,
+                  token_name: alert.name,
+                },
+              });
+            }
+          }
         }
       }
 
       if (allSucceeded) {
         sent++;
+        if (alert.workspace_id) {
+          await resolveOperationalNotification(
+            client,
+            alert.workspace_id,
+            `delivery_blocked:${alert.id}`,
+          );
+          await resolveOperationalNotification(
+            client,
+            alert.workspace_id,
+            `delivery_degraded:${alert.id}`,
+          );
+        }
         const contactGroupId =
           alert.contact_group_id || alert.default_contact_group_id || null;
         const groups = Array.isArray(alert.contact_groups)

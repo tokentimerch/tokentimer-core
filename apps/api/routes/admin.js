@@ -557,7 +557,8 @@ router.post(
   },
 );
 
-// Operational notifications for the dashboard bell (auto-sync failures, deferred alerts)
+// Operational notifications for the dashboard bell (auto-sync failures, deferred alerts,
+// and persisted operational_notifications rows raised by delivery-worker/auto-sync-worker)
 router.get(
   "/api/v1/workspaces/:id/notifications",
   getApiLimiter(),
@@ -620,13 +621,138 @@ router.get(
         }
       }
 
-      res.json({ items });
+      // Persisted operational_notifications: unresolved incidents (delivery
+      // blocked/degraded, auto-sync failures) raised by the worker, newest
+      // first. Included for every member (not just privileged roles) since a
+      // token owner without a management role should still see incidents
+      // about their own tokens; token-scoped rows are additionally filtered
+      // to the current user unless they are privileged.
+      const opRows = await pool.query(
+        `SELECT n.id, n.category, n.type, n.severity, n.title, n.message,
+                n.metadata, n.created_at, n.updated_at, n.token_id,
+                (r.notification_id IS NOT NULL) AS is_read
+           FROM operational_notifications n
+           LEFT JOIN operational_notification_reads r
+             ON r.notification_id = n.id AND r.user_id = $2
+           LEFT JOIN tokens t ON t.id = n.token_id
+          WHERE n.workspace_id = $1
+            AND n.resolved_at IS NULL
+            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $2)
+          ORDER BY n.created_at DESC
+          LIMIT 50`,
+        [req.workspace.id, req.user.id, isPrivileged],
+      );
+      let unreadCount = 0;
+      for (const row of opRows.rows) {
+        if (!row.is_read) unreadCount += 1;
+        const meta = row.metadata || {};
+        const href =
+          row.category === "auto_sync"
+            ? `/dashboard?import=${encodeURIComponent(meta.provider || "")}&autoSyncManage=1`
+            : "/control-center";
+        items.push({
+          id: row.id,
+          kind: row.severity === "critical" ? "error" : row.severity === "warning" ? "warning" : "info",
+          text: row.title,
+          message: row.message,
+          href,
+          category: row.category,
+          type: row.type,
+          severity: row.severity,
+          isRead: row.is_read === true,
+          createdAt: row.created_at,
+          persisted: true,
+        });
+      }
+
+      res.json({ items, unreadCount });
     } catch (e) {
       logger.error("Workspace notifications error", {
         error: e.message,
         workspaceId: req.workspace.id,
       });
       res.status(500).json({ error: "Failed to load notifications" });
+    }
+  },
+);
+
+// Mark a single persisted operational notification as read for the current user.
+router.post(
+  "/api/v1/workspaces/:id/notifications/:notificationId/read",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  async (req, res) => {
+    try {
+      const roleRes = await pool.query(
+        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+        [req.workspace.id, req.user.id],
+      );
+      const role = roleRes.rows?.[0]?.role || null;
+      const isPrivileged = role === "admin" || role === "workspace_manager";
+
+      // Same visibility rule as GET /notifications: non-privileged members
+      // may only mark workspace-level notifications or ones scoped to their
+      // own token as read, even if they somehow learn another notification's id.
+      const check = await pool.query(
+        `SELECT n.id
+           FROM operational_notifications n
+           LEFT JOIN tokens t ON t.id = n.token_id
+          WHERE n.id = $1
+            AND n.workspace_id = $2
+            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $4)`,
+        [req.params.notificationId, req.workspace.id, isPrivileged, req.user.id],
+      );
+      if (check.rows.length === 0) {
+        return res.status(404).json({ error: "Notification not found" });
+      }
+      await pool.query(
+        `INSERT INTO operational_notification_reads (notification_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (notification_id, user_id) DO NOTHING`,
+        [req.params.notificationId, req.user.id],
+      );
+      res.json({ success: true });
+    } catch (e) {
+      logger.error("Mark notification read error", { error: e.message });
+      res.status(500).json({ error: "Failed to mark notification as read" });
+    }
+  },
+);
+
+// Mark every currently-unresolved operational notification visible to the
+// current user (in this workspace) as read.
+router.post(
+  "/api/v1/workspaces/:id/notifications/read-all",
+  getApiLimiter(),
+  requireAuth,
+  loadWorkspace,
+  requireWorkspaceMembership,
+  async (req, res) => {
+    try {
+      const roleRes = await pool.query(
+        "SELECT role FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2",
+        [req.workspace.id, req.user.id],
+      );
+      const role = roleRes.rows?.[0]?.role || null;
+      const isPrivileged = role === "admin" || role === "workspace_manager";
+
+      await pool.query(
+        `INSERT INTO operational_notification_reads (notification_id, user_id)
+         SELECT n.id, $2
+           FROM operational_notifications n
+           LEFT JOIN tokens t ON t.id = n.token_id
+          WHERE n.workspace_id = $1
+            AND n.resolved_at IS NULL
+            AND ($3 = TRUE OR n.token_id IS NULL OR t.user_id = $2)
+         ON CONFLICT (notification_id, user_id) DO NOTHING`,
+        [req.workspace.id, req.user.id, isPrivileged],
+      );
+      res.json({ success: true });
+    } catch (e) {
+      logger.error("Mark all notifications read error", { error: e.message });
+      res.status(500).json({ error: "Failed to mark notifications as read" });
     }
   },
 );
