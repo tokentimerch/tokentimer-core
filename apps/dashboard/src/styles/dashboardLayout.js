@@ -1,3 +1,12 @@
+/**
+ * Fixed (not min) height shared by the sidebar's logo row and both header
+ * bars (desktop + mobile), so their bottom borders always land on the exact
+ * same horizontal line. Must stay a fixed `h`, not a `minH`: a `minH` lets
+ * whichever row has the taller content (e.g. the page-title Heading) grow
+ * past it, which is what caused the two borders to drift apart before.
+ */
+export const DASHBOARD_SHELL_HEADER_HEIGHT = '54px';
+
 /** Shared horizontal rhythm for dashboard shell header and page content. */
 export const DASHBOARD_PAGE_GUTTER_X = { base: 4, lg: 6, '2xl': 8 };
 
