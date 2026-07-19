@@ -25,6 +25,13 @@ const {
   fetchHostnameCertificate,
   liveCertificateImportSkipDetail,
 } = require("../services/domainChecker");
+const {
+  bridgeEndpointCertificateObservation,
+} = require("../services/certops/monitorBridge");
+const { containsPrivateKeyMaterial } = require("../utils/secretMaterial");
+const {
+  PRIVATE_KEY_MATERIAL_REJECTED,
+} = require("../middleware/reject-key-material");
 
 const DNS_LIVE_CERT_SKIP_DETAILS = new Set([
   "live_certificate_dns_unresolved",
@@ -73,6 +80,22 @@ function normalizeTokenSectionInput(value) {
   }
   const uniq = [...new Set(flat)];
   return uniq.length ? uniq : null;
+}
+
+async function recordCertOpsMonitorObservation(options) {
+  try {
+    await bridgeEndpointCertificateObservation({
+      dbPool: pool,
+      ...options,
+    });
+  } catch (err) {
+    logger.warn("CertOps monitor bridge failed", {
+      workspaceId: options.workspaceId,
+      domainMonitorId: options.domainMonitorId,
+      code: err.code || null,
+      error: err.message,
+    });
+  }
 }
 
 // ============================================================
@@ -805,6 +828,12 @@ router.post(
           code: "NO_CERTIFICATES_SELECTED",
         });
       }
+      if (containsPrivateKeyMaterial(certificates)) {
+        return res.status(422).json({
+          error: "Private key material is not accepted in certificate imports",
+          code: PRIVATE_KEY_MATERIAL_REJECTED,
+        });
+      }
       const importMax = getDomainCheckerImportMaxCertificates("oss");
       if (certificates.length > importMax) {
         return res.status(400).json({
@@ -1028,13 +1057,31 @@ router.post(
           for (const certDomain of certDomains) {
             const monitorUrl = `https://${certDomain}`;
             const existingMonitor = await pool.query(
-              `SELECT id FROM domain_monitors
+              `SELECT id, token_id FROM domain_monitors
                WHERE workspace_id = $1 AND url = $2
                LIMIT 1`,
               [req.workspace.id, monitorUrl],
             );
             if (existingMonitor.rows[0]?.id) {
               monitorsExisting += 1;
+              await recordCertOpsMonitorObservation({
+                workspaceId: req.workspace.id,
+                createdBy: req.user.id,
+                domainMonitorId: existingMonitor.rows[0].id,
+                tokenId:
+                  existingMonitor.rows[0].token_id || tokenResult.rows[0].id,
+                url: monitorUrl,
+                hostname: certDomain,
+                source: "domain_checker",
+                sourceRef: sourceCertId || certificate.id || certDomain,
+                certificate: {
+                  issuer,
+                  subject,
+                  serialNumber,
+                  fingerprintSha256: tlsFingerprint,
+                  notAfter: expiration,
+                },
+              });
               continue;
             }
             let monitorSslValidTo = null;
@@ -1049,12 +1096,13 @@ router.post(
             } catch (_) {}
             const monitorValidated = Boolean(monitorSslValidTo);
             const monitorValidatedAt = monitorValidated ? new Date() : null;
-            await pool.query(
+            const monitorResult = await pool.query(
               `INSERT INTO domain_monitors
                  (workspace_id, url, validated, validated_at,
                   ssl_issuer, ssl_subject, ssl_valid_from, ssl_valid_to, ssl_serial, ssl_fingerprint,
                   token_id, health_check_enabled, check_interval, alert_after_failures, created_by)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+               RETURNING id, token_id`,
               [
                 req.workspace.id,
                 monitorUrl,
@@ -1073,6 +1121,23 @@ router.post(
                 req.user.id,
               ],
             );
+            await recordCertOpsMonitorObservation({
+              workspaceId: req.workspace.id,
+              createdBy: req.user.id,
+              domainMonitorId: monitorResult.rows[0].id,
+              tokenId: tokenResult.rows[0].id,
+              url: monitorUrl,
+              hostname: certDomain,
+              source: "domain_checker",
+              sourceRef: sourceCertId || certificate.id || certDomain,
+              certificate: {
+                issuer,
+                subject,
+                serialNumber,
+                fingerprintSha256: tlsFingerprint,
+                notAfter: monitorSslValidTo || expiration,
+              },
+            });
             monitorsCreated += 1;
           }
         }
@@ -1248,6 +1313,8 @@ router.post(
               ssl_valid_to: cert.valid_to ? new Date(cert.valid_to) : null,
               ssl_serial: x509.serialNumber || cert.serialNumber || null,
               ssl_fingerprint: cert.fingerprint256 || cert.fingerprint || null,
+              public_certificate_pem:
+                typeof x509.toString === "function" ? x509.toString() : null,
             };
           }
         }
@@ -1345,6 +1412,28 @@ router.post(
             error: tokenErr.message,
           });
         }
+      }
+
+      if (sslData.ssl_valid_to) {
+        await recordCertOpsMonitorObservation({
+          workspaceId: req.workspace.id,
+          createdBy: req.user.id,
+          domainMonitorId: domainRow.id,
+          tokenId: domainRow.token_id || null,
+          url: normalizedUrl,
+          hostname: parsedUrl.hostname,
+          source: "endpoint_monitor",
+          sourceRef: domainRow.id,
+          certificate: {
+            issuer: sslData.ssl_issuer,
+            subject: sslData.ssl_subject,
+            serialNumber: sslData.ssl_serial,
+            fingerprintSha256: sslData.ssl_fingerprint,
+            notBefore: sslData.ssl_valid_from,
+            notAfter: sslData.ssl_valid_to,
+            certificatePem: sslData.public_certificate_pem,
+          },
+        });
       }
 
       try {

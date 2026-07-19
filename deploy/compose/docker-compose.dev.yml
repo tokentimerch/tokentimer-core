@@ -46,6 +46,8 @@ services:
       - DB_PASSWORD=password
       - APP_URL=http://localhost:5173
       - API_URL=http://localhost:4000
+      # CertOps rollout flag (env > DB > default false)
+      - CERTOPS_ENABLED=${CERTOPS_ENABLED:-}
       - SESSION_SECRET=dev_session_secret_change_in_production
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!
@@ -320,6 +322,8 @@ services:
       - DB_NAME=tokentimer
       - DB_USER=tokentimer
       - DB_PASSWORD=password
+      # CertOps rollout flag (env > DB > default false); must match api service
+      - CERTOPS_ENABLED=${CERTOPS_ENABLED:-}
       - "WORKER_ENDPOINT_CHECK_CRON=${WORKER_ENDPOINT_CHECK_CRON:-*/1 * * * *}"
       - WORKER_ENDPOINT_CHECK_INTERVAL_MS=${WORKER_ENDPOINT_CHECK_INTERVAL_MS:-}
       - WORKER_RUN_ON_START=${WORKER_RUN_ON_START:-false}

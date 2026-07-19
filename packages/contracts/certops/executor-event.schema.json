@@ -1,0 +1,284 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/executor-event.schema.json",
+  "title": "CertOps Executor Event",
+  "description": "M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. It carries normalized public job/evidence events only; runtime enforces machine-token auth, rate limiting, idempotency, private-key rejection, generic-secret redaction, and safe persistence. Richer agent-executed protocol and job signing are deferred to M4.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "jobId",
+    "workspaceId",
+    "status",
+    "eventType",
+    "occurredAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "workspaceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "certificateId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "executorId": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "claimed", "running", "succeeded", "failed", "rejected", "blocked", "cancelled"]
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "job.accepted",
+        "job.started",
+        "job.progress",
+        "job.completed",
+        "job.failed",
+        "job.rejected",
+        "evidence.attached"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$",
+      "description": "The supplied RFC3339 timestamp must use a year from 2000 through 2100. Runtime normalizes accepted values to UTC milliseconds; offsets may move the normalized instant outside that lexical-year range."
+    },
+    "message": {
+      "type": ["string", "null"],
+      "maxLength": 1024
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/definitions/embeddedEvidenceItem"
+      }
+    },
+    "metadata": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Public, sanitized metadata entries only. Names that collide after case/separator normalization with server-owned executor, evidence, lifecycle, or redaction fields are rejected.",
+      "items": {
+        "$ref": "#/definitions/publicMetadataEntry"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["eventType"],
+        "properties": {
+          "eventType": {
+            "const": "evidence.attached"
+          }
+        }
+      },
+      "then": {
+        "required": ["evidence"],
+        "properties": {
+          "evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "embeddedEvidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Relaxed embedded evidence item accepted inside the M2 executor envelope. Context such as jobId, workspaceId, source, and observedAt may be derived or soft-filled by later runtime from the envelope/path. Standalone normalized/persisted evidence remains strict in evidence.schema.json.",
+      "required": ["eventType"],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "evidenceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "certificateId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "certificateInstanceId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "targetId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "certificate.observed",
+            "deployment.checked",
+            "deployment.updated",
+            "validation.passed",
+            "validation.failed",
+            "policy.checked"
+          ]
+        },
+        "source": {
+          "type": ["string", "null"],
+          "enum": ["executor", "domain-monitor", "endpoint-monitor", "control-plane", "external", null]
+        },
+        "status": {
+          "type": ["string", "null"],
+          "enum": ["accepted", "redacted", "rejected", "failed", null]
+        },
+        "observedAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "pattern": "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$",
+      "description": "The supplied RFC3339 timestamp must use a year from 2000 through 2100. Runtime normalizes accepted values to UTC milliseconds; offsets may move the normalized instant outside that lexical-year range."
+        },
+        "fingerprintSha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "summary": {
+          "type": ["string", "null"],
+          "maxLength": 1024
+        },
+        "metadata": {
+          "type": "array",
+          "maxItems": 32,
+          "description": "Public, sanitized metadata entries only.",
+          "items": {
+            "$ref": "#/definitions/publicMetadataEntry"
+          }
+        },
+        "artifactRefs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "reference"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["log", "report", "certificate", "deployment", "external"]
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "sha256": {
+                "type": ["string", "null"],
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        "output": {
+          "type": ["string", "null"],
+          "maxLength": 65536,
+          "x-maxBytes": 65536,
+          "description": "Optional executor output, limited to 65,536 UTF-8 bytes. Runtime rejects private key material, redacts generic secrets, and stores only redacted output separately from normalized metadata."
+        },
+        "redactionApplied": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Public metadata name. Private-key-bearing names are prohibited. Generic-secret-bearing names are accepted only for server-side redaction and persist under server-owned redacted metadata keys. Names colliding after case/separator normalization with x-certops-reservedMetadataNames are rejected.",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "x-certops-reservedMetadataNames": [
+        "executorEventId",
+        "executorEventType",
+        "executorStatus",
+        "occurredAt",
+        "certificateId",
+        "executorId",
+        "evidenceId",
+        "certificateInstanceId",
+        "targetId",
+        "source",
+        "status",
+        "fingerprintSha256",
+        "summary",
+        "artifactRefs",
+        "redactionApplied",
+        "redactionCount",
+        "redactedFields",
+        "redactedSecretCategories",
+        "jobStatusTransitionApplied",
+        "jobStatusTransitionIgnored",
+        "jobStatusTransitionIgnoredReason"
+      ]
+    }
+  }
+}

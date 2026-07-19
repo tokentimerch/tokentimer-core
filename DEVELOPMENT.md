@@ -84,7 +84,7 @@ API_URL=http://localhost:4000
 # Optional: override worker cron schedules. Defaults match Kubernetes Helm.
 # WORKER_DISCOVERY_CRON="*/5 * * * *"
 # WORKER_DELIVERY_CRON="1/5 * * * *"
-# WORKER_AUTO_SYNC_CRON="0 * * * *"
+# WORKER_AUTO_SYNC_CRON="*/1 * * * *"
 # WORKER_ENDPOINT_CHECK_CRON="*/1 * * * *"
 # WORKER_WEEKLY_DIGEST_CRON="0 9 * * 1"
 ```
@@ -187,14 +187,14 @@ Schedules are explicit and configurable. Cron defaults match
 |--------|---------------|------------------|---------------|
 | Alert Discovery | `WORKER_DISCOVERY_CRON` | `*/5 * * * *` | No |
 | Alert Delivery | `WORKER_DELIVERY_CRON` | `1/5 * * * *` | No |
-| Auto Sync | `WORKER_AUTO_SYNC_CRON` | `0 * * * *` | No |
+| Auto Sync | `WORKER_AUTO_SYNC_CRON` | `*/1 * * * *` | No |
 | Endpoint Check | `WORKER_ENDPOINT_CHECK_CRON` | `*/1 * * * *` | No |
 | Weekly Digest | `WORKER_WEEKLY_DIGEST_CRON` | `0 9 * * 1` | No |
 
 ```bash
 WORKER_DISCOVERY_CRON="*/5 * * * *"
 WORKER_DELIVERY_CRON="1/5 * * * *"
-WORKER_AUTO_SYNC_CRON="0 * * * *"
+WORKER_AUTO_SYNC_CRON="*/1 * * * *"
 WORKER_ENDPOINT_CHECK_CRON="*/1 * * * *"
 WORKER_WEEKLY_DIGEST_CRON="0 9 * * 1"
 WORKER_RUN_ON_START=false

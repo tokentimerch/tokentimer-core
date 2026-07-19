@@ -363,12 +363,35 @@ function parseList(value) {
 
 const SMTP_USERS = parseList(process.env.SMTP_USER);
 const SMTP_PASS = parseList(process.env.SMTP_PASS);
+// Hard cap so a single sendEmailNotification() cannot outlive the delivery
+// worker lease even with a huge SMTP_USERS list (each attempt can take tens
+// of seconds for verify + sendMail). Override via SMTP_MAX_ACCOUNT_ATTEMPTS.
+const DEFAULT_SMTP_MAX_ACCOUNT_ATTEMPTS = 10;
+
+export function resolveSmtpAccountAttemptLimit(
+  configuredCount,
+  envMax = process.env.SMTP_MAX_ACCOUNT_ATTEMPTS,
+) {
+  const parsed = Number.parseInt(String(envMax ?? ""), 10);
+  const max =
+    Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : DEFAULT_SMTP_MAX_ACCOUNT_ATTEMPTS;
+  const configured = Math.max(0, Number(configuredCount) || 0);
+  return Math.min(configured, max);
+}
 
 const transporters = [];
 // Allow self-signed certs via env var for development/air-gapped deployments
 const SMTP_REJECT_UNAUTHORIZED =
   String(process.env.SMTP_REJECT_UNAUTHORIZED ?? "true").toLowerCase() !==
   "false";
+
+async function maybeBeforeSmtpAttempt(onBeforeAttempt, meta) {
+  if (typeof onBeforeAttempt === "function") {
+    await onBeforeAttempt(meta);
+  }
+}
 
 function getTransporterForIndex(index) {
   const host = process.env.SMTP_HOST;
@@ -471,12 +494,34 @@ export async function sendEmailNotification({
   html,
   useEmbeddedLogo,
   attachments: providedAttachments,
+  onBeforeAttempt,
 }) {
-  // In test mode, short-circuit to success for deterministic runs
+  // In test mode, short-circuit to success for deterministic runs. Still
+  // invoke the ownership heartbeat once so callers can abort mid-send.
   if (process.env.NODE_ENV === "test") {
+    await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+      attempt: "test-short-circuit",
+    });
     return { success: true };
   }
-  const total = SMTP_USERS.length || 1;
+  const configuredTotal = SMTP_USERS.length || 1;
+  const total = resolveSmtpAccountAttemptLimit(configuredTotal);
+  if (total < configuredTotal) {
+    try {
+      logger.warn(
+        JSON.stringify({
+          level: "WARN",
+          message: "email-smtp-account-attempts-capped",
+          configured: configuredTotal,
+          cappedTo: total,
+        }),
+      );
+    } catch (_err) {
+      logger.debug("Non-critical operation failed", {
+        error: _err.message,
+      });
+    }
+  }
   const fromEnv = process.env.FROM_EMAIL; // optional explicit from
   try {
     // Check if HTML already contains the full template (with footer)
@@ -503,6 +548,10 @@ export async function sendEmailNotification({
 
     let last = null;
     for (let i = 0; i < total; i++) {
+      await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+        attempt: "smtp-account",
+        accountIndex: i,
+      });
       const tx = getTransporterForIndex(i);
       if (!tx) continue;
       const from = fromEnv
@@ -629,6 +678,9 @@ export async function sendEmailNotification({
       last.code === "SMTP_ERROR";
     if (shouldTryDbFallback) {
       try {
+        await maybeBeforeSmtpAttempt(onBeforeAttempt, {
+          attempt: "db-smtp",
+        });
         const dbTx = await getDbTransporter();
         if (dbTx) {
           const dbConfig = await getDbSmtpConfig();
@@ -704,12 +756,16 @@ export async function sendEmailNotification({
           }
         }
       } catch (dbErr) {
+        if (dbErr?.name === "DeliveryOwnershipLostError") throw dbErr;
         logger.warn("DB SMTP fallback failed:", dbErr.message);
       }
     }
 
     return last || { success: false, error: "SMTP not configured" };
   } catch (e) {
+    // Ownership heartbeats must propagate so the delivery worker aborts the
+    // row instead of treating lease loss as a generic SMTP failure.
+    if (e?.name === "DeliveryOwnershipLostError") throw e;
     const raw = String(e?.message || "").trim();
     let error = `Failed to send email. If the problem persists, contact ${getSupportEmail()}.`;
     let code = "SMTP_ERROR";

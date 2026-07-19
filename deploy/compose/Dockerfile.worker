@@ -24,10 +24,23 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 # Copy workspace packages and the worker app
 COPY packages ./packages
 COPY apps/worker ./apps/worker
+# CertOps monitor bridge for endpoint-check-worker (token-linked inventory sync).
+COPY apps/api/services/certops ./apps/api/services/certops
+COPY apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
+COPY apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY apps/api/config/runtime-labels.js ./apps/api/config/runtime-labels.js
+COPY apps/api/db/database.js ./apps/api/db/database.js
 
 # Install production dependencies for the worker and its workspace deps
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker... \
     && rm -rf /usr/local/lib/node_modules/npm
+
+# Node resolves require("pg")/("winston")/("prom-client") by walking up from
+# the requiring file. pnpm's non-hoisted install only symlinks those into
+# apps/worker/node_modules, but the copied apps/api/{db,utils}/*.js files
+# above sit under apps/api, a tree with no node_modules in its ancestry, so
+# those requires fail at runtime. Point apps/api at the worker's modules.
+RUN ln -s ../worker/node_modules /app/apps/api/node_modules
 
 # Own the app directory
 RUN chown -R tokentimer:tokentimer /app

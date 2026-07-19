@@ -1,0 +1,565 @@
+"use strict";
+
+const {
+  PRIVATE_KEY_MATERIAL_REJECTED,
+  RETIRE_STATUS_SQL_LIST,
+  toInventoryRecord,
+  upsertManagedCertificateByMonitorSource,
+} = require("./inventory");
+const { isCertOpsEnabled } = require("./settings");
+const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const {
+  assertSafeHostname,
+  CERTOPS_UNSAFE_IDENTITY,
+} = require("./identitySafety");
+
+const CERTOPS_MONITOR_BRIDGE_SKIPPED = "CERTOPS_MONITOR_BRIDGE_SKIPPED";
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([_key, item]) => item !== undefined),
+  );
+}
+
+function normalizeText(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function normalizeDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function normalizeFingerprintSha256(value) {
+  const text = normalizeText(value);
+  if (!text) return null;
+  const compact = text.replace(/[:\s-]/g, "").toLowerCase();
+  if (/^[a-f0-9]{64}$/.test(compact)) return compact;
+  return null;
+}
+
+function firstSha256Fingerprint(...values) {
+  for (const value of values) {
+    const normalized = normalizeFingerprintSha256(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function commonNameFromSubject(subject) {
+  const text = normalizeText(subject);
+  if (!text) return null;
+  const match = text.match(/(?:^|\n|,\s*)CN\s*=\s*([^,\n]+)/i);
+  return match?.[1]?.trim() || null;
+}
+
+function rejectPrivateMaterial(value) {
+  if (!containsPrivateKeyMaterial(value)) return;
+  const error = new Error("Private key material is not accepted by CertOps");
+  error.code = PRIVATE_KEY_MATERIAL_REJECTED;
+  error.status = 422;
+  throw error;
+}
+
+// Infra handles (pg Pool/Client instances, the env bag) are not certificate
+// data and their object graphs are deep enough to trip the detector's
+// fail-closed max-scan-depth guard, which would misreport a false-positive
+// private-key rejection. Scan only the caller-supplied observation fields.
+function dataFieldsForPrivateMaterialScan(options) {
+  const { dbPool: _dbPool, client: _client, env: _env, ...rest } = options;
+  return rest;
+}
+
+function certificateFromObservation(options) {
+  const input = options.certificate || {};
+  rejectPrivateMaterial(input);
+
+  const subject = normalizeText(
+    input.subject || input.ssl_subject || input.commonName,
+  );
+  const issuer = normalizeText(input.issuer || input.ssl_issuer);
+  const serialNumber = normalizeText(
+    input.serialNumber || input.serial_number || input.ssl_serial,
+  );
+  const fingerprintSha256 = firstSha256Fingerprint(
+    input.fingerprintSha256,
+    input.fingerprint_sha256,
+    input.fingerprint256,
+    input.fingerprint,
+    input.ssl_fingerprint,
+  );
+  const notBefore = normalizeDate(
+    input.notBefore || input.validFrom || input.ssl_valid_from,
+  );
+  const notAfter = normalizeDate(
+    input.notAfter ||
+      input.validTo ||
+      input.expiration ||
+      input.ssl_valid_to,
+  );
+  const certificatePem = normalizeText(
+    input.certificatePem || input.publicCertificatePem,
+  );
+
+  return {
+    commonName:
+      normalizeText(input.commonName) ||
+      commonNameFromSubject(subject) ||
+      normalizeText(options.hostname),
+    subjectAltNames: Array.isArray(input.subjectAltNames)
+      ? input.subjectAltNames.filter(Boolean)
+      : [],
+    issuer,
+    subject,
+    serialNumber,
+    certificatePem,
+    fingerprintSha256,
+    notBefore,
+    notAfter,
+  };
+}
+
+function hasPublicObservation(certificate) {
+  return Boolean(
+    certificate.fingerprintSha256 ||
+      certificate.serialNumber ||
+      certificate.subject ||
+      certificate.issuer ||
+      certificate.notAfter ||
+      certificate.certificatePem,
+  );
+}
+
+function assertObservationIdentitiesSafe(options, certificate) {
+  const hostname = normalizeText(options.hostname);
+  if (hostname) {
+    assertSafeHostname(hostname, { field: "hostname" });
+  }
+
+  const commonName = normalizeText(certificate?.commonName);
+  if (commonName) {
+    assertSafeHostname(commonName, { field: "commonName" });
+  }
+
+  for (const san of certificate?.subjectAltNames || []) {
+    const text = normalizeText(san);
+    if (text) {
+      assertSafeHostname(text, { field: "subjectAltName" });
+    }
+  }
+}
+
+async function withBridgeClient(options, fn) {
+  if (options.client) return fn(options.client);
+  if (!options.dbPool || typeof options.dbPool.connect !== "function") {
+    throw new Error("CertOps monitor bridge requires a client or dbPool");
+  }
+
+  const client = await options.dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+function bridgeSource(options) {
+  return normalizeText(options.source) || "endpoint_monitor";
+}
+
+function bridgeSourceRef(options) {
+  return normalizeText(options.sourceRef || options.domainMonitorId);
+}
+
+async function updateManagedCertificateToken(client, managedCertificate, tokenId) {
+  if (!tokenId || !managedCertificate?.id) return managedCertificate;
+  const result = await client.query(
+    `UPDATE managed_certificates
+        SET token_id = $1,
+            updated_at = NOW()
+      WHERE workspace_id = $2
+        AND id = $3
+      RETURNING *`,
+    [tokenId, managedCertificate.workspaceId, managedCertificate.id],
+  );
+  return toInventoryRecord(result.rows[0]);
+}
+
+async function existingManagedCertificate(client, options) {
+  const sourceRef = bridgeSourceRef(options);
+  if (!sourceRef) return null;
+
+  // Deliberately status-agnostic: a retired (revoked/decommissioned) row must
+  // still be found here so its monitor identity is reused instead of
+  // re-created, which would violate the unique index on
+  // (workspace_id, source, source_ref). Terminal-status preservation happens
+  // in updateManagedCertificateFromObservation, not in this lookup.
+  const result = await client.query(
+    `SELECT *
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND source = $2
+        AND source_ref = $3
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [options.workspaceId, bridgeSource(options), sourceRef],
+  );
+  return result.rows[0] ? toInventoryRecord(result.rows[0]) : null;
+}
+
+async function updateManagedCertificateFromObservation(
+  client,
+  managedCertificate,
+  certificate,
+  options,
+) {
+  const metadata = compactObject({
+    bridge: "certops-monitor-observation",
+    source: bridgeSource(options),
+    sourceRef: bridgeSourceRef(options),
+    domainMonitorId: normalizeText(options.domainMonitorId),
+    hostname: normalizeText(options.hostname),
+    url: normalizeText(options.url),
+  });
+  // Retire-first lifecycle: revoked/decommissioned are terminal. A monitor
+  // observation still refreshes observation fields on a retired row, but the
+  // status CASE below (mirroring the ON CONFLICT path in
+  // upsertManagedCertificateByMonitorSource) never flips a terminal status
+  // back to an active one.
+  const result = await client.query(
+    `UPDATE managed_certificates
+        SET status = CASE
+              WHEN managed_certificates.status IN (${RETIRE_STATUS_SQL_LIST})
+              THEN managed_certificates.status
+              ELSE $3
+            END,
+            token_id = COALESCE($4, token_id),
+            name = COALESCE($5, name),
+            common_name = COALESCE($6, common_name),
+            issuer = COALESCE($7, issuer),
+            subject = COALESCE($8, subject),
+            serial_number = COALESCE($9, serial_number),
+            certificate_pem = COALESCE($10, certificate_pem),
+            fingerprint_sha256 = COALESCE($11, fingerprint_sha256),
+            spki_fingerprint_sha256 = COALESCE($12, spki_fingerprint_sha256),
+            not_before = COALESCE($13, not_before),
+            not_after = COALESCE($14, not_after),
+            public_metadata = public_metadata || $15::jsonb,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2
+      RETURNING *`,
+    [
+      options.workspaceId,
+      managedCertificate.id,
+      options.status || "discovered",
+      options.tokenId || null,
+      normalizeText(options.name || options.hostname),
+      certificate.commonName,
+      certificate.issuer,
+      certificate.subject,
+      certificate.serialNumber,
+      certificate.certificatePem,
+      certificate.fingerprintSha256 || null,
+      certificate.spkiFingerprintSha256 || null,
+      certificate.notBefore,
+      certificate.notAfter,
+      JSON.stringify(metadata),
+    ],
+  );
+  return toInventoryRecord(result.rows[0]);
+}
+
+async function upsertObservedManagedCertificate(client, certificate, options) {
+  // Monitor observations are keyed by source + source_ref (the monitor id), not
+  // fingerprint alone. That keeps one managed_certificate row per endpoint/domain
+  // monitor when the served certificate rotates (new fingerprint, same URL).
+  const managedByMonitor = await existingManagedCertificate(client, options);
+  if (managedByMonitor) {
+    return updateManagedCertificateFromObservation(
+      client,
+      managedByMonitor,
+      certificate,
+      options,
+    );
+  }
+
+  const managedCertificate = await upsertManagedCertificateByMonitorSource(
+    client,
+    certificate,
+    {
+      workspaceId: options.workspaceId,
+      status: options.status || "discovered",
+      source: bridgeSource(options),
+      sourceRef: bridgeSourceRef(options),
+      name: options.name || options.hostname,
+      tokenId: options.tokenId || null,
+      createdBy: options.createdBy || null,
+    },
+    0,
+  );
+
+  return updateManagedCertificateToken(client, managedCertificate, options.tokenId);
+}
+
+async function upsertCertificateTarget(client, options) {
+  const source = bridgeSource(options);
+  const sourceRef = bridgeSourceRef(options);
+  const hostname = normalizeText(options.hostname);
+  const url = normalizeText(options.url);
+  const name = normalizeText(options.targetName || hostname || url) || "endpoint";
+  const metadata = compactObject({
+    bridge: "certops-monitor-observation",
+    source,
+    sourceRef,
+    hostname,
+    url,
+  });
+
+  const existing = await client.query(
+    `SELECT *
+       FROM certificate_targets
+      WHERE workspace_id = $1
+        AND domain_monitor_id = $2
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1`,
+    [options.workspaceId, options.domainMonitorId],
+  );
+
+  if (existing.rows[0]) {
+    const result = await client.query(
+      `UPDATE certificate_targets
+          SET token_id = COALESCE($3, token_id),
+              name = COALESCE($4, name),
+              target_type = $5,
+              status = 'active',
+              source = $6,
+              source_ref = COALESCE($7, source_ref),
+              hostname = COALESCE($8, hostname),
+              url = COALESCE($9, url),
+              deployment_reference = COALESCE($10, deployment_reference),
+              public_metadata = public_metadata || $11::jsonb,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND id = $2
+        RETURNING *`,
+      [
+        options.workspaceId,
+        existing.rows[0].id,
+        options.tokenId || null,
+        name,
+        options.targetType || "endpoint",
+        source,
+        sourceRef,
+        hostname,
+        url,
+        url || hostname,
+        JSON.stringify(metadata),
+      ],
+    );
+    return result.rows[0];
+  }
+
+  const result = await client.query(
+    `INSERT INTO certificate_targets (
+       workspace_id,
+       domain_monitor_id,
+       token_id,
+       name,
+       target_type,
+       status,
+       source,
+       source_ref,
+       hostname,
+       url,
+       deployment_reference,
+       public_metadata,
+       created_by
+     )
+     VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8, $9, $10, $11::jsonb, $12)
+     RETURNING *`,
+    [
+      options.workspaceId,
+      options.domainMonitorId,
+      options.tokenId || null,
+      name,
+      options.targetType || "endpoint",
+      source,
+      sourceRef,
+      hostname,
+      url,
+      url || hostname,
+      JSON.stringify(metadata),
+      options.createdBy || null,
+    ],
+  );
+  return result.rows[0];
+}
+
+async function upsertCertificateInstance(
+  client,
+  certificate,
+  managedCertificate,
+  target,
+  options,
+) {
+  const source = bridgeSource(options);
+  const sourceRef = bridgeSourceRef(options);
+  const metadata = compactObject({
+    bridge: "certops-monitor-observation",
+    source,
+    sourceRef,
+    domainMonitorId: normalizeText(options.domainMonitorId),
+    hostname: normalizeText(options.hostname),
+    url: normalizeText(options.url),
+    tokenLinked: Boolean(options.tokenId),
+  });
+  const observedAt = normalizeDate(options.observedAt) || new Date();
+
+  const result = await client.query(
+    `INSERT INTO certificate_instances (
+       workspace_id,
+       managed_certificate_id,
+       target_id,
+       domain_monitor_id,
+       token_id,
+       status,
+       source,
+       source_ref,
+       observed_fingerprint_sha256,
+       observed_serial_number,
+       observed_subject,
+       observed_issuer,
+       observed_not_before,
+       observed_not_after,
+       deployment_reference,
+       observed_at,
+       public_metadata,
+       created_by
+     )
+     VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+       $11, $12, $13, $14, $15, $16, $17::jsonb, $18
+     )
+     ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
+     DO UPDATE SET
+       domain_monitor_id = EXCLUDED.domain_monitor_id,
+       token_id = COALESCE(EXCLUDED.token_id, certificate_instances.token_id),
+       status = EXCLUDED.status,
+       source = EXCLUDED.source,
+       source_ref = COALESCE(EXCLUDED.source_ref, certificate_instances.source_ref),
+       observed_serial_number = EXCLUDED.observed_serial_number,
+       observed_subject = EXCLUDED.observed_subject,
+       observed_issuer = EXCLUDED.observed_issuer,
+       observed_not_before = EXCLUDED.observed_not_before,
+       observed_not_after = EXCLUDED.observed_not_after,
+       deployment_reference = EXCLUDED.deployment_reference,
+       observed_at = EXCLUDED.observed_at,
+       public_metadata = EXCLUDED.public_metadata,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      managedCertificate.id,
+      target.id,
+      options.domainMonitorId,
+      options.tokenId || null,
+      options.instanceStatus || "active",
+      source,
+      sourceRef,
+      certificate.fingerprintSha256,
+      certificate.serialNumber,
+      certificate.subject,
+      certificate.issuer,
+      certificate.notBefore,
+      certificate.notAfter,
+      normalizeText(options.deploymentReference || options.url),
+      observedAt,
+      JSON.stringify(metadata),
+      options.createdBy || null,
+    ],
+  );
+
+  return result.rows[0];
+}
+
+async function bridgeEndpointCertificateObservation(options = {}) {
+  rejectPrivateMaterial(dataFieldsForPrivateMaterialScan(options));
+
+  if (!options.workspaceId || !options.domainMonitorId) {
+    throw new Error("workspaceId and domainMonitorId are required");
+  }
+
+  const db = options.client || options.dbPool;
+  const enabled = await isCertOpsEnabled({
+    dbPool: db,
+    env: options.env || process.env,
+  });
+  if (!enabled) {
+    return {
+      skipped: true,
+      code: CERTOPS_MONITOR_BRIDGE_SKIPPED,
+      reason: "certops_disabled",
+    };
+  }
+
+  const certificate = certificateFromObservation(options);
+  if (!hasPublicObservation(certificate)) {
+    return {
+      skipped: true,
+      code: CERTOPS_MONITOR_BRIDGE_SKIPPED,
+      reason: "no_public_certificate_observation",
+    };
+  }
+
+  assertObservationIdentitiesSafe(options, certificate);
+
+  if (!options.tokenId) {
+    return {
+      skipped: true,
+      code: CERTOPS_MONITOR_BRIDGE_SKIPPED,
+      reason: "no_linked_token",
+    };
+  }
+
+  return withBridgeClient(options, async (client) => {
+    const managedCertificate = await upsertObservedManagedCertificate(
+      client,
+      certificate,
+      options,
+    );
+    const target = await upsertCertificateTarget(client, options);
+    const instance = await upsertCertificateInstance(
+      client,
+      certificate,
+      managedCertificate,
+      target,
+      options,
+    );
+
+    return {
+      skipped: false,
+      managedCertificate,
+      target,
+      instance,
+    };
+  });
+}
+
+module.exports = {
+  CERTOPS_MONITOR_BRIDGE_SKIPPED,
+  CERTOPS_UNSAFE_IDENTITY,
+  bridgeEndpointCertificateObservation,
+  certificateFromObservation,
+  normalizeFingerprintSha256,
+};

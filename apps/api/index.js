@@ -31,7 +31,13 @@ const {
   loadWorkspace,
   requireWorkspaceMembership,
 } = require("./services/rbac");
-const { createCsrfExemptMiddleware } = require("./middleware/csrf-exempt");
+const {
+  createCsrfExemptMiddleware,
+  isCertOpsMachineTokenCsrfExemptPath,
+} = require("./middleware/csrf-exempt");
+const {
+  createCertOpsMachineWritePreParserBoundary,
+} = require("./middleware/certops-executor-body-parser");
 
 const swaggerOptions = {
   definition: {
@@ -252,7 +258,10 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
-// 3. Request size limits
+// 3. Request size limits. The exact CertOps machine-write boundary runs its
+// prefix/IP limiter before parsing, then applies the smaller dedicated parser.
+// It marks accepted requests so the machine router does not count them twice.
+app.use(createCertOpsMachineWritePreParserBoundary());
 app.use(express.json({ limit: "10mb" })); // Limit JSON payload size (10mb for large integration scans)
 
 // Initialize session and Passport BEFORE any routes that require authentication
@@ -571,7 +580,9 @@ app.get("/api/csrf-token", (req, res) => {
 
 // Apply CSRF protection to API routes - Skip in development and test
 if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
-  const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection);
+  const csrfExempt = createCsrfExemptMiddleware(doubleCsrfProtection, {
+    allowPath: isCertOpsMachineTokenCsrfExemptPath,
+  });
   app.use("/api", csrfExempt);
 }
 // Apply email verification enforcement to all API routes
@@ -594,6 +605,10 @@ app.use(require("./routes/alerts"));
 app.use(require("./routes/account"));
 // --- INTEGRATIONS (extracted to routes/integrations.js) ---
 app.use(require("./routes/integrations"));
+// --- CERTOPS (extracted to routes/certops.js) ---
+app.use(require("./routes/certops"));
+// --- CERTOPS EXECUTOR (machine-token routes) ---
+app.use(require("./routes/certops-executor"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 

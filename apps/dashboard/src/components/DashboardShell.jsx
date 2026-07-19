@@ -43,7 +43,10 @@ import {
   User,
 } from 'lucide-react';
 import { useDashboardMenuStyles } from '../hooks/useDashboardMenuStyles.js';
-import { DASHBOARD_PAGE_GUTTER_X } from '../styles/dashboardLayout';
+import {
+  DASHBOARD_PAGE_GUTTER_X,
+  DASHBOARD_SHELL_HEADER_HEIGHT,
+} from '../styles/dashboardLayout';
 import { getFaviconPath } from '../utils/logoUtils.js';
 
 const DASHBOARD_SIDEBAR_STORAGE_KEY = 'tt_dashboard_sidebar_width';
@@ -150,8 +153,20 @@ function getDashboardLinkTarget() {
   if (typeof window === 'undefined') return '/dashboard';
 
   try {
+    const path = String(window.location.pathname || '');
     const search = new URLSearchParams(window.location.search);
     search.delete('view');
+    // Inventory reuses the `q` query param for asset search. Audit (and other
+    // non-dashboard pages) also use `q` for their own search boxes. Only carry
+    // inventory filters onto /dashboard when already on the inventory route;
+    // otherwise keep workspace context and drop foreign search terms.
+    if (!path.startsWith('/dashboard')) {
+      const workspace = search.get('workspace');
+      const next = new URLSearchParams();
+      if (workspace) next.set('workspace', workspace);
+      const qs = next.toString();
+      return `/dashboard${qs ? `?${qs}` : ''}`;
+    }
     const qs = search.toString();
     return `/dashboard${qs ? `?${qs}` : ''}`;
   } catch (_) {
@@ -400,7 +415,7 @@ export default function DashboardShell({
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
-            href: 'https://tokentimer.ch/docs#self-hosted',
+            href: 'https://tokentimer.ch/docs/self-hosted',
           },
           {
             key: 'audit',
@@ -429,7 +444,7 @@ export default function DashboardShell({
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
-            href: 'https://tokentimer.ch/docs#self-hosted',
+            href: 'https://tokentimer.ch/docs/self-hosted',
           },
         ]),
     ...(isSystemAdmin
@@ -581,10 +596,12 @@ export default function DashboardShell({
           <Flex
             align='center'
             justify='center'
-            minH='54px'
+            h={DASHBOARD_SHELL_HEADER_HEIGHT}
             w='100%'
             px={isDashboardSidebarExpanded ? 3 : 1}
             flexShrink={0}
+            borderBottom='1px solid'
+            borderColor={dividerColor}
           >
             <Button
               as={RouterLink}
@@ -625,8 +642,6 @@ export default function DashboardShell({
               />
             </Button>
           </Flex>
-
-          <Divider w='100%' borderColor={dividerColor} />
 
           <VStack
             align='stretch'
@@ -774,7 +789,7 @@ export default function DashboardShell({
           align='center'
           justify='space-between'
           gap={4}
-          minH='54px'
+          h={DASHBOARD_SHELL_HEADER_HEIGHT}
           px={DASHBOARD_PAGE_GUTTER_X}
           py={2}
           bg={pageBg}
@@ -791,7 +806,7 @@ export default function DashboardShell({
                 fontFamily='Archivo, system-ui, sans-serif'
                 fontWeight='bold'
                 letterSpacing='-0.01em'
-                lineHeight='short'
+                lineHeight='shorter'
                 noOfLines={1}
               >
                 {pageTitle}
@@ -1022,7 +1037,7 @@ export default function DashboardShell({
           align='center'
           justify='space-between'
           gap={3}
-          minH='54px'
+          h={DASHBOARD_SHELL_HEADER_HEIGHT}
           px={DASHBOARD_PAGE_GUTTER_X}
           py={2}
           bg={pageBg}

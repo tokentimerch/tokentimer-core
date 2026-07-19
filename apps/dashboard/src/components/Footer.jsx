@@ -101,7 +101,7 @@ const Footer = () => {
       {
         label: 'Docs',
         icon: FiBookOpen,
-        href: 'https://tokentimer.ch/docs#self-hosted',
+        href: 'https://tokentimer.ch/docs/self-hosted',
         isExternal: true,
         ariaLabel: 'Documentation (opens online)',
       },
@@ -263,7 +263,7 @@ const Footer = () => {
             }}
           >
             <Link
-              href='https://tokentimer.ch/docs#self-hosted'
+              href='https://tokentimer.ch/docs/self-hosted'
               isExternal
               cursor='pointer'
               color={footerLinkColor}

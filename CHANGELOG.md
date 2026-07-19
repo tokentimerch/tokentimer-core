@@ -389,8 +389,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **Removed embedded docs from the self-hosted dashboard.** The in-app `/docs` route and all bundled documentation pages (Intro, Teams, Tokens, Alerts, Audit, Usage, API) have been removed from the dashboard bundle. Every docs link in the dashboard — Navigation bar, mobile nav, Footer, Help page, NotFound page, WelcomeModal, ProductTour, ImportTokensModal, and all import provider forms — now opens `https://tokentimer.ch/docs#self-hosted` in a new tab. This reduces the dashboard bundle size and ensures self-hosted users always read the latest documentation.
-- Updated `COMMERCIAL_TERMS.md` and `README.md` docs references to point to `https://tokentimer.ch/docs#self-hosted`.
+- **Removed embedded docs from the self-hosted dashboard.** The in-app `/docs` route and all bundled documentation pages (Intro, Teams, Tokens, Alerts, Audit, Usage, API) have been removed from the dashboard bundle. Every docs link in the dashboard — Navigation bar, mobile nav, Footer, Help page, NotFound page, WelcomeModal, ProductTour, ImportTokensModal, and all import provider forms — now opens `https://tokentimer.ch/docs/self-hosted` in a new tab. This reduces the dashboard bundle size and ensures self-hosted users always read the latest documentation.
+- Updated `COMMERCIAL_TERMS.md` and `README.md` docs references to point to `https://tokentimer.ch/docs/self-hosted`.
 - Updated release metadata from **0.3.1** to **0.3.2** across package and contract version files.
 
 ### Fixed

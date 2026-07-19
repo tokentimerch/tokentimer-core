@@ -316,6 +316,7 @@ const migrations = [
         attempts_whatsapp INTEGER NOT NULL DEFAULT 0,
         last_attempt TIMESTAMP NULL,
         next_attempt_at TIMESTAMP NULL,
+        delivery_claim_id UUID NULL,
         last_error_class TEXT NULL,
         last_error_message TEXT NULL,
         error_message TEXT NULL,
@@ -539,6 +540,8 @@ const migrations = [
         token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
         health_check_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         last_health_check_at TIMESTAMPTZ NULL,
+        check_claimed_until TIMESTAMPTZ NULL,
+        check_claim_id UUID NULL,
         last_health_status TEXT NULL CHECK (last_health_status IN ('healthy','unhealthy','error','pending')),
         last_health_status_code INTEGER NULL,
         last_health_error TEXT NULL,
@@ -561,6 +564,738 @@ const migrations = [
     sql: `
       CREATE INDEX IF NOT EXISTS idx_tokens_workspace_expiration
         ON tokens(workspace_id, expiration);
+    `,
+  },
+  {
+    version: 10,
+    name: "certops_inventory_schema",
+    sql: `
+      -- CertOps profiles contain public/non-secret policy metadata only.
+      CREATE TABLE IF NOT EXISTS certificate_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT NULL,
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'disabled', 'archived')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        issuer TEXT NULL,
+        subject_template TEXT NULL,
+        san_templates TEXT[] NOT NULL DEFAULT '{}',
+        validity_days INTEGER NULL CHECK (validity_days IS NULL OR validity_days > 0),
+        renew_before_days INTEGER NULL CHECK (renew_before_days IS NULL OR renew_before_days >= 0),
+        key_mode TEXT NULL CHECK (
+          key_mode IS NULL OR key_mode IN (
+            'agent-local',
+            'proxy-agent-local',
+            'cert-manager-managed',
+            'appliance-managed',
+            'hsm-managed',
+            'vault-managed',
+            'os-store-managed',
+            'external-unknown'
+          )
+        ),
+        key_reference TEXT NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_profiles_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_profiles_workspace
+        ON certificate_profiles(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_profiles_workspace_status
+        ON certificate_profiles(workspace_id, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_profiles_workspace_name
+        ON certificate_profiles(workspace_id, LOWER(name));
+
+      -- Managed certificates are inventory identities. They store public
+      -- certificate material and metadata only; never customer private keys.
+      CREATE TABLE IF NOT EXISTS managed_certificates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        profile_id UUID NULL,
+        status TEXT NOT NULL DEFAULT 'discovered'
+          CHECK (status IN ('discovered', 'active', 'renewing', 'expiring', 'expired', 'revoked', 'decommissioned')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        name TEXT NULL,
+        common_name TEXT NULL,
+        subject_alt_names TEXT[] NOT NULL DEFAULT '{}',
+        issuer TEXT NULL,
+        subject TEXT NULL,
+        serial_number TEXT NULL,
+        certificate_pem TEXT NULL,
+        fingerprint_sha256 TEXT NULL,
+        spki_fingerprint_sha256 TEXT NULL,
+        public_key_algorithm TEXT NULL,
+        public_key_size INTEGER NULL CHECK (public_key_size IS NULL OR public_key_size > 0),
+        signature_algorithm TEXT NULL,
+        not_before TIMESTAMPTZ NULL,
+        not_after TIMESTAMPTZ NULL,
+        key_mode TEXT NULL CHECK (
+          key_mode IS NULL OR key_mode IN (
+            'agent-local',
+            'proxy-agent-local',
+            'cert-manager-managed',
+            'appliance-managed',
+            'hsm-managed',
+            'vault-managed',
+            'os-store-managed',
+            'external-unknown'
+          )
+        ),
+        key_reference TEXT NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_managed_certificates_profile
+          FOREIGN KEY (workspace_id, profile_id)
+          REFERENCES certificate_profiles(workspace_id, id)
+          ON DELETE SET NULL (profile_id),
+        CONSTRAINT uq_managed_certificates_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace
+        ON managed_certificates(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_status
+        ON managed_certificates(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_token
+        ON managed_certificates(workspace_id, token_id)
+        WHERE token_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_expiry
+        ON managed_certificates(workspace_id, not_after);
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_serial
+        ON managed_certificates(workspace_id, serial_number)
+        WHERE serial_number IS NOT NULL;
+      -- Non-monitor rows (import/api/manual/...) dedupe by fingerprint.
+      -- Monitor observations dedupe by (source, source_ref) so two monitors
+      -- can share a fingerprint as separate inventory identities without
+      -- stealing provenance.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker');
+      CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_san
+        ON managed_certificates USING GIN(subject_alt_names);
+
+      -- Certificate targets are a location abstraction (observation point or
+      -- deployment destination). They may point at hosts, endpoints, appliances,
+      -- or cluster references, but never hold key material.
+      CREATE TABLE IF NOT EXISTS certificate_targets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        profile_id UUID NULL,
+        domain_monitor_id UUID NULL REFERENCES domain_monitors(id) ON DELETE SET NULL,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        target_type TEXT NOT NULL
+          CHECK (target_type IN ('endpoint', 'domain', 'host', 'kubernetes-secret', 'load-balancer', 'cdn', 'appliance', 'hsm', 'vault', 'other')),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'inactive', 'decommissioned', 'error')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        hostname TEXT NULL,
+        url TEXT NULL,
+        deployment_reference TEXT NULL,
+        environment TEXT NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certificate_targets_profile
+          FOREIGN KEY (workspace_id, profile_id)
+          REFERENCES certificate_profiles(workspace_id, id)
+          ON DELETE SET NULL (profile_id),
+        CONSTRAINT uq_certificate_targets_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace
+        ON certificate_targets(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace_status
+        ON certificate_targets(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace_type
+        ON certificate_targets(workspace_id, target_type);
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_workspace_hostname
+        ON certificate_targets(workspace_id, hostname)
+        WHERE hostname IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_targets_domain_monitor
+        ON certificate_targets(workspace_id, domain_monitor_id)
+        WHERE domain_monitor_id IS NOT NULL;
+
+      -- Certificate instances are observed/deployed public certificate copies
+      -- on a target.
+      CREATE TABLE IF NOT EXISTS certificate_instances (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        managed_certificate_id UUID NOT NULL,
+        target_id UUID NOT NULL,
+        domain_monitor_id UUID NULL REFERENCES domain_monitors(id) ON DELETE SET NULL,
+        token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'discovered'
+          CHECK (status IN ('discovered', 'active', 'deployed', 'stale', 'drifted', 'expiring', 'expired', 'revoked', 'missing', 'decommissioned', 'error')),
+        source TEXT NOT NULL DEFAULT 'manual'
+          CHECK (source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync')),
+        source_ref TEXT NULL,
+        observed_fingerprint_sha256 TEXT NULL,
+        observed_serial_number TEXT NULL,
+        observed_subject TEXT NULL,
+        observed_issuer TEXT NULL,
+        observed_not_before TIMESTAMPTZ NULL,
+        observed_not_after TIMESTAMPTZ NULL,
+        deployment_reference TEXT NULL,
+        observed_at TIMESTAMPTZ NULL,
+        public_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certificate_instances_managed_certificate
+          FOREIGN KEY (workspace_id, managed_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_certificate_instances_target
+          FOREIGN KEY (workspace_id, target_id)
+          REFERENCES certificate_targets(workspace_id, id)
+          ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace
+        ON certificate_instances(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_certificate
+        ON certificate_instances(workspace_id, managed_certificate_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_target
+        ON certificate_instances(workspace_id, target_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_domain_monitor
+        ON certificate_instances(workspace_id, domain_monitor_id)
+        WHERE domain_monitor_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace_status
+        ON certificate_instances(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certificate_instances_workspace_fingerprint
+        ON certificate_instances(workspace_id, observed_fingerprint_sha256)
+        WHERE observed_fingerprint_sha256 IS NOT NULL;
+      -- A monitor keeps one managed_certificate row (stable identity by source +
+      -- source_ref). Rotations are recorded as additional certificate_instances rows
+      -- per distinct served fingerprint: re-observing the same fingerprint at the same
+      -- target refreshes the existing row (last-seen), while a new fingerprint appends a
+      -- new row (rotation history). Uniqueness therefore includes the observed fingerprint.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_instances_target_cert_fingerprint
+        ON certificate_instances(
+          workspace_id,
+          target_id,
+          managed_certificate_id,
+          observed_fingerprint_sha256
+        );
+    `,
+  },
+  {
+    version: 11,
+    name: "certops_token_lifecycle_status",
+    sql: `
+      ALTER TABLE tokens
+        ADD COLUMN IF NOT EXISTS cert_lifecycle_status TEXT NULL;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE c.conname = 'tokens_cert_lifecycle_status_check'
+             AND t.relname = 'tokens'
+             AND n.nspname = current_schema()
+        ) THEN
+          ALTER TABLE tokens
+            ADD CONSTRAINT tokens_cert_lifecycle_status_check
+            CHECK (
+              cert_lifecycle_status IS NULL OR
+              cert_lifecycle_status IN (
+                'discovered',
+                'active',
+                'renewing',
+                'expiring',
+                'expired',
+                'revoked',
+                'decommissioned'
+              )
+            );
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_tokens_workspace_cert_lifecycle_status
+        ON tokens(workspace_id, cert_lifecycle_status)
+        WHERE cert_lifecycle_status IS NOT NULL;
+    `,
+  },
+  {
+    version: 12,
+    name: "certops_api_tokens_schema",
+    sql: `
+      -- CertOps API tokens store lookup metadata only. The raw plaintext token
+      -- is returned once by the service and is never persisted.
+      CREATE TABLE IF NOT EXISTS api_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 128),
+        token_prefix TEXT NOT NULL
+          CHECK (token_prefix ~ '^ttx_[a-f0-9]{16}$'),
+        token_hash TEXT NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+        scopes TEXT[] NOT NULL DEFAULT '{}',
+        CONSTRAINT api_tokens_scopes_check CHECK (
+            COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+            scopes <@ ARRAY[
+              'certops:read',
+              'certops:events:write',
+              'certops:jobs:read',
+              'certops:evidence:write'
+            ]::text[]
+        ),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'revoked')),
+        expires_at TIMESTAMPTZ NULL,
+        last_used_at TIMESTAMPTZ NULL,
+        revoked_at TIMESTAMPTZ NULL,
+        revoked_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_api_tokens_workspace_id UNIQUE (workspace_id, id)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_api_tokens_token_prefix
+        ON api_tokens(token_prefix);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_api_tokens_token_hash
+        ON api_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_workspace
+        ON api_tokens(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_workspace_status
+        ON api_tokens(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_status_expires
+        ON api_tokens(status, expires_at)
+        WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_created_by
+        ON api_tokens(workspace_id, created_by)
+        WHERE created_by IS NOT NULL;
+    `,
+  },
+  {
+    version: 13,
+    name: "certops_jobs_evidence_schema",
+    sql: `
+      -- CertOps jobs persist public lifecycle intent and status only. Payloads
+      -- and metadata are sanitized by services before persistence; no private
+      -- key material, credentials, PEM blobs, PFX/JKS bundles, or passwords are
+      -- accepted into these tables.
+      CREATE TABLE IF NOT EXISTS certificate_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        operation TEXT NOT NULL
+          CHECK (operation IN ('renew', 'deploy', 'reload', 'revoke', 'noop')),
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending_approval', 'approved', 'rejected', 'pending', 'claimed', 'running', 'succeeded', 'failed', 'blocked', 'cancelled')),
+        source TEXT NOT NULL DEFAULT 'api'
+          CHECK (source IN ('api', 'executor', 'system', 'automation', 'domain-monitor', 'endpoint-monitor', 'control-plane', 'external')),
+        requested_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        requested_by_api_token_id UUID NULL,
+        idempotency_key TEXT NULL
+          CHECK (idempotency_key IS NULL OR char_length(btrim(idempotency_key)) BETWEEN 1 AND 128),
+        subject_type TEXT NULL
+          CHECK (subject_type IS NULL OR subject_type IN ('managed_certificate', 'certificate_instance', 'certificate_target', 'token', 'domain', 'endpoint', 'external')),
+        subject_id TEXT NULL
+          CHECK (subject_id IS NULL OR char_length(btrim(subject_id)) BETWEEN 1 AND 128),
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        result_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        error_code TEXT NULL
+          CHECK (error_code IS NULL OR char_length(btrim(error_code)) BETWEEN 1 AND 128),
+        error_message TEXT NULL
+          CHECK (error_message IS NULL OR char_length(error_message) <= 1024),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        queued_at TIMESTAMPTZ NULL,
+        started_at TIMESTAMPTZ NULL,
+        completed_at TIMESTAMPTZ NULL,
+        canceled_at TIMESTAMPTZ NULL,
+        CONSTRAINT uq_certificate_jobs_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT fk_certificate_jobs_api_token
+          FOREIGN KEY (workspace_id, requested_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (requested_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_created
+        ON certificate_jobs(workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_status_created
+        ON certificate_jobs(workspace_id, status, created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_jobs_workspace_idempotency_key
+        ON certificate_jobs(workspace_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_subject
+        ON certificate_jobs(workspace_id, subject_type, subject_id, created_at DESC)
+        WHERE subject_type IS NOT NULL AND subject_id IS NOT NULL;
+
+      -- CertOps job log stores bounded lifecycle events and sanitized metadata.
+      CREATE TABLE IF NOT EXISTS certificate_job_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NOT NULL,
+        event_type TEXT NOT NULL
+          CHECK (event_type IN ('job.created', 'job.accepted', 'job.started', 'job.progress', 'job.completed', 'job.failed', 'job.rejected', 'job.cancelled', 'job.status_updated', 'evidence.attached')),
+        status TEXT NULL
+          CHECK (status IS NULL OR status IN ('pending_approval', 'approved', 'rejected', 'pending', 'claimed', 'running', 'succeeded', 'failed', 'blocked', 'cancelled')),
+        message TEXT NULL
+          CHECK (message IS NULL OR char_length(message) <= 1024),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certificate_job_log_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_certificate_job_log_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_job_log_workspace_job_created
+        ON certificate_job_log(workspace_id, job_id, created_at DESC);
+
+      -- CertOps evidence is public, sanitized lifecycle metadata only. Job
+      -- deletion detaches evidence from the job while preserving workspace
+      -- ownership for later audit/reporting until the workspace is removed.
+      CREATE TABLE IF NOT EXISTS certificate_evidence (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NULL,
+        evidence_type TEXT NOT NULL
+          CHECK (evidence_type IN ('certificate.observed', 'deployment.checked', 'deployment.updated', 'validation.passed', 'validation.failed', 'policy.checked')),
+        subject_type TEXT NULL
+          CHECK (subject_type IS NULL OR subject_type IN ('managed_certificate', 'certificate_instance', 'certificate_target', 'token', 'domain', 'endpoint', 'external')),
+        subject_id TEXT NULL
+          CHECK (subject_id IS NULL OR char_length(btrim(subject_id)) BETWEEN 1 AND 128),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        redacted_output TEXT NULL
+          CHECK (redacted_output IS NULL OR octet_length(redacted_output) <= 65536),
+        output_truncated BOOLEAN NOT NULL DEFAULT FALSE,
+        output_sha256 TEXT NULL
+          CHECK (output_sha256 IS NULL OR output_sha256 ~ '^[a-f0-9]{64}$'),
+        output_size_bytes INTEGER NULL
+          CHECK (output_size_bytes IS NULL OR output_size_bytes BETWEEN 0 AND 65536),
+        observed_at TIMESTAMPTZ NULL,
+        created_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_evidence_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT fk_certificate_evidence_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE SET NULL (job_id),
+        CONSTRAINT fk_certificate_evidence_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id),
+        CONSTRAINT certificate_evidence_output_consistency_check CHECK (
+          (redacted_output IS NULL AND output_sha256 IS NULL AND output_size_bytes IS NULL) OR
+          (redacted_output IS NOT NULL AND output_sha256 IS NOT NULL AND
+            output_size_bytes = octet_length(redacted_output))
+        )
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_evidence_workspace_job_created
+        ON certificate_evidence(workspace_id, job_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_certificate_evidence_workspace_subject_created
+        ON certificate_evidence(workspace_id, subject_type, subject_id, created_at DESC)
+        WHERE subject_type IS NOT NULL AND subject_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 14,
+    name: "certops_executor_event_idempotency",
+    sql: `
+      -- Executor event records hold only a hash of the normalized public
+      -- envelope and a safe accepted response. They never retain request
+      -- bodies, bearer tokens, credentials, or private-key material.
+      CREATE TABLE IF NOT EXISTS certificate_executor_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NOT NULL,
+        executor_event_id TEXT NOT NULL
+          CHECK (char_length(btrim(executor_event_id)) BETWEEN 1 AND 128),
+        request_hash TEXT NOT NULL
+          CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+        response JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'accepted'
+          CHECK (status IN ('accepted', 'claimed', 'running', 'succeeded', 'failed', 'rejected', 'blocked', 'cancelled')),
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_executor_events_workspace_job_event
+          UNIQUE (workspace_id, job_id, executor_event_id),
+        CONSTRAINT fk_certificate_executor_events_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_certificate_executor_events_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_workspace_job_created
+        ON certificate_executor_events(workspace_id, job_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_workspace_event
+        ON certificate_executor_events(workspace_id, executor_event_id);
+      CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_api_token
+        ON certificate_executor_events(workspace_id, created_by_api_token_id)
+        WHERE created_by_api_token_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 15,
+    name: "certops_managed_certificate_monitor_identity",
+    sql: `
+      -- Stop merging distinct monitor observations on shared fingerprints.
+      -- Non-monitor rows (import/api/manual/...) keep fingerprint dedupe.
+      -- Monitor identity is (workspace_id, source, source_ref).
+      -- certificate_targets is a location abstraction (observation point or
+      -- deployment destination), not only a deployment reference.
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint;
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+
+      -- Pre-v15 databases could hold duplicate monitor identities
+      -- (workspace_id, source, source_ref): the old SELECT-then-INSERT
+      -- monitor bridge raced (TOCTOU) and NULL-fingerprint rows bypassed
+      -- the old fingerprint unique index. Deduplicate deterministically
+      -- before creating the monitor identity unique index: keep the newest
+      -- row per identity (updated_at DESC, created_at DESC, id DESC), the
+      -- same resolution the old bridge converged on (latest observation).
+      -- certificate_instances children of losing rows are re-pointed to the
+      -- keeper so rotation history survives; only instances that would
+      -- collide with an equivalent keeper instance under
+      -- uq_certificate_instances_target_cert_fingerprint are deleted
+      -- (they describe the same observation). certificate_jobs and
+      -- certificate_evidence history that references losing rows through the
+      -- FK-less text pair (subject_type='managed_certificate', subject_id)
+      -- is re-pointed to the keeper too, and a terminal lifecycle status on
+      -- any losing row ('revoked'/'decommissioned', retire-first) is
+      -- carried onto the keeper before losers are deleted. No dedup is
+      -- needed for
+      -- uq_managed_certificates_workspace_fingerprint_import: the pre-v15
+      -- index uq_managed_certificates_workspace_fingerprint was unique over
+      -- ALL rows with fingerprint_sha256 IS NOT NULL, a superset of the new
+      -- import predicate's row set.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      colliding_instances AS (
+        SELECT ci.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ci.workspace_id, ci.target_id, k.keeper_id,
+                              ci.observed_fingerprint_sha256
+                 ORDER BY (ci.managed_certificate_id = k.keeper_id) DESC,
+                          ci.updated_at DESC, ci.created_at DESC, ci.id DESC
+               ) AS rn
+          FROM certificate_instances ci
+          JOIN managed_certificates mc
+            ON mc.workspace_id = ci.workspace_id
+           AND mc.id = ci.managed_certificate_id
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE ci.observed_fingerprint_sha256 IS NOT NULL
+      )
+      DELETE FROM certificate_instances
+       WHERE id IN (SELECT id FROM colliding_instances WHERE rn > 1);
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      )
+      UPDATE certificate_instances ci
+         SET managed_certificate_id = k.keeper_id
+        FROM managed_certificates mc
+        JOIN monitor_identity_keepers k
+          ON k.workspace_id = mc.workspace_id
+         AND k.source = mc.source
+         AND k.source_ref = mc.source_ref
+       WHERE ci.workspace_id = mc.workspace_id
+         AND ci.managed_certificate_id = mc.id
+         AND mc.id <> k.keeper_id;
+
+      -- certificate_jobs and certificate_evidence reference managed
+      -- certificates through the FK-less text pair
+      -- (subject_type = 'managed_certificate', subject_id = mc.id::text).
+      -- Re-point that history from each losing row to its keeper so job and
+      -- evidence trails survive the dedup. audit_events rows that mention
+      -- loser ids inside their metadata are historical records of what
+      -- happened at the time and are intentionally left untouched.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      monitor_identity_losers AS (
+        SELECT mc.workspace_id, mc.id AS loser_id, k.keeper_id
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+      )
+      UPDATE certificate_jobs cj
+         SET subject_id = l.keeper_id::text
+        FROM monitor_identity_losers l
+       WHERE cj.workspace_id = l.workspace_id
+         AND cj.subject_type = 'managed_certificate'
+         AND cj.subject_id = l.loser_id::text;
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      monitor_identity_losers AS (
+        SELECT mc.workspace_id, mc.id AS loser_id, k.keeper_id
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+      )
+      UPDATE certificate_evidence ce
+         SET subject_id = l.keeper_id::text
+        FROM monitor_identity_losers l
+       WHERE ce.workspace_id = l.workspace_id
+         AND ce.subject_type = 'managed_certificate'
+         AND ce.subject_id = l.loser_id::text;
+
+      -- Retire-first: a terminal lifecycle status ('revoked' or
+      -- 'decommissioned') must not be discarded just because a different
+      -- duplicate has a newer updated_at. The keeper row is still selected
+      -- by recency (identity and relationships), but if any losing row in
+      -- the group is terminal and the keeper is not, the keeper inherits the
+      -- terminal status. Deterministic choice: the most recently updated
+      -- terminal loser wins (updated_at DESC, created_at DESC, id DESC).
+      -- managed_certificates has no retired_at/decommissioned_at columns;
+      -- status is the only lifecycle column. updated_at is left as-is: the
+      -- keeper already carries the newest updated_at in its group by
+      -- construction.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      terminal_losers AS (
+        SELECT DISTINCT ON (k.workspace_id, k.keeper_id)
+               k.workspace_id, k.keeper_id,
+               mc.status AS terminal_status
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+           AND mc.status IN ('revoked', 'decommissioned')
+         ORDER BY k.workspace_id, k.keeper_id,
+                  mc.updated_at DESC, mc.created_at DESC, mc.id DESC
+      )
+      UPDATE managed_certificates mc
+         SET status = t.terminal_status
+        FROM terminal_losers t
+       WHERE mc.workspace_id = t.workspace_id
+         AND mc.id = t.keeper_id
+         AND mc.status NOT IN ('revoked', 'decommissioned');
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      )
+      DELETE FROM managed_certificates mc
+       USING monitor_identity_keepers k
+       WHERE mc.workspace_id = k.workspace_id
+         AND mc.source = k.source
+         AND mc.source_ref = k.source_ref
+         AND mc.id <> k.keeper_id;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker');
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker');
+    `,
+  },
+  {
+    version: 16,
+    name: "endpoint_monitor_check_claim_lease",
+    sql: `
+      -- Dedicated concurrency lease for the endpoint check worker so
+      -- last_health_check_at stays pure scheduling state. A claimed monitor
+      -- has check_claimed_until in the future; crash recovery is natural
+      -- lease expiry. Mirrors the auto-sync worker's claimed-until idiom.
+      ALTER TABLE domain_monitors
+        ADD COLUMN IF NOT EXISTS check_claimed_until TIMESTAMPTZ NULL;
+    `,
+  },
+  {
+    version: 17,
+    name: "worker_owner_scoped_claim_ids",
+    sql: `
+      -- Owner identity for the claim-then-commit workers. A time-based marker
+      -- (next_attempt_at / check_claimed_until) alone cannot distinguish two
+      -- workers racing on the same row after a lease expires: both renewals
+      -- match a status-only predicate and both perform external side effects.
+      -- Each worker run generates one claim UUID; renewals, terminal writes,
+      -- and lease releases are conditional on still owning that claim id, so
+      -- a superseded worker's writes no-op instead of double-sending or
+      -- clearing another worker's lease.
+      ALTER TABLE alert_queue
+        ADD COLUMN IF NOT EXISTS delivery_claim_id UUID NULL;
+      ALTER TABLE domain_monitors
+        ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL;
     `,
   },
 ];
