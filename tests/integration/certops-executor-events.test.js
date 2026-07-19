@@ -900,6 +900,133 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("preserves private-key rejection precedence over the route's base scope on every machine route", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-wrong-scope-key-material",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      // Read-only token: valid and workspace-bound, but missing the base
+      // write scope required by every executor route.
+      const readOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:read"],
+      });
+      // Evidence-only token: passes the evidence route's base scope but not
+      // the two event routes' base scope.
+      const evidenceOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:evidence:write"],
+      });
+      const requests = [
+        {
+          route: "/api/v1/certops/executor/events",
+          tokens: [readOnly, evidenceOnly],
+          body: eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            message: PRIVATE_KEY_PEM,
+          }),
+        },
+        {
+          route: `/api/v1/certops/jobs/${job.id}/events`,
+          tokens: [readOnly, evidenceOnly],
+          body: {
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "renewal.started",
+            status: "running",
+            occurredAt: new Date().toISOString(),
+            message: PRIVATE_KEY_PEM,
+          },
+        },
+        {
+          route: `/api/v1/certops/jobs/${job.id}/evidence`,
+          tokens: [readOnly],
+          body: {
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            occurredAt: new Date().toISOString(),
+            evidence: [{ type: "log", output: "renewal log" }],
+            message: PRIVATE_KEY_PEM,
+          },
+        },
+      ];
+
+      for (const request of requests) {
+        for (const token of request.tokens) {
+          const beforeArtifacts = await countJobArtifacts({
+            workspaceId: workspaceA,
+            jobId: job.id,
+          });
+          const beforeStatus = (
+            await getCertificateJobById({
+              workspaceId: workspaceA,
+              jobId: job.id,
+            })
+          ).status;
+          const beforeAudits = await auditActionCounts({
+            workspaceId: workspaceA,
+          });
+
+          const withKeyMaterial = await supertest(app)
+            .post(request.route)
+            .set("Authorization", `Bearer ${token.plaintextToken}`)
+            .send({ ...request.body, eventId: `event-${crypto.randomUUID()}` });
+
+          const afterAudits = await auditActionCounts({
+            workspaceId: workspaceA,
+          });
+          expect(withKeyMaterial.status).to.equal(422);
+          expect(withKeyMaterial.body.code).to.equal(
+            "PRIVATE_KEY_MATERIAL_REJECTED",
+          );
+          expectNoSensitiveValues(withKeyMaterial.body, token.plaintextToken, [
+            PRIVATE_KEY_PEM,
+          ]);
+          expect(
+            await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id }),
+          ).to.deep.equal(beforeArtifacts);
+          expect(
+            (
+              await getCertificateJobById({
+                workspaceId: workspaceA,
+                jobId: job.id,
+              })
+            ).status,
+          ).to.equal(beforeStatus);
+          expect(afterAudits.CERTOPS_KEY_MATERIAL_REJECTED || 0).to.equal(
+            (beforeAudits.CERTOPS_KEY_MATERIAL_REJECTED || 0) + 1,
+          );
+
+          // Without key material the same underscoped token gets the scope
+          // denial: deferral must not weaken the route's scope enforcement.
+          const withoutKeyMaterial = await supertest(app)
+            .post(request.route)
+            .set("Authorization", `Bearer ${token.plaintextToken}`)
+            .send({
+              ...request.body,
+              eventId: `event-${crypto.randomUUID()}`,
+              message: "no key material",
+            });
+          expect(withoutKeyMaterial.status).to.equal(403);
+          expect(withoutKeyMaterial.body.code).to.equal(
+            "CERTOPS_API_TOKEN_SCOPE_DENIED",
+          );
+          expect(
+            await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id }),
+          ).to.deep.equal(beforeArtifacts);
+        }
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("fails closed when a combined empty-evidence key-material audit cannot be written", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-empty-evidence-key-audit-failure",

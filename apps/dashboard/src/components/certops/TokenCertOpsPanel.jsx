@@ -59,6 +59,7 @@ function CertOpsPanelBody({ tokenId }) {
     certificateCount,
     instances,
     instancesAvailable,
+    instancesError,
     loading,
     error,
   } = useCertOpsForToken(tokenId);
@@ -189,6 +190,7 @@ function CertOpsPanelBody({ tokenId }) {
         <CertificateInstances
           instances={instances}
           available={instancesAvailable}
+          error={instancesError}
         />
       </GridItem>
 

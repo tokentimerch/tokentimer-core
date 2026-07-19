@@ -552,7 +552,7 @@ describe("CertOps inventory migration", function () {
         const sourceRef = "endpoint:dedup-monitor-history";
 
         // The keeper-by-recency is active while the loser carries a terminal
-        // status: D7 retire-first must survive the dedup on the keeper.
+        // status: retire-first must survive the dedup on the keeper.
         await TestUtils.execQuery(
           `INSERT INTO ${schema}.managed_certificates
              (id, workspace_id, source, source_ref, status, fingerprint_sha256, updated_at)

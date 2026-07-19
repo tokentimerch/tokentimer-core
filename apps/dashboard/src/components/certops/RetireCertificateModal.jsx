@@ -41,7 +41,7 @@ const RETIRE_OPTIONS = [
 
 /**
  * Retire (soft lifecycle transition) for a managed certificate that is linked to
- * a token (plan D7 / section 10.1). The token cannot be hard-deleted while it is
+ * a token. The token cannot be hard-deleted while it is
  * backed by a managed certificate; it is revoked or decommissioned instead. The
  * certificate row and its evidence are preserved and the status is mirrored onto
  * the linked token by the backend.

@@ -1132,11 +1132,18 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(certOpsExecutorRoutesSource, /certops:executor:events/);
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireExecutorRouteScope,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
     );
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/jobs\/:jobId\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*perJobEventAuthMiddleware,\s*rateLimitMiddleware,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/jobs\/:jobId\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*perJobEventAuthMiddleware,\s*rateLimitMiddleware,\s*requireExecutorRouteScope,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,/s,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      // Private-key rejection precedence (PR #61 remediation): the base route
+      // scope is enforced by requireExecutorRouteScope only after private-key
+      // material has been scanned and rejected, not by the auth middleware.
+      /function requireExecutorRouteScope/,
     );
     assert.match(
       certOpsExecutorRoutesSource,
@@ -1508,6 +1515,9 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/index.js",
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
+      // PR #61 review remediation: classification-independent managed-backing
+      // check for the retire-first delete/reclassification gates.
+      "apps/api/routes/tokens.js",
       "apps/api/services/audit.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
@@ -1620,6 +1630,9 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/dashboard/tests/unit/certopsJobsFormat.test.js",
       "apps/dashboard/tests/unit/certopsMultiCert.test.js",
       "apps/dashboard/tests/unit/certopsPagination.test.js",
+      // PR #61 review remediation: fail-closed inventory resolution and
+      // instance-error propagation coverage.
+      "apps/dashboard/tests/unit/useCertOps.test.jsx",
     ]);
     const unexpectedFiles = files.filter(
       (file) =>
@@ -1658,6 +1671,9 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/index.js",
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
+      // PR #61 review remediation: classification-independent managed-backing
+      // check for the retire-first delete/reclassification gates.
+      "apps/api/routes/tokens.js",
       "apps/api/services/audit.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/bridgeGates.js",
@@ -1675,6 +1691,24 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/worker/src/delivery-worker.js",
       "apps/worker/src/endpoint-check-worker.js",
       "apps/worker/src/notify/email.js",
+      // PR #61 review remediation: dashboard fail-closed delete routing and
+      // instance-error propagation (Findings 4-6), plus the show-once modal
+      // Escape-key fix (Finding 5).
+      "apps/dashboard/src/App.jsx",
+      "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertificateInstances.jsx",
+      "apps/dashboard/src/components/certops/TokenCertOpsPanel.jsx",
+      "apps/dashboard/src/components/certops/useCertOps.js",
+      "apps/dashboard/tests/unit/ApiTokenPanel.test.jsx",
+      "apps/dashboard/tests/unit/useCertOps.test.jsx",
+      // Comment cleanup: remove internal plan-milestone shorthand from code
+      // comments and test descriptions; no behavior change.
+      "apps/dashboard/src/components/AssetInventoryTable.jsx",
+      "apps/dashboard/src/components/certops/RetireCertificateModal.jsx",
+      "apps/dashboard/src/components/certops/certopsApi.js",
+      "apps/dashboard/src/components/certops/certopsFormat.js",
+      "apps/dashboard/tests/unit/TokenCertOpsPanel.test.jsx",
+      "apps/dashboard/tests/unit/certopsMultiCert.test.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

@@ -390,7 +390,7 @@ function assertSafeDnsIdentity(value, { field = "DNS identity" } = {}) {
 }
 
 /**
- * Hostname validation for monitor-bridge / endpoint wiring (D8).
+ * Hostname validation for monitor-bridge / endpoint wiring.
  * Same policy as assertSafeDnsIdentity.
  */
 function assertSafeHostname(value, { field = "hostname" } = {}) {

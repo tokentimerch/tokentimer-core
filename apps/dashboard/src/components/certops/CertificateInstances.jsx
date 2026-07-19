@@ -18,8 +18,19 @@ import { formatDate, statusScheme } from './certopsFormat';
  * certificate location where the certificate was observed (an endpoint,
  * target, or other monitored location); monitors are observers.
  */
-export default function CertificateInstances({ instances, available }) {
+export default function CertificateInstances({ instances, available, error }) {
   const { muted, border } = useDashboardTheme();
+
+  if (error) {
+    return (
+      <DashboardState
+        type='error'
+        title='Could not load locations'
+        description={error}
+        py={6}
+      />
+    );
+  }
 
   if (!available) {
     return (

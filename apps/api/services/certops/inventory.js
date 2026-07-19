@@ -876,14 +876,35 @@ async function retireManagedCertificate(clientOrPool, options) {
     );
 
     if (certificate.token_id) {
-      await client.query(
-        `UPDATE tokens
-            SET cert_lifecycle_status = $1,
-                updated_at = NOW()
-          WHERE workspace_id = $2
-            AND id = $3`,
-        [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
+      // Interim model: several managed certificates may reference the same
+      // token. Only mirror a terminal lifecycle status onto the shared token
+      // when no sibling certificate remains outside a retired status;
+      // otherwise the token would advertise revoked/decommissioned while
+      // another linked certificate is still active.
+      const activeSiblings = await client.query(
+        `SELECT 1
+           FROM managed_certificates
+          WHERE workspace_id = $1
+            AND token_id = $2
+            AND id <> $3
+            AND status NOT IN ('revoked', 'decommissioned')
+          LIMIT 1`,
+        [
+          resolved.options.workspaceId,
+          certificate.token_id,
+          resolved.options.certificateId,
+        ],
       );
+      if (activeSiblings.rowCount === 0) {
+        await client.query(
+          `UPDATE tokens
+              SET cert_lifecycle_status = $1,
+                  updated_at = NOW()
+            WHERE workspace_id = $2
+              AND id = $3`,
+          [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
+        );
+      }
     }
 
     await writeRetireAudit(

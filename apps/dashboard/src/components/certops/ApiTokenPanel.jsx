@@ -466,6 +466,7 @@ export default function ApiTokenPanel() {
         isOpen={showOnceOpen}
         onClose={handleShowOnceClose}
         closeOnOverlayClick={false}
+        closeOnEsc={false}
         isCentered
         size='lg'
       >

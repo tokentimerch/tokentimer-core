@@ -1062,7 +1062,7 @@ const migrations = [
     version: 15,
     name: "certops_managed_certificate_monitor_identity",
     sql: `
-      -- D8: stop merging distinct monitor observations on shared fingerprints.
+      -- Stop merging distinct monitor observations on shared fingerprints.
       -- Non-monitor rows (import/api/manual/...) keep fingerprint dedupe.
       -- Monitor identity is (workspace_id, source, source_ref).
       -- certificate_targets is a location abstraction (observation point or
@@ -1086,7 +1086,7 @@ const migrations = [
       -- certificate_evidence history that references losing rows through the
       -- FK-less text pair (subject_type='managed_certificate', subject_id)
       -- is re-pointed to the keeper too, and a terminal lifecycle status on
-      -- any losing row ('revoked'/'decommissioned', D7 retire-first) is
+      -- any losing row ('revoked'/'decommissioned', retire-first) is
       -- carried onto the keeper before losers are deleted. No dedup is
       -- needed for
       -- uq_managed_certificates_workspace_fingerprint_import: the pre-v15
@@ -1200,7 +1200,7 @@ const migrations = [
          AND ce.subject_type = 'managed_certificate'
          AND ce.subject_id = l.loser_id::text;
 
-      -- D7 retire-first: a terminal lifecycle status ('revoked' or
+      -- Retire-first: a terminal lifecycle status ('revoked' or
       -- 'decommissioned') must not be discarded just because a different
       -- duplicate has a newer updated_at. The keeper row is still selected
       -- by recency (identity and relationships), but if any losing row in

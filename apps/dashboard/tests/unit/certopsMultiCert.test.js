@@ -14,7 +14,7 @@ function cert(overrides = {}) {
   };
 }
 
-describe('sortCertificatesForToken / pickPrimaryCertificate (D8 multi-cert)', () => {
+describe('sortCertificatesForToken / pickPrimaryCertificate (multi-cert)', () => {
   it('returns null / empty for missing input', () => {
     expect(pickPrimaryCertificate(undefined)).toBeNull();
     expect(pickPrimaryCertificate(null)).toBeNull();

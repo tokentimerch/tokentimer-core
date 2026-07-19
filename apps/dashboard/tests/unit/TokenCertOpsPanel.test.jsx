@@ -63,7 +63,7 @@ function hookState(overrides = {}) {
   };
 }
 
-describe('TokenCertOpsPanel multi-cert notice (D8)', () => {
+describe('TokenCertOpsPanel multi-cert notice', () => {
   beforeEach(() => {
     useCertOpsForTokenMock.mockReset();
   });

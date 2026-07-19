@@ -337,6 +337,39 @@ describe('ApiTokenPanel', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it('does not dismiss the show-once modal or destroy the secret on Escape', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const refresh = vi.fn();
+    useCertOpsApiTokensMock.mockReturnValue(tokensState({ refresh }));
+    const realisticPlaintext =
+      'ttx_0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    createApiTokenMock.mockResolvedValue({
+      token: { id: 'tok-1', name: 'certbot-prod-hook' },
+      plaintextToken: realisticPlaintext,
+    });
+
+    renderWithProviders(<ApiTokenPanel />);
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'certbot-prod-hook' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByText(realisticPlaintext)).toBeInTheDocument();
+
+    const dialog = screen.getByRole('dialog');
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+
+    // The secret is one-time: only the explicit acknowledgement button may
+    // dismiss the modal and clear the plaintext.
+    expect(screen.getByText(realisticPlaintext)).toBeInTheDocument();
+    expect(screen.getByText('Store this token now')).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it('clears the show-once token and closes the modal when the workspace changes', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsApiTokensMock.mockReturnValue(tokensState());

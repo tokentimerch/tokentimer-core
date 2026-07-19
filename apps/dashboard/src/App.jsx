@@ -2525,6 +2525,21 @@ function App() {
       setTokenToDelete(null);
     } catch (error) {
       logger.error('Failed to delete token:', error);
+      const code = error?.response?.data?.code;
+      try {
+        if (code === 'CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED') {
+          toast.error(
+            'This certificate is managed and cannot be deleted. Revoke or decommission it from the certificate panel instead.'
+          );
+        } else {
+          toast.error(
+            error?.response?.data?.error ||
+              'Failed to delete token. Please try again.'
+          );
+        }
+      } catch (_) {}
+      onDeleteModalClose();
+      setTokenToDelete(null);
     }
   };
 
@@ -3601,12 +3616,15 @@ function DashboardView({
   const { workspaceId, selectWorkspace } = useWorkspace();
 
   // CertOps: workspace-wide managed-certificate index (tokenId -> cert[]), used
-  // to gate deletion of managed cert tokens and to hide retired certs by default
-  // (plan D7). Empty/no-op when CertOps is disabled for the workspace. D8 allows
-  // several certificates per token; single-cert contexts use the deterministic
-  // primary pick (active preferred, most recently updated).
-  const { byTokenId: managedByTokenId, refresh: refreshCertOps } =
-    useWorkspaceCertOps();
+  // to gate deletion of managed cert tokens and to hide retired certs by default.
+  // Empty/no-op when CertOps is disabled for the workspace. Several
+  // certificates may reference the same token; single-cert contexts use the
+  // deterministic primary pick (active preferred, most recently updated).
+  const {
+    byTokenId: managedByTokenId,
+    resolved: certOpsResolved,
+    refresh: refreshCertOps,
+  } = useWorkspaceCertOps();
   const getManagedCertForToken = useCallback(
     id => pickPrimaryCertificate(managedByTokenId.get(Number(id))),
     [managedByTokenId]
@@ -3620,9 +3638,20 @@ function DashboardView({
   const [retireTarget, setRetireTarget] = useState(null);
 
   // Managed cert tokens cannot be hard-deleted; the row delete action routes to
-  // the retire (revoke/decommission) flow instead (plan D7).
+  // the retire (revoke/decommission) flow instead. Fail closed: while
+  // the managed-certificate inventory is still resolving (or its fetch failed),
+  // a token missing from the map must not be assumed unmanaged.
   const handleRowDeleteOrRetire = useCallback(
     id => {
+      if (!certOpsResolved) {
+        try {
+          toast.error(
+            'Checking certificate management status. Try again in a moment.'
+          );
+        } catch (_) {}
+        refreshCertOps();
+        return;
+      }
       const cert = getManagedCertForToken(id);
       if (cert) {
         const token = (Array.isArray(tokens)
@@ -3636,7 +3665,14 @@ function DashboardView({
       }
       onDeleteToken(id);
     },
-    [getManagedCertForToken, onDeleteToken, onRetireModalOpen, tokens]
+    [
+      certOpsResolved,
+      getManagedCertForToken,
+      onDeleteToken,
+      onRetireModalOpen,
+      refreshCertOps,
+      tokens,
+    ]
   );
 
   const handleRetireConfirm = useCallback(
@@ -4305,8 +4341,20 @@ function DashboardView({
     if (isViewer) return;
     const selectedIds = selectedVisibleTokenIds;
     if (selectedIds.length === 0) return;
+    // Fail closed: without a resolved managed-certificate inventory
+    // we cannot tell managed cert tokens apart from ordinary ones, so bulk
+    // deletion must wait rather than treat unknown tokens as unmanaged.
+    if (!certOpsResolved) {
+      try {
+        toast.error(
+          'Checking certificate management status. Try again in a moment.'
+        );
+      } catch (_) {}
+      refreshCertOps();
+      return;
+    }
     // Managed cert tokens cannot be hard-deleted; exclude them from bulk delete
-    // (they must be revoked/decommissioned individually) (plan D7).
+    // (they must be revoked/decommissioned individually).
     const managedSelected = selectedIds.filter(id =>
       getManagedCertForToken(id)
     );
@@ -4355,6 +4403,19 @@ function DashboardView({
       if (failedCount === 0) {
         showSuccessMessage(`Successfully deleted ${successCount} tokens.`);
       } else {
+        const retireRequiredCount = (data.results?.failed || []).filter(
+          f => f?.code === 'CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED'
+        ).length;
+        if (retireRequiredCount > 0) {
+          try {
+            toast.error(
+              `${retireRequiredCount} certificate(s) are managed and were not deleted. Revoke or decommission them individually.`
+            );
+          } catch (_) {}
+          // The inventory believed those tokens were unmanaged; refresh so
+          // the next attempt routes them to the retire flow.
+          refreshCertOps();
+        }
         showSuccessMessage(
           `Deleted ${successCount} tokens. ${failedCount} failed.`
         );
@@ -4733,7 +4794,7 @@ function DashboardView({
   );
 
   // Tokens in scope for the status chips/metrics: retired managed certs are
-  // hidden unless the "Retired" toggle is on, matching the visible list (D7).
+  // hidden unless the "Retired" toggle is on, matching the visible list.
   const scopedLoadedTokens = useMemo(
     () =>
       showRetired

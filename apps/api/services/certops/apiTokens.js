@@ -555,7 +555,15 @@ async function validateApiToken(options) {
   }
 
   if (!hasRequiredScopes(scopesFromRow(row), requiredScopes)) {
-    return invalidValidation(CERTOPS_API_TOKEN_SCOPE_DENIED);
+    // The token itself is fully authenticated (hash, workspace, status,
+    // expiry) at this point; expose its safe metadata so callers that defer
+    // scope enforcement (private-key-first executor routes) can still bind
+    // the identity for the synchronous rejection audit.
+    return {
+      valid: false,
+      code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+      token: tokenMetadataFromRow(row),
+    };
   }
 
   const token = await markApiTokenUsed({

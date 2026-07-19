@@ -231,7 +231,7 @@ async function updateManagedCertificateFromObservation(
     hostname: normalizeText(options.hostname),
     url: normalizeText(options.url),
   });
-  // D7 retire-first lifecycle: revoked/decommissioned are terminal. A monitor
+  // Retire-first lifecycle: revoked/decommissioned are terminal. A monitor
   // observation still refreshes observation fields on a retired row, but the
   // status CASE below (mirroring the ON CONFLICT path in
   // upsertManagedCertificateByMonitorSource) never flips a terminal status

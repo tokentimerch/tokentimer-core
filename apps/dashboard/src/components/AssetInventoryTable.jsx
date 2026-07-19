@@ -62,7 +62,7 @@ const RETIRED_STATUS_META = {
 /**
  * Resolves the badge a row should show: a retired managed-certificate state
  * (revoked/decommissioned) wins over the expiry-derived status, so retired
- * certs read as retired rather than "expired/healthy" (plan D7).
+ * certs read as retired rather than "expired/healthy".
  */
 function effectiveStatusMeta(token, getStatusMeta) {
   const managed = token.__managedCert;

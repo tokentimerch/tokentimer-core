@@ -69,7 +69,11 @@ function isCertificateToken(token) {
 }
 
 async function isManagedBackedCertificateToken(token) {
-  if (!token?.workspace_id || !isCertificateToken(token)) return false;
+  // Deliberately classification-independent: the token's type/category are
+  // mutable through the update route, so managed backing must be derived
+  // solely from managed_certificates.token_id or the retire-first delete
+  // gate could be bypassed by reclassifying the token before deletion.
+  if (!token?.workspace_id) return false;
 
   const result = await pool.query(
     `SELECT 1
@@ -991,6 +995,28 @@ router.put(
         }
       }
 
+      // Defense in depth: a managed-backed token must keep a certificate
+      // classification. Deletion is already gated independently of the
+      // classification, but allowing the reclassification would still leave
+      // the inventory pointing at a token the UI no longer treats as a cert.
+      if (type !== undefined || category !== undefined) {
+        const nextClassification = {
+          type: type !== undefined ? type : existingToken.type,
+          category: category !== undefined ? category : existingToken.category,
+        };
+        if (
+          isCertificateToken(existingToken) &&
+          !isCertificateToken(nextClassification) &&
+          (await isManagedBackedCertificateToken(existingToken))
+        ) {
+          return res.status(409).json({
+            error:
+              "Managed certificates must be retired before reclassification",
+            code: CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED,
+          });
+        }
+      }
+
       // Validate domains array if provided
       let domainsArray = undefined; // Use undefined to indicate not provided
       if (domains !== undefined) {
@@ -1393,8 +1419,12 @@ router.delete(
         }
       }
 
+      // Managed backing is classification-independent (see
+      // isManagedBackedCertificateToken): check every workspace-scoped token,
+      // not just cert-classified ones, so reclassification cannot bypass the
+      // retire-first delete gate.
       const authorizedCertTokenIds = authorizedTokens
-        .filter((token) => token.workspace_id && isCertificateToken(token))
+        .filter((token) => token.workspace_id)
         .map((token) => token.id);
       if (authorizedCertTokenIds.length > 0) {
         const managedBacked = await pool.query(

@@ -225,8 +225,10 @@ resetting per route.
 | 429 | `CERTOPS_MACHINE_RATE_LIMITED` | Token exceeded its shared rate-limit bucket (see section 4). |
 | 404 | `NOT_FOUND` | CertOps is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
 
-All error bodies are `{ "error": { "code": "...", "message": "..." } }` with
-no sensitive data (tokens, key material, raw secrets) ever echoed back.
+All error bodies use the flat envelope
+`{ "error": "<human-readable message>", "code": "<ERROR_CODE>" }` (an optional
+`details` field may carry validation specifics), with no sensitive data
+(tokens, key material, raw secrets) ever echoed back.
 
 ## 6. Minimal external executor example
 

@@ -111,7 +111,7 @@ export async function importCertificateMaterial(
  * Retire a managed certificate (soft lifecycle transition, not a row delete).
  *
  * Maps to POST /certops/certificates/:id/retire with `{ status, reason }` where
- * status is `revoked` or `decommissioned` (plan D7 / section 10.1). The backend
+ * status is `revoked` or `decommissioned`. The backend
  * keeps the certificate row and its evidence and mirrors the status onto the
  * linked token; nothing is purged. The endpoint may not exist yet in the current
  * core build (see PR #47), so callers should handle a 404 gracefully.
@@ -170,7 +170,7 @@ export function invalidateCertOpsInventoryCache(workspaceId) {
  * Loads the workspace CertOps inventory once and indexes by tokenId / cert id.
  * Used to enrich existing cert tokens in the dashboard without a separate list UI.
  *
- * `byTokenId` maps tokenId -> certificate[] because backend D8 allows multiple
+ * `byTokenId` maps tokenId -> certificate[] because the backend allows multiple
  * managed_certificates rows to reference the same token (e.g. one imported and
  * one monitor-observed for the same site). Use `getManagedCertificateForToken`
  * or `pickPrimaryCertificate` for single-cert display contexts.
@@ -216,7 +216,7 @@ export async function loadCertOpsInventoryIndex(
 }
 
 /**
- * All managed_certificate rows linked to an existing tokens.id (D8: several
+ * All managed_certificate rows linked to an existing tokens.id (several
  * certificates may reference the same token).
  */
 export async function getManagedCertificatesForToken(

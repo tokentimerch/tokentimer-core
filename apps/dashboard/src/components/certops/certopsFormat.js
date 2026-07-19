@@ -79,7 +79,7 @@ export function statusLabel(status) {
 }
 
 /**
- * Retired lifecycle states (plan D7 / section 10.1). A managed certificate in
+ * Retired lifecycle states. A managed certificate in
  * one of these states is hidden from the dashboard by default and its linked
  * token can no longer be hard-deleted, only revoked/decommissioned.
  */
@@ -91,7 +91,7 @@ export function isRetiredStatus(status) {
 
 /**
  * Deterministic ordering for multiple managed certificates that reference the
- * same token (backend D8 allows e.g. one imported + one monitor-observed row).
+ * same token (the backend allows e.g. one imported + one monitor-observed row).
  * Ordering: active (non-retired) certificates before retired ones, then most
  * recently updated first (updatedAt, falling back to createdAt), then id
  * ascending as a stable tie-breaker.

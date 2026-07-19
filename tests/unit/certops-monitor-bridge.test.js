@@ -98,7 +98,7 @@ function createIdentityStore() {
     return status === "revoked" || status === "decommissioned";
   }
 
-  // Emulate the D7 status CASE only when the query text actually contains it,
+  // Emulate the retire-first status CASE only when the query text actually contains it,
   // so tests exercise the production SQL rather than mock behavior.
   function sqlPreservesRetiredStatus(normalizedSql) {
     return /status = CASE\s+WHEN managed_certificates\.status IN \('revoked', 'decommissioned'\)\s+THEN managed_certificates\.status\s+ELSE .+? END/.test(
@@ -465,7 +465,7 @@ describe("CertOps monitor bridge zero-custody", () => {
   });
 });
 
-describe("CertOps monitor bridge identity (D8)", () => {
+describe("CertOps monitor bridge identity (monitor-source)", () => {
   it("exports upsertManagedCertificateByMonitorSource", () => {
     assert.equal(typeof upsertManagedCertificateByMonitorSource, "function");
   });
@@ -566,7 +566,7 @@ describe("CertOps monitor bridge identity (D8)", () => {
   });
 });
 
-describe("CertOps monitor bridge retire-first lifecycle (D7)", () => {
+describe("CertOps monitor bridge retire-first lifecycle", () => {
   for (const retiredStatus of ["revoked", "decommissioned"]) {
     it(`keeps a ${retiredStatus} certificate ${retiredStatus} on re-observation while updating observation fields`, async () => {
       const store = createIdentityStore();

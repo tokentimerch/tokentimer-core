@@ -1732,6 +1732,26 @@ function requireExecutorEvidenceScope(req, res, next) {
   }
 }
 
+function requireExecutorRouteScope(req, res, next) {
+  if (req.apiTokenScopeDenied !== true) return next();
+
+  try {
+    // Private-key-first: an authenticated machine token missing the route's
+    // base scope must still trigger the canonical 422 response and the
+    // synchronous rejection audit when the payload carries key material. The
+    // handler owns both; letting the request through here keeps that boundary.
+    rejectPrivateKeyMaterial(req.body);
+  } catch (error) {
+    if (error?.code === PRIVATE_KEY_MATERIAL_REJECTED) return next();
+    return next(error);
+  }
+
+  return res.status(403).json({
+    error: "CertOps API token scope denied",
+    code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+  });
+}
+
 function createCertOpsExecutorRouter(options = {}) {
   const certOpsExecutorRouter = router();
   const preAuthRateLimitMiddleware =
@@ -1744,6 +1764,10 @@ function createCertOpsExecutorRouter(options = {}) {
     createCertOpsApiTokenAuth({
       scopes: [EXECUTOR_EVENT_SCOPE],
       resolveWorkspaceId: workspaceIdHintFromBody,
+      // Private-key-first: bind authenticated-but-underscoped tokens so
+      // requireExecutorRouteScope can reject key material (422 + audit)
+      // before returning the scope denial.
+      deferScopeEnforcement: true,
     });
   const certOpsEnabledMiddleware =
     options.certOpsEnabledMiddleware || requireCertOpsEnabled;
@@ -1752,12 +1776,14 @@ function createCertOpsExecutorRouter(options = {}) {
     createCertOpsApiTokenAuth({
       scopes: [EXECUTOR_EVENT_SCOPE],
       allowTokenWorkspace: true,
+      deferScopeEnforcement: true,
     });
   const perJobEvidenceAuthMiddleware =
     options.perJobEvidenceAuthMiddleware ||
     createCertOpsApiTokenAuth({
       scopes: [EXECUTOR_EVIDENCE_SCOPE],
       allowTokenWorkspace: true,
+      deferScopeEnforcement: true,
     });
   const rateLimitMiddleware =
     options.rateLimitMiddleware ||
@@ -1773,6 +1799,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     authMiddleware,
     rateLimitMiddleware,
+    requireExecutorRouteScope,
     requireEvidenceItems,
     requireExecutorEvidenceScope,
     executorEventsHandler,
@@ -1784,6 +1811,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     perJobEventAuthMiddleware,
     rateLimitMiddleware,
+    requireExecutorRouteScope,
     requireEvidenceItems,
     requireExecutorEvidenceScope,
     (req, res) => executorEventsHandler(req, res, { mode: "event" }),
@@ -1795,6 +1823,7 @@ function createCertOpsExecutorRouter(options = {}) {
     certOpsEnabledMiddleware,
     perJobEvidenceAuthMiddleware,
     rateLimitMiddleware,
+    requireExecutorRouteScope,
     (req, res, next) => requireEvidenceItems(req, res, next, { mode: "evidence" }),
     (req, res) => executorEventsHandler(req, res, { mode: "evidence" }),
   );
