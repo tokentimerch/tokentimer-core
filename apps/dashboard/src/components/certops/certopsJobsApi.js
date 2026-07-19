@@ -162,9 +162,6 @@ export async function createJob(
   if (payload !== undefined) body.payload = payload;
   if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
 
-  const res = await apiClient.post(
-    `${workspaceBase(workspaceId)}/jobs`,
-    body
-  );
+  const res = await apiClient.post(`${workspaceBase(workspaceId)}/jobs`, body);
   return res.data;
 }
