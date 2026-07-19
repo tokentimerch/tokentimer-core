@@ -415,7 +415,7 @@ export default function DashboardShell({
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
-            href: 'https://tokentimer.ch/docs#self-hosted',
+            href: 'https://tokentimer.ch/docs/self-hosted',
           },
           {
             key: 'audit',
@@ -444,7 +444,7 @@ export default function DashboardShell({
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
-            href: 'https://tokentimer.ch/docs#self-hosted',
+            href: 'https://tokentimer.ch/docs/self-hosted',
           },
         ]),
     ...(isSystemAdmin

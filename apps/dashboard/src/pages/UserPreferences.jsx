@@ -392,7 +392,7 @@ export default function UserPreferences({
                 >
                   <DashboardActionButton
                     as='a'
-                    href='https://tokentimer.ch/docs#self-hosted'
+                    href='https://tokentimer.ch/docs/self-hosted'
                     target='_blank'
                     rel='noopener noreferrer'
                     leftIcon={<Icon as={FiBookOpen} aria-hidden />}

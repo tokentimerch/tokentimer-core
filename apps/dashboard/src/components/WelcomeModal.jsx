@@ -156,7 +156,7 @@ function WelcomeModal({
                 )}
                 <Text fontSize='xs' color={modalTokens.muted}>
                   <Link
-                    href='https://tokentimer.ch/docs#self-hosted'
+                    href='https://tokentimer.ch/docs/self-hosted'
                     isExternal
                     color={modalTokens.focusBorder}
                     textDecoration='underline'
