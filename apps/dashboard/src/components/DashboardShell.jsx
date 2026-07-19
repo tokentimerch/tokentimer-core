@@ -600,6 +600,8 @@ export default function DashboardShell({
             w='100%'
             px={isDashboardSidebarExpanded ? 3 : 1}
             flexShrink={0}
+            borderBottom='1px solid'
+            borderColor={dividerColor}
           >
             <Button
               as={RouterLink}
@@ -640,8 +642,6 @@ export default function DashboardShell({
               />
             </Button>
           </Flex>
-
-          <Divider w='100%' borderColor={dividerColor} />
 
           <VStack
             align='stretch'
