@@ -9,6 +9,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-19
+
+### Added
+
+- **CertOps M0–M2 (self-hosted)** — gated certificate operations broker under `/api/v1/workspaces/:id/certops/*`, enabled with `CERTOPS_ENABLED=true`. TokenTimer remains zero-custody: private-key material is rejected at the API boundary and never persisted, logged, or returned.
+- **Managed certificate inventory (M1)** — `managed_certificates`, `certificate_targets`, and `certificate_instances` persistence; public PEM import/upsert by fingerprint; inventory list/detail/retire APIs; endpoint/domain-monitor observation bridge; retire-first lifecycle (`revoked` / `decommissioned`) with status mirrored onto the linked token.
+- **Dashboard CertOps surfaces (M1/M2)** — token-detail enrichment (key locality, observation history, retire modal), Import tokens PEM path, Control Center / preferences entry to Certificate operations, and `/certops/operations` for machine API tokens, jobs, and evidence timelines.
+- **Machine executor API (M2)** — workspace-bound CertOps API tokens with scopes `certops:read`, `certops:jobs:read`, `certops:events:write`, `certops:evidence:write`; bearer auth; CSRF exemption on machine routes; dedicated machine-token rate limiting; job/log/evidence persistence; aggregate and per-job executor event ingestion with idempotent replay and monotonic lifecycle transitions.
+- **Manual job creation (M2 amendment)** — `POST /api/v1/workspaces/:id/certops/jobs` (session-authenticated, manager+) plus dashboard "Create manual job" for the pre-scheduler / break-glass path; jobs are always recorded with `source: "api"`.
+- **Contracts and docs** — OpenAPI CertOps paths/schemas, route-compat and evidence/executor-event contracts, enablement docs, and ADR/CONTEXT updates for the CertOps broker model.
+
+### Changed
+
+- **Dashboard shell header alignment** — shared fixed `DASHBOARD_SHELL_HEADER_HEIGHT` so sidebar logo row and header bottom borders stay level.
+- **Worker image module resolution** — compose/dev worker Dockerfiles symlink `apps/api/node_modules` to the worker install tree so copied CertOps bridge modules resolve `pg` / logging deps at runtime.
+- **Version metadata bumped to 0.9.0** across package manifests, contract files, OpenAPI, and Helm chart `version` / `appVersion` / image tags.
+
+### Fixed
+
+- **Private-key rejection hardening** — JKS magic-header detection; key-rejection precedence before plan/role gates on write routes; fail-closed Unicode / mixed-script identity validation on certificate CN/SAN.
+- **Retire and shared-token lifecycle** — retire-first delete gate for managed-backed tokens; terminal status mirrored onto a shared token only when no active sibling managed certificate remains; re-import and monitor observations never revive `revoked` / `decommissioned` rows.
+- **Dashboard isolation and UX** — workspace-switch guards for CertOps loads; audit deep-link scope; show-once token reveal reset on workspace change; fail-closed delete while management status is unresolved; certificate-location empty vs 404 vs server-error states distinguished.
+
+### Security
+
+- **Zero-custody CertOps boundary** — private-key and keystore material rejected with audited `PRIVATE_KEY_MATERIAL_REJECTED`; generic secrets redacted from evidence/executor payloads before persistence; machine tokens never returned after one-time reveal.
+
 ## [0.8.3] - 2026-07-16
 
 ### Added

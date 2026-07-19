@@ -29,7 +29,6 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import DashboardShell from '../../components/DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../../components/SEO.jsx';
-import CopyableId from '../../components/CopyableId.jsx';
 import ApiTokenPanel from '../../components/certops/ApiTokenPanel.jsx';
 import EvidenceTimeline from '../../components/certops/EvidenceTimeline.jsx';
 import JobStatusBadge from '../../components/certops/JobStatusBadge.jsx';
@@ -76,9 +75,7 @@ function createJobErrorMessage(err) {
   if (code === 'CERTOPS_JOB_IDEMPOTENCY_CONFLICT') {
     return 'This idempotency key was already used with different job details.';
   }
-  return (
-    err?.response?.data?.error || err?.message || 'Could not create job.'
-  );
+  return err?.response?.data?.error || err?.message || 'Could not create job.';
 }
 
 /**
@@ -145,10 +142,10 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
             <Alert status='info' variant='subtle' borderRadius='md'>
               <AlertIcon boxSize={4} />
               <AlertDescription fontSize='sm'>
-                Manual job creation is an exception path for driving
-                certificate operations before automated scheduling ships. The
-                job is recorded with source &quot;api&quot; and appears at the
-                start of the job&apos;s history.
+                Manual job creation is an exception path for driving certificate
+                operations before automated scheduling ships. The job is
+                recorded with source &quot;api&quot; and appears at the start of
+                the job&apos;s history.
               </AlertDescription>
             </Alert>
             <FormControl isRequired>

@@ -1,11 +1,10 @@
 {
   "name": "tokentimer-core",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "private": true,
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
     "//": "Run `pnpm dev:help` for the full command map. Quick pick: host-native = `pnpm dev`; full Docker stack = `pnpm docker:up`.",
-
     "// --- Host-native dev (Postgres in Docker; API + worker + dashboard on your machine) ---": "",
     "dev:help": "node scripts/dev-help.js",
     "dev": "node scripts/dev.js",
@@ -15,7 +14,6 @@
     "dev:api": "node scripts/run-with-env.js pnpm --filter @tokentimer/api dev",
     "dev:worker": "node scripts/run-with-env.js pnpm --filter @tokentimer/worker dev",
     "dev:dashboard": "node scripts/run-with-env.js pnpm --filter @tokentimer/dashboard dev",
-
     "// --- Build / run / migrate ---": "",
     "build": "pnpm run build:api && pnpm run build:worker && pnpm run build:dashboard",
     "build:api": "pnpm --filter @tokentimer/api build",
@@ -29,7 +27,6 @@
     "lint:api": "pnpm --filter @tokentimer/api lint",
     "lint:worker": "pnpm --filter @tokentimer/worker lint",
     "lint:dashboard": "pnpm --filter @tokentimer/dashboard lint",
-
     "// --- Tests ---": "",
     "test:unit": "node scripts/run-unit-tests.js",
     "test:core": "node scripts/run-tests-local.js core",
@@ -44,18 +41,15 @@
     "test:local:integration:complete": "node scripts/run-local-integration-complete.js",
     "test:full:local": "node scripts/run-local-full.js",
     "test:local:full": "node scripts/run-local-full.js",
-
     "// --- CI / contract checks ---": "",
     "check:contracts": "node scripts/check-contracts-manifest.js && node scripts/check-openapi-runtime-coverage.js",
     "check:contracts:integrity": "node scripts/check-contracts-integrity.js",
     "check:openapi:coverage": "node scripts/check-openapi-runtime-coverage.js",
     "check:lockfile-overrides": "node scripts/check-lockfile-overrides.js",
     "check:secret-logging": "node scripts/check-secret-logging.js",
-
     "// --- Integration test Docker stack (deploy/compose/docker-compose.test.yml) ---": "",
     "test:up": "docker compose -f deploy/compose/docker-compose.test.yml up --build -d",
     "test:down": "docker compose -f deploy/compose/docker-compose.test.yml down --volumes --remove-orphans",
-
     "// --- Full stack in Docker (postgres + API + worker + dashboard) ---": "",
     "docker:build": "docker compose -f deploy/compose/docker-compose.yml build",
     "docker:up": "docker compose -f deploy/compose/docker-compose.yml up",
@@ -63,7 +57,6 @@
     "docker:down:stack": "docker compose -f deploy/compose/docker-compose.yml down --remove-orphans",
     "docker:down:dev": "docker compose -f deploy/compose/docker-compose.dev.yml down --remove-orphans",
     "docker:down:all": "node scripts/docker-down-local.js",
-
     "// --- Coverage ---": "",
     "coverage:clean": "node scripts/run-coverage.js --clean-only",
     "coverage:collect": "node scripts/run-coverage.js core --collect-only",
@@ -77,7 +70,6 @@
     "test:coverage:backend": "pnpm run coverage:clean && pnpm run coverage:collect && pnpm run coverage:report:backend && pnpm run coverage:check:backend",
     "test:coverage:frontend": "pnpm run coverage:collect:frontend && pnpm run coverage:check:frontend",
     "test:coverage": "pnpm run test:coverage:backend && pnpm run test:coverage:frontend && pnpm run coverage:merge",
-
     "// --- Helm ---": "",
     "helm:lint": "helm lint deploy/helm",
     "helm:template": "helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml",
