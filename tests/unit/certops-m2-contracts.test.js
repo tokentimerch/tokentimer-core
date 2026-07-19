@@ -1538,6 +1538,13 @@ describe("CertOps M2 contract skeletons", () => {
       // SMTP provider-loop ownership heartbeat + account-attempt cap so a
       // single sendEmailNotification cannot outlive the delivery lease:
       "apps/worker/src/notify/email.js",
+      // Unrelated dashboard layout polish stacked on this branch (fixed
+      // header height, bottom border) plus its dev-image Dockerfile fallout;
+      // no CertOps behavior change.
+      "apps/dashboard/src/components/certops/RetireCertificateModal.jsx",
+      "apps/dashboard/src/styles/dashboardLayout.js",
+      "apps/worker/Dockerfile.dev",
+      "deploy/compose/Dockerfile.worker",
       // CertOps rollout flag + demo provisioning tooling for local/manual
       // M2 validation (no runtime code paths; compose env wiring only):
       "deploy/compose/.env.example",
@@ -1571,6 +1578,11 @@ describe("CertOps M2 contract skeletons", () => {
       "tests/integration/endpoint-check-worker.integration.test.js",
       "tests/integration/helpers/local-https-server.js",
       "tests/integration/worker-claim-lease.test.js",
+      // M2 manual job-creation surface (POST /certops/jobs): pulls the
+      // exception-path job-creation entry point forward from M4 so M2 ships
+      // with a usable way into the job/evidence lifecycle it otherwise fully
+      // supports (see plan v1.17).
+      "tests/integration/certops-job-create-api.test.js",
       "tests/integration/suites/cloud-compatible.txt",
       "tests/integration/suites/core-compatible.txt",
       "tests/integration/suites/core.txt",
@@ -1616,6 +1628,10 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/dashboard/src/components/certops/certopsTokensApi.js",
       "apps/dashboard/src/components/certops/useCertOps.js",
       "apps/dashboard/src/components/certops/useCertOpsJobs.js",
+      // Shared compact inline id chip (click-to-copy) used by job rows and
+      // the evidence timeline so a job id is never confused with a
+      // managed-certificate/subject id (plan v1.18).
+      "apps/dashboard/src/components/CopyableId.jsx",
       "apps/dashboard/src/pages/AlertPreferences.jsx",
       "apps/dashboard/src/pages/Audit.jsx",
       "apps/dashboard/src/pages/ControlCenter.jsx",
@@ -1701,6 +1717,15 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/dashboard/src/components/certops/useCertOps.js",
       "apps/dashboard/tests/unit/ApiTokenPanel.test.jsx",
       "apps/dashboard/tests/unit/useCertOps.test.jsx",
+      // M2 manual job-creation surface + ID-legibility fixes (plan v1.17/v1.18):
+      // "Create manual job" modal, CopyableId component, job/subject id
+      // formatting helpers in the evidence timeline.
+      "apps/dashboard/src/components/CopyableId.jsx",
+      "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
+      "apps/dashboard/src/components/certops/certopsJobsApi.js",
+      "apps/dashboard/src/components/certops/certopsJobsFormat.js",
+      "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
+      "apps/dashboard/tests/unit/CertOpsOperations.test.jsx",
       // Comment cleanup: remove internal plan-milestone shorthand from code
       // comments and test descriptions; no behavior change.
       "apps/dashboard/src/components/AssetInventoryTable.jsx",

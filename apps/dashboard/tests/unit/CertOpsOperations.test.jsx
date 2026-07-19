@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -11,11 +11,13 @@ const {
   useCertOpsJobsMock,
   useCertOpsCanManageMock,
   useCertOpsApiTokensMock,
+  createJobMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
   useCertOpsJobsMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
   useCertOpsApiTokensMock: vi.fn(),
+  createJobMock: vi.fn(),
 }));
 
 vi.mock('../../src/hooks/useDashboardShellProps.js', () => ({
@@ -64,6 +66,16 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
 }));
 
+vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsJobsApi.js'
+  );
+  return {
+    ...actual,
+    createJob: createJobMock,
+  };
+});
+
 vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
   useCertOpsJobs: useCertOpsJobsMock,
   useCertOpsApiTokens: useCertOpsApiTokensMock,
@@ -106,6 +118,7 @@ describe('CertOpsOperations', () => {
     useCertOpsJobsMock.mockReset();
     useCertOpsCanManageMock.mockReset();
     useCertOpsApiTokensMock.mockReset();
+    createJobMock.mockReset();
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsApiTokensMock.mockReturnValue({
       enabled: true,
@@ -329,5 +342,118 @@ describe('CertOpsOperations', () => {
     renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
 
     expect(screen.queryByText(/Showing .* jobs/)).not.toBeInTheDocument();
+  });
+
+  it('does not show the "Create manual job" button for a non-manager viewer', () => {
+    useCertOpsCanManageMock.mockReturnValue(false);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: false }} />);
+
+    expect(
+      screen.queryByRole('button', { name: 'Create manual job' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens the manual job modal, submits it, and refreshes the job list', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    const refresh = vi.fn();
+    useCertOpsJobsMock.mockReturnValue(jobsState({ refresh }));
+    createJobMock.mockResolvedValue({
+      job: { id: 'job-new', operation: 'deploy', status: 'pending' },
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    expect(screen.getByRole('dialog', { name: 'Create manual job' })).toBeInTheDocument();
+
+    const createButton = screen.getByRole('button', { name: 'Create job' });
+    expect(createButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Operation/), {
+      target: { value: 'deploy' },
+    });
+    expect(createButton).not.toBeDisabled();
+
+    fireEvent.click(createButton);
+
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledTimes(1));
+    expect(createJobMock).toHaveBeenCalledWith('ws-1', {
+      operation: 'deploy',
+    });
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('requires a subject ID once a subject type is chosen', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    fireEvent.change(screen.getByLabelText(/^Operation/), {
+      target: { value: 'deploy' },
+    });
+    const createButton = screen.getByRole('button', { name: 'Create job' });
+    expect(createButton).not.toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    expect(createButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: 'cert-1' },
+    });
+    expect(createButton).not.toBeDisabled();
+  });
+
+  it('shows an inline error and keeps the modal open when creation fails', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    const refresh = vi.fn();
+    useCertOpsJobsMock.mockReturnValue(jobsState({ refresh }));
+    createJobMock.mockRejectedValue({
+      response: { status: 403, data: { code: 'INSUFFICIENT_ROLE' } },
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    fireEvent.change(screen.getByLabelText(/^Operation/), {
+      target: { value: 'deploy' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+
+    await waitFor(() => expect(createJobMock).toHaveBeenCalledTimes(1));
+    // The modal stays open on failure so the manager can retry.
+    expect(screen.getByRole('dialog', { name: 'Create manual job' })).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

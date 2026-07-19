@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import CopyableId from '../CopyableId.jsx';
 import {
   evidenceTypeLabel,
   evidenceTypeScheme,
@@ -31,6 +32,7 @@ import {
   formatDateTime,
   hasRedactionMarkers,
   jobOperationLabel,
+  subjectTypeLabel,
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
@@ -129,9 +131,13 @@ function TimelineItem({ item, attemptLabel }) {
     isEvidence ? entry.observedAt || entry.createdAt : entry.createdAt
   );
   const redacted = hasRedactionMarkers(entry.metadata);
+  const subjectLabel = isEvidence
+    ? [subjectTypeLabel(entry.subjectType), entry.subjectId]
+        .filter(Boolean)
+        .join(': ')
+    : '';
   const detail = isEvidence
-    ? [entry.subjectType, entry.subjectId].filter(Boolean).join(' / ') ||
-      'No subject recorded'
+    ? subjectLabel || 'No subject recorded'
     : entry.message || entry.status || '';
 
   return (
@@ -179,7 +185,13 @@ function TimelineItem({ item, attemptLabel }) {
           ) : null}
           {redacted ? <RedactionBadge /> : null}
         </HStack>
-        {detail ? (
+        {isEvidence && entry.subjectId ? (
+          <CopyableId
+            id={entry.subjectId}
+            label={subjectTypeLabel(entry.subjectType) || 'Subject'}
+            size='xs'
+          />
+        ) : detail ? (
           <Text fontSize='sm' color={muted} noOfLines={3}>
             {detail}
           </Text>
@@ -254,39 +266,41 @@ export default function EvidenceTimeline({ jobId, onClose }) {
     }),
   ].filter(Boolean);
 
-  const subjectInfo = [job.subjectType, job.subjectId]
-    .filter(Boolean)
-    .join(' / ');
-
   return (
     <VStack align='stretch' spacing={3}>
       <HStack justify='space-between' align='start' spacing={3}>
-        <HStack spacing={2} flexWrap='wrap'>
-          <Text fontSize='sm' fontWeight='bold'>
-            {jobOperationLabel(job.operation)}
-          </Text>
-          <JobStatusBadge status={job.status} />
-          {job.source ? (
-            <Badge variant='outline' textTransform='none' fontSize='2xs'>
-              {job.source}
-            </Badge>
-          ) : null}
-          {subjectInfo ? (
-            <Text fontSize='xs' color={muted}>
-              {subjectInfo}
+        <VStack align='stretch' spacing={1}>
+          <HStack spacing={2} flexWrap='wrap'>
+            <Text fontSize='sm' fontWeight='bold'>
+              {jobOperationLabel(job.operation)}
             </Text>
-          ) : null}
-          {job.id ? (
-            <Link
-              as={RouterLink}
-              to={`/audit?q=${encodeURIComponent(job.id)}`}
-              fontSize='xs'
-              color='blue.400'
-            >
-              View audit log
-            </Link>
-          ) : null}
-        </HStack>
+            <JobStatusBadge status={job.status} />
+            {job.source ? (
+              <Badge variant='outline' textTransform='none' fontSize='2xs'>
+                {job.source}
+              </Badge>
+            ) : null}
+            {job.id ? (
+              <Link
+                as={RouterLink}
+                to={`/audit?q=${encodeURIComponent(job.id)}`}
+                fontSize='xs'
+                color='blue.400'
+              >
+                View audit log
+              </Link>
+            ) : null}
+          </HStack>
+          <HStack spacing={3} flexWrap='wrap'>
+            {job.id ? <CopyableId id={job.id} label='Job ID' /> : null}
+            {job.subjectId ? (
+              <CopyableId
+                id={job.subjectId}
+                label={subjectTypeLabel(job.subjectType) || 'Subject'}
+              />
+            ) : null}
+          </HStack>
+        </VStack>
         {typeof onClose === 'function' ? (
           <IconButton
             aria-label='Close timeline'

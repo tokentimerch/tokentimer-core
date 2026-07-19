@@ -28,6 +28,16 @@ export const CERTOPS_JOB_OPERATIONS = [
   'noop',
 ];
 
+export const CERTOPS_SUBJECT_TYPES = [
+  'managed_certificate',
+  'certificate_instance',
+  'certificate_target',
+  'token',
+  'domain',
+  'endpoint',
+  'external',
+];
+
 export const CERTOPS_JOB_LOG_EVENT_TYPES = [
   'job.created',
   'job.accepted',
@@ -132,6 +142,29 @@ export async function listJobEvidence(
       params: { limit, offset },
       signal,
     }
+  );
+  return res.data;
+}
+
+/**
+ * Create a manual CertOps job through the session-authenticated workspace
+ * surface. source is always forced to "api" by the server. Requires
+ * workspace_manager role or above.
+ * @returns {Promise<{ job: object }>}
+ */
+export async function createJob(
+  workspaceId,
+  { operation, subjectType, subjectId, payload, idempotencyKey } = {}
+) {
+  const body = { operation };
+  if (subjectType !== undefined) body.subjectType = subjectType;
+  if (subjectId !== undefined) body.subjectId = subjectId;
+  if (payload !== undefined) body.payload = payload;
+  if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
+
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/jobs`,
+    body
   );
   return res.data;
 }

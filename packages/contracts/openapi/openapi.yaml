@@ -3425,6 +3425,61 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Create a manual CertOps job
+      operationId: createCertOpsJob
+      description: >-
+        Creates a workspace-scoped CertOps job through the manual creation
+        surface. This is a session-authenticated exception path for the
+        pre-certops-scheduler window (and a break-glass path afterward);
+        jobs created this way are always recorded with source "api" and
+        cannot be attributed to the executor or automated-scheduler
+        pipelines. Requires workspace_manager role or above. Private key or
+        secret material in the request body is rejected.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsJobCreateRequest"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: idempotencyKey was already used with a different job request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Idempotency key was already used with a different CertOps job request
+                code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+        "422":
+          description: The request contained private-key or forbidden secret material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
     get:
       tags: [CertOps]
@@ -4573,6 +4628,28 @@ components:
             $ref: "#/components/schemas/CertOpsJob"
         pagination:
           $ref: "#/components/schemas/Pagination"
+    CertOpsJobCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [operation]
+      description: >-
+        Manual job creation request. source is always forced to "api" by the
+        server and is not accepted from the request body.
+      properties:
+        operation:
+          type: string
+          enum: [renew, deploy, reload, revoke, noop]
+        subjectType:
+          type: string
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+        subjectId:
+          type: string
+          maxLength: 128
+        payload:
+          $ref: "#/components/schemas/CertOpsPublicObject"
+        idempotencyKey:
+          type: string
+          maxLength: 128
     CertOpsPublicObject:
       type: object
       additionalProperties: true

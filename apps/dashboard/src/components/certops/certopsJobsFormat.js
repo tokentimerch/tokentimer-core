@@ -65,6 +65,16 @@ const EVIDENCE_TYPE_SCHEMES = {
   'policy.checked': 'gray',
 };
 
+const SUBJECT_TYPE_LABELS = {
+  managed_certificate: 'Managed certificate',
+  certificate_instance: 'Certificate instance',
+  certificate_target: 'Certificate target',
+  token: 'Token',
+  domain: 'Domain',
+  endpoint: 'Endpoint',
+  external: 'External',
+};
+
 const REDACTED_LITERAL = '[REDACTED]';
 const REDACTION_SCAN_MAX_DEPTH = 6;
 
@@ -99,6 +109,24 @@ export function evidenceTypeLabel(evidenceType) {
 
 export function evidenceTypeScheme(evidenceType) {
   return EVIDENCE_TYPE_SCHEMES[String(evidenceType || '')] || 'gray';
+}
+
+/** Human label for a CertOps subject type; falls back to the raw value. */
+export function subjectTypeLabel(subjectType) {
+  const key = String(subjectType || '');
+  return SUBJECT_TYPE_LABELS[key] || (subjectType ? String(subjectType) : '');
+}
+
+/**
+ * Shortens a UUID-like id for compact display, keeping enough of the start
+ * and end to distinguish rows at a glance (e.g. `4a30d1e2...9f0c`). Ids
+ * shorter than the threshold are returned unchanged.
+ */
+export function truncateId(id, { head = 8, tail = 4 } = {}) {
+  const value = String(id ?? '').trim();
+  if (!value) return '';
+  if (value.length <= head + tail + 3) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
 }
 
 /**

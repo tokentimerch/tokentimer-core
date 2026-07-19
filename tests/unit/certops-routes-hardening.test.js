@@ -112,6 +112,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
+      "POST /api/v1/workspaces/:id/certops/jobs",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ].sort());
@@ -135,6 +136,7 @@ describe("CertOps route hardening", () => {
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
       ["get", "/api/v1/workspaces/:id/certops/jobs"],
+      ["post", "/api/v1/workspaces/:id/certops/jobs"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
@@ -208,6 +210,7 @@ describe("CertOps route hardening", () => {
       "/api/v1/workspaces/:id/certops/certificates",
       "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "/api/v1/workspaces/:id/certops/imports",
+      "/api/v1/workspaces/:id/certops/jobs",
       "/api/v1/workspaces/:id/certops/tokens",
       "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ]) {
