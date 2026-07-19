@@ -4,6 +4,12 @@ const { createHash, X509Certificate } = require("crypto");
 const {
   containsPrivateKeyMaterial,
 } = require("../../utils/secretMaterial");
+const {
+  CertOpsIdentitySafetyError,
+  assertSafeDnsIdentity,
+  assertSafeIpIdentity,
+  assertSafeNonDnsIdentity,
+} = require("./identitySafety");
 
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 const CERTOPS_CERTIFICATE_PARSE_FAILED = "CERTOPS_CERTIFICATE_PARSE_FAILED";
@@ -118,12 +124,90 @@ function unquoteSanValue(value) {
   return trimmed;
 }
 
-function parseSubjectAltNames(subjectAltName) {
+function classifySanType(prefix) {
+  const normalized = String(prefix || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "dns") return "dns";
+  if (normalized === "ip address" || normalized === "ip") return "ip";
+  if (normalized === "uri") return "uri";
+  if (normalized === "email") return "email";
+  return "other";
+}
+
+function wrapIdentitySafetyError(error) {
+  if (error instanceof CertOpsIdentitySafetyError) {
+    return createParserError(error.message, CERTOPS_CERTIFICATE_PARSE_FAILED);
+  }
+  return error;
+}
+
+function assertSafeSanEntry(entry) {
+  try {
+    switch (entry.type) {
+      case "dns":
+        assertSafeDnsIdentity(entry.value, { field: "DNS SAN" });
+        break;
+      case "ip":
+        assertSafeIpIdentity(entry.value, { field: "IP SAN" });
+        break;
+      case "uri":
+        assertSafeNonDnsIdentity(entry.value, { field: "URI SAN" });
+        break;
+      case "email":
+        assertSafeNonDnsIdentity(entry.value, { field: "email SAN" });
+        break;
+      default:
+        assertSafeNonDnsIdentity(entry.value, { field: "SAN" });
+        break;
+    }
+  } catch (error) {
+    throw wrapIdentitySafetyError(error);
+  }
+}
+
+/**
+ * Typed SAN parse: keeps DNS / IP / URI / email distinct so DNS mixed-script
+ * rules are not applied to IP addresses. Unsafe DNS values fail closed.
+ */
+function parseTypedSubjectAltNames(subjectAltName) {
   return splitSubjectAltName(subjectAltName).map((entry) => {
     const match = /^([^:]+):(.+)$/.exec(entry);
-    if (!match) return entry;
-    return unquoteSanValue(match[2]);
+    if (!match) {
+      const parsed = { type: "other", value: entry, prefix: null };
+      assertSafeSanEntry(parsed);
+      return parsed;
+    }
+
+    const prefix = match[1].trim();
+    const parsed = {
+      type: classifySanType(prefix),
+      value: unquoteSanValue(match[2]),
+      prefix,
+    };
+    assertSafeSanEntry(parsed);
+    return parsed;
   });
+}
+
+/**
+ * Backward-compatible flat string[] of SAN values (DNS, IP, URI, email, ...).
+ * Inventory still consumes this shape; typed detail is on subjectAltNameEntries.
+ */
+function parseSubjectAltNames(subjectAltName) {
+  return parseTypedSubjectAltNames(subjectAltName).map((entry) => entry.value);
+}
+
+function assertSafeCommonName(commonName) {
+  if (commonName === null || commonName === undefined || commonName === "") {
+    return commonName;
+  }
+  try {
+    assertSafeDnsIdentity(commonName, { field: "commonName" });
+  } catch (error) {
+    throw wrapIdentitySafetyError(error);
+  }
+  return commonName;
 }
 
 function publicKeyMetadata(publicKey) {
@@ -179,18 +263,23 @@ function parseCertificateBlock(certificatePem, index) {
   const fingerprint512 =
     normalizeFingerprint(certificate.fingerprint512) ||
     hashHex("sha512", certificate.raw);
+  const commonName = assertSafeCommonName(extractCommonName(subject));
+  const subjectAltNameEntries = parseTypedSubjectAltNames(
+    certificate.subjectAltName,
+  );
 
   return {
     subject,
     issuer,
     serialNumber: certificate.serialNumber || null,
-    commonName: extractCommonName(subject),
+    commonName,
     validFrom,
     validTo,
     notBefore: validFrom,
     notAfter: validTo,
     subjectAltName: certificate.subjectAltName || null,
-    subjectAltNames: parseSubjectAltNames(certificate.subjectAltName),
+    subjectAltNames: subjectAltNameEntries.map((entry) => entry.value),
+    subjectAltNameEntries,
     fingerprint256,
     fingerprint512,
     fingerprintSha256: fingerprint256,
@@ -214,5 +303,8 @@ module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   CertOpsCertificateParserError,
+  classifySanType,
   parsePublicCertificateMaterial,
+  parseSubjectAltNames,
+  parseTypedSubjectAltNames,
 };

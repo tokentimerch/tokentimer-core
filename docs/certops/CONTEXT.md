@@ -65,7 +65,12 @@ rather than adding a parallel M1 inventory page. See ADR-0006.
 - **Token detail** - CertOps panel for managed fields and deployment history.
 - **Import tokens** - public PEM import card when `certops.enabled` is on.
 - **CertOps section (M2+)** - orchestration only (agents, jobs, evidence,
-  approvals), not a second certificate list.
+  approvals), not a second certificate list. M2 ships
+  `/certops/operations` (executor jobs, evidence timelines, machine API
+  tokens) mounted via the `/certops/*` splat route. No nav entry: it is
+  reached from the Control Center certificate-operations panel footer link
+  and from a Workspace Preferences entry (last section, shown only when
+  `certops.enabled` is on).
 
 ## Certificate removal (D7)
 
@@ -96,11 +101,18 @@ continue to fall back safely when that column is absent.
 
 ## M1 monitor bridge and instance history
 
-Endpoint and domain monitors are **observers**, not certificate deployment targets.
-They watch a URL or hostname and record what public certificate is currently served.
-TokenTimer does not push or patch certificates to those endpoints; rotation is
-detected when the next observation shows different public material at the same
-monitor.
+Endpoint and domain monitors are **observers**, not deployable endpoints
+TokenTimer can write to. They watch a URL or hostname and record what public
+certificate is currently served. TokenTimer does not push or patch certificates
+to those endpoints; rotation is detected when the next observation shows
+different public material at the same monitor.
+
+`certificate_targets` is a broader **certificate location** abstraction: an
+observation point or a deployment destination. Monitor-bridge-created target
+rows are observation points (`target_type` endpoint/domain); they key instance
+history by location and do not imply deploy capability. Future job
+orchestration must not treat observation-only locations as deploy targets;
+deployability is a future `target_type` / capability policy.
 
 Bridge rules (worker rechecks and admin create paths share `monitorBridge.js`):
 

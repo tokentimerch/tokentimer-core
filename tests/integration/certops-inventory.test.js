@@ -8,6 +8,10 @@ const { runMigrations } = requireMigrateModule();
 const {
   countActiveManagedCertificates,
 } = require("../../apps/api/services/certops/inventory");
+const {
+  bridgeEndpointCertificateObservation,
+} = require("../../apps/api/services/certops/monitorBridge");
+const { pool } = require("../../apps/api/db/database");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -495,6 +499,100 @@ describe("CertOps inventory routes", function () {
     );
   });
 
+  it("rolls back certificate import when the inventory audit write fails", async () => {
+    await TestUtils.execQuery(`
+      CREATE OR REPLACE FUNCTION fail_certops_inventory_audit_for_test()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action IN (
+          'CERTOPS_CERTIFICATE_IMPORTED',
+          'CERTOPS_CERTIFICATE_REGISTERED'
+        ) THEN
+          RAISE EXCEPTION 'forced CertOps inventory audit failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+    await TestUtils.execQuery(`
+      CREATE TRIGGER fail_certops_inventory_audit_for_test_trigger
+      BEFORE INSERT ON audit_events
+      FOR EACH ROW
+      EXECUTE FUNCTION fail_certops_inventory_audit_for_test();
+    `);
+
+    try {
+      const managedBefore = await TestUtils.execQuery(
+        "SELECT COUNT(*)::int AS count FROM managed_certificates WHERE workspace_id = $1",
+        [outsiderWorkspaceId],
+      );
+      const tokensBefore = await TestUtils.execQuery(
+        `SELECT COUNT(*)::int AS count
+           FROM tokens
+          WHERE workspace_id = $1
+            AND type = 'ssl_cert'
+            AND notes ILIKE $2`,
+        [
+          outsiderWorkspaceId,
+          "%Imported by CertOps public PEM import. Fingerprint:%",
+        ],
+      );
+
+      const failedImport = await request(BASE)
+        .post(`/api/v1/workspaces/${outsiderWorkspaceId}/certops/imports`)
+        .set("Cookie", outsiderSession.cookie)
+        .send({ certificatePem: PUBLIC_LEAF_CERT });
+      expect(failedImport.status).to.equal(500);
+      expect(failedImport.body.code).to.equal("INTERNAL_ERROR");
+      expectNoPrivateKeyFields(failedImport.body);
+
+      const failedRegister = await request(BASE)
+        .post(`/api/v1/workspaces/${outsiderWorkspaceId}/certops/certificates`)
+        .set("Cookie", outsiderSession.cookie)
+        .send({ certificatePem: PUBLIC_CA_CERT });
+      expect(failedRegister.status).to.equal(500);
+      expect(failedRegister.body.code).to.equal("INTERNAL_ERROR");
+      expectNoPrivateKeyFields(failedRegister.body);
+
+      const managedAfter = await TestUtils.execQuery(
+        "SELECT COUNT(*)::int AS count FROM managed_certificates WHERE workspace_id = $1",
+        [outsiderWorkspaceId],
+      );
+      const tokensAfter = await TestUtils.execQuery(
+        `SELECT COUNT(*)::int AS count
+           FROM tokens
+          WHERE workspace_id = $1
+            AND type = 'ssl_cert'
+            AND notes ILIKE $2`,
+        [
+          outsiderWorkspaceId,
+          "%Imported by CertOps public PEM import. Fingerprint:%",
+        ],
+      );
+      expect(managedAfter.rows[0].count).to.equal(managedBefore.rows[0].count);
+      expect(tokensAfter.rows[0].count).to.equal(tokensBefore.rows[0].count);
+
+      const audit = await TestUtils.execQuery(
+        `SELECT action
+           FROM audit_events
+          WHERE workspace_id = $1
+            AND action IN (
+              'CERTOPS_CERTIFICATE_IMPORTED',
+              'CERTOPS_CERTIFICATE_REGISTERED'
+            )`,
+        [outsiderWorkspaceId],
+      );
+      expect(audit.rows).to.have.length(0);
+    } finally {
+      await TestUtils.execQuery(
+        "DROP TRIGGER IF EXISTS fail_certops_inventory_audit_for_test_trigger ON audit_events",
+      );
+      await TestUtils.execQuery(
+        "DROP FUNCTION IF EXISTS fail_certops_inventory_audit_for_test()",
+      );
+    }
+  });
+
   it("allows viewers to list and fetch certificates in their workspace", async () => {
     const list = await request(BASE)
       .get(`/api/v1/workspaces/${workspaceId}/certops/certificates`)
@@ -700,6 +798,76 @@ describe("CertOps inventory routes", function () {
     expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
   });
 
+  it("does not mirror a terminal status onto a token while a sibling certificate stays active", async () => {
+    // Interim model: several managed certificates can reference one token.
+    const shared = await createWorkspaceToken(ownerSession, workspaceId, {
+      name: "Shared cert token",
+      type: "tls_cert",
+      category: "cert",
+      domains: ["shared-lifecycle.certops.example"],
+    });
+
+    const insertCert = async (suffix, status) => {
+      const rows = await TestUtils.execQuery(
+        `INSERT INTO managed_certificates (
+           workspace_id, token_id, status, source, name,
+           common_name, fingerprint_sha256
+         )
+         VALUES ($1, $2, $3, 'api', $4, $5, $6)
+         RETURNING id`,
+        [
+          workspaceId,
+          shared.id,
+          status,
+          `Shared lifecycle ${suffix}`,
+          `shared-${suffix}.certops.example`,
+          `${suffix.repeat(40)}`.replace(/[^a-f0-9]/g, "0").slice(0, 64).padEnd(64, "0"),
+        ],
+      );
+      return rows.rows[0].id;
+    };
+
+    const firstId = await insertCert("a1", "active");
+    const secondId = await insertCert("b2", "active");
+
+    try {
+      // Retiring one certificate must not flip the shared token while the
+      // sibling is still active.
+      await request(BASE)
+        .post(
+          `/api/v1/workspaces/${workspaceId}/certops/certificates/${firstId}/retire`,
+        )
+        .set("Cookie", ownerSession.cookie)
+        .send({ status: "revoked", reason: "one of two rotated" })
+        .expect(200);
+
+      const firstRetired = await managedCertificateRow(workspaceId, firstId);
+      expect(firstRetired.status).to.equal("revoked");
+      let sharedToken = await tokenRow(shared.id);
+      expect(sharedToken.cert_lifecycle_status).to.not.equal("revoked");
+
+      // Retiring the last sibling mirrors the terminal status onto the token.
+      await request(BASE)
+        .post(
+          `/api/v1/workspaces/${workspaceId}/certops/certificates/${secondId}/retire`,
+        )
+        .set("Cookie", ownerSession.cookie)
+        .send({ status: "decommissioned", reason: "last sibling retired" })
+        .expect(200);
+
+      sharedToken = await tokenRow(shared.id);
+      expect(sharedToken.cert_lifecycle_status).to.equal("decommissioned");
+    } finally {
+      await TestUtils.execQuery(
+        "DELETE FROM managed_certificates WHERE id = ANY($1::uuid[])",
+        [[firstId, secondId]],
+      );
+      await TestUtils.execQuery("DELETE FROM tokens WHERE id = $1", [
+        shared.id,
+      ]);
+    }
+  });
+
   it("excludes retired managed certificates from active inventory counts", async () => {
     const totalRows = await TestUtils.execQuery(
       `SELECT COUNT(*)::int AS count
@@ -730,6 +898,81 @@ describe("CertOps inventory routes", function () {
 
     const linkedToken = await tokenRow(caCertificate.tokenId);
     expect(linkedToken.cert_lifecycle_status).to.equal("revoked");
+  });
+
+  it("does not reset retired status when a monitor observation hits a retired certificate", async () => {
+    for (const retiredStatus of ["revoked", "decommissioned"]) {
+      const monitorRows = await TestUtils.execQuery(
+        `INSERT INTO domain_monitors (workspace_id, url, created_by)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [
+          workspaceId,
+          `https://retired-${retiredStatus}.example`,
+          ownerUser.id,
+        ],
+      );
+      const domainMonitorId = monitorRows.rows[0].id;
+      const linkedToken = await createWorkspaceToken(ownerSession, workspaceId, {
+        name: `CertOps ${retiredStatus} monitor token`,
+      });
+
+      const observation = {
+        dbPool: pool,
+        env: { CERTOPS_ENABLED: "true" },
+        workspaceId,
+        domainMonitorId,
+        tokenId: linkedToken.id,
+        hostname: `retired-${retiredStatus}.example`,
+        url: `https://retired-${retiredStatus}.example`,
+        source: "endpoint_monitor",
+        certificate: {
+          issuer: "Retire Test CA",
+          subject: `CN=retired-${retiredStatus}.example`,
+          serialNumber: "01",
+          fingerprintSha256: "d".repeat(64),
+          notAfter: "2099-01-01",
+        },
+      };
+
+      const first = await bridgeEndpointCertificateObservation(observation);
+      expect(first.skipped).to.equal(false);
+      expect(first.managedCertificate.status).to.equal("discovered");
+
+      await request(BASE)
+        .post(
+          `/api/v1/workspaces/${workspaceId}/certops/certificates/${first.managedCertificate.id}/retire`,
+        )
+        .set("Cookie", ownerSession.cookie)
+        .send({ status: retiredStatus, reason: "retire-first regression" })
+        .expect(200);
+
+      const second = await bridgeEndpointCertificateObservation({
+        ...observation,
+        certificate: {
+          ...observation.certificate,
+          serialNumber: "02",
+          fingerprintSha256: "e".repeat(64),
+        },
+      });
+
+      expect(second.skipped).to.equal(false);
+      expect(second.managedCertificate.id).to.equal(
+        first.managedCertificate.id,
+      );
+      expect(second.managedCertificate.status).to.equal(retiredStatus);
+      expect(second.managedCertificate.serialNumber).to.equal("02");
+      expect(second.managedCertificate.fingerprintSha256).to.equal(
+        "e".repeat(64),
+      );
+
+      const managed = await managedCertificateRow(
+        workspaceId,
+        first.managedCertificate.id,
+      );
+      expect(managed.status).to.equal(retiredStatus);
+      expect(managed.fingerprint_sha256).to.equal("e".repeat(64));
+    }
   });
 
   it("rejects invalid retire status without changing database state", async () => {
@@ -847,6 +1090,69 @@ describe("CertOps inventory routes", function () {
       [disposable.id],
     );
     expect(deletedRows.rows).to.have.length(0);
+  });
+
+  it("blocks reclassifying a managed-backed certificate token away from cert", async () => {
+    const before = await tokenRow(leafCertificate.tokenId);
+
+    const response = await request(BASE)
+      .put(`/api/tokens/${leafCertificate.tokenId}`)
+      .set("Cookie", ownerSession.cookie)
+      .send({ type: "api_key", category: "key_secret" });
+
+    expect(response.status).to.equal(409);
+    expect(response.body).to.deep.equal({
+      error: "Managed certificates must be retired before reclassification",
+      code: "CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED",
+    });
+
+    const after = await tokenRow(leafCertificate.tokenId);
+    expect(after.type).to.equal(before.type);
+    expect(after.category).to.equal(before.category);
+  });
+
+  it("blocks deletion of managed-backed tokens regardless of classification", async () => {
+    // Simulate a token whose classification drifted away from cert (legacy
+    // data or a write path that bypassed the reclassification guard): the
+    // delete gate must derive managed backing from managed_certificates
+    // alone, not from the mutable type/category.
+    const original = await tokenRow(leafCertificate.tokenId);
+    await TestUtils.execQuery(
+      "UPDATE tokens SET type = 'api_key', category = 'key_secret' WHERE id = $1",
+      [leafCertificate.tokenId],
+    );
+
+    try {
+      const single = await request(BASE)
+        .delete(`/api/tokens/${leafCertificate.tokenId}`)
+        .set("Cookie", ownerSession.cookie);
+
+      expect(single.status).to.equal(409);
+      expect(single.body.code).to.equal(
+        "CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED",
+      );
+
+      const bulk = await request(BASE)
+        .delete("/api/tokens/bulk")
+        .set("Cookie", ownerSession.cookie)
+        .send({ ids: [leafCertificate.tokenId] })
+        .expect(200);
+
+      expect(bulk.body.successCount).to.equal(0);
+      expect(bulk.body.results.failed).to.deep.include({
+        id: leafCertificate.tokenId,
+        reason: "Managed certificate retire required",
+        code: "CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED",
+      });
+
+      await tokenRow(leafCertificate.tokenId);
+      await managedCertificateRow(workspaceId, leafCertificate.id);
+    } finally {
+      await TestUtils.execQuery(
+        "UPDATE tokens SET type = $1, category = $2 WHERE id = $3",
+        [original.type, original.category, leafCertificate.tokenId],
+      );
+    }
   });
 
   it("allows hard delete of manual cert tokens not backed by managed certificates", async () => {

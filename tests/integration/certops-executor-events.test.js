@@ -23,6 +23,7 @@ const {
   listCertificateJobLog,
 } = require("../../apps/api/services/certops/jobs");
 const {
+  getCertificateEvidenceById,
   listCertificateEvidence,
 } = require("../../apps/api/services/certops/evidence");
 const {
@@ -899,6 +900,133 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("preserves private-key rejection precedence over the route's base scope on every machine route", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-wrong-scope-key-material",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      // Read-only token: valid and workspace-bound, but missing the base
+      // write scope required by every executor route.
+      const readOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:read"],
+      });
+      // Evidence-only token: passes the evidence route's base scope but not
+      // the two event routes' base scope.
+      const evidenceOnly = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:evidence:write"],
+      });
+      const requests = [
+        {
+          route: "/api/v1/certops/executor/events",
+          tokens: [readOnly, evidenceOnly],
+          body: eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            message: PRIVATE_KEY_PEM,
+          }),
+        },
+        {
+          route: `/api/v1/certops/jobs/${job.id}/events`,
+          tokens: [readOnly, evidenceOnly],
+          body: {
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "renewal.started",
+            status: "running",
+            occurredAt: new Date().toISOString(),
+            message: PRIVATE_KEY_PEM,
+          },
+        },
+        {
+          route: `/api/v1/certops/jobs/${job.id}/evidence`,
+          tokens: [readOnly],
+          body: {
+            schemaVersion: 1,
+            eventId: `event-${crypto.randomUUID()}`,
+            occurredAt: new Date().toISOString(),
+            evidence: [{ type: "log", output: "renewal log" }],
+            message: PRIVATE_KEY_PEM,
+          },
+        },
+      ];
+
+      for (const request of requests) {
+        for (const token of request.tokens) {
+          const beforeArtifacts = await countJobArtifacts({
+            workspaceId: workspaceA,
+            jobId: job.id,
+          });
+          const beforeStatus = (
+            await getCertificateJobById({
+              workspaceId: workspaceA,
+              jobId: job.id,
+            })
+          ).status;
+          const beforeAudits = await auditActionCounts({
+            workspaceId: workspaceA,
+          });
+
+          const withKeyMaterial = await supertest(app)
+            .post(request.route)
+            .set("Authorization", `Bearer ${token.plaintextToken}`)
+            .send({ ...request.body, eventId: `event-${crypto.randomUUID()}` });
+
+          const afterAudits = await auditActionCounts({
+            workspaceId: workspaceA,
+          });
+          expect(withKeyMaterial.status).to.equal(422);
+          expect(withKeyMaterial.body.code).to.equal(
+            "PRIVATE_KEY_MATERIAL_REJECTED",
+          );
+          expectNoSensitiveValues(withKeyMaterial.body, token.plaintextToken, [
+            PRIVATE_KEY_PEM,
+          ]);
+          expect(
+            await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id }),
+          ).to.deep.equal(beforeArtifacts);
+          expect(
+            (
+              await getCertificateJobById({
+                workspaceId: workspaceA,
+                jobId: job.id,
+              })
+            ).status,
+          ).to.equal(beforeStatus);
+          expect(afterAudits.CERTOPS_KEY_MATERIAL_REJECTED || 0).to.equal(
+            (beforeAudits.CERTOPS_KEY_MATERIAL_REJECTED || 0) + 1,
+          );
+
+          // Without key material the same underscoped token gets the scope
+          // denial: deferral must not weaken the route's scope enforcement.
+          const withoutKeyMaterial = await supertest(app)
+            .post(request.route)
+            .set("Authorization", `Bearer ${token.plaintextToken}`)
+            .send({
+              ...request.body,
+              eventId: `event-${crypto.randomUUID()}`,
+              message: "no key material",
+            });
+          expect(withoutKeyMaterial.status).to.equal(403);
+          expect(withoutKeyMaterial.body.code).to.equal(
+            "CERTOPS_API_TOKEN_SCOPE_DENIED",
+          );
+          expect(
+            await countJobArtifacts({ workspaceId: workspaceA, jobId: job.id }),
+          ).to.deep.equal(beforeArtifacts);
+        }
+      }
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("fails closed when a combined empty-evidence key-material audit cannot be written", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-empty-evidence-key-audit-failure",
@@ -1263,6 +1391,27 @@ describe("CertOps executor event ingestion", function () {
       expect(outputEvidence.outputSizeBytes).to.equal(
         Buffer.byteLength("executor finished password=[REDACTED]"),
       );
+      expect(outputEvidence.outputRedactionApplied).to.equal(true);
+      expect(outputEvidence.outputRedactionCount).to.be.greaterThan(0);
+      expect(outputEvidence.metadata.redaction).to.deep.equal({
+        applied: true,
+        count: outputEvidence.outputRedactionCount,
+      });
+      expect(JSON.stringify(outputEvidence)).to.not.include("swordfish");
+
+      const fetchedEvidence = await getCertificateEvidenceById({
+        workspaceId: workspaceA,
+        evidenceId: outputEvidence.id,
+      });
+      expect(fetchedEvidence.outputRedactionApplied).to.equal(true);
+      expect(fetchedEvidence.outputRedactionCount).to.equal(
+        outputEvidence.outputRedactionCount,
+      );
+      expect(fetchedEvidence.metadata.redaction).to.deep.equal({
+        applied: true,
+        count: outputEvidence.outputRedactionCount,
+      });
+      expect(JSON.stringify(fetchedEvidence)).to.not.include("swordfish");
 
       const oversizedBefore = await countJobArtifacts({
         workspaceId: workspaceA,
@@ -2344,6 +2493,150 @@ describe("CertOps executor event ingestion", function () {
       expect(
         await auditActionCounts({ workspaceId: workspaceA, jobId: job.id }),
       ).to.deep.equal({ CERTOPS_EXECUTOR_EVENT_ACCEPTED: 2 });
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("resolves genuinely concurrent identical-payload requests to exactly one write, without deadlocking", async () => {
+    // Regression test for a lock-upgrade deadlock (Postgres 40P01): the
+    // executor event ingestion used to take `SELECT ... FOR SHARE` on the
+    // certificate_jobs row, while updateCertificateJobStatus() later in the
+    // same transaction runs an `UPDATE certificate_jobs ...` against that
+    // same row (needing an exclusive lock). Two concurrent requests for the
+    // same job could each hold the shared lock and then each block upgrading
+    // to exclusive, deadlocking. Fixed by taking `FOR UPDATE` upfront (see
+    // apps/api/services/certops/executorEvents.js) so concurrent events on
+    // one job serialize instead of deadlocking.
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-concurrency",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const payload = eventPayload({ workspaceId: workspaceA, jobId: job.id });
+
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          supertest(app).post(route).set("Authorization", auth).send(payload),
+        ),
+      );
+
+      for (const res of responses) {
+        expect(
+          res.status,
+          `expected 202, got ${res.status}: ${JSON.stringify(res.body)}`,
+        ).to.equal(202);
+      }
+      const originals = responses.filter((res) => res.body.duplicate !== true);
+      const replays = responses.filter((res) => res.body.duplicate === true);
+      expect(
+        originals.length,
+        "exactly one concurrent request should win as the original write",
+      ).to.equal(1);
+      expect(replays.length).to.equal(3);
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(
+        logs.items.length,
+        "no duplicate job-log row should be created by the race",
+      ).to.equal(1);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
+  it("resolves two different lifecycle events racing for the same job to exactly one terminal state, without deadlocking", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-concurrency-terminal",
+    );
+
+    try {
+      const app = buildExecutorApp();
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+
+      // job.started first, so the job is "running" (non-terminal) before
+      // the completed/failed race below.
+      await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "job.started",
+            status: "running",
+          }),
+        );
+
+      const [completedRes, failedRes] = await Promise.all([
+        supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(
+            eventPayload({
+              workspaceId: workspaceA,
+              jobId: job.id,
+              eventType: "job.completed",
+              status: "succeeded",
+            }),
+          ),
+        supertest(app)
+          .post(route)
+          .set("Authorization", auth)
+          .send(
+            eventPayload({
+              workspaceId: workspaceA,
+              jobId: job.id,
+              eventType: "job.failed",
+              status: "failed",
+            }),
+          ),
+      ]);
+
+      expect(
+        completedRes.status,
+        `job.completed should be 202: ${JSON.stringify(completedRes.body)}`,
+      ).to.equal(202);
+      expect(
+        failedRes.status,
+        `job.failed should be 202: ${JSON.stringify(failedRes.body)}`,
+      ).to.equal(202);
+
+      const finalJob = await getCertificateJobById({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(["succeeded", "failed"]).to.include(finalJob.status);
+      expect(completedRes.body.status).to.equal(finalJob.status);
+      expect(failedRes.body.status).to.equal(finalJob.status);
+
+      const logs = await listCertificateJobLog({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(
+        logs.items.length,
+        "job.started, job.completed, and job.failed should all still be logged",
+      ).to.equal(3);
     } finally {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }

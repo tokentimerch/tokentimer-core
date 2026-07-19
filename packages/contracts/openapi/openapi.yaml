@@ -976,6 +976,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Managed-backed certificate token must be retired before reclassification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
     delete:
@@ -999,6 +1005,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Managed-backed certificate token must be retired before removal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/tokens/bulk:
@@ -1749,7 +1761,7 @@ paths:
       tags: [Account]
       summary: Grant or revoke system admin
       operationId: setSystemAdmin
-      description: Sets installation-wide system admin (`users.is_admin`) for a user. Requires an authenticated system admin. The last system admin cannot demote themselves.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Sets installation-wide system admin (`users.is_admin`) for a user. Requires an authenticated system admin. The last system admin cannot demote themselves. On TokenTimer Cloud this route does not exist; TokenTimer operates the instance.
       parameters:
         - $ref: "#/components/parameters/userIdParam"
       requestBody:
@@ -1787,7 +1799,7 @@ paths:
       tags: [Account]
       summary: Get system settings
       operationId: getSystemSettings
-      description: Returns SMTP and WhatsApp system settings for admin users.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Returns SMTP and WhatsApp system settings for admin users. On TokenTimer Cloud this route does not exist; TokenTimer operates SMTP and WhatsApp delivery.
       responses:
         "200":
           description: System settings
@@ -1802,7 +1814,7 @@ paths:
       tags: [Account]
       summary: Update system settings
       operationId: updateSystemSettings
-      description: Updates SMTP and WhatsApp configuration values for admin users.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Updates SMTP and WhatsApp configuration values for admin users. On TokenTimer Cloud this route does not exist; TokenTimer operates SMTP and WhatsApp delivery.
       requestBody:
         required: true
         content:
@@ -1825,7 +1837,7 @@ paths:
       tags: [Account]
       summary: Send SMTP test email
       operationId: testSmtpConfiguration
-      description: Sends a test email using current SMTP settings.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Sends a test email using current SMTP settings. On TokenTimer Cloud this route does not exist; TokenTimer operates SMTP delivery.
       requestBody:
         required: false
         content:
@@ -1853,7 +1865,7 @@ paths:
       tags: [Account]
       summary: Send WhatsApp test message as admin
       operationId: testAdminWhatsAppConfiguration
-      description: Sends a test WhatsApp message using current system settings.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Sends a test WhatsApp message using current system settings. On TokenTimer Cloud this route does not exist; TokenTimer operates WhatsApp delivery.
       requestBody:
         required: true
         content:
@@ -2012,7 +2024,7 @@ paths:
       tags: [Workspaces]
       summary: List auto-sync configs
       operationId: listAutoSyncConfigs
-      description: Lists auto-sync configurations for a workspace.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Lists auto-sync configurations for a workspace. TokenTimer Cloud does not offer auto-sync (this route returns 404); credentials are never stored there.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -2034,7 +2046,7 @@ paths:
       tags: [Workspaces]
       summary: Create auto-sync config
       operationId: createAutoSyncConfig
-      description: Creates a new provider auto-sync configuration for a workspace.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Creates a new provider auto-sync configuration for a workspace. TokenTimer Cloud does not offer auto-sync (this route returns 404); credentials are never stored there.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -2084,7 +2096,7 @@ paths:
       tags: [Workspaces]
       summary: Update auto-sync config
       operationId: updateAutoSyncConfig
-      description: Updates an existing auto-sync configuration.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Updates an existing auto-sync configuration. TokenTimer Cloud does not offer auto-sync (this route returns 404).
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -2117,7 +2129,7 @@ paths:
       tags: [Workspaces]
       summary: Delete auto-sync config
       operationId: deleteAutoSyncConfig
-      description: Deletes an auto-sync configuration from a workspace.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Deletes an auto-sync configuration from a workspace (also deletes stored credentials). TokenTimer Cloud does not offer auto-sync (this route returns 404).
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -2144,7 +2156,7 @@ paths:
       tags: [Workspaces]
       summary: Trigger auto-sync run
       operationId: triggerAutoSyncRun
-      description: Queues an immediate run for an enabled auto-sync configuration.
+      description: <span class="tt-deployment-badge tt-deployment-badge--selfhosted">Self-hosted / Enterprise only</span> Queues an immediate run for an enabled auto-sync configuration. TokenTimer Cloud does not offer auto-sync (this route returns 404).
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3413,6 +3425,61 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Create a manual CertOps job
+      operationId: createCertOpsJob
+      description: >-
+        Creates a workspace-scoped CertOps job through the manual creation
+        surface. This is a session-authenticated exception path for the
+        pre-certops-scheduler window (and a break-glass path afterward);
+        jobs created this way are always recorded with source "api" and
+        cannot be attributed to the executor or automated-scheduler
+        pipelines. Requires workspace_manager role or above. Private key or
+        secret material in the request body is rejected.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsJobCreateRequest"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: idempotencyKey was already used with a different job request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Idempotency key was already used with a different CertOps job request
+                code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+        "422":
+          description: The request contained private-key or forbidden secret material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
     get:
       tags: [CertOps]
@@ -4561,6 +4628,28 @@ components:
             $ref: "#/components/schemas/CertOpsJob"
         pagination:
           $ref: "#/components/schemas/Pagination"
+    CertOpsJobCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [operation]
+      description: >-
+        Manual job creation request. source is always forced to "api" by the
+        server and is not accepted from the request body.
+      properties:
+        operation:
+          type: string
+          enum: [renew, deploy, reload, revoke, noop]
+        subjectType:
+          type: string
+          enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+        subjectId:
+          type: string
+          maxLength: 128
+        payload:
+          $ref: "#/components/schemas/CertOpsPublicObject"
+        idempotencyKey:
+          type: string
+          maxLength: 128
     CertOpsPublicObject:
       type: object
       additionalProperties: true

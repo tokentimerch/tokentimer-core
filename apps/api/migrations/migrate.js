@@ -316,6 +316,7 @@ const migrations = [
         attempts_whatsapp INTEGER NOT NULL DEFAULT 0,
         last_attempt TIMESTAMP NULL,
         next_attempt_at TIMESTAMP NULL,
+        delivery_claim_id UUID NULL,
         last_error_class TEXT NULL,
         last_error_message TEXT NULL,
         error_message TEXT NULL,
@@ -539,6 +540,8 @@ const migrations = [
         token_id INTEGER NULL REFERENCES tokens(id) ON DELETE SET NULL,
         health_check_enabled BOOLEAN NOT NULL DEFAULT TRUE,
         last_health_check_at TIMESTAMPTZ NULL,
+        check_claimed_until TIMESTAMPTZ NULL,
+        check_claim_id UUID NULL,
         last_health_status TEXT NULL CHECK (last_health_status IN ('healthy','unhealthy','error','pending')),
         last_health_status_code INTEGER NULL,
         last_health_error TEXT NULL,
@@ -670,15 +673,24 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_managed_certificates_serial
         ON managed_certificates(workspace_id, serial_number)
         WHERE serial_number IS NOT NULL;
-      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint
+      -- Non-monitor rows (import/api/manual/...) dedupe by fingerprint.
+      -- Monitor observations dedupe by (source, source_ref) so two monitors
+      -- can share a fingerprint as separate inventory identities without
+      -- stealing provenance.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
         ON managed_certificates(workspace_id, fingerprint_sha256)
-        WHERE fingerprint_sha256 IS NOT NULL;
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker');
       CREATE INDEX IF NOT EXISTS idx_managed_certificates_workspace_san
         ON managed_certificates USING GIN(subject_alt_names);
 
-      -- Certificate targets are deployment references. They may point at
-      -- hosts, endpoints, appliances, or cluster references, but never hold key
-      -- material.
+      -- Certificate targets are a location abstraction (observation point or
+      -- deployment destination). They may point at hosts, endpoints, appliances,
+      -- or cluster references, but never hold key material.
       CREATE TABLE IF NOT EXISTS certificate_targets (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -1044,6 +1056,246 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_certificate_executor_events_api_token
         ON certificate_executor_events(workspace_id, created_by_api_token_id)
         WHERE created_by_api_token_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 15,
+    name: "certops_managed_certificate_monitor_identity",
+    sql: `
+      -- Stop merging distinct monitor observations on shared fingerprints.
+      -- Non-monitor rows (import/api/manual/...) keep fingerprint dedupe.
+      -- Monitor identity is (workspace_id, source, source_ref).
+      -- certificate_targets is a location abstraction (observation point or
+      -- deployment destination), not only a deployment reference.
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint;
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+
+      -- Pre-v15 databases could hold duplicate monitor identities
+      -- (workspace_id, source, source_ref): the old SELECT-then-INSERT
+      -- monitor bridge raced (TOCTOU) and NULL-fingerprint rows bypassed
+      -- the old fingerprint unique index. Deduplicate deterministically
+      -- before creating the monitor identity unique index: keep the newest
+      -- row per identity (updated_at DESC, created_at DESC, id DESC), the
+      -- same resolution the old bridge converged on (latest observation).
+      -- certificate_instances children of losing rows are re-pointed to the
+      -- keeper so rotation history survives; only instances that would
+      -- collide with an equivalent keeper instance under
+      -- uq_certificate_instances_target_cert_fingerprint are deleted
+      -- (they describe the same observation). certificate_jobs and
+      -- certificate_evidence history that references losing rows through the
+      -- FK-less text pair (subject_type='managed_certificate', subject_id)
+      -- is re-pointed to the keeper too, and a terminal lifecycle status on
+      -- any losing row ('revoked'/'decommissioned', retire-first) is
+      -- carried onto the keeper before losers are deleted. No dedup is
+      -- needed for
+      -- uq_managed_certificates_workspace_fingerprint_import: the pre-v15
+      -- index uq_managed_certificates_workspace_fingerprint was unique over
+      -- ALL rows with fingerprint_sha256 IS NOT NULL, a superset of the new
+      -- import predicate's row set.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      colliding_instances AS (
+        SELECT ci.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ci.workspace_id, ci.target_id, k.keeper_id,
+                              ci.observed_fingerprint_sha256
+                 ORDER BY (ci.managed_certificate_id = k.keeper_id) DESC,
+                          ci.updated_at DESC, ci.created_at DESC, ci.id DESC
+               ) AS rn
+          FROM certificate_instances ci
+          JOIN managed_certificates mc
+            ON mc.workspace_id = ci.workspace_id
+           AND mc.id = ci.managed_certificate_id
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE ci.observed_fingerprint_sha256 IS NOT NULL
+      )
+      DELETE FROM certificate_instances
+       WHERE id IN (SELECT id FROM colliding_instances WHERE rn > 1);
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      )
+      UPDATE certificate_instances ci
+         SET managed_certificate_id = k.keeper_id
+        FROM managed_certificates mc
+        JOIN monitor_identity_keepers k
+          ON k.workspace_id = mc.workspace_id
+         AND k.source = mc.source
+         AND k.source_ref = mc.source_ref
+       WHERE ci.workspace_id = mc.workspace_id
+         AND ci.managed_certificate_id = mc.id
+         AND mc.id <> k.keeper_id;
+
+      -- certificate_jobs and certificate_evidence reference managed
+      -- certificates through the FK-less text pair
+      -- (subject_type = 'managed_certificate', subject_id = mc.id::text).
+      -- Re-point that history from each losing row to its keeper so job and
+      -- evidence trails survive the dedup. audit_events rows that mention
+      -- loser ids inside their metadata are historical records of what
+      -- happened at the time and are intentionally left untouched.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      monitor_identity_losers AS (
+        SELECT mc.workspace_id, mc.id AS loser_id, k.keeper_id
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+      )
+      UPDATE certificate_jobs cj
+         SET subject_id = l.keeper_id::text
+        FROM monitor_identity_losers l
+       WHERE cj.workspace_id = l.workspace_id
+         AND cj.subject_type = 'managed_certificate'
+         AND cj.subject_id = l.loser_id::text;
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      monitor_identity_losers AS (
+        SELECT mc.workspace_id, mc.id AS loser_id, k.keeper_id
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+      )
+      UPDATE certificate_evidence ce
+         SET subject_id = l.keeper_id::text
+        FROM monitor_identity_losers l
+       WHERE ce.workspace_id = l.workspace_id
+         AND ce.subject_type = 'managed_certificate'
+         AND ce.subject_id = l.loser_id::text;
+
+      -- Retire-first: a terminal lifecycle status ('revoked' or
+      -- 'decommissioned') must not be discarded just because a different
+      -- duplicate has a newer updated_at. The keeper row is still selected
+      -- by recency (identity and relationships), but if any losing row in
+      -- the group is terminal and the keeper is not, the keeper inherits the
+      -- terminal status. Deterministic choice: the most recently updated
+      -- terminal loser wins (updated_at DESC, created_at DESC, id DESC).
+      -- managed_certificates has no retired_at/decommissioned_at columns;
+      -- status is the only lifecycle column. updated_at is left as-is: the
+      -- keeper already carries the newest updated_at in its group by
+      -- construction.
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      ),
+      terminal_losers AS (
+        SELECT DISTINCT ON (k.workspace_id, k.keeper_id)
+               k.workspace_id, k.keeper_id,
+               mc.status AS terminal_status
+          FROM managed_certificates mc
+          JOIN monitor_identity_keepers k
+            ON k.workspace_id = mc.workspace_id
+           AND k.source = mc.source
+           AND k.source_ref = mc.source_ref
+         WHERE mc.id <> k.keeper_id
+           AND mc.status IN ('revoked', 'decommissioned')
+         ORDER BY k.workspace_id, k.keeper_id,
+                  mc.updated_at DESC, mc.created_at DESC, mc.id DESC
+      )
+      UPDATE managed_certificates mc
+         SET status = t.terminal_status
+        FROM terminal_losers t
+       WHERE mc.workspace_id = t.workspace_id
+         AND mc.id = t.keeper_id
+         AND mc.status NOT IN ('revoked', 'decommissioned');
+
+      WITH monitor_identity_keepers AS (
+        SELECT DISTINCT ON (workspace_id, source, source_ref)
+               workspace_id, source, source_ref, id AS keeper_id
+          FROM managed_certificates
+         WHERE source_ref IS NOT NULL
+           AND source IN ('endpoint_monitor', 'domain_checker')
+         ORDER BY workspace_id, source, source_ref,
+                  updated_at DESC, created_at DESC, id DESC
+      )
+      DELETE FROM managed_certificates mc
+       USING monitor_identity_keepers k
+       WHERE mc.workspace_id = k.workspace_id
+         AND mc.source = k.source
+         AND mc.source_ref = k.source_ref
+         AND mc.id <> k.keeper_id;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker');
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker');
+    `,
+  },
+  {
+    version: 16,
+    name: "endpoint_monitor_check_claim_lease",
+    sql: `
+      -- Dedicated concurrency lease for the endpoint check worker so
+      -- last_health_check_at stays pure scheduling state. A claimed monitor
+      -- has check_claimed_until in the future; crash recovery is natural
+      -- lease expiry. Mirrors the auto-sync worker's claimed-until idiom.
+      ALTER TABLE domain_monitors
+        ADD COLUMN IF NOT EXISTS check_claimed_until TIMESTAMPTZ NULL;
+    `,
+  },
+  {
+    version: 17,
+    name: "worker_owner_scoped_claim_ids",
+    sql: `
+      -- Owner identity for the claim-then-commit workers. A time-based marker
+      -- (next_attempt_at / check_claimed_until) alone cannot distinguish two
+      -- workers racing on the same row after a lease expires: both renewals
+      -- match a status-only predicate and both perform external side effects.
+      -- Each worker run generates one claim UUID; renewals, terminal writes,
+      -- and lease releases are conditional on still owning that claim id, so
+      -- a superseded worker's writes no-op instead of double-sending or
+      -- clearing another worker's lease.
+      ALTER TABLE alert_queue
+        ADD COLUMN IF NOT EXISTS delivery_claim_id UUID NULL;
+      ALTER TABLE domain_monitors
+        ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL;
     `,
   },
 ];

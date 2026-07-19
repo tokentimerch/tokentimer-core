@@ -62,7 +62,7 @@ const RETIRED_STATUS_META = {
 /**
  * Resolves the badge a row should show: a retired managed-certificate state
  * (revoked/decommissioned) wins over the expiry-derived status, so retired
- * certs read as retired rather than "expired/healthy" (plan D7).
+ * certs read as retired rather than "expired/healthy".
  */
 function effectiveStatusMeta(token, getStatusMeta) {
   const managed = token.__managedCert;
@@ -530,7 +530,7 @@ function DomainsCell({ token, mutedTextColor }) {
   }
 
   return (
-    <VStack align='start' spacing={1}>
+    <VStack align='start' spacing={1} maxW='240px'>
       <HStack spacing={1} minW={0} w='full'>
         <Link
           href={domainValueToUrl(domains[0])}
@@ -538,11 +538,14 @@ function DomainsCell({ token, mutedTextColor }) {
           color='blue.300'
           fontSize='sm'
           noOfLines={1}
+          minW={0}
+          wordBreak='break-all'
+          title={domains[0]}
           onClick={event => event.stopPropagation()}
         >
           {domains[0]}
         </Link>
-        <FiExternalLink size={13} />
+        <FiExternalLink size={13} style={{ flexShrink: 0 }} />
       </HStack>
       {domains.length > 1 && (
         <Text color={mutedTextColor} fontSize='xs'>
@@ -562,18 +565,21 @@ function LocationCell({ token, getTokenLocation, mutedTextColor }) {
 
   if (isDomain) {
     return (
-      <HStack spacing={1} minW={0}>
+      <HStack spacing={1} minW={0} maxW='240px'>
         <Link
           href={domainValueToUrl(location)}
           isExternal
           color='blue.300'
           fontSize='sm'
           noOfLines={1}
+          minW={0}
+          wordBreak='break-all'
+          title={location}
           onClick={event => event.stopPropagation()}
         >
           {location}
         </Link>
-        <FiExternalLink size={13} />
+        <FiExternalLink size={13} style={{ flexShrink: 0 }} />
         {token.domains.length > 1 && (
           <Text color={mutedTextColor} fontSize='xs'>
             +{token.domains.length - 1}
@@ -594,7 +600,7 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
   const managed = token.__managedCert;
 
   return (
-    <HStack spacing={3} minW={0}>
+    <HStack spacing={3} minW={0} maxW='340px'>
       <Circle
         size='32px'
         bg={visual.bg}
@@ -605,8 +611,14 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
       >
         <VisualIcon size={16} />
       </Circle>
-      <Box minW={0}>
-        <Text color={nameColor} fontWeight='medium' noOfLines={1}>
+      <Box minW={0} maxW='296px'>
+        <Text
+          color={nameColor}
+          fontWeight='medium'
+          noOfLines={1}
+          wordBreak='break-all'
+          title={token.name}
+        >
           {token.name}
         </Text>
         {subtitle ? (

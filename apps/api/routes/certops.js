@@ -34,12 +34,14 @@ const {
   revokeApiTokenWithResult,
 } = require("../services/certops/apiTokens");
 const {
+  CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
+  createCertificateJob,
   getCertificateJobById,
   listCertificateJobLog,
   listCertificateJobs,
@@ -217,6 +219,13 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT) {
+    return res.status(409).json({
+      error: "Idempotency key was already used with a different CertOps job request",
+      code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+    });
+  }
+
   return null;
 }
 
@@ -254,6 +263,24 @@ function jobListOptionsFromRequest(req) {
     subjectId: req.query.subjectId,
     operation: req.query.operation,
     source: req.query.source,
+  };
+}
+
+function jobCreateOptionsFromRequest(req) {
+  return {
+    workspaceId: req.workspace.id,
+    operation: req.body?.operation,
+    subjectType: req.body?.subjectType,
+    subjectId: req.body?.subjectId,
+    payload: req.body?.payload,
+    idempotencyKey: req.body?.idempotencyKey,
+    // Manual jobs are always created through this session-authenticated
+    // route: source is always "api" (the same value the certificate-import
+    // route uses for session-initiated writes), never taken from the
+    // request body, so a caller cannot spoof an executor- or system-sourced
+    // job through the manual-create surface.
+    source: "api",
+    requestedByUserId: req.user?.id || null,
   };
 }
 
@@ -354,7 +381,7 @@ function apiTokenAuditMetadata(token, { includeRevocation = false } = {}) {
   return metadata;
 }
 
-async function withCertOpsTokenTransaction(work) {
+async function withCertOpsTransaction(work) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -372,6 +399,9 @@ async function withCertOpsTokenTransaction(work) {
     client.release();
   }
 }
+
+// Alias kept for callers that still name the helper after API-token routes.
+const withCertOpsTokenTransaction = withCertOpsTransaction;
 
 async function recordApiTokenAudit({
   client,
@@ -393,9 +423,10 @@ async function recordApiTokenAudit({
   });
 }
 
-async function recordInventoryAudit(req, source, certificates) {
+async function recordInventoryAudit(req, source, certificates, client = null) {
   const actorUserId = req.user?.id || null;
   await writeAudit({
+    client,
     actorUserId,
     subjectUserId: actorUserId,
     action:
@@ -420,6 +451,9 @@ router.get(
   "/api/v1/workspaces/:id/certops/tokens",
   getApiLimiter(),
   requireCertOpsEnabled,
+  // Token metadata enumeration is manager-only, same as create/revoke:
+  // viewers must not see machine-token names, prefixes, or scopes.
+  requireCertOpsWriteRole,
   async (req, res) => {
     try {
       const tokens = await listApiTokens({
@@ -573,6 +607,51 @@ router.get(
       });
       return res.status(500).json({
         error: "Failed to list CertOps jobs",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // Manual job creation is a write action that mutates workspace state
+  // (queues an executor job), so it uses the same manager-only gate as
+  // token issuance/revocation rather than the read-only jobs-list route.
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const job = await createCertificateJob(jobCreateOptionsFromRequest(req));
+      await writeAudit({
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+        action: "CERTOPS_JOB_CREATED_MANUAL",
+        targetType: "certificate_job",
+        targetId: job.id,
+        workspaceId: req.workspace.id,
+        metadata: {
+          operation: job.operation,
+          subjectType: job.subjectType,
+          subjectId: job.subjectId,
+          source: job.source,
+        },
+      });
+      return res.status(201).json({ job: jobDetail(job) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps manual job creation failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps job",
         code: "INTERNAL_ERROR",
       });
     }
@@ -743,8 +822,14 @@ async function importCertificatesHandler(req, res, source, statusCode) {
       });
     }
 
-    const certificates = await importPublicCertificates(options);
-    await recordInventoryAudit(req, source, certificates);
+    const certificates = await withCertOpsTransaction(async (client) => {
+      const imported = await importPublicCertificates({
+        ...options,
+        client,
+      });
+      await recordInventoryAudit(req, source, imported, client);
+      return imported;
+    });
     return res.status(statusCode).json({
       items: certificates,
       count: certificates.length,

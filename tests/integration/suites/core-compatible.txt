@@ -48,6 +48,7 @@ tests/integration/contact-group-default-fallback.test.js
 tests/integration/channel-selection.test.js
 tests/integration/no-eligible-channels.test.js
 tests/integration/concurrent-delivery-workers.test.js
+tests/integration/worker-claim-lease.test.js
 tests/integration/alert-queue-retry-requeue.test.js
 tests/integration/delivery-window-deferral.test.js
 
@@ -80,6 +81,8 @@ tests/integration/certops-api-token-auth.test.js
 tests/integration/certops-machine-token-rate-limit.test.js
 tests/integration/certops-jobs-evidence.test.js
 tests/integration/certops-executor-events.test.js
+tests/integration/certops-docs-fixtures.test.js
+tests/integration/certops-fake-executor.test.js
 tests/integration/certops-job-read-apis.test.js
 
 # Integrations

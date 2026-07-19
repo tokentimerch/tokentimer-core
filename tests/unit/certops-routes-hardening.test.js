@@ -112,6 +112,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
+      "POST /api/v1/workspaces/:id/certops/jobs",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ].sort());
@@ -135,6 +136,7 @@ describe("CertOps route hardening", () => {
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
       ["get", "/api/v1/workspaces/:id/certops/jobs"],
+      ["post", "/api/v1/workspaces/:id/certops/jobs"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
@@ -144,6 +146,18 @@ describe("CertOps route hardening", () => {
     ]) {
       assert.match(routeBlock(method, routePath), /requireCertOpsEnabled/);
     }
+  });
+
+  it("requires manager role for CertOps API token metadata enumeration", () => {
+    // Token metadata enumeration (names, prefixes, scopes, status) must be
+    // manager-only, matching token create/revoke, so viewers cannot enumerate
+    // machine tokens by calling the API directly.
+    const block = routeBlock("get", "/api/v1/workspaces/:id/certops/tokens");
+    assert.ok(
+      block.indexOf("requireCertOpsEnabled") <
+        block.indexOf("requireCertOpsWriteRole"),
+      "GET /certops/tokens must check the rollout gate before manager authorization",
+    );
   });
 
   it("declares specific child routes before generic detail routes", () => {
@@ -196,6 +210,7 @@ describe("CertOps route hardening", () => {
       "/api/v1/workspaces/:id/certops/certificates",
       "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "/api/v1/workspaces/:id/certops/imports",
+      "/api/v1/workspaces/:id/certops/jobs",
       "/api/v1/workspaces/:id/certops/tokens",
       "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
     ]) {

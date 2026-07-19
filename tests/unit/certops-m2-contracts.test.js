@@ -454,6 +454,59 @@ function prChangedFiles() {
     }
   }
 
+  // CI checkouts default to fetch-depth: 1, so origin/feature/certops is
+  // usually missing and even a shallow tip fetch cannot compute the
+  // three-dot merge-base. Fetch the base branch, then unshallow when needed.
+  try {
+    execFileSync(
+      "git",
+      [
+        "fetch",
+        "--no-tags",
+        "origin",
+        "+feature/certops:refs/remotes/origin/feature/certops",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const isShallow = execFileSync(
+      "git",
+      ["rev-parse", "--is-shallow-repository"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ).trim();
+    if (isShallow === "true") {
+      execFileSync("git", ["fetch", "--no-tags", "--unshallow", "origin"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+    const output = execFileSync(
+      "git",
+      ["diff", "--name-only", "origin/feature/certops...HEAD"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+    return {
+      ref: "origin/feature/certops",
+      files: output
+        .split(/\r?\n/)
+        .map((file) => file.trim().replace(/\\/g, "/"))
+        .filter(Boolean),
+    };
+  } catch (error) {
+    errors.push(`fetch-origin/feature/certops: ${error.message}`);
+  }
+
   throw new Error(
     `Unable to compare M2-A1 PR diff against feature/certops or origin/feature/certops: ${errors.join("; ")}`,
   );
@@ -1079,11 +1132,18 @@ describe("CertOps M2 contract skeletons", () => {
     assert.doesNotMatch(certOpsExecutorRoutesSource, /certops:executor:events/);
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/executor\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*authMiddleware,\s*rateLimitMiddleware,\s*requireExecutorRouteScope,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,\s*executorEventsHandler,/s,
     );
     assert.match(
       certOpsExecutorRoutesSource,
-      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/jobs\/:jobId\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*perJobEventAuthMiddleware,\s*rateLimitMiddleware,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,/s,
+      /certOpsExecutorRouter\.post\(\s*"\/api\/v1\/certops\/jobs\/:jobId\/events",\s*preAuthRateLimitFallback,\s*certOpsEnabledMiddleware,\s*perJobEventAuthMiddleware,\s*rateLimitMiddleware,\s*requireExecutorRouteScope,\s*requireEvidenceItems,\s*requireExecutorEvidenceScope,/s,
+    );
+    assert.match(
+      certOpsExecutorRoutesSource,
+      // Private-key rejection precedence (PR #61 remediation): the base route
+      // scope is enforced by requireExecutorRouteScope only after private-key
+      // material has been scanned and rejected, not by the auth middleware.
+      /function requireExecutorRouteScope/,
     );
     assert.match(
       certOpsExecutorRoutesSource,
@@ -1455,33 +1515,140 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/index.js",
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
+      // PR #61 review remediation: classification-independent managed-backing
+      // check for the retire-first delete/reclassification gates.
+      "apps/api/routes/tokens.js",
       "apps/api/services/audit.js",
       "apps/api/services/certops/apiTokens.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/executorEvents.js",
       "apps/api/services/certops/inventory.js",
       "apps/api/services/certops/jobs.js",
+      // Post-M2 hardening fixes stacked on feature/certops (worker SKIP LOCKED
+      // transaction wrap, monitor-bridge infra-handle scan fix, ADR label
+      // cleanup, PR #49 review remediation) reviewed in the backend-fixes PR:
+      "apps/api/services/certops/bridgeGates.js",
+      "apps/api/services/certops/identitySafety.js",
+      "apps/api/services/certops/monitorBridge.js",
+      "apps/api/services/certops/parser.js",
+      "apps/api/utils/logger.js",
       "apps/api/utils/secretMaterial.js",
+      "apps/worker/src/delivery-worker.js",
+      "apps/worker/src/endpoint-check-worker.js",
+      // SMTP provider-loop ownership heartbeat + account-attempt cap so a
+      // single sendEmailNotification cannot outlive the delivery lease:
+      "apps/worker/src/notify/email.js",
+      // Unrelated dashboard layout polish stacked on this branch (fixed
+      // header height, bottom border) plus its dev-image Dockerfile fallout;
+      // no CertOps behavior change.
+      "apps/dashboard/src/components/certops/RetireCertificateModal.jsx",
+      "apps/dashboard/src/styles/dashboardLayout.js",
+      "apps/worker/Dockerfile.dev",
+      "deploy/compose/Dockerfile.worker",
+      // CertOps rollout flag + demo provisioning tooling for local/manual
+      // M2 validation (no runtime code paths; compose env wiring only):
+      "deploy/compose/.env.example",
+      "deploy/compose/docker-compose.dev.yml",
+      "deploy/compose/docker-compose.yml",
+      "scripts/provision-certops-demo.js",
+      "docs/adr/0007-certops-certificate-removal-lifecycle.md",
+      "docs/certops/CONTEXT.md",
+      "docs/certops/executor-api.md",
+      "tests/fixtures/certops-docs-examples.js",
+      // Unrelated fixes stacked on feature/certops-m2-backend-fixes before
+      // this PR (worker test env isolation, WORKER_AUTO_SYNC_CRON doc fix,
+      // ROADMAP CertOps milestones):
+      ".env.example",
+      "DEVELOPMENT.md",
+      "ROADMAP.md",
+      "tests/integration/setup.js",
       "tests/integration/certops-api-token-auth.test.js",
       "tests/integration/certops-api-token-routes.test.js",
       "tests/integration/certops-api-tokens.test.js",
+      "tests/integration/certops-docs-fixtures.test.js",
       "tests/integration/certops-executor-events.test.js",
+      "tests/integration/certops-fake-executor.test.js",
+      "tests/integration/fake-executor.js",
+      "tests/integration/certops-inventory.test.js",
       "tests/integration/certops-inventory-import-helpers.test.js",
       "tests/integration/certops-job-read-apis.test.js",
       "tests/integration/certops-jobs-evidence.test.js",
       "tests/integration/certops-machine-token-rate-limit.test.js",
       "tests/integration/certops-migration.test.js",
+      "tests/integration/endpoint-check-worker.integration.test.js",
+      "tests/integration/helpers/local-https-server.js",
+      "tests/integration/worker-claim-lease.test.js",
+      // M2 manual job-creation surface (POST /certops/jobs): pulls the
+      // exception-path job-creation entry point forward from M4 so M2 ships
+      // with a usable way into the job/evidence lifecycle it otherwise fully
+      // supports (see plan v1.17).
+      "tests/integration/certops-job-create-api.test.js",
+      "tests/integration/suites/cloud-compatible.txt",
       "tests/integration/suites/core-compatible.txt",
       "tests/integration/suites/core.txt",
       "tests/unit/certops-api-token-auth.test.js",
       "tests/unit/certops-api-tokens.test.js",
+      "tests/unit/certops-bridge-gates.test.js",
       "tests/unit/certops-evidence.test.js",
       "tests/unit/certops-executor-body-parser.test.js",
       "tests/unit/certops-executor-events.test.js",
+      "tests/unit/certops-identity-safety.test.js",
       "tests/unit/certops-jobs.test.js",
       "tests/unit/certops-machine-token-rate-limit.test.js",
       "tests/unit/certops-migration.test.js",
+      "tests/unit/certops-monitor-bridge.test.js",
+      "tests/unit/certops-parser.test.js",
+      "tests/unit/logger-redaction.test.js",
       "tests/unit/secretMaterial.test.js",
+      "tests/unit/worker-email-ownership-heartbeat.test.js",
+    ]);
+    // M2-B dashboard/UI work (this PR) rides on top of the M2-A backend.
+    // Explicit allowlist of the dashboard files actually touched by the
+    // M2-B branch (git diff feature/certops-m2-backend-fixes...HEAD --
+    // apps/dashboard), instead of a blanket apps/dashboard/ prefix:
+    const allowedM2BDashboardFiles = new Set([
+      "apps/dashboard/src/App.jsx",
+      "apps/dashboard/src/components/AssetFilters.jsx",
+      "apps/dashboard/src/components/AssetInventoryTable.jsx",
+      "apps/dashboard/src/components/ImportTokensModal.jsx",
+      "apps/dashboard/src/components/RequireManagerRoute.jsx",
+      "apps/dashboard/src/components/DashboardShell.jsx",
+      "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertOpsPreferencesEntry.jsx",
+      "apps/dashboard/src/components/certops/CertificateInstances.jsx",
+      "apps/dashboard/src/components/certops/CertificateTimeline.jsx",
+      "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
+      "apps/dashboard/src/components/certops/JobStatusBadge.jsx",
+      "apps/dashboard/src/components/certops/TokenCertOpsPanel.jsx",
+      "apps/dashboard/src/components/certops/certopsApi.js",
+      "apps/dashboard/src/components/certops/certopsFormat.js",
+      "apps/dashboard/src/components/certops/certopsJobsApi.js",
+      "apps/dashboard/src/components/certops/certopsJobsFormat.js",
+      "apps/dashboard/src/components/certops/certopsPagination.js",
+      "apps/dashboard/src/components/certops/certopsTokensApi.js",
+      "apps/dashboard/src/components/certops/useCertOps.js",
+      "apps/dashboard/src/components/certops/useCertOpsJobs.js",
+      // Shared compact inline id chip (click-to-copy) used by job rows and
+      // the evidence timeline so a job id is never confused with a
+      // managed-certificate/subject id (plan v1.18).
+      "apps/dashboard/src/components/CopyableId.jsx",
+      "apps/dashboard/src/pages/AlertPreferences.jsx",
+      "apps/dashboard/src/pages/Audit.jsx",
+      "apps/dashboard/src/pages/ControlCenter.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
+      "apps/dashboard/src/pages/certops/CertOpsRoutes.jsx",
+      "apps/dashboard/tests/unit/ApiTokenPanel.test.jsx",
+      "apps/dashboard/tests/unit/CertOpsOperations.test.jsx",
+      "apps/dashboard/tests/unit/DashboardPages.smoke.test.jsx",
+      "apps/dashboard/tests/unit/EvidenceTimeline.test.jsx",
+      "apps/dashboard/tests/unit/RequireManagerRoute.test.jsx",
+      "apps/dashboard/tests/unit/TokenCertOpsPanel.test.jsx",
+      "apps/dashboard/tests/unit/certopsJobsFormat.test.js",
+      "apps/dashboard/tests/unit/certopsMultiCert.test.js",
+      "apps/dashboard/tests/unit/certopsPagination.test.js",
+      // PR #61 review remediation: fail-closed inventory resolution and
+      // instance-error propagation coverage.
+      "apps/dashboard/tests/unit/useCertOps.test.jsx",
     ]);
     const unexpectedFiles = files.filter(
       (file) =>
@@ -1489,6 +1656,10 @@ describe("CertOps M2 contract skeletons", () => {
         file.startsWith("packages/contracts/") ||
         file === "tests/unit/certops-m2-contracts.test.js" ||
         file === "tests/unit/certops-routes-hardening.test.js" ||
+        allowedM2BDashboardFiles.has(file) ||
+        file === ".gitignore" ||
+        file === "docs/adr/0006-certops-dashboard-ux-split.md" ||
+        file === "docs/certops/CONTEXT.md" ||
         allowedM2Files.has(file),
     );
 
@@ -1516,13 +1687,53 @@ describe("CertOps M2 contract skeletons", () => {
       "apps/api/index.js",
       "apps/api/routes/certops.js",
       "apps/api/routes/certops-executor.js",
+      // PR #61 review remediation: classification-independent managed-backing
+      // check for the retire-first delete/reclassification gates.
+      "apps/api/routes/tokens.js",
       "apps/api/services/audit.js",
       "apps/api/services/certops/apiTokens.js",
+      "apps/api/services/certops/bridgeGates.js",
       "apps/api/services/certops/evidence.js",
       "apps/api/services/certops/executorEvents.js",
+      "apps/api/services/certops/identitySafety.js",
       "apps/api/services/certops/inventory.js",
       "apps/api/services/certops/jobs.js",
+      "apps/api/services/certops/monitorBridge.js",
+      "apps/api/services/certops/parser.js",
+      "apps/api/utils/logger.js",
       "apps/api/utils/secretMaterial.js",
+      // Post-M2 hardening follow-up on this stacked branch: claim-then-commit
+      // restructure so worker row locks never span external network I/O.
+      "apps/worker/src/delivery-worker.js",
+      "apps/worker/src/endpoint-check-worker.js",
+      "apps/worker/src/notify/email.js",
+      // PR #61 review remediation: dashboard fail-closed delete routing and
+      // instance-error propagation (Findings 4-6), plus the show-once modal
+      // Escape-key fix (Finding 5).
+      "apps/dashboard/src/App.jsx",
+      "apps/dashboard/src/components/certops/ApiTokenPanel.jsx",
+      "apps/dashboard/src/components/certops/CertificateInstances.jsx",
+      "apps/dashboard/src/components/certops/TokenCertOpsPanel.jsx",
+      "apps/dashboard/src/components/certops/useCertOps.js",
+      "apps/dashboard/tests/unit/ApiTokenPanel.test.jsx",
+      "apps/dashboard/tests/unit/useCertOps.test.jsx",
+      // M2 manual job-creation surface + ID-legibility fixes (plan v1.17/v1.18):
+      // "Create manual job" modal, CopyableId component, job/subject id
+      // formatting helpers in the evidence timeline.
+      "apps/dashboard/src/components/CopyableId.jsx",
+      "apps/dashboard/src/components/certops/EvidenceTimeline.jsx",
+      "apps/dashboard/src/components/certops/certopsJobsApi.js",
+      "apps/dashboard/src/components/certops/certopsJobsFormat.js",
+      "apps/dashboard/src/pages/certops/CertOpsOperations.jsx",
+      "apps/dashboard/tests/unit/CertOpsOperations.test.jsx",
+      // Comment cleanup: remove internal plan-milestone shorthand from code
+      // comments and test descriptions; no behavior change.
+      "apps/dashboard/src/components/AssetInventoryTable.jsx",
+      "apps/dashboard/src/components/certops/RetireCertificateModal.jsx",
+      "apps/dashboard/src/components/certops/certopsApi.js",
+      "apps/dashboard/src/components/certops/certopsFormat.js",
+      "apps/dashboard/tests/unit/TokenCertOpsPanel.test.jsx",
+      "apps/dashboard/tests/unit/certopsMultiCert.test.js",
     ]);
     const unexpectedAppFiles = changedAppFiles().filter(
       (file) => !allowedStackedM2Files.has(file),

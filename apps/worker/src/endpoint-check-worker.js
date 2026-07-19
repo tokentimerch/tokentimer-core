@@ -13,7 +13,7 @@ import { logger } from "./logger.js";
 import tls from "tls";
 import https from "https";
 import http from "http";
-import { X509Certificate } from "crypto";
+import { X509Certificate, randomUUID } from "node:crypto";
 import { createRequire } from "module";
 import {
   resolveContactGroup,
@@ -275,34 +275,88 @@ async function queueEndpointAlert(
 async function runEndpointChecks() {
   logger.info("Endpoint check worker started");
 
-  await withClient(async (client) => {
-    // Find endpoints due for check based on their configured interval
-    const result = await client.query(
-      `SELECT * FROM domain_monitors
-       WHERE (
-         (check_interval = '1min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 minute'))
-         OR
-         (check_interval = '5min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '5 minutes'))
-         OR
-         (check_interval = '30min'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '30 minutes'))
-         OR
-         (check_interval = 'hourly' AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 hour'))
-         OR
-         (check_interval = 'daily'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '24 hours'))
-       )
-       ORDER BY last_health_check_at ASC NULLS FIRST
-       LIMIT 50
-       FOR UPDATE SKIP LOCKED`,
-    );
+  // Owner identity for this run's claims. Lease renewals and releases are
+  // conditional on still holding this claim id, so a worker whose lease
+  // expired and was taken over cannot clear or extend the new owner's lease.
+  const claimId = randomUUID();
 
-    if (result.rows.length === 0) {
+  await withClient(async (client) => {
+    // Claim-then-commit: hold the FOR UPDATE SKIP LOCKED locks only for a
+    // short claim transaction, mark the claimed rows via check_claimed_until
+    // (a dedicated concurrency lease) plus check_claim_id (owner identity)
+    // so a concurrent worker's claim predicate skips them, then COMMIT
+    // before any network I/O.
+    // last_health_check_at stays pure scheduling state and is only advanced
+    // when a check actually completes. Without BEGIN/COMMIT, autocommit mode
+    // would release the lock the instant the SELECT finishes (making SKIP
+    // LOCKED a no-op against a second concurrent worker); but one batch-wide
+    // transaction spanning the live TLS/HTTP checks (15s timeouts x 50
+    // domains) would pin row locks for minutes and let one late error roll
+    // back every domain's committed progress. If the process dies after the
+    // claim, the lease simply expires and the row becomes claimable again.
+    // The lease is renewed per row (owner-scoped) right before each monitor
+    // is processed, so it only has to outlive ONE monitor's checks, not the
+    // whole batch (which can exceed the lease with 15s timeouts x 50 rows).
+    const CHECK_CLAIM_LEASE_MS =
+      process.env.NODE_ENV === "test" ? 5 * 1000 : 10 * 60 * 1000;
+    let claimedMonitors;
+    await client.query("BEGIN");
+    try {
+      const result = await client.query(
+        `SELECT * FROM domain_monitors
+         WHERE (check_claimed_until IS NULL OR check_claimed_until < NOW())
+           AND (
+           (check_interval = '1min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 minute'))
+           OR
+           (check_interval = '5min'   AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '5 minutes'))
+           OR
+           (check_interval = '30min'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '30 minutes'))
+           OR
+           (check_interval = 'hourly' AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '1 hour'))
+           OR
+           (check_interval = 'daily'  AND (last_health_check_at IS NULL OR last_health_check_at < NOW() - INTERVAL '24 hours'))
+         )
+         ORDER BY last_health_check_at ASC NULLS FIRST
+         LIMIT 50
+         FOR UPDATE SKIP LOCKED`,
+      );
+      claimedMonitors = result.rows;
+      if (claimedMonitors.length > 0) {
+        // An expired lease is claimable regardless of any stale
+        // check_claim_id left by a crashed/superseded worker; taking the
+        // claim overwrites the owner id.
+        await client.query(
+          `UPDATE domain_monitors
+              SET check_claimed_until = NOW() + ($2 * INTERVAL '1 millisecond'),
+                  check_claim_id = $3,
+                  updated_at = NOW()
+            WHERE id = ANY($1::uuid[])`,
+          [claimedMonitors.map((row) => row.id), CHECK_CLAIM_LEASE_MS, claimId],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (claimErr) {
+      // Release the client back to the pool clean; leaving a transaction open
+      // across pool.connect() calls would corrupt the next borrower's session.
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        logger.debug("Rollback failed", { error: _rollbackErr.message });
+      }
+      throw claimErr;
+    }
+
+    if (claimedMonitors.length === 0) {
       logger.info("No endpoint monitors due for check");
       return;
     }
 
-    logger.info(`Checking ${result.rows.length} endpoints`);
+    logger.info(`Checking ${claimedMonitors.length} endpoints`);
 
-    for (const domain of result.rows) {
+    // From here on we run in autocommit: each per-domain UPDATE persists
+    // immediately, so a failure on domain N cannot roll back the results
+    // already recorded for domains 1..N-1, and no lock spans network I/O.
+    for (const domain of claimedMonitors) {
       const {
         id,
         url,
@@ -312,6 +366,38 @@ async function runEndpointChecks() {
         consecutive_failures,
       } = domain;
       let currentTokenId = token_id;
+
+      // Owner-scoped per-row lease renewal: the batch-wide lease taken at
+      // claim time can expire before later rows are reached (each row's
+      // TLS/HTTP checks can take ~15s x 50 rows > lease). Renewing right
+      // before processing means the lease only has to outlive this one row.
+      // If another worker meanwhile took over the expired lease (its claim
+      // overwrote check_claim_id), the renewal matches 0 rows and we skip.
+      let renewed;
+      try {
+        renewed = await client.query(
+          `UPDATE domain_monitors
+              SET check_claimed_until = NOW() + ($3 * INTERVAL '1 millisecond'),
+                  updated_at = NOW()
+            WHERE id = $1
+              AND check_claim_id = $2
+          RETURNING id`,
+          [id, claimId, CHECK_CLAIM_LEASE_MS],
+        );
+      } catch (renewErr) {
+        logger.warn(`Failed to renew check claim for ${url}, skipping`, {
+          error: renewErr.message,
+        });
+        continue;
+      }
+      if (renewed.rows.length === 0) {
+        logger.warn(
+          `Skipping monitor ${url}: another worker took over the expired claim`,
+          { monitorId: id },
+        );
+        continue;
+      }
+
       logger.info(`Checking endpoint: ${url}`);
 
       try {
@@ -429,6 +515,11 @@ async function runEndpointChecks() {
 
               if (currentTokenId) {
                 try {
+                  // Small per-domain transaction just for the CertOps bridge:
+                  // gate evaluation + bridge write commit or roll back as one
+                  // atomic unit, without holding locks across the network I/O
+                  // that surrounds this block (we run in autocommit here, so a
+                  // plain BEGIN/COMMIT is legal again).
                   await client.query("BEGIN");
                   try {
                     const bridgeGate = await evaluateCertOpsMonitorBridgeGate({
@@ -497,7 +588,7 @@ async function runEndpointChecks() {
 
           await client.query(
             `UPDATE domain_monitors
-             SET last_health_check_at = NOW(), last_health_status = $1,
+             SET last_health_status = $1,
                  last_health_status_code = $2, last_health_error = $3,
                  last_health_response_ms = $4,
                  previous_health_status = last_health_status,
@@ -566,7 +657,7 @@ async function runEndpointChecks() {
 
         await client.query(
           `UPDATE domain_monitors
-           SET last_health_check_at = NOW(), last_health_status = 'error',
+           SET last_health_status = 'error',
                last_health_error = $1,
                previous_health_status = last_health_status,
                consecutive_failures = $2,
@@ -584,6 +675,29 @@ async function runEndpointChecks() {
             { error: domainErr.message, responseMs: null, statusCode: null },
             "down",
           );
+        }
+      } finally {
+        // The check completed (or failed terminally): advance the schedule
+        // and release the concurrency lease so the monitor becomes claimable
+        // again at its next interval. The release is owner-scoped
+        // (check_claim_id = our claimId) so a superseded worker cannot clear
+        // a lease that another worker meanwhile took over. If the process
+        // dies before reaching this point, the lease simply expires.
+        try {
+          await client.query(
+            `UPDATE domain_monitors
+                SET last_health_check_at = NOW(),
+                    check_claimed_until = NULL,
+                    check_claim_id = NULL,
+                    updated_at = NOW()
+              WHERE id = $1
+                AND check_claim_id = $2`,
+            [id, claimId],
+          );
+        } catch (releaseErr) {
+          logger.warn(`Failed to release check claim for ${url}`, {
+            error: releaseErr.message,
+          });
         }
       }
     }

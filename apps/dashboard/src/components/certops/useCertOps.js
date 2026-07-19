@@ -3,11 +3,12 @@ import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import {
   getCertificateInstances,
-  getManagedCertificateForToken,
+  getManagedCertificatesForToken,
   invalidateCertOpsInventoryCache,
   loadCertOpsInventoryIndex,
   probeCertOpsEnabled,
 } from './certopsApi';
+import { pickPrimaryCertificate } from './certopsFormat';
 
 /**
  * Resolves CertOps availability for the active workspace.
@@ -16,7 +17,7 @@ import {
  * its routes (404) while the flag is off. Only 404 means disabled; other
  * failures are surfaced as `error` so outages are not mistaken for "feature off".
  *
- * @returns {{ ready: boolean, enabled: boolean|null, error: string|null }}
+ * @returns {{ ready: boolean, enabled: boolean|null, error: string|null, retry: function }}
  */
 export function useCertOpsAvailability() {
   const { workspaceId } = useWorkspace();
@@ -25,6 +26,11 @@ export function useCertOpsAvailability() {
     enabled: null,
     error: null,
   });
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const retry = useCallback(() => {
+    setReloadTick(tick => tick + 1);
+  }, []);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -59,9 +65,9 @@ export function useCertOpsAvailability() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId]);
+  }, [workspaceId, reloadTick]);
 
-  return state;
+  return { ...state, retry };
 }
 
 /**
@@ -115,11 +121,12 @@ export function useCertOpsCanManage() {
 /**
  * Loads the whole workspace CertOps inventory once and exposes a tokenId ->
  * managed certificate lookup, so the asset list can tell which token rows are
- * backed by a managed certificate (delete gating + retired filtering, plan D7).
+ * backed by a managed certificate (delete gating + retired filtering).
  *
- * Returns a stable `byTokenId` Map (empty when CertOps is disabled/resolving),
- * the enabled flag, a loading flag, and a `refresh()` that re-fetches after a
- * retire so the list reflects the new lifecycle status.
+ * Returns a stable `byTokenId` Map of tokenId -> certificate[] (empty when
+ * CertOps is disabled/resolving; several certificates may reference the same
+ * token), the enabled flag, a loading flag, and a `refresh()` that re-fetches
+ * after a retire so the list reflects the new lifecycle status.
  */
 export function useWorkspaceCertOps() {
   const { workspaceId } = useWorkspace();
@@ -127,6 +134,7 @@ export function useWorkspaceCertOps() {
   const [byTokenId, setByTokenId] = useState(() => new Map());
   const [items, setItems] = useState(() => []);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
 
   const refresh = useCallback(() => {
@@ -139,24 +147,31 @@ export function useWorkspaceCertOps() {
       setByTokenId(new Map());
       setItems([]);
       setLoading(false);
+      setError('');
       return undefined;
     }
 
     let cancelled = false;
     const controller = new AbortController();
     setLoading(true);
+    setError('');
 
     loadCertOpsInventoryIndex(workspaceId, { signal: controller.signal })
       .then(index => {
         if (!cancelled) {
           setByTokenId(new Map(index.byTokenId));
           setItems(Array.isArray(index.items) ? index.items : []);
+          setError('');
         }
       })
-      .catch(() => {
+      .catch(err => {
         if (!cancelled) {
           setByTokenId(new Map());
           setItems([]);
+          setError(
+            err?.response?.data?.error ||
+              'Could not load the certificate inventory.'
+          );
         }
       })
       .finally(() => {
@@ -169,27 +184,44 @@ export function useWorkspaceCertOps() {
     };
   }, [workspaceId, enabled, reloadTick]);
 
-  return { enabled, byTokenId, items, loading, refresh };
+  // `resolved` is the fail-closed signal for delete gating: while CertOps
+  // availability or the inventory is still resolving, or the fetch
+  // failed, callers must not assume a token is unmanaged just because it is
+  // missing from `byTokenId`. `resolved` is true when CertOps is known to be
+  // disabled (nothing is managed) or the inventory loaded successfully.
+  const resolved =
+    enabled === false || (enabled === true && !loading && !error);
+
+  return { enabled, byTokenId, items, loading, error, resolved, refresh };
 }
 
 /**
  * Loads CertOps enrichment (managed certificate + deployment history) for an
  * existing cert token row, keyed by tokens.id via managed_certificates.token_id.
+ *
+ * Several managed certificates can reference the same token. `certificate`
+ * is the deterministic primary pick (active preferred, most recently updated);
+ * `certificates` and `certificateCount` expose the full set so callers can
+ * surface a multi-cert notice.
  */
 export function useCertOpsForToken(tokenId) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const [certificate, setCertificate] = useState(null);
+  const [certificates, setCertificates] = useState([]);
   const [instances, setInstances] = useState([]);
   const [instancesAvailable, setInstancesAvailable] = useState(true);
+  const [instancesError, setInstancesError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!workspaceId || !tokenId || enabled !== true) {
       setCertificate(null);
+      setCertificates([]);
       setInstances([]);
       setInstancesAvailable(true);
+      setInstancesError('');
       setLoading(false);
       setError('');
       return undefined;
@@ -199,15 +231,18 @@ export function useCertOpsForToken(tokenId) {
     const controller = new AbortController();
     setLoading(true);
     setError('');
+    setInstancesError('');
 
     (async () => {
       try {
-        const managed = await getManagedCertificateForToken(
+        const linked = await getManagedCertificatesForToken(
           workspaceId,
           tokenId,
           { signal: controller.signal }
         );
         if (cancelled) return;
+        const managed = pickPrimaryCertificate(linked);
+        setCertificates(Array.isArray(linked) ? linked : []);
         setCertificate(managed);
         if (!managed?.id) {
           setInstances([]);
@@ -223,16 +258,28 @@ export function useCertOpsForToken(tokenId) {
           if (!cancelled) {
             setInstances(Array.isArray(data?.items) ? data.items : []);
             setInstancesAvailable(true);
+            setInstancesError('');
           }
         } catch (err) {
           if (!cancelled) {
             setInstances([]);
-            setInstancesAvailable(err?.response?.status !== 404);
+            // Only 404 means "history not recorded for this certificate yet".
+            // Network/server failures must not masquerade as a successful
+            // empty result, so they surface as a distinct instances error.
+            const notFound = err?.response?.status === 404;
+            setInstancesAvailable(!notFound);
+            setInstancesError(
+              notFound
+                ? ''
+                : err?.response?.data?.error ||
+                    'Could not load certificate locations.'
+            );
           }
         }
       } catch (err) {
         if (!cancelled) {
           setCertificate(null);
+          setCertificates([]);
           setInstances([]);
           setError(
             err?.response?.data?.error ||
@@ -253,8 +300,11 @@ export function useCertOpsForToken(tokenId) {
   return {
     enabled,
     certificate,
+    certificates,
+    certificateCount: certificates.length,
     instances,
     instancesAvailable,
+    instancesError,
     loading,
     error,
   };

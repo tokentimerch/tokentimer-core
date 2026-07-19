@@ -5,7 +5,7 @@ Engineering health and quality targets, tracked alongside the
 These items are worked on in parallel with feature development and may
 ship in any release -- version numbers below are targets, not hard gates.
 
-Last updated: 2026-05-23
+Last updated: 2026-07-18
 
 ---
 
@@ -42,6 +42,42 @@ Last updated: 2026-05-23
 - [x] 530 integration tests passing (100% on Docker Compose and on live k8s)
 - [x] Contract tests for API surface, OpenAPI conformance, and schema validation
 - [x] GitHub Actions pipeline: lint, audit, test, build, publish (Docker + Helm)
+
+---
+
+## CertOps program (certificate lifecycle orchestration)
+
+Engineering milestones for the CertOps feature set (canonical plan:
+`tokentimer-canvas/plans/TOKENTIMER_CERTOPS_PLAN.md`; decisions under
+`docs/adr/`). CertOps adds actions and services only -- it never changes the
+role model, preserving the v1.0.0 RBAC breaking-change reservation below.
+Zero private-key custody is a structural invariant: the control plane
+rejects key material at every write surface (CI-enforced).
+
+- [x] **M1 -- Visibility**: managed certificate inventory (`managed_certificates`,
+  `certificate_instances`), public-PEM import with private-key rejection and
+  Unicode/homograph identity safety, endpoint-monitor bridge (D8 monitor-source
+  identity), retire-first lifecycle (D7), key-locality display, `CERTOPS_ENABLED`
+  fail-closed rollout flag. No new dashboard route (D6: enriches Tokens /
+  Control Center / token detail).
+- [x] **M2 -- External execution reporting**: machine API tokens (scoped,
+  hashed, show-once), executor event/evidence ingestion with idempotent
+  `eventId`, owner-scoped delivery leases, secret redaction, evidence size caps,
+  per-token rate limiting, `/certops/*` orchestration UI (jobs, timeline, audit
+  deep links).
+- [ ] **M3 -- cert-manager**: Kubernetes controller, observe + basic provision mode.
+- [ ] **M4 -- Agent**: registration, heartbeat, job polling, replay protection,
+  agent-local command allowlists.
+- [ ] **M5 -- Agent-side renewal**: ACME (RFC 8555), filesystem deploy, reload
+  helpers, basic rollback. Key generation happens only on the agent, never on
+  the control plane.
+- [ ] **M12 -- Consolidation guards** (non-blocking, lands incrementally):
+  shared SSRF egress module, versioned encryption envelopes, audit hash chain,
+  enum/type-drift and control-plane-keygen CI guards.
+
+M6-M11 (approvals, issuer integrations, proxy-agents, appliance connectors,
+compliance reporting) are enterprise-led; see the canvas plan and
+`tokentimer-enterprise/docs/ENTERPRISE_ROADMAP.md`.
 
 ---
 

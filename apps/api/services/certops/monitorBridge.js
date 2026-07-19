@@ -2,11 +2,16 @@
 
 const {
   PRIVATE_KEY_MATERIAL_REJECTED,
+  RETIRE_STATUS_SQL_LIST,
   toInventoryRecord,
-  upsertManagedCertificate,
+  upsertManagedCertificateByMonitorSource,
 } = require("./inventory");
 const { isCertOpsEnabled } = require("./settings");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+const {
+  assertSafeHostname,
+  CERTOPS_UNSAFE_IDENTITY,
+} = require("./identitySafety");
 
 const CERTOPS_MONITOR_BRIDGE_SKIPPED = "CERTOPS_MONITOR_BRIDGE_SKIPPED";
 
@@ -58,6 +63,15 @@ function rejectPrivateMaterial(value) {
   error.code = PRIVATE_KEY_MATERIAL_REJECTED;
   error.status = 422;
   throw error;
+}
+
+// Infra handles (pg Pool/Client instances, the env bag) are not certificate
+// data and their object graphs are deep enough to trip the detector's
+// fail-closed max-scan-depth guard, which would misreport a false-positive
+// private-key rejection. Scan only the caller-supplied observation fields.
+function dataFieldsForPrivateMaterialScan(options) {
+  const { dbPool: _dbPool, client: _client, env: _env, ...rest } = options;
+  return rest;
 }
 
 function certificateFromObservation(options) {
@@ -120,6 +134,25 @@ function hasPublicObservation(certificate) {
   );
 }
 
+function assertObservationIdentitiesSafe(options, certificate) {
+  const hostname = normalizeText(options.hostname);
+  if (hostname) {
+    assertSafeHostname(hostname, { field: "hostname" });
+  }
+
+  const commonName = normalizeText(certificate?.commonName);
+  if (commonName) {
+    assertSafeHostname(commonName, { field: "commonName" });
+  }
+
+  for (const san of certificate?.subjectAltNames || []) {
+    const text = normalizeText(san);
+    if (text) {
+      assertSafeHostname(text, { field: "subjectAltName" });
+    }
+  }
+}
+
 async function withBridgeClient(options, fn) {
   if (options.client) return fn(options.client);
   if (!options.dbPool || typeof options.dbPool.connect !== "function") {
@@ -166,6 +199,11 @@ async function existingManagedCertificate(client, options) {
   const sourceRef = bridgeSourceRef(options);
   if (!sourceRef) return null;
 
+  // Deliberately status-agnostic: a retired (revoked/decommissioned) row must
+  // still be found here so its monitor identity is reused instead of
+  // re-created, which would violate the unique index on
+  // (workspace_id, source, source_ref). Terminal-status preservation happens
+  // in updateManagedCertificateFromObservation, not in this lookup.
   const result = await client.query(
     `SELECT *
        FROM managed_certificates
@@ -193,9 +231,18 @@ async function updateManagedCertificateFromObservation(
     hostname: normalizeText(options.hostname),
     url: normalizeText(options.url),
   });
+  // Retire-first lifecycle: revoked/decommissioned are terminal. A monitor
+  // observation still refreshes observation fields on a retired row, but the
+  // status CASE below (mirroring the ON CONFLICT path in
+  // upsertManagedCertificateByMonitorSource) never flips a terminal status
+  // back to an active one.
   const result = await client.query(
     `UPDATE managed_certificates
-        SET status = $3,
+        SET status = CASE
+              WHEN managed_certificates.status IN (${RETIRE_STATUS_SQL_LIST})
+              THEN managed_certificates.status
+              ELSE $3
+            END,
             token_id = COALESCE($4, token_id),
             name = COALESCE($5, name),
             common_name = COALESCE($6, common_name),
@@ -247,7 +294,7 @@ async function upsertObservedManagedCertificate(client, certificate, options) {
     );
   }
 
-  const managedCertificate = await upsertManagedCertificate(
+  const managedCertificate = await upsertManagedCertificateByMonitorSource(
     client,
     certificate,
     {
@@ -447,7 +494,7 @@ async function upsertCertificateInstance(
 }
 
 async function bridgeEndpointCertificateObservation(options = {}) {
-  rejectPrivateMaterial(options);
+  rejectPrivateMaterial(dataFieldsForPrivateMaterialScan(options));
 
   if (!options.workspaceId || !options.domainMonitorId) {
     throw new Error("workspaceId and domainMonitorId are required");
@@ -474,6 +521,8 @@ async function bridgeEndpointCertificateObservation(options = {}) {
       reason: "no_public_certificate_observation",
     };
   }
+
+  assertObservationIdentitiesSafe(options, certificate);
 
   if (!options.tokenId) {
     return {
@@ -509,6 +558,7 @@ async function bridgeEndpointCertificateObservation(options = {}) {
 
 module.exports = {
   CERTOPS_MONITOR_BRIDGE_SKIPPED,
+  CERTOPS_UNSAFE_IDENTITY,
   bridgeEndpointCertificateObservation,
   certificateFromObservation,
   normalizeFingerprintSha256,

@@ -57,3 +57,11 @@ list). Minimal wiring edits only.
 - Reviewers should treat token-surface enrichment as aligned with D6 even when
   it lands before backend endpoints are complete, provided contracts and paired
   backend PRs are tracked (see ADR-0007 for retire UI pairing).
+- M2 implementation note: the first orchestration page is
+  `/certops/operations` (executor jobs, evidence timelines, machine API
+  tokens), mounted via the `/certops/*` splat route behind the manager route
+  guard. There is still no nav entry; discovery is contextual only - a footer
+  link on the Control Center certificate-operations panel and a Workspace
+  Preferences entry rendered as the last section when `certops.enabled` is on.
+  Control Center itself stays read-only: the executor jobs list and token
+  management live exclusively on the orchestration page.

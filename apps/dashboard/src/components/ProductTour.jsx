@@ -358,7 +358,7 @@ const CustomTooltip = ({
       closeProps.onClick(e);
     }
     window.open(
-      'https://tokentimer.ch/docs#self-hosted',
+      'https://tokentimer.ch/docs/self-hosted',
       '_blank',
       'noopener,noreferrer'
     );

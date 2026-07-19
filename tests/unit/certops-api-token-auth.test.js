@@ -416,6 +416,61 @@ describe("CertOps API token auth middleware", () => {
     assert.equal(result.res.body.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
   });
 
+  it("binds the authenticated identity and defers scope denial when deferScopeEnforcement is set", async () => {
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      deferScopeEnforcement: true,
+      validateApiToken: async () => ({
+        valid: false,
+        code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+        token: successfulValidation().token,
+      }),
+    });
+    const req = createRequest({ authorization: `Bearer ${RAW_TOKEN}` });
+    const result = await runMiddleware(middleware, req);
+
+    assert.equal(result.nextCalled, true);
+    assert.equal(req.apiTokenScopeDenied, true);
+    assert.equal(req.apiToken.workspaceId, WORKSPACE_A);
+    assert.equal(collectKeys(req.apiToken).includes("token_hash"), false);
+    assert.equal(collectKeys(req.apiToken).includes("plaintextToken"), false);
+  });
+
+  it("still returns 403 under deferScopeEnforcement when no authenticated token is bound", async () => {
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      deferScopeEnforcement: true,
+      validateApiToken: async () => ({
+        valid: false,
+        code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+      }),
+    });
+    const result = await runMiddleware(
+      middleware,
+      createRequest({ authorization: `Bearer ${RAW_TOKEN}` }),
+    );
+
+    assert.equal(result.nextCalled, false);
+    assert.equal(result.res.statusCode, 403);
+    assert.equal(result.res.body.code, CERTOPS_API_TOKEN_SCOPE_DENIED);
+  });
+
+  it("keeps 401 responses unchanged under deferScopeEnforcement", async () => {
+    const middleware = createCertOpsApiTokenAuth({
+      scopes: ["certops:events:write"],
+      deferScopeEnforcement: true,
+      validateApiToken: async () => ({ valid: false, code: "ANY_REASON" }),
+    });
+    const result = await runMiddleware(
+      middleware,
+      createRequest({ authorization: `Bearer ${RAW_TOKEN}` }),
+    );
+
+    assert.equal(result.nextCalled, false);
+    assert.equal(result.res.statusCode, 401);
+    assert.equal(result.res.body.code, CERTOPS_API_TOKEN_UNAUTHORIZED);
+  });
+
   it("fails safely when workspace context is missing", async () => {
     const middleware = createCertOpsApiTokenAuth({
       scopes: ["certops:events:write"],

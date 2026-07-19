@@ -1,6 +1,14 @@
 # Cloud-compatible core integration subset
 # Keep this suite focused on behavior expected to be shared
 # between tokentimer-core and tokentimer-cloud.
+#
+# CertOps M2 exclusions: all 12 certops-*.test.js files (fake-executor,
+# executor-events, api-token-routes, api-tokens, migration,
+# machine-token-rate-limit, job-read-apis, jobs-evidence, inventory,
+# inventory-import-helpers, api-token-auth, docs-fixtures) require()
+# modules directly under apps/api/ (services/routes/middleware), which
+# stage-variant-image.js omits entirely via CORE_SKIP_DIRS when building
+# the cloud variant image; none of them are candidates for this suite.
 
 # Auth/session
 tests/integration/auth.test.js

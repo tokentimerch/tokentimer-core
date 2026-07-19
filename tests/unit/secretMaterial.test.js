@@ -17,6 +17,7 @@ const {
   classifyEncryptedPkcs8Der,
   looksEncryptedPkcs8Der,
   looksPrivateKeyDer,
+  looksJksKeystore,
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
   looksPkcs12Bundle,
@@ -108,6 +109,17 @@ function fakeCertificateDerBuffer() {
     0x30, 0x0a, 0x30, 0x08, 0x02, 0x01, 0x01, 0x30, 0x03, 0x06, 0x01,
     0x2a,
   ]);
+}
+
+function fakeJksKeystoreBuffer(version = 2) {
+  const magic = Buffer.from([0xfe, 0xed, 0xfe, 0xed]);
+  const versionBytes = Buffer.alloc(4);
+  versionBytes.writeUInt32BE(version, 0);
+  const entryCount = Buffer.from([0x00, 0x00, 0x00, 0x01]);
+  const padding = Buffer.from(
+    "synthetic-jks-entry-bytes-not-a-real-keystore-for-unit-tests",
+  );
+  return Buffer.concat([magic, versionBytes, entryCount, padding]);
 }
 
 function ordinaryAsn1SequenceBuffer() {
@@ -332,6 +344,51 @@ describe("secretMaterial.containsPrivateKeyMaterial", () => {
     const certificateDer = fakeCertificateDerBuffer();
     assert.strictEqual(looksPrivateKeyDer(certificateDer), false);
     assert.strictEqual(containsPrivateKeyMaterial(certificateDer), false);
+  });
+
+  it("detects a JKS keystore by its magic header, regardless of field name", () => {
+    const jks = fakeJksKeystoreBuffer();
+    assert.strictEqual(looksJksKeystore(jks), true);
+    assert.strictEqual(containsPrivateKeyMaterial(jks), true);
+    assert.strictEqual(
+      containsPrivateKeyMaterial({ diagnostics: { snapshot: jks } }),
+      true,
+    );
+  });
+
+  it("detects a base64-encoded JKS keystore under an innocuous field name", () => {
+    const wrapped = fakeJksKeystoreBuffer().toString("base64");
+    assert.strictEqual(containsPrivateKeyMaterial(wrapped), true);
+    assert.strictEqual(
+      containsPrivateKeyMaterial({ buildTag: wrapped }),
+      true,
+    );
+  });
+
+  it("detects JKS format version 1 as well as version 2", () => {
+    const jksV1 = fakeJksKeystoreBuffer(1);
+    assert.strictEqual(looksJksKeystore(jksV1), true);
+    assert.strictEqual(containsPrivateKeyMaterial(jksV1), true);
+  });
+
+  it("does not flag ordinary buffers that merely start with similar-looking bytes", () => {
+    // Wrong magic entirely.
+    assert.strictEqual(
+      looksJksKeystore(Buffer.from([0xfe, 0xed, 0xfe, 0xee, 0, 0, 0, 2, 0, 0, 0, 1])),
+      false,
+    );
+    // Correct magic but an unsupported format version.
+    assert.strictEqual(
+      looksJksKeystore(Buffer.from([0xfe, 0xed, 0xfe, 0xed, 0, 0, 0, 9, 0, 0, 0, 1])),
+      false,
+    );
+    // Too short to contain the full header.
+    assert.strictEqual(
+      looksJksKeystore(Buffer.from([0xfe, 0xed, 0xfe, 0xed, 0, 0, 0, 2])),
+      false,
+    );
+    // Not a buffer at all.
+    assert.strictEqual(looksJksKeystore("feedfeed"), false);
   });
 
   it("detects key material under an innocent field name", () => {

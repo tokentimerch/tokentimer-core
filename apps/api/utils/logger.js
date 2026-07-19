@@ -1,10 +1,17 @@
 const winston = require("winston");
 const client = require("prom-client");
 const { getRuntimeLabels } = require("../config/runtime-labels");
+const {
+  PRIVATE_KEY_REDACTION_PLACEHOLDER,
+  containsPrivateKeyMaterial,
+  redactPrivateKeyMaterial,
+  redactGenericSecrets,
+} = require("./secretMaterial");
 
 const SERVICE_NAME = getRuntimeLabels().service;
 
 const LOG_FIELD_ORDER = ["level", "message", "service", "timestamp"];
+const MAX_REDACT_DEPTH = 8;
 
 const isDev =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
@@ -62,8 +69,38 @@ function isSensitiveKey(key) {
   return REDACT_KEY_PATTERN.test(String(key));
 }
 
+/**
+ * Content-based scrub for free-form log strings: private-key material first,
+ * then generic secrets. Field-name redaction remains the outer defense layer.
+ * @param {string} value
+ * @returns {string}
+ */
+function scrubLogString(value) {
+  if (typeof value !== "string") return value;
+  if (value.length === 0) return value;
+
+  let scrubbed = redactPrivateKeyMaterial(value);
+  // Header-only / non-block matches can survive replace; fail closed.
+  if (containsPrivateKeyMaterial(scrubbed)) {
+    return PRIVATE_KEY_REDACTION_PLACEHOLDER;
+  }
+  return redactGenericSecrets(scrubbed);
+}
+
+function scrubLogBuffer(value) {
+  if (!Buffer.isBuffer(value)) return value;
+  if (containsPrivateKeyMaterial(value)) {
+    return PRIVATE_KEY_REDACTION_PLACEHOLDER;
+  }
+  return value;
+}
+
 function redactSensitiveFields(value, depth = 0) {
-  if (value === null || value === undefined || depth > 8) return value;
+  if (value === null || value === undefined || depth > MAX_REDACT_DEPTH) {
+    return value;
+  }
+  if (typeof value === "string") return scrubLogString(value);
+  if (Buffer.isBuffer(value)) return scrubLogBuffer(value);
   if (Array.isArray(value)) {
     return value.map((v) => redactSensitiveFields(v, depth + 1));
   }
@@ -84,11 +121,14 @@ function redactSensitiveFields(value, depth = 0) {
 function sanitizeLogValue(value) {
   if (value === null || value === undefined) return value;
   const t = typeof value;
-  if (t === "string" || t === "number" || t === "boolean") return value;
+  if (t === "string") return scrubLogString(value);
+  if (t === "number" || t === "boolean") return value;
+  if (Buffer.isBuffer(value)) return scrubLogBuffer(value);
   if (value instanceof Error) {
     return {
-      message: value.message,
-      stack: value.stack,
+      message: scrubLogString(String(value.message || "")),
+      stack:
+        value.stack == null ? value.stack : scrubLogString(String(value.stack)),
       name: value.name,
       code: value.code,
     };
@@ -209,6 +249,7 @@ module.exports = {
   resolveClientIp,
   buildOrderedLogRecord,
   redactSensitiveFields,
+  scrubLogString,
   REDACT_FIELDS,
   LOG_FIELD_ORDER,
 };

@@ -80,9 +80,13 @@ import ImportTokensModal from './components/ImportTokensModal.jsx';
 import TokenDetailModal from './components/TokenDetailModal.jsx';
 import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
+import RequireManagerRoute from './components/RequireManagerRoute.jsx';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificate } from './components/certops/certopsApi.js';
-import { isRetiredStatus } from './components/certops/certopsFormat.js';
+import {
+  isRetiredStatus,
+  pickPrimaryCertificate,
+} from './components/certops/certopsFormat.js';
 import {
   DashboardModalFrame,
   DashboardModalDescription,
@@ -139,6 +143,7 @@ const NotFound = lazy(() => import('./pages/NotFound.jsx'));
 const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const UserPreferences = lazy(() => import('./pages/UserPreferences'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
+const CertOpsRoutes = lazy(() => import('./pages/certops/CertOpsRoutes.jsx'));
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
@@ -153,39 +158,6 @@ function VerifyEmailWrapper({ session }) {
 
   // Allow unverified users to navigate to landing or logout from verify page via UI controls
   return <VerifyEmail />;
-}
-
-function RequireManagerRoute({ session, children }) {
-  const [isAllowed, setIsAllowed] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!session) {
-        if (!cancelled) setIsAllowed(false);
-        return;
-      }
-      const isSystemAdmin = session?.isAdmin === true;
-      try {
-        const ws = await workspaceAPI.list(50, 0);
-        const items = ws?.items || [];
-        const roles = items.map(w => String(w.role || '').toLowerCase());
-        const hasManagerOrAdmin =
-          roles.includes('admin') || roles.includes('workspace_manager');
-        if (!cancelled) setIsAllowed(isSystemAdmin || hasManagerOrAdmin);
-      } catch (_) {
-        if (!cancelled) setIsAllowed(isSystemAdmin);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [session]);
-
-  if (!session) return <Navigate to='/login' replace />;
-  if (isAllowed === null) return null;
-  if (!isAllowed) return <Navigate to='/dashboard' replace />;
-  return children;
 }
 
 function AdminOnlyRoute({ session, children }) {
@@ -2553,6 +2525,21 @@ function App() {
       setTokenToDelete(null);
     } catch (error) {
       logger.error('Failed to delete token:', error);
+      const code = error?.response?.data?.code;
+      try {
+        if (code === 'CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED') {
+          toast.error(
+            'This certificate is managed and cannot be deleted. Revoke or decommission it from the certificate panel instead.'
+          );
+        } else {
+          toast.error(
+            error?.response?.data?.error ||
+              'Failed to delete token. Please try again.'
+          );
+        }
+      } catch (_) {}
+      onDeleteModalClose();
+      setTokenToDelete(null);
     }
   };
 
@@ -2961,6 +2948,21 @@ function App() {
                         <Route
                           path='/usage'
                           element={<Navigate to='/control-center' replace />}
+                        />
+                        <Route
+                          path='/certops/*'
+                          element={
+                            <RequireManagerRoute
+                              session={session}
+                              scope='active-workspace'
+                            >
+                              <CertOpsRoutes
+                                session={session}
+                                onLogout={handleLogout}
+                                onAccountClick={handleHelpAccountClick}
+                              />
+                            </RequireManagerRoute>
+                          }
                         />
                         <Route
                           path='/workspaces'
@@ -3613,13 +3615,18 @@ function DashboardView({
   }, [navigate]);
   const { workspaceId, selectWorkspace } = useWorkspace();
 
-  // CertOps: workspace-wide managed-certificate index (tokenId -> cert), used to
-  // gate deletion of managed cert tokens and to hide retired certs by default
-  // (plan D7). Empty/no-op when CertOps is disabled for the workspace.
-  const { byTokenId: managedByTokenId, refresh: refreshCertOps } =
-    useWorkspaceCertOps();
+  // CertOps: workspace-wide managed-certificate index (tokenId -> cert[]), used
+  // to gate deletion of managed cert tokens and to hide retired certs by default.
+  // Empty/no-op when CertOps is disabled for the workspace. Several
+  // certificates may reference the same token; single-cert contexts use the
+  // deterministic primary pick (active preferred, most recently updated).
+  const {
+    byTokenId: managedByTokenId,
+    resolved: certOpsResolved,
+    refresh: refreshCertOps,
+  } = useWorkspaceCertOps();
   const getManagedCertForToken = useCallback(
-    id => managedByTokenId.get(Number(id)) || null,
+    id => pickPrimaryCertificate(managedByTokenId.get(Number(id))),
     [managedByTokenId]
   );
   const [showRetired, setShowRetired] = useState(false);
@@ -3631,22 +3638,41 @@ function DashboardView({
   const [retireTarget, setRetireTarget] = useState(null);
 
   // Managed cert tokens cannot be hard-deleted; the row delete action routes to
-  // the retire (revoke/decommission) flow instead (plan D7).
+  // the retire (revoke/decommission) flow instead. Fail closed: while
+  // the managed-certificate inventory is still resolving (or its fetch failed),
+  // a token missing from the map must not be assumed unmanaged.
   const handleRowDeleteOrRetire = useCallback(
     id => {
+      if (!certOpsResolved) {
+        try {
+          toast.error(
+            'Checking certificate management status. Try again in a moment.'
+          );
+        } catch (_) {}
+        refreshCertOps();
+        return;
+      }
       const cert = getManagedCertForToken(id);
       if (cert) {
-        const token =
-          (Array.isArray(tokens) ? tokens.find(t => t.id === id) : null) || {
-            id,
-          };
+        const token = (Array.isArray(tokens)
+          ? tokens.find(t => t.id === id)
+          : null) || {
+          id,
+        };
         setRetireTarget({ token, certificate: cert });
         onRetireModalOpen();
         return;
       }
       onDeleteToken(id);
     },
-    [getManagedCertForToken, onDeleteToken, onRetireModalOpen, tokens]
+    [
+      certOpsResolved,
+      getManagedCertForToken,
+      onDeleteToken,
+      onRetireModalOpen,
+      refreshCertOps,
+      tokens,
+    ]
   );
 
   const handleRetireConfirm = useCallback(
@@ -4315,8 +4341,20 @@ function DashboardView({
     if (isViewer) return;
     const selectedIds = selectedVisibleTokenIds;
     if (selectedIds.length === 0) return;
+    // Fail closed: without a resolved managed-certificate inventory
+    // we cannot tell managed cert tokens apart from ordinary ones, so bulk
+    // deletion must wait rather than treat unknown tokens as unmanaged.
+    if (!certOpsResolved) {
+      try {
+        toast.error(
+          'Checking certificate management status. Try again in a moment.'
+        );
+      } catch (_) {}
+      refreshCertOps();
+      return;
+    }
     // Managed cert tokens cannot be hard-deleted; exclude them from bulk delete
-    // (they must be revoked/decommissioned individually) (plan D7).
+    // (they must be revoked/decommissioned individually).
     const managedSelected = selectedIds.filter(id =>
       getManagedCertForToken(id)
     );
@@ -4365,6 +4403,19 @@ function DashboardView({
       if (failedCount === 0) {
         showSuccessMessage(`Successfully deleted ${successCount} tokens.`);
       } else {
+        const retireRequiredCount = (data.results?.failed || []).filter(
+          f => f?.code === 'CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED'
+        ).length;
+        if (retireRequiredCount > 0) {
+          try {
+            toast.error(
+              `${retireRequiredCount} certificate(s) are managed and were not deleted. Revoke or decommission them individually.`
+            );
+          } catch (_) {}
+          // The inventory believed those tokens were unmanaged; refresh so
+          // the next attempt routes them to the retire flow.
+          refreshCertOps();
+        }
         showSuccessMessage(
           `Deleted ${successCount} tokens. ${failedCount} failed.`
         );
@@ -4729,7 +4780,9 @@ function DashboardView({
 
   const isTokenRetired = useCallback(
     token => {
-      const cert = managedByTokenId.get(Number(token?.id));
+      const cert = pickPrimaryCertificate(
+        managedByTokenId.get(Number(token?.id))
+      );
       return Boolean(cert && isRetiredStatus(cert.status));
     },
     [managedByTokenId]
@@ -4741,7 +4794,7 @@ function DashboardView({
   );
 
   // Tokens in scope for the status chips/metrics: retired managed certs are
-  // hidden unless the "Retired" toggle is on, matching the visible list (D7).
+  // hidden unless the "Retired" toggle is on, matching the visible list.
   const scopedLoadedTokens = useMemo(
     () =>
       showRetired
@@ -4775,7 +4828,9 @@ function DashboardView({
         sectionParam
       );
       for (const token of categoryTokens) {
-        const managedCert = managedByTokenId.get(Number(token.id)) || null;
+        const managedCert = pickPrimaryCertificate(
+          managedByTokenId.get(Number(token.id))
+        );
         const retired = Boolean(
           managedCert && isRetiredStatus(managedCert.status)
         );

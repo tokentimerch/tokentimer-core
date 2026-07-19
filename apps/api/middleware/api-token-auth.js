@@ -254,6 +254,15 @@ function createCertOpsApiTokenAuth(options = {}) {
 
     if (!validation?.valid) {
       if (validation?.code === CERTOPS_API_TOKEN_SCOPE_DENIED) {
+        if (options.deferScopeEnforcement === true && validation.token) {
+          // The token is fully authenticated; only the route scope failed.
+          // Bind the identity and let the route decide, so private-key
+          // material can still be rejected (422 + synchronous audit) with
+          // the scope denial enforced immediately afterwards.
+          req.apiToken = safeApiTokenIdentity(validation.token);
+          req.apiTokenScopeDenied = true;
+          return next();
+        }
         return res.status(403).json(SCOPE_DENIED_RESPONSE);
       }
       return res.status(401).json(UNAUTHORIZED_RESPONSE);

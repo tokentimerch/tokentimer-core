@@ -25,10 +25,18 @@ COPY --chown=nodejs:nodejs apps/worker ./apps/worker
 COPY --chown=nodejs:nodejs apps/api/services/certops ./apps/api/services/certops
 COPY --chown=nodejs:nodejs apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY --chown=nodejs:nodejs apps/api/utils/logger.js ./apps/api/utils/logger.js
+COPY --chown=nodejs:nodejs apps/api/config/runtime-labels.js ./apps/api/config/runtime-labels.js
 COPY --chown=nodejs:nodejs apps/api/db/database.js ./apps/api/db/database.js
 
 # Install all dependencies (including dev) using frozen lockfile
 RUN pnpm install --frozen-lockfile --filter @tokentimer/worker...
+
+# Node resolves require("pg")/("winston")/("prom-client") by walking up from
+# the requiring file. pnpm's non-hoisted install only symlinks those into
+# apps/worker/node_modules, but the copied apps/api/{db,utils}/*.js files
+# above sit under apps/api, a tree with no node_modules in its ancestry, so
+# those requires fail at runtime. Point apps/api at the worker's modules.
+RUN ln -s ../worker/node_modules /app/apps/api/node_modules
 
 # Set working directory to worker
 WORKDIR /app/apps/worker

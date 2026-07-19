@@ -1,4 +1,5 @@
 import apiClient from '../../utils/apiClient';
+import { pickPrimaryCertificate } from './certopsFormat';
 
 /**
  * CertOps API helpers (M1 inventory surface).
@@ -110,10 +111,10 @@ export async function importCertificateMaterial(
  * Retire a managed certificate (soft lifecycle transition, not a row delete).
  *
  * Maps to POST /certops/certificates/:id/retire with `{ status, reason }` where
- * status is `revoked` or `decommissioned` (plan D7 / section 10.1). The backend
+ * status is `revoked` or `decommissioned`. The backend
  * keeps the certificate row and its evidence and mirrors the status onto the
  * linked token; nothing is purged. The endpoint may not exist yet in the current
- * core build (Dev A / PR #47), so callers should handle a 404 gracefully.
+ * core build (see PR #47), so callers should handle a 404 gracefully.
  * @returns {Promise<{ certificate: object }>}
  */
 export async function retireCertificate(
@@ -154,7 +155,7 @@ export async function probeCertOpsEnabled(workspaceId, { signal } = {}) {
   }
 }
 
-/** @type {Map<string, { at: number, byTokenId: Map<number, object>, byCertId: Map<string, object> }>} */
+/** @type {Map<string, { at: number, byTokenId: Map<number, object[]>, byCertId: Map<string, object> }>} */
 const inventoryIndexCache = new Map();
 
 /**
@@ -168,6 +169,11 @@ export function invalidateCertOpsInventoryCache(workspaceId) {
 /**
  * Loads the workspace CertOps inventory once and indexes by tokenId / cert id.
  * Used to enrich existing cert tokens in the dashboard without a separate list UI.
+ *
+ * `byTokenId` maps tokenId -> certificate[] because the backend allows multiple
+ * managed_certificates rows to reference the same token (e.g. one imported and
+ * one monitor-observed for the same site). Use `getManagedCertificateForToken`
+ * or `pickPrimaryCertificate` for single-cert display contexts.
  */
 export async function loadCertOpsInventoryIndex(
   workspaceId,
@@ -196,7 +202,12 @@ export async function loadCertOpsInventoryIndex(
   const byCertId = new Map();
   for (const cert of items) {
     byCertId.set(cert.id, cert);
-    if (cert.tokenId != null) byTokenId.set(Number(cert.tokenId), cert);
+    if (cert.tokenId != null) {
+      const tokenKey = Number(cert.tokenId);
+      const existing = byTokenId.get(tokenKey);
+      if (existing) existing.push(cert);
+      else byTokenId.set(tokenKey, [cert]);
+    }
   }
 
   const index = { at: Date.now(), byTokenId, byCertId, items };
@@ -205,13 +216,32 @@ export async function loadCertOpsInventoryIndex(
 }
 
 /**
- * Resolve the managed_certificate row linked to an existing tokens.id.
+ * All managed_certificate rows linked to an existing tokens.id (several
+ * certificates may reference the same token).
+ */
+export async function getManagedCertificatesForToken(
+  workspaceId,
+  tokenId,
+  opts = {}
+) {
+  const index = await loadCertOpsInventoryIndex(workspaceId, opts);
+  return index.byTokenId.get(Number(tokenId)) || [];
+}
+
+/**
+ * Resolve the primary managed_certificate row linked to an existing tokens.id.
+ * When several certificates reference the token, the deterministic pick from
+ * `pickPrimaryCertificate` applies (active preferred, most recently updated).
  */
 export async function getManagedCertificateForToken(
   workspaceId,
   tokenId,
   opts = {}
 ) {
-  const index = await loadCertOpsInventoryIndex(workspaceId, opts);
-  return index.byTokenId.get(Number(tokenId)) || null;
+  const certs = await getManagedCertificatesForToken(
+    workspaceId,
+    tokenId,
+    opts
+  );
+  return pickPrimaryCertificate(certs);
 }

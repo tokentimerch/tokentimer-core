@@ -506,6 +506,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
      )
      ON CONFLICT (workspace_id, fingerprint_sha256)
        WHERE fingerprint_sha256 IS NOT NULL
+         AND source NOT IN ('endpoint_monitor', 'domain_checker')
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE
@@ -513,8 +514,20 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
          THEN managed_certificates.status
          ELSE EXCLUDED.status
        END,
-       source = EXCLUDED.source,
-       source_ref = EXCLUDED.source_ref,
+       -- Import-scoped unique index: conflict only fires for import rows.
+       -- Never overwrite monitor provenance if a non-import row somehow matched.
+       source = CASE
+         WHEN managed_certificates.source_ref IS NOT NULL
+           AND managed_certificates.source <> 'import'
+         THEN managed_certificates.source
+         ELSE EXCLUDED.source
+       END,
+       source_ref = CASE
+         WHEN managed_certificates.source_ref IS NOT NULL
+           AND managed_certificates.source <> 'import'
+         THEN managed_certificates.source_ref
+         ELSE EXCLUDED.source_ref
+       END,
        name = COALESCE(EXCLUDED.name, managed_certificates.name),
        common_name = EXCLUDED.common_name,
        subject_alt_names = EXCLUDED.subject_alt_names,
@@ -522,6 +535,116 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
        subject = EXCLUDED.subject,
        serial_number = EXCLUDED.serial_number,
        certificate_pem = EXCLUDED.certificate_pem,
+       spki_fingerprint_sha256 = EXCLUDED.spki_fingerprint_sha256,
+       public_key_algorithm = EXCLUDED.public_key_algorithm,
+       public_key_size = EXCLUDED.public_key_size,
+       signature_algorithm = EXCLUDED.signature_algorithm,
+       not_before = EXCLUDED.not_before,
+       not_after = EXCLUDED.not_after,
+       key_mode = COALESCE(EXCLUDED.key_mode, managed_certificates.key_mode),
+       key_reference = COALESCE(EXCLUDED.key_reference, managed_certificates.key_reference),
+       public_metadata = EXCLUDED.public_metadata,
+       created_by = COALESCE(managed_certificates.created_by, EXCLUDED.created_by),
+       updated_at = NOW()
+     RETURNING *`,
+    params,
+  );
+
+  return toInventoryRecord(result.rows[0]);
+}
+
+/**
+ * Upsert a managed certificate keyed by monitor identity (workspace, source,
+ * source_ref). Does not require fingerprint uniqueness, so a second monitor
+ * observing the same cert material inserts a new row instead of stealing the
+ * first monitor's provenance.
+ */
+async function upsertManagedCertificateByMonitorSource(
+  client,
+  certificate,
+  options,
+  chainIndex,
+) {
+  const sourceRef = options.sourceRef || null;
+  if (!sourceRef) {
+    throw new Error("sourceRef is required for monitor-source upsert");
+  }
+
+  const keyReference = normalizeKeyReference(options.keyReference);
+  const params = [
+    options.workspaceId,
+    options.tokenId || null,
+    options.status || "discovered",
+    options.source || "endpoint_monitor",
+    sourceRef,
+    chooseCertificateName(certificate, options.name),
+    certificate.commonName || null,
+    certificate.subjectAltNames || [],
+    certificate.issuer || null,
+    certificate.subject || null,
+    certificate.serialNumber || null,
+    certificate.certificatePem || null,
+    certificate.fingerprintSha256 || certificate.fingerprint256 || null,
+    certificate.spkiFingerprintSha256 || null,
+    certificate.publicKeyAlgorithm || null,
+    certificate.publicKeySize || null,
+    certificate.signatureAlgorithm || null,
+    certificate.notBefore || certificate.validFrom || null,
+    certificate.notAfter || certificate.validTo || null,
+    options.keyMode || null,
+    keyReference,
+    JSON.stringify(publicMetadataFor(certificate, options, chainIndex)),
+    options.createdBy || null,
+  ];
+
+  const result = await client.query(
+    `INSERT INTO managed_certificates (
+       workspace_id,
+       token_id,
+       status,
+       source,
+       source_ref,
+       name,
+       common_name,
+       subject_alt_names,
+       issuer,
+       subject,
+       serial_number,
+       certificate_pem,
+       fingerprint_sha256,
+       spki_fingerprint_sha256,
+       public_key_algorithm,
+       public_key_size,
+       signature_algorithm,
+       not_before,
+       not_after,
+       key_mode,
+       key_reference,
+       public_metadata,
+       created_by
+     )
+     VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12,
+       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23
+     )
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source_ref IS NOT NULL
+         AND source IN ('endpoint_monitor', 'domain_checker')
+     DO UPDATE SET
+       token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
+       status = CASE
+         WHEN managed_certificates.status IN (${RETIRE_STATUS_SQL_LIST})
+         THEN managed_certificates.status
+         ELSE EXCLUDED.status
+       END,
+       name = COALESCE(EXCLUDED.name, managed_certificates.name),
+       common_name = EXCLUDED.common_name,
+       subject_alt_names = EXCLUDED.subject_alt_names,
+       issuer = EXCLUDED.issuer,
+       subject = EXCLUDED.subject,
+       serial_number = EXCLUDED.serial_number,
+       certificate_pem = EXCLUDED.certificate_pem,
+       fingerprint_sha256 = EXCLUDED.fingerprint_sha256,
        spki_fingerprint_sha256 = EXCLUDED.spki_fingerprint_sha256,
        public_key_algorithm = EXCLUDED.public_key_algorithm,
        public_key_size = EXCLUDED.public_key_size,
@@ -753,14 +876,35 @@ async function retireManagedCertificate(clientOrPool, options) {
     );
 
     if (certificate.token_id) {
-      await client.query(
-        `UPDATE tokens
-            SET cert_lifecycle_status = $1,
-                updated_at = NOW()
-          WHERE workspace_id = $2
-            AND id = $3`,
-        [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
+      // Interim model: several managed certificates may reference the same
+      // token. Only mirror a terminal lifecycle status onto the shared token
+      // when no sibling certificate remains outside a retired status;
+      // otherwise the token would advertise revoked/decommissioned while
+      // another linked certificate is still active.
+      const activeSiblings = await client.query(
+        `SELECT 1
+           FROM managed_certificates
+          WHERE workspace_id = $1
+            AND token_id = $2
+            AND id <> $3
+            AND status NOT IN ('revoked', 'decommissioned')
+          LIMIT 1`,
+        [
+          resolved.options.workspaceId,
+          certificate.token_id,
+          resolved.options.certificateId,
+        ],
       );
+      if (activeSiblings.rowCount === 0) {
+        await client.query(
+          `UPDATE tokens
+              SET cert_lifecycle_status = $1,
+                  updated_at = NOW()
+            WHERE workspace_id = $2
+              AND id = $3`,
+          [normalizedStatus, resolved.options.workspaceId, certificate.token_id],
+        );
+      }
     }
 
     await writeRetireAudit(
@@ -794,6 +938,7 @@ module.exports = {
   CERTOPS_KEY_REFERENCE_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   RETIRE_STATUSES,
+  RETIRE_STATUS_SQL_LIST,
   acquireManagedCertificateImportLock,
   countActiveManagedCertificates,
   countActiveManagedCertificatesWithClient,
@@ -812,4 +957,5 @@ module.exports = {
   toInstanceRecord,
   toInventoryRecord,
   upsertManagedCertificate,
+  upsertManagedCertificateByMonitorSource,
 };

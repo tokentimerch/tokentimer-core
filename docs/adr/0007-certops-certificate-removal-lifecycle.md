@@ -57,7 +57,7 @@ the certificate status change. Exact column name is an implementation detail.
 ### Paired delivery
 
 Frontend retire UI (dashboard PR #48) may land ahead of the backend retire
-endpoint (Dev A / PR #47). That is acceptable under D7 when:
+endpoint (see PR #47). That is acceptable under D7 when:
 - OpenAPI, route-compat contract, migration, token status column, audit row, and
   tests are tracked in the paired backend PR or an immediately following one.
 - Callers handle 404 on the retire route until the backend ships.
