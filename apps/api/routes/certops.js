@@ -9,6 +9,8 @@ const {
   rejectKeyMaterial,
 } = require("../middleware/reject-key-material");
 const {
+  CERTOPS_DISABLED,
+  NOT_FOUND_RESPONSE,
   requireCertOpsEnabled,
 } = require("../middleware/require-certops-enabled");
 const {
@@ -155,6 +157,10 @@ function writeOptionsFromRequest(req, source) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.code === CERTOPS_DISABLED) {
+    return res.status(404).json(NOT_FOUND_RESPONSE);
+  }
+
   if (err?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
     return res.status(422).json({
       error: "Private key material is not accepted in CertOps requests",
@@ -331,6 +337,35 @@ function jobCreateOptionsFromRequest(req) {
     // job through the manual-create surface.
     source: "api",
     requestedByUserId: req.user?.id || null,
+  };
+}
+
+function createManualCertificateJobHandler({
+  manualJobCreator = createManualCertificateJob,
+} = {}) {
+  return async function createManualCertificateJobHandler(req, res) {
+    try {
+      const { job } = await manualJobCreator({
+        ...jobCreateOptionsFromRequest(req),
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.status(201).json({ job: jobDetail(job) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps manual job creation failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps job",
+        code: "INTERNAL_ERROR",
+      });
+    }
   };
 }
 
@@ -792,30 +827,7 @@ router.post(
   // blocks only new work; reads and existing machine event/evidence ingestion
   // remain available while a workspace is paused.
   requireWorkspaceCertOpsActive,
-  async (req, res) => {
-    try {
-      const { job } = await createManualCertificateJob({
-        ...jobCreateOptionsFromRequest(req),
-        actorUserId: req.user?.id || null,
-        subjectUserId: req.user?.id || null,
-      });
-      return res.status(201).json({ job: jobDetail(job) });
-    } catch (err) {
-      const handled = handleCertOpsError(res, err);
-      if (handled) return handled;
-
-      logger.error("CertOps manual job creation failed", {
-        error: err.message,
-        code: err.code || null,
-        workspaceId: req.workspace?.id,
-        userId: req.user?.id,
-      });
-      return res.status(500).json({
-        error: "Failed to create CertOps job",
-        code: "INTERNAL_ERROR",
-      });
-    }
-  },
+  createManualCertificateJobHandler(),
 );
 
 router.get(
@@ -1152,3 +1164,7 @@ router.post(
 );
 
 module.exports = router;
+module.exports._test = {
+  createManualCertificateJobHandler,
+  handleCertOpsError,
+};
