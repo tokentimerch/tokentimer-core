@@ -404,10 +404,22 @@ describe("CertOps workspace kill-switch API", function () {
 
   it("blocks only new manual jobs while paused, preserves reads, and resumes cleanly", async function () {
     if (!CERTOPS_ENABLED) {
+      const blockedSubjectId = `rollout-disabled-job-${crypto.randomUUID()}`;
       const unavailable = await request(BASE)
         .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
         .set("Cookie", fixture.viewerSession.cookie);
       expect(unavailable.status).to.equal(404);
+      const blocked = await request(BASE)
+        .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+        .set("Cookie", fixture.managerSession.cookie)
+        .send({
+          operation: "deploy",
+          subjectType: "managed_certificate",
+          subjectId: blockedSubjectId,
+        });
+      expect(blocked.status).to.equal(404);
+      expect(await jobsForSubject(fixture.workspaceId, blockedSubjectId)).to.have.length(0);
+      expect(await manualJobAudits(fixture.workspaceId, blockedSubjectId)).to.have.length(0);
       await request(BASE)
         .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
         .set("Cookie", fixture.ownerSession.cookie)
@@ -698,7 +710,8 @@ describe("CertOps workspace kill-switch API", function () {
     expect(state.rows[0].certops_paused).to.equal(false);
   });
 
-  it("serializes real PostgreSQL pause and manual-job races in both commit orders", async () => {
+  it("serializes real PostgreSQL pause and manual-job races in both commit orders", async function () {
+    if (!CERTOPS_ENABLED) this.skip();
     const subjectAfterPause = `pause-first-${crypto.randomUUID()}`;
     const pauseAuditEntered = deferred();
     const releasePauseCommit = deferred();

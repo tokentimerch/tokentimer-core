@@ -32,6 +32,11 @@ const {
     "../../apps/api/middleware/require-workspace-certops-active.js",
   ),
 );
+const {
+  CERTOPS_DISABLED,
+} = require(
+  path.resolve(__dirname, "../../apps/api/services/certops/settings.js"),
+);
 
 function createStatefulPool(initialPaused = false) {
   let certOpsPaused = initialPaused;
@@ -249,6 +254,7 @@ describe("CertOps workspace kill-switch service", () => {
         createManualCertificateJob({
           workspaceId: "workspace-1",
           dbPool: pool,
+          certOpsEnabledResolver: async () => true,
           jobCreator: async () => {
             pool.addJob(job);
             return { job, created: true };
@@ -274,6 +280,7 @@ describe("CertOps workspace kill-switch service", () => {
     const result = await createManualCertificateJob({
       workspaceId: "workspace-1",
       dbPool: pool,
+      certOpsEnabledResolver: async () => true,
       jobCreator: async () => ({
         job: {
           id: "existing-job",
@@ -341,6 +348,7 @@ describe("CertOps workspace kill-switch service", () => {
     const workspace = await lockWorkspaceForCertOpsSideEffect({
       client: activePool.client,
       workspaceId: "workspace-1",
+      certOpsEnabledResolver: async () => true,
     });
     assert.equal(workspace.id, "workspace-1");
     assert.equal(
@@ -351,8 +359,27 @@ describe("CertOps workspace kill-switch service", () => {
     await assert.rejects(
       () =>
         lockWorkspaceForCertOpsSideEffect({
+          client: createStatefulPool(false).client,
+          workspaceId: "workspace-1",
+          certOpsEnabledResolver: async () => false,
+        }),
+      (error) => {
+        assert.equal(error?.code, CERTOPS_DISABLED);
+        assert.deepEqual(error?.state, {
+          workspaceId: "workspace-1",
+          certOpsPaused: false,
+          certOpsEnabled: false,
+          certOpsActive: false,
+        });
+        return true;
+      },
+    );
+    await assert.rejects(
+      () =>
+        lockWorkspaceForCertOpsSideEffect({
           client: createStatefulPool(true).client,
           workspaceId: "workspace-1",
+          certOpsEnabledResolver: async () => true,
         }),
       (error) => error?.code === CERTOPS_WORKSPACE_PAUSED,
     );
@@ -360,6 +387,86 @@ describe("CertOps workspace kill-switch service", () => {
       () => lockWorkspaceForCertOpsSideEffect({ workspaceId: "workspace-1" }),
       (error) => error?.code === CERTOPS_WORKSPACE_NOT_FOUND,
     );
+  });
+
+  it("blocks both transactional gates before creating a job or audit", async () => {
+    for (const { enabled, paused, code } of [
+      { enabled: false, paused: false, code: CERTOPS_DISABLED },
+      { enabled: true, paused: true, code: CERTOPS_WORKSPACE_PAUSED },
+    ]) {
+      const pool = createStatefulPool(paused);
+      let jobCreatorCalls = 0;
+      let auditCalls = 0;
+
+      await assert.rejects(
+        () =>
+          createManualCertificateJob({
+            workspaceId: "workspace-1",
+            dbPool: pool,
+            certOpsEnabledResolver: async () => enabled,
+            jobCreator: async () => {
+              jobCreatorCalls += 1;
+              return { job: { id: "must-not-exist" }, created: true };
+            },
+            auditWriter: async () => {
+              auditCalls += 1;
+            },
+          }),
+        (error) => error?.code === code,
+      );
+
+      assert.equal(jobCreatorCalls, 0);
+      assert.equal(auditCalls, 0);
+      assert.deepEqual(pool.jobs, []);
+      assert.equal(pool.queries[0].sql, "BEGIN");
+      assert.equal(
+        pool.queries.some((query) => query.sql.endsWith("FOR SHARE")),
+        true,
+      );
+      assert.equal(pool.queries.at(-1).sql, "ROLLBACK");
+    }
+  });
+
+  it("keeps the active global check, workspace lock, job, and audit atomic", async () => {
+    const pool = createStatefulPool(false);
+    const calls = [];
+    const job = {
+      id: "job-1",
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "certificate-1",
+      source: "api",
+    };
+
+    const result = await createManualCertificateJob({
+      workspaceId: "workspace-1",
+      dbPool: pool,
+      certOpsEnabledResolver: async ({ dbPool }) => {
+        assert.equal(dbPool, pool.client);
+        assert.equal(
+          pool.queries.some((query) => query.sql.endsWith("FOR SHARE")),
+          true,
+        );
+        return true;
+      },
+      jobCreator: async ({ client }) => {
+        assert.equal(client, pool.client);
+        calls.push("job");
+        pool.addJob(job);
+        return { job, created: true };
+      },
+      auditWriter: async ({ client }) => {
+        assert.equal(client, pool.client);
+        calls.push("audit");
+      },
+    });
+
+    assert.equal(result.job, job);
+    assert.equal(result.created, true);
+    assert.deepEqual(calls, ["job", "audit"]);
+    assert.deepEqual(pool.jobs, [job]);
+    assert.equal(pool.queries[0].sql, "BEGIN");
+    assert.equal(pool.queries.at(-1).sql, "COMMIT");
   });
 });
 

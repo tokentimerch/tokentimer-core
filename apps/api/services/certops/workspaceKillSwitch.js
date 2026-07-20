@@ -2,7 +2,7 @@
 
 const { writeAudit } = require("../audit");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
-const { isCertOpsEnabled } = require("./settings");
+const { CERTOPS_DISABLED, isCertOpsEnabled } = require("./settings");
 const { createCertificateJob } = require("./jobs");
 
 const CERTOPS_WORKSPACE_PAUSED = "CERTOPS_WORKSPACE_PAUSED";
@@ -167,10 +167,17 @@ function assertWorkspaceCertOpsActive(options = {}) {
  * Acquire the workspace lock required before any authoritative CertOps side
  * effect. The caller must supply its already transaction-bound PostgreSQL
  * client and retain this lock until the side effect and synchronous audit have
- * committed or rolled back. FOR SHARE conflicts with the kill switch's FOR
- * UPDATE transition lock.
+ * committed or rolled back. After acquiring the workspace lock, this helper
+ * rechecks both the global rollout and local pause gates inside that same
+ * transaction. FOR SHARE conflicts with the kill switch's FOR UPDATE
+ * transition lock.
  */
-async function lockWorkspaceForCertOpsSideEffect({ client, workspaceId } = {}) {
+async function lockWorkspaceForCertOpsSideEffect({
+  client,
+  workspaceId,
+  certOpsEnabledResolver = isCertOpsEnabled,
+  env = process.env,
+} = {}) {
   if (!client || typeof client.query !== "function") {
     throw workspaceKillSwitchError(
       "A transaction-bound database client is required",
@@ -187,16 +194,27 @@ async function lockWorkspaceForCertOpsSideEffect({ client, workspaceId } = {}) {
   const workspace = await loadWorkspacePauseState(client, workspaceId, {
     lock: "share",
   });
-  if (workspace.certops_paused === true) {
+  const certOpsEnabled = await certOpsEnabledResolver({ dbPool: client, env });
+  const state = stateFromRow({
+    workspaceId: workspace.id,
+    certOpsPaused: workspace.certops_paused,
+    certOpsEnabled,
+  });
+
+  if (!state.certOpsEnabled) {
+    const error = workspaceKillSwitchError(
+      "CertOps is disabled for this deployment",
+      CERTOPS_DISABLED,
+    );
+    error.state = state;
+    throw error;
+  }
+  if (state.certOpsPaused) {
     const error = workspaceKillSwitchError(
       "CertOps is paused for this workspace",
       CERTOPS_WORKSPACE_PAUSED,
     );
-    error.state = stateFromRow({
-      workspaceId: workspace.id,
-      certOpsPaused: true,
-      certOpsEnabled: true,
-    });
+    error.state = state;
     throw error;
   }
   return workspace;
@@ -314,6 +332,8 @@ async function createManualCertificateJob({
   dbPool = defaultPool(),
   jobCreator = createCertificateJob,
   auditWriter = writeAudit,
+  certOpsEnabledResolver = isCertOpsEnabled,
+  env = process.env,
   ...jobOptions
 } = {}) {
   if (!workspaceId) {
@@ -333,6 +353,8 @@ async function createManualCertificateJob({
     const workspace = await lockWorkspaceForCertOpsSideEffect({
       client,
       workspaceId,
+      certOpsEnabledResolver,
+      env,
     });
 
     const outcome = await jobCreator({
