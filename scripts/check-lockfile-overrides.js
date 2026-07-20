@@ -19,7 +19,7 @@ const REQUIRED_PINS = {
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
   minimatch: { "*": "9.0.9" },
-  "brace-expansion": { "*": "2.0.3" },
+  "brace-expansion": { "*": "2.1.2" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
   rollup: { "*": "4.60.0" },

@@ -245,8 +245,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-8).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15, 16, 17],
+      migrations.slice(-9).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15, 16, 17, 18],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -434,8 +434,31 @@ describe("CertOps inventory migration", () => {
       ownerClaimIdMigration.sql,
       /ALTER TABLE domain_monitors\s+ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL/,
     );
+  });
+
+  it("defines the TokenTimer/CertOps token link migration after the owner-scoped claim ids", () => {
+    const certOpsTokenLinkMigration = migrations.find(
+      (migration) => migration.name === "tokens_certops_api_token_link",
+    );
+    assert.ok(
+      certOpsTokenLinkMigration,
+      "expected tokens_certops_api_token_link migration",
+    );
+    assert.equal(certOpsTokenLinkMigration.version, 18);
+    assert.match(
+      certOpsTokenLinkMigration.sql,
+      /ALTER TABLE tokens\s+ADD COLUMN IF NOT EXISTS certops_api_token_id UUID NULL/,
+    );
+    assert.match(
+      certOpsTokenLinkMigration.sql,
+      /REFERENCES api_tokens\(id\) ON DELETE CASCADE/,
+    );
+    assert.match(
+      certOpsTokenLinkMigration.sql,
+      /uq_tokens_certops_api_token_id/,
+    );
     assert.equal(
-      migrations.some((migration) => migration.version === 18),
+      migrations.some((migration) => migration.version === 19),
       false,
     );
   });

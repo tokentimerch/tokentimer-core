@@ -179,7 +179,8 @@ export default function ApiTokenPanel() {
   if (enabled !== true) return null;
 
   const expiresAtIso = toIsoExpiry(expiresLocal);
-  const expiryInPast = Boolean(expiresAtIso) && new Date(expiresAtIso).getTime() <= Date.now();
+  const expiryInPast =
+    Boolean(expiresAtIso) && new Date(expiresAtIso).getTime() <= Date.now();
 
   const canSubmit =
     Boolean(name.trim()) &&
@@ -552,8 +553,8 @@ export default function ApiTokenPanel() {
               ) : null}
               {createdTokenInfo?.expiresAt && monitorExpiry ? (
                 <Text fontSize='xs' color={muted}>
-                  The TokenTimer entry is removed automatically if this
-                  machine token is revoked.
+                  The TokenTimer entry is removed automatically if this machine
+                  token is revoked.
                 </Text>
               ) : null}
             </VStack>
