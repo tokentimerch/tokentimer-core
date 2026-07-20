@@ -98,6 +98,12 @@ function toIsoExpiry(localValue) {
   return date.toISOString();
 }
 
+function nowLocalDatetimeValue() {
+  const date = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function createErrorMessage(err) {
   const code = err?.response?.data?.code;
   const status = err?.response?.status;
@@ -172,9 +178,13 @@ export default function ApiTokenPanel() {
 
   if (enabled !== true) return null;
 
+  const expiresAtIso = toIsoExpiry(expiresLocal);
+  const expiryInPast = Boolean(expiresAtIso) && new Date(expiresAtIso).getTime() <= Date.now();
+
   const canSubmit =
     Boolean(name.trim()) &&
     scopes.length > 0 &&
+    !expiryInPast &&
     !creating &&
     Boolean(workspaceId);
 
@@ -240,6 +250,12 @@ export default function ApiTokenPanel() {
           workspace_id: workspaceId,
           certopsApiTokenId: createdTokenInfo.id || undefined,
         });
+        // Tell the dashboard's token list (rendered on a different route) to
+        // reload, same as the import/endpoint flows do, so the new TokenTimer
+        // entry shows up without a manual refresh.
+        try {
+          window.dispatchEvent(new CustomEvent('tt:tokens-updated'));
+        } catch (_) {}
       } catch (err) {
         showError(
           'Monitoring not added',
@@ -350,16 +366,21 @@ export default function ApiTokenPanel() {
               </CheckboxGroup>
             </FormControl>
 
-            <FormControl>
+            <FormControl isInvalid={expiryInPast}>
               <FormLabel fontSize='sm'>Expires (optional)</FormLabel>
               <Input
                 type='datetime-local'
                 value={expiresLocal}
                 onChange={event => setExpiresLocal(event.target.value)}
+                min={nowLocalDatetimeValue()}
                 size='sm'
                 maxW='280px'
               />
-              <FormHelperText>Leave empty for no expiry.</FormHelperText>
+              <FormHelperText>
+                {expiryInPast
+                  ? 'Expiry must be in the future.'
+                  : 'Leave empty for no expiry.'}
+              </FormHelperText>
             </FormControl>
 
             <Button

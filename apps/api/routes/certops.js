@@ -487,6 +487,23 @@ router.post(
   requireCertOpsTokenManager,
   async (req, res) => {
     try {
+      // Reject already-expired expiry up front: the service layer also
+      // accepts past dates for internal test fixtures that seed expired
+      // tokens directly, so the future-only rule belongs on this
+      // user-facing create path instead of createApiToken() itself.
+      if (req.body?.expiresAt) {
+        const requestedExpiry = new Date(req.body.expiresAt);
+        if (
+          !Number.isNaN(requestedExpiry.getTime()) &&
+          requestedExpiry.getTime() <= Date.now()
+        ) {
+          return res.status(400).json({
+            error: "API token expiry must be in the future",
+            code: CERTOPS_API_TOKEN_INVALID,
+          });
+        }
+      }
+
       const created = await withCertOpsTokenTransaction(async (client) => {
         const tokenResult = await createApiToken({
           client,
