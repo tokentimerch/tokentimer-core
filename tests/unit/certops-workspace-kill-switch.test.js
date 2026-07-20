@@ -11,6 +11,7 @@ const {
   CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
   MAX_CERTOPS_PAUSE_REASON_LENGTH,
   assertWorkspaceCertOpsActive,
+  createManualCertificateJob,
   getWorkspaceCertOpsPauseState,
   normalizeReason,
   setWorkspaceCertOpsPauseState,
@@ -33,6 +34,7 @@ const {
 function createStatefulPool(initialPaused = false) {
   let certOpsPaused = initialPaused;
   let transactionStart = null;
+  let jobs = [];
   const queries = [];
   const client = {
     released: false,
@@ -41,7 +43,7 @@ function createStatefulPool(initialPaused = false) {
       queries.push({ sql: normalized, params });
 
       if (normalized === "BEGIN") {
-        transactionStart = certOpsPaused;
+        transactionStart = { certOpsPaused, jobs: [...jobs] };
         return { rows: [] };
       }
       if (normalized === "COMMIT") {
@@ -49,7 +51,8 @@ function createStatefulPool(initialPaused = false) {
         return { rows: [] };
       }
       if (normalized === "ROLLBACK") {
-        certOpsPaused = transactionStart;
+        certOpsPaused = transactionStart.certOpsPaused;
+        jobs = transactionStart.jobs;
         transactionStart = null;
         return { rows: [] };
       }
@@ -80,6 +83,12 @@ function createStatefulPool(initialPaused = false) {
     },
     get certOpsPaused() {
       return certOpsPaused;
+    },
+    addJob(job) {
+      jobs.push(job);
+    },
+    get jobs() {
+      return jobs;
     },
   };
 }
@@ -221,6 +230,66 @@ describe("CertOps workspace kill-switch service", () => {
     );
     assert.equal(pool.certOpsPaused, false);
     assert.equal(pool.queries.some((query) => query.sql === "ROLLBACK"), true);
+  });
+
+  it("rolls back a manual job when its synchronous creation audit fails", async () => {
+    const pool = createStatefulPool(false);
+    const job = {
+      id: "job-1",
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "certificate-1",
+      source: "api",
+    };
+
+    await assert.rejects(
+      () =>
+        createManualCertificateJob({
+          workspaceId: "workspace-1",
+          dbPool: pool,
+          jobCreator: async () => {
+            pool.addJob(job);
+            return { job, created: true };
+          },
+          auditWriter: async () => {
+            throw new Error("audit unavailable");
+          },
+        }),
+      /audit unavailable/,
+    );
+
+    assert.deepEqual(pool.jobs, []);
+    assert.equal(pool.queries.some((query) => query.sql === "ROLLBACK"), true);
+    assert.equal(
+      pool.queries.some((query) => query.sql.endsWith("FOR SHARE")),
+      true,
+    );
+  });
+
+  it("does not emit a duplicate manual-job audit for an idempotent replay", async () => {
+    const pool = createStatefulPool(false);
+    let auditCount = 0;
+    const result = await createManualCertificateJob({
+      workspaceId: "workspace-1",
+      dbPool: pool,
+      jobCreator: async () => ({
+        job: {
+          id: "existing-job",
+          operation: "deploy",
+          subjectType: "managed_certificate",
+          subjectId: "certificate-1",
+          source: "api",
+        },
+        created: false,
+      }),
+      auditWriter: async () => {
+        auditCount += 1;
+      },
+    });
+
+    assert.equal(result.created, false);
+    assert.equal(auditCount, 0);
+    assert.equal(pool.queries.some((query) => query.sql === "COMMIT"), true);
   });
 
   it("validates and redacts the bounded operator reason", async () => {

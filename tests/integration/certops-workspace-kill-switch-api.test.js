@@ -2,6 +2,7 @@ const { loadRootEnv } = require("../../scripts/load-root-env");
 
 loadRootEnv();
 
+const assert = require("node:assert/strict");
 const crypto = require("crypto");
 const { expect, request, TestUtils } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
@@ -14,10 +15,43 @@ const {
 } = require("../../apps/api/services/certops/jobs");
 const {
   setWorkspaceCertOpsPauseState,
+  createManualCertificateJob,
 } = require("../../apps/api/services/certops/workspaceKillSwitch");
 const { writeAudit } = require("../../apps/api/services/audit");
+const { pool } = require("../../apps/api/db/database");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
+const CERTOPS_ENABLED = ["1", "true", "yes", "on", "enabled"].includes(
+  String(process.env.CERTOPS_ENABLED || "").trim().toLowerCase(),
+);
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+function singleClientPool(client, onQuery = null) {
+  let released = false;
+  return {
+    async connect() {
+      return {
+        async query(sql, params) {
+          onQuery?.(String(sql).replace(/\s+/g, " ").trim());
+          return client.query(sql, params);
+        },
+        release() {
+          if (!released) {
+            released = true;
+            client.release();
+          }
+        },
+      };
+    },
+  };
+}
 
 async function primaryWorkspaceId(session) {
   const response = await request(BASE)
@@ -190,8 +224,8 @@ describe("CertOps workspace kill-switch API", function () {
       expect(response.body).to.include({
         workspaceId: fixture.workspaceId,
         certOpsPaused: false,
-        certOpsEnabled: true,
-        certOpsActive: true,
+        certOpsEnabled: CERTOPS_ENABLED,
+        certOpsActive: CERTOPS_ENABLED,
       });
     }
 
@@ -205,6 +239,11 @@ describe("CertOps workspace kill-switch API", function () {
       .set("Cookie", fixture.outsiderSession.cookie);
     expect(unknownWorkspace.status).to.equal(404);
     expect(unknownWorkspace.body).to.deep.equal(outsider.body);
+
+    const unrelatedRoute = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.outsiderSession.cookie);
+    expect(unrelatedRoute.status).to.equal(403);
 
     for (const session of [fixture.managerSession, fixture.viewerSession]) {
       const denied = await request(BASE)
@@ -222,7 +261,7 @@ describe("CertOps workspace kill-switch API", function () {
     expect(paused.body).to.deep.include({
       workspaceId: fixture.workspaceId,
       certOpsPaused: true,
-      certOpsEnabled: true,
+      certOpsEnabled: CERTOPS_ENABLED,
       certOpsActive: false,
       changed: true,
     });
@@ -243,7 +282,7 @@ describe("CertOps workspace kill-switch API", function () {
       workspaceId: fixture.workspaceId,
       previousCertOpsPaused: false,
       certOpsPaused: true,
-      certOpsEnabled: true,
+      certOpsEnabled: CERTOPS_ENABLED,
       certOpsActive: false,
       reason: "incident token=[REDACTED]",
     });
@@ -263,7 +302,19 @@ describe("CertOps workspace kill-switch API", function () {
     expect(otherWorkspace.rows[0].certops_paused).to.equal(false);
   });
 
-  it("blocks only new manual jobs while paused, preserves reads, and resumes cleanly", async () => {
+  it("blocks only new manual jobs while paused, preserves reads, and resumes cleanly", async function () {
+    if (!CERTOPS_ENABLED) {
+      const unavailable = await request(BASE)
+        .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+        .set("Cookie", fixture.viewerSession.cookie);
+      expect(unavailable.status).to.equal(404);
+      await request(BASE)
+        .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+        .set("Cookie", fixture.ownerSession.cookie)
+        .send({ certOpsPaused: false, reason: "rollout-disabled verification complete" })
+        .expect(200);
+      return;
+    }
     const blockedSubjectId = "paused-workspace-job";
     const privateKey = "-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----";
 
@@ -359,7 +410,67 @@ describe("CertOps workspace kill-switch API", function () {
     expect(state.rows[0].certops_paused).to.equal(false);
   });
 
-  it("keeps machine event and evidence ingestion available for pre-existing work while paused", async () => {
+  it("keeps a same-request idempotent manual-job replay to one audit", async function () {
+    if (!CERTOPS_ENABLED) this.skip();
+    const subjectId = `manual-idempotency-${crypto.randomUUID()}`;
+    const body = {
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId,
+      idempotencyKey: `manual-job-${crypto.randomUUID()}`,
+    };
+
+    const first = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send(body)
+      .expect(201);
+    const replay = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send(body)
+      .expect(201);
+
+    expect(replay.body.job.id).to.equal(first.body.job.id);
+    expect(await jobsForSubject(fixture.workspaceId, subjectId)).to.have.length(1);
+    expect(await manualJobAudits(fixture.workspaceId, subjectId)).to.have.length(1);
+  });
+
+  it("exposes both workspace pause states independently of the global rollout", async () => {
+    for (const certOpsPaused of [true, false]) {
+      const response = await request(BASE)
+        .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+        .set("Cookie", fixture.ownerSession.cookie)
+        .send({ certOpsPaused })
+        .expect(200);
+      expect(response.body).to.deep.include({
+        workspaceId: fixture.workspaceId,
+        certOpsPaused,
+        certOpsEnabled: CERTOPS_ENABLED,
+        certOpsActive: CERTOPS_ENABLED && !certOpsPaused,
+      });
+    }
+  });
+
+  it("rejects private key material on settings before role checks even with rollout disabled", async () => {
+    const before = await keyRejectionAudits(fixture.workspaceId);
+    const privateKey = "-----BEGIN PRIVATE KEY-----\nnot-allowed\n-----END PRIVATE KEY-----";
+
+    for (const session of [fixture.ownerSession, fixture.managerSession]) {
+      const response = await request(BASE)
+        .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+        .set("Cookie", session.cookie)
+        .send({ certOpsPaused: false, reason: privateKey });
+      expect(response.status).to.equal(422);
+      expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+    }
+
+    const after = await keyRejectionAudits(fixture.workspaceId);
+    expect(after).to.have.length(before.length + 2);
+  });
+
+  it("keeps machine event and evidence ingestion available for pre-existing work while paused", async function () {
+    if (!CERTOPS_ENABLED) this.skip();
     const paused = await request(BASE)
       .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
       .set("Cookie", fixture.ownerSession.cookie)
@@ -483,5 +594,118 @@ describe("CertOps workspace kill-switch API", function () {
       [fixture.workspaceId],
     );
     expect(state.rows[0].certops_paused).to.equal(false);
+  });
+
+  it("serializes real PostgreSQL pause and manual-job races in both commit orders", async () => {
+    const subjectAfterPause = `pause-first-${crypto.randomUUID()}`;
+    const pauseAuditEntered = deferred();
+    const releasePauseCommit = deferred();
+    const pauseClient = await pool.connect();
+    const jobClient = await pool.connect();
+
+    try {
+      const pause = setWorkspaceCertOpsPauseState({
+        workspaceId: fixture.workspaceId,
+        certOpsPaused: true,
+        reason: "pause wins race",
+        actorUserId: fixture.ownerUser.id,
+        dbPool: singleClientPool(pauseClient),
+        auditWriter: async (event) => {
+          await writeAudit(event);
+          pauseAuditEntered.resolve();
+          await releasePauseCommit.promise;
+        },
+      });
+      await pauseAuditEntered.promise;
+
+      const shareRequested = deferred();
+      const job = createManualCertificateJob({
+        workspaceId: fixture.workspaceId,
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId: subjectAfterPause,
+        requestedByUserId: fixture.managerUser.id,
+        actorUserId: fixture.managerUser.id,
+        dbPool: singleClientPool(jobClient, (sql) => {
+          if (sql.endsWith("FOR SHARE")) shareRequested.resolve();
+        }),
+      });
+      await shareRequested.promise;
+      releasePauseCommit.resolve();
+      await pause;
+      await assert.rejects(
+        () => job,
+        (error) => error?.code === "CERTOPS_WORKSPACE_PAUSED",
+      );
+      expect(await jobsForSubject(fixture.workspaceId, subjectAfterPause)).to.have.length(0);
+      expect(await manualJobAudits(fixture.workspaceId, subjectAfterPause)).to.have.length(0);
+    } finally {
+      try {
+        pauseClient.release();
+      } catch (_) {}
+      try {
+        jobClient.release();
+      } catch (_) {}
+    }
+
+    await TestUtils.execQuery(
+      "UPDATE workspaces SET certops_paused = FALSE WHERE id = $1",
+      [fixture.workspaceId],
+    );
+
+    const subjectBeforePause = `job-first-${crypto.randomUUID()}`;
+    const jobAuditEntered = deferred();
+    const releaseJobCommit = deferred();
+    const firstJobClient = await pool.connect();
+    const secondPauseClient = await pool.connect();
+
+    try {
+      const job = createManualCertificateJob({
+        workspaceId: fixture.workspaceId,
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId: subjectBeforePause,
+        requestedByUserId: fixture.managerUser.id,
+        actorUserId: fixture.managerUser.id,
+        dbPool: singleClientPool(firstJobClient),
+        auditWriter: async (event) => {
+          await writeAudit(event);
+          jobAuditEntered.resolve();
+          await releaseJobCommit.promise;
+        },
+      });
+      await jobAuditEntered.promise;
+
+      const updateLockRequested = deferred();
+      const pause = setWorkspaceCertOpsPauseState({
+        workspaceId: fixture.workspaceId,
+        certOpsPaused: true,
+        reason: "job wins race",
+        actorUserId: fixture.ownerUser.id,
+        dbPool: singleClientPool(secondPauseClient, (sql) => {
+          if (sql.endsWith("FOR UPDATE")) updateLockRequested.resolve();
+        }),
+      });
+      await updateLockRequested.promise;
+      releaseJobCommit.resolve();
+
+      const [created, paused] = await Promise.all([job, pause]);
+      expect(created.created).to.equal(true);
+      expect(paused.certOpsPaused).to.equal(true);
+      expect(await jobsForSubject(fixture.workspaceId, subjectBeforePause)).to.have.length(1);
+      expect(await manualJobAudits(fixture.workspaceId, subjectBeforePause)).to.have.length(1);
+    } finally {
+      try {
+        firstJobClient.release();
+      } catch (_) {}
+      try {
+        secondPauseClient.release();
+      } catch (_) {}
+    }
+
+    await TestUtils.execQuery(
+      "UPDATE workspaces SET certops_paused = FALSE WHERE id = $1",
+      [fixture.workspaceId],
+    );
   });
 });

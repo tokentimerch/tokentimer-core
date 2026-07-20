@@ -216,11 +216,7 @@ function requireWorkspaceMembership(req, res, next) {
     req.authz = { ...(req.authz || {}), workspaceRole: role };
   }
   if (!role) {
-    // The M3-A1 settings surface is an incident-control endpoint. Returning
-    // the same generic result as an unknown workspace prevents an authenticated
-    // non-member from using it as a workspace-existence oracle. Members still
-    // reach the route, where the action policy returns 403 for non-admin writes.
-    if (/^\/certops\/settings\/?$/.test(req.path || "")) {
+    if (req.workspaceAccessPolicy?.hideExistence === true) {
       return res.status(404).json({ error: "Workspace not found" });
     }
     return res.status(403).json({ error: "Forbidden: not a workspace member" });

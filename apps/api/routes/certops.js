@@ -44,7 +44,6 @@ const {
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
-  createCertificateJob,
   getCertificateJobById,
   listCertificateJobLog,
   listCertificateJobs,
@@ -56,8 +55,10 @@ const {
 } = require("../services/certops/evidence");
 const {
   CERTOPS_WORKSPACE_NOT_FOUND,
+  CERTOPS_WORKSPACE_PAUSED,
   CERTOPS_WORKSPACE_PAUSE_REASON_INVALID,
   CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+  createManualCertificateJob,
   getWorkspaceCertOpsPauseState,
   setWorkspaceCertOpsPauseState,
 } = require("../services/certops/workspaceKillSwitch");
@@ -211,6 +212,13 @@ function handleCertOpsError(res, err) {
     return res.status(404).json({
       error: "Certificate job not found",
       code: CERTOPS_JOB_NOT_FOUND,
+    });
+  }
+
+  if (err?.code === CERTOPS_WORKSPACE_PAUSED) {
+    return res.status(409).json({
+      error: "CertOps is paused for this workspace",
+      code: CERTOPS_WORKSPACE_PAUSED,
     });
   }
 
@@ -692,13 +700,12 @@ router.get(
   },
 );
 
-// The kill-switch setting is intentionally small and workspace-local. It is
-// gated by the normal rollout flag, while its response makes the independent
-// stored pause and effective (global AND workspace) state explicit.
+// The kill-switch setting is intentionally small and workspace-local. It stays
+// available while rollout is disabled so incident controls can be inspected or
+// staged; its response composes the independent global and workspace state.
 router.get(
   "/api/v1/workspaces/:id/certops/settings",
   getApiLimiter(),
-  requireCertOpsEnabled,
   async (req, res) => {
     try {
       const state = await getWorkspaceCertOpsPauseState({
@@ -727,7 +734,6 @@ router.put(
   "/api/v1/workspaces/:id/certops/settings",
   getApiLimiter(),
   rejectKeyMaterial,
-  requireCertOpsEnabled,
   authorize("certops.kill_switch.manage"),
   async (req, res) => {
     try {
@@ -772,20 +778,10 @@ router.post(
   requireWorkspaceCertOpsActive,
   async (req, res) => {
     try {
-      const job = await createCertificateJob(jobCreateOptionsFromRequest(req));
-      await writeAudit({
+      const { job } = await createManualCertificateJob({
+        ...jobCreateOptionsFromRequest(req),
         actorUserId: req.user?.id || null,
         subjectUserId: req.user?.id || null,
-        action: "CERTOPS_JOB_CREATED_MANUAL",
-        targetType: "certificate_job",
-        targetId: job.id,
-        workspaceId: req.workspace.id,
-        metadata: {
-          operation: job.operation,
-          subjectType: job.subjectType,
-          subjectId: job.subjectId,
-          source: job.source,
-        },
       });
       return res.status(201).json({ job: jobDetail(job) });
     } catch (err) {

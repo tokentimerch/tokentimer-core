@@ -31,6 +31,7 @@ const {
   loadWorkspace,
   requireWorkspaceMembership,
 } = require("./services/rbac");
+const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
 const {
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
@@ -331,6 +332,10 @@ if (process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test") {
 // Remove duplicate later session initialization: session was already set up earlier
 
 // Enforce workspace membership and write restrictions for all workspace routes
+app.use(
+  "/api/v1/workspaces/:id/certops/settings",
+  hideWorkspaceExistence,
+);
 app.use(
   "/api/v1/workspaces/:id",
   requireAuth,

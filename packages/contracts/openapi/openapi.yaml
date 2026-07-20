@@ -3481,7 +3481,8 @@ paths:
         Returns the workspace-local CertOps kill-switch state and the effective
         side-effect availability. All authorized workspace members may read it.
         The stored pause state remains distinct from the deployment-wide
-        certops.enabled rollout flag.
+        certops.enabled rollout flag, and this settings endpoint remains
+        available when that rollout flag is disabled.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3504,7 +3505,8 @@ paths:
       summary: Pause or resume new CertOps work for a workspace
       operationId: updateCertOpsWorkspaceSettings
       description: >-
-        Changes only the workspace-local M3-A1 kill switch. Requires a workspace
+        Changes only the workspace-local M3-A1 kill switch and remains available
+        while the deployment-wide rollout flag is disabled. Requires a workspace
         admin. A paused workspace rejects new manual jobs and future dispatch or
         provision side effects with 409 CERTOPS_WORKSPACE_PAUSED; inventory,
         status, audit, evidence, and existing-work reporting remain available.

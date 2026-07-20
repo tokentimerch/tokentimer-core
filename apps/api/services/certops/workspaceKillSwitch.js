@@ -3,6 +3,7 @@
 const { writeAudit } = require("../audit");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const { isCertOpsEnabled } = require("./settings");
+const { createCertificateJob } = require("./jobs");
 
 const CERTOPS_WORKSPACE_PAUSED = "CERTOPS_WORKSPACE_PAUSED";
 const CERTOPS_WORKSPACE_NOT_FOUND = "CERTOPS_WORKSPACE_NOT_FOUND";
@@ -80,11 +81,13 @@ function stateFromRow({ workspaceId, certOpsPaused, certOpsEnabled }) {
   };
 }
 
-async function loadWorkspacePauseState(dbPool, workspaceId, { forUpdate = false } = {}) {
+async function loadWorkspacePauseState(dbPool, workspaceId, { lock = null } = {}) {
+  const lockClause =
+    lock === "update" ? " FOR UPDATE" : lock === "share" ? " FOR SHARE" : "";
   const result = await dbPool.query(
     `SELECT id, certops_paused
        FROM workspaces
-      WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`,
+      WHERE id = $1${lockClause}`,
     [workspaceId],
   );
   const row = result.rows[0];
@@ -183,7 +186,7 @@ async function setWorkspaceCertOpsPauseState({
     transactionStarted = true;
 
     const workspace = await loadWorkspacePauseState(client, workspaceId, {
-      forUpdate: true,
+      lock: "update",
     });
     const previousCertOpsPaused = workspace.certops_paused === true;
     const certOpsEnabled = await certOpsEnabledResolver({ dbPool: client, env });
@@ -249,6 +252,97 @@ async function setWorkspaceCertOpsPauseState({
   }
 }
 
+/**
+ * Create a manual job and its creation audit as one workspace-serialized
+ * transaction. The shared row lock conflicts with the kill switch's update
+ * lock, so a pause that commits first is always observed before this job is
+ * inserted. Idempotent replays return the stored job without another audit.
+ */
+async function createManualCertificateJob({
+  workspaceId,
+  actorUserId = null,
+  subjectUserId = actorUserId,
+  dbPool = defaultPool(),
+  jobCreator = createCertificateJob,
+  auditWriter = writeAudit,
+  ...jobOptions
+} = {}) {
+  if (!workspaceId) {
+    throw workspaceKillSwitchError(
+      "workspaceId is required",
+      CERTOPS_WORKSPACE_NOT_FOUND,
+    );
+  }
+
+  const client = await dbPool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // FOR SHARE conflicts with the pause transition's FOR UPDATE lock.
+    const workspace = await loadWorkspacePauseState(client, workspaceId, {
+      lock: "share",
+    });
+    if (workspace.certops_paused === true) {
+      const error = workspaceKillSwitchError(
+        "CertOps is paused for this workspace",
+        CERTOPS_WORKSPACE_PAUSED,
+      );
+      error.state = stateFromRow({
+        workspaceId: workspace.id,
+        certOpsPaused: true,
+        certOpsEnabled: true,
+      });
+      throw error;
+    }
+
+    const outcome = await jobCreator({
+      ...jobOptions,
+      workspaceId: workspace.id,
+      source: "api",
+      client,
+      returnOutcome: true,
+    });
+    const job = outcome?.job || outcome;
+    const created = outcome?.created === true;
+
+    if (created) {
+      await auditWriter({
+        client,
+        actorUserId,
+        subjectUserId,
+        action: "CERTOPS_JOB_CREATED_MANUAL",
+        targetType: "certificate_job",
+        targetId: job.id,
+        workspaceId: workspace.id,
+        metadata: {
+          operation: job.operation,
+          subjectType: job.subjectType,
+          subjectId: job.subjectId,
+          source: job.source,
+        },
+      });
+    }
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return { job, created };
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_) {
+        // Preserve the primary job or audit failure for the caller.
+      }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   CERTOPS_WORKSPACE_PAUSED,
   CERTOPS_WORKSPACE_NOT_FOUND,
@@ -257,6 +351,7 @@ module.exports = {
   MAX_CERTOPS_PAUSE_REASON_LENGTH,
   CertOpsWorkspaceKillSwitchError,
   assertWorkspaceCertOpsActive,
+  createManualCertificateJob,
   getWorkspaceCertOpsPauseState,
   normalizePaused,
   normalizeReason,

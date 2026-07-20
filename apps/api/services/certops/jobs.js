@@ -684,6 +684,9 @@ async function createCertificateJob(options) {
          $1, $2, $3, $4, $5, $6, $7, $8, $9,
          $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17
        )
+       ON CONFLICT (workspace_id, idempotency_key)
+         WHERE idempotency_key IS NOT NULL
+       DO NOTHING
        RETURNING ${SAFE_JOB_SELECT_FIELDS}`,
       [
         workspaceId,
@@ -706,7 +709,34 @@ async function createCertificateJob(options) {
       ],
     );
 
-    return jobFromRow(result.rows[0]);
+    const job = jobFromRow(result.rows[0]);
+    if (job) {
+      return options.returnOutcome === true ? { job, created: true } : job;
+    }
+
+    // ON CONFLICT DO NOTHING keeps the transaction usable for an idempotent
+    // replay, which is essential when the caller also persists an audit in the
+    // same transaction.
+    if (idempotencyKey) {
+      const existing = await getJobByIdempotencyKey(
+        db,
+        workspaceId,
+        idempotencyKey,
+      );
+      if (existing) {
+        if (idempotencyIdentity(existing) === requestIdentity) {
+          return options.returnOutcome === true
+            ? { job: existing, created: false }
+            : existing;
+        }
+        throw serviceError(
+          "Idempotency key was already used with a different CertOps job request",
+          CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+        );
+      }
+    }
+
+    throw serviceError("Certificate job insert did not return a job", CERTOPS_JOB_INVALID);
   } catch (error) {
     if (
       idempotencyKey &&
@@ -722,7 +752,9 @@ async function createCertificateJob(options) {
       );
       if (existing) {
         if (idempotencyIdentity(existing) === requestIdentity) {
-          return existing;
+          return options.returnOutcome === true
+            ? { job: existing, created: false }
+            : existing;
         }
         throw serviceError(
           "Idempotency key was already used with a different CertOps job request",
