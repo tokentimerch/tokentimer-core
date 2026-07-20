@@ -286,11 +286,14 @@ test("checkDnsProvider allows an exact match", () => {
   });
 });
 
-test("checkDnsProvider rejects an unknown provider using dns_zone_not_allowlisted", () => {
+test("checkDnsProvider rejects an unknown provider with dns_provider_not_allowlisted", () => {
   const engine = baseEngine();
   const result = engine.checkDnsProvider("route53-prod");
   assert.equal(result.allowed, false);
-  assert.equal(result.rejectionReason, REJECTION_REASONS.DNS_ZONE_NOT_ALLOWLISTED);
+  assert.equal(
+    result.rejectionReason,
+    REJECTION_REASONS.DNS_PROVIDER_NOT_ALLOWLISTED,
+  );
   assert.match(result.detail, /DNS provider/);
 });
 

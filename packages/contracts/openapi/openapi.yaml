@@ -4379,7 +4379,7 @@ paths:
       tags: [CertOps Agent]
       summary: Register an agent
       operationId: createCertOpsAgentRegistration
-      description: Outbound-only agent enrollment using a single-use bootstrap token; returns a per-agent credential shown once. Frozen namespace skeleton; body schema lands with the agent protocol.
+      description: Outbound-only agent enrollment using a single-use bootstrap token; returns a per-agent credential shown once. Request body is the agent-protocol envelope with messageType register (packages/contracts/certops/agent-protocol.schema.json, additionalProperties false); the envelope schema is authoritative, full OpenAPI body modeling lands with the server implementation.
       security:
         - agentBootstrapTokenAuth: []
       requestBody:
@@ -4406,7 +4406,7 @@ paths:
       tags: [CertOps Agent]
       summary: Agent heartbeat
       operationId: createCertOpsAgentHeartbeat
-      description: Agent heartbeat including reported clock offset (clock-drift detection). Per-agent credential authenticated. Frozen skeleton; body schema lands with the agent protocol.
+      description: Agent heartbeat including reported clock offset (clock-drift detection). Per-agent credential authenticated. Request body is the agent-protocol envelope with messageType heartbeat (packages/contracts/certops/agent-protocol.schema.json, additionalProperties false); the envelope schema is authoritative, full OpenAPI body modeling lands with the server implementation.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4433,7 +4433,7 @@ paths:
       tags: [CertOps Agent]
       summary: Claim pending jobs
       operationId: createCertOpsAgentJobClaim
-      description: Agent polls for and claims signed jobs. Per-agent credential authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) once the agent protocol lands.
+      description: Agent polls for and claims signed jobs. Per-agent credential authenticated. Request body is the agent-protocol envelope with messageType claim (packages/contracts/certops/agent-protocol.schema.json, additionalProperties false); responses return signed job payloads per job-payload.schema.json once the server implementation lands.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4460,7 +4460,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report job results and evidence
       operationId: createCertOpsAgentJobResult
-      description: Agent reports job results and evidence metadata. Per-agent credential authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands with the agent protocol.
+      description: Agent reports job results and evidence metadata. Per-agent credential authenticated. Payloads containing private key material are rejected (422). Request body is the agent-protocol envelope with messageType result or evidence, dispatched on messageType (packages/contracts/certops/agent-protocol.schema.json, additionalProperties false); the envelope schema is authoritative, full OpenAPI body modeling lands with the server implementation.
       security:
         - agentCredentialAuth: []
       requestBody:

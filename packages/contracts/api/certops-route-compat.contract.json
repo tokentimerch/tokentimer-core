@@ -33,7 +33,7 @@
         "Enrollment and steady state use different credentials, by design.",
         "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
         "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
-        "All routes CSRF-exempt (token-authenticated, non-cookie). Frozen in Phase 0 to reserve the namespace; bodies specified in the agent protocol phase."
+        "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen in Phase 0; request/response bodies are now specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType."
       ]
     }
   },

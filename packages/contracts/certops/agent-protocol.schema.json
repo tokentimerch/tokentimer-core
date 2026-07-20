@@ -224,6 +224,7 @@
             "path_not_allowlisted",
             "ca_endpoint_not_allowlisted",
             "dns_zone_not_allowlisted",
+            "dns_provider_not_allowlisted",
             "key_export_requested",
             "clock_drift_suspected",
             null

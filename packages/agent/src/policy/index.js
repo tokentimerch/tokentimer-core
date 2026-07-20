@@ -19,7 +19,8 @@
  * Scope note: this module owns only the *policy* rejection reasons from the
  * agent-protocol schema (resultBody.rejectionReason): target_out_of_scope,
  * command_not_allowlisted, path_not_allowlisted, ca_endpoint_not_allowlisted,
- * dns_zone_not_allowlisted, key_export_requested. job_integrity_failed,
+ * dns_zone_not_allowlisted, dns_provider_not_allowlisted,
+ * key_export_requested. job_integrity_failed,
  * job_replay_rejected, and clock_drift_suspected belong to the Phase 4
  * signature/replay runtime and are NOT implemented here; this module's
  * rejection result shape ({ allowed, rejectionReason, detail }) is designed
@@ -65,6 +66,7 @@ const REJECTION_REASONS = Object.freeze({
   PATH_NOT_ALLOWLISTED: "path_not_allowlisted",
   CA_ENDPOINT_NOT_ALLOWLISTED: "ca_endpoint_not_allowlisted",
   DNS_ZONE_NOT_ALLOWLISTED: "dns_zone_not_allowlisted",
+  DNS_PROVIDER_NOT_ALLOWLISTED: "dns_provider_not_allowlisted",
   KEY_EXPORT_REQUESTED: "key_export_requested",
 });
 
@@ -408,11 +410,7 @@ function createPolicyEngine(policyConfig, { declaredTargetSelectors = [] } = {})
   }
 
   /**
-   * Exact match against allowedDnsProviders. The agent-protocol schema has
-   * no dedicated rejection reason for an unrecognized DNS provider (see
-   * resultBody.rejectionReason in
-   * packages/contracts/certops/agent-protocol.schema.json), so this reuses
-   * dns_zone_not_allowlisted and says so explicitly in `detail`.
+   * Exact match against allowedDnsProviders.
    *
    * @param {string} providerName
    * @returns {{ allowed: true } | ReturnType<typeof reject>}
@@ -422,10 +420,8 @@ function createPolicyEngine(policyConfig, { declaredTargetSelectors = [] } = {})
 
     if (!isAllowed) {
       return reject(
-        REJECTION_REASONS.DNS_ZONE_NOT_ALLOWLISTED,
-        `DNS provider "${providerName}" is not present in the agent-local DNS provider allowlist ` +
-          `(reported as dns_zone_not_allowlisted: the agent-protocol schema has no dedicated ` +
-          `DNS-provider rejection reason).`,
+        REJECTION_REASONS.DNS_PROVIDER_NOT_ALLOWLISTED,
+        `DNS provider "${providerName}" is not present in the agent-local DNS provider allowlist.`,
       );
     }
 

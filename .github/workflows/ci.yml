@@ -162,6 +162,12 @@ jobs:
       - name: Lint backend code
         run: pnpm --filter @tokentimer/api lint
 
+      - name: Lint agent package
+        run: pnpm run lint:agent
+
+      - name: Run agent package tests
+        run: pnpm run test:agent
+
       - name: Check for security vulnerabilities
         run: pnpm audit --prod --audit-level=moderate
 
