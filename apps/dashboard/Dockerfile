@@ -42,9 +42,10 @@ RUN apk update && apk upgrade --no-cache \
         nginx-module-image-filter \
         nginx-module-njs \
         nginx-module-xslt \
-    && apk add --no-cache nginx=1.28.3-r4 \
+    && apk add --no-cache 'nginx~1.28.3' \
     && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0" \
-    && test "$(apk list -I nginx | cut -d- -f2- | cut -d' ' -f1)" = "1.28.3-r4" \
+    && nginx_version="$(apk info -v nginx | sed 's/^nginx-//')" \
+    && test "$(apk version -t "$nginx_version" "1.28.3-r4")" != "<" \
     && mkdir -p /run/nginx
 
 RUN mkdir -p /usr/share/nginx/html && \
