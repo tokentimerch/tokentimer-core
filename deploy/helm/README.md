@@ -14,6 +14,7 @@ Token, certificate, and secret expiration management for teams.
 | Endpoint Check | CronJob | SSL certificate and health monitoring |
 | Auto Sync | CronJob | Scheduled integration scans |
 | PostgreSQL | CloudNativePG Cluster | Database (optional, can use external) |
+| CertOps Controller | Deployment | Optional, observe-only cert-manager inventory foundation |
 
 Optional resources (disabled by default): Ingress, HPA, PDB, ServiceMonitor, PrometheusRule, NetworkPolicy.
 
@@ -156,6 +157,40 @@ twilio:
 
 When `existingSecret` is set for a group, the chart renders **no keys** for that group in the ConfigMap or generated Secret, so the existing secret becomes the single source of truth with no empty-value conflicts.
 
+### CertOps Controller (observe-only)
+
+The CertOps controller is disabled by default. In M3-A3 it receives only
+read-level access to cert-manager `Certificate` and `CertificateRequest`
+resources; provisioning is deliberately not supported. It uses a dedicated
+ServiceAccount and reads its TokenTimer API token exclusively from an existing
+Kubernetes Secret volume.
+
+```yaml
+certops:
+  controller:
+    enabled: true
+    mode: observe
+    api:
+      url: "https://api.tokentimer.example"
+      workspaceId: "workspace-123"
+      clusterId: "cluster-123"
+    apiToken:
+      existingSecret: "tokentimer-controller-api-token"
+      key: token
+    # Empty means the Helm release namespace. Set this only for an explicit
+    # namespaced allow-list, or use clusterWide: true (never both).
+    watchNamespaces: []
+    clusterWide: false
+    # Adds `get` on Secrets only; leave false unless public-certificate Secret
+    # fallback is required.
+    secretFallbackEnabled: false
+```
+
+When `networkPolicy.enabled` is also true, `networkPolicy.egress.kubeApiServerCidrs`
+must list the Kubernetes API server CIDRs. The controller can then reach only
+DNS, those API-server CIDRs on TCP 443, and either the in-chart TokenTimer API
+pods or the explicit `networkPolicy.egress.controllerApiCidrs` allow-list.
+
 ### Ingress
 
 ```yaml
@@ -240,6 +275,11 @@ The chart defaults to a hardened security posture:
 - `seccompProfile: RuntimeDefault`
 - `automountServiceAccountToken: false`
 - NetworkPolicy available (opt-in)
+
+When the optional CertOps controller is enabled, it is the only workload that
+opts into a mounted Kubernetes ServiceAccount token. Its distinct identity has
+only observe RBAC, with Secret `get` added only when its fallback is explicitly
+enabled.
 
 ## Upgrading
 

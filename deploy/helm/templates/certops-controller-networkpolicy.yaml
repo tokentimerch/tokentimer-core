@@ -1,0 +1,63 @@
+{{- if and .Values.certops.controller.enabled .Values.networkPolicy.enabled }}
+{{- include "tokentimer.certopsControllerValidate" . }}
+{{- include "tokentimer.certopsControllerNetworkPolicyValidate" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tokentimer.certopsControllerName" . }}
+  labels:
+    {{- include "tokentimer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certops-controller
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tokentimer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: certops-controller
+  policyTypes:
+    - Egress
+  egress:
+    # Kubernetes DNS only.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The TokenTimer API is an explicit CIDR allow-list for external API
+    # endpoints, or the in-chart API pod selector when no CIDRs are supplied.
+    {{- with .Values.networkPolicy.egress.controllerApiCidrs }}
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.egress.controllerApiPort }}
+    {{- else }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "tokentimer.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+    {{- end }}
+    # Kubernetes API server CIDRs are required when controller networking is
+    # isolated. They cannot safely be represented by a hostname rule.
+    - to:
+        {{- range .Values.networkPolicy.egress.kubeApiServerCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}
