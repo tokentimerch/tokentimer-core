@@ -5,7 +5,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "tokentimer.certopsControllerName" . }}
+  name: {{ include "tokentimer.certopsControllerName" . | quote }}
   labels:
     {{- include "tokentimer.labels" . | nindent 4 }}
     app.kubernetes.io/component: certops-controller
@@ -35,7 +35,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "tokentimer.certopsControllerServiceAccountName" . }}
+      serviceAccountName: {{ include "tokentimer.certopsControllerServiceAccountName" . | quote }}
       automountServiceAccountToken: true
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -44,7 +44,7 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: {{ include "tokentimer.image" (dict "image" $controller.image "global" .Values.global "defaultTag" .Chart.AppVersion) | quote }}
-          imagePullPolicy: {{ $controller.image.pullPolicy }}
+          imagePullPolicy: {{ $controller.image.pullPolicy | quote }}
           ports:
             - name: http
               containerPort: {{ $controller.healthPort }}
@@ -97,10 +97,10 @@ spec:
           emptyDir: {}
         - name: api-token
           secret:
-            secretName: {{ $controller.apiToken.existingSecret }}
+            secretName: {{ $controller.apiToken.existingSecret | quote }}
             defaultMode: 256
             items:
-              - key: {{ $controller.apiToken.key }}
+              - key: {{ $controller.apiToken.key | quote }}
                 path: token
       {{- with $controller.nodeSelector }}
       nodeSelector:

@@ -435,8 +435,13 @@ available to a downstream Helm implementation.
   {{- if ne (int $controller.replicaCount) 1 -}}
     {{- fail "certops.controller.replicaCount must be 1 until leader election exists" -}}
   {{- end -}}
-  {{- $apiUrl := required "certops.controller.api.url is required when certops.controller.enabled=true" $controller.api.url -}}
-  {{- if not (regexMatch "^https?://[^/]+" ($apiUrl | toString)) -}}
+  {{- $apiUrl := required "certops.controller.api.url is required when certops.controller.enabled=true" $controller.api.url | toString -}}
+  {{- $parsedApiUrl := urlParse $apiUrl -}}
+  {{- $apiScheme := get $parsedApiUrl "scheme" | toString | lower -}}
+  {{- $apiHost := get $parsedApiUrl "host" | toString -}}
+  {{- $apiUserInfo := get $parsedApiUrl "userinfo" | toString -}}
+  {{- $apiPort := regexFind ":[0-9]+$" $apiHost | trimPrefix ":" -}}
+  {{- if or (not (or (eq $apiScheme "http") (eq $apiScheme "https"))) (eq $apiHost "") (ne $apiUserInfo "") (and $apiPort (gt (int $apiPort) 65535)) -}}
     {{- fail "certops.controller.api.url must be an absolute http or https URL" -}}
   {{- end -}}
   {{- $_ := required "certops.controller.api.workspaceId is required when certops.controller.enabled=true" $controller.api.workspaceId -}}
@@ -476,6 +481,9 @@ available to a downstream Helm implementation.
 {{- if and .Values.certops.controller.enabled .Values.networkPolicy.enabled -}}
   {{- if eq (len .Values.networkPolicy.egress.kubeApiServerCidrs) 0 -}}
     {{- fail "networkPolicy.egress.kubeApiServerCidrs is required when certops.controller and networkPolicy are enabled" -}}
+  {{- end -}}
+  {{- if and (eq (len .Values.networkPolicy.egress.controllerApiCidrs) 0) (not .Values.api.enabled) -}}
+    {{- fail "networkPolicy.egress.controllerApiCidrs is required when networkPolicy is enabled and api.enabled=false" -}}
   {{- end -}}
 {{- end -}}
 {{- end -}}

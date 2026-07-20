@@ -7,7 +7,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ $name }}
+  name: {{ $name | quote }}
   labels:
     {{- include "tokentimer.labels" . | nindent 4 }}
     app.kubernetes.io/component: certops-controller
@@ -33,18 +33,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ $name }}
+  name: {{ $name | quote }}
   labels:
     {{- include "tokentimer.labels" . | nindent 4 }}
     app.kubernetes.io/component: certops-controller
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ $name }}
+  name: {{ $name | quote }}
 subjects:
   - kind: ServiceAccount
-    name: {{ $serviceAccountName }}
-    namespace: {{ .Release.Namespace }}
+    name: {{ $serviceAccountName | quote }}
+    namespace: {{ .Release.Namespace | quote }}
 {{- else }}
 {{- $watchNamespaces := include "tokentimer.certopsControllerWatchNamespaces" . | fromYamlArray -}}
 {{- range $namespace := $watchNamespaces }}
@@ -52,8 +52,8 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ $name }}
-  namespace: {{ $namespace }}
+  name: {{ $name | quote }}
+  namespace: {{ $namespace | quote }}
   labels:
     {{- include "tokentimer.labels" $ | nindent 4 }}
     app.kubernetes.io/component: certops-controller
@@ -79,19 +79,19 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ $name }}
-  namespace: {{ $namespace }}
+  name: {{ $name | quote }}
+  namespace: {{ $namespace | quote }}
   labels:
     {{- include "tokentimer.labels" $ | nindent 4 }}
     app.kubernetes.io/component: certops-controller
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ $name }}
+  name: {{ $name | quote }}
 subjects:
   - kind: ServiceAccount
-    name: {{ $serviceAccountName }}
-    namespace: {{ $.Release.Namespace }}
+    name: {{ $serviceAccountName | quote }}
+    namespace: {{ $.Release.Namespace | quote }}
 {{- end }}
 {{- end }}
 {{- end }}
