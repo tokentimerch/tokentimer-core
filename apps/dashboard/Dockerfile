@@ -36,6 +36,7 @@ FROM nginx:1.28.3-alpine3.23
 RUN apk update && apk upgrade --no-cache \
     && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
     && apk del --no-cache \
+        nginx \
         nginx-module-acme \
         nginx-module-geoip \
         nginx-module-image-filter \
