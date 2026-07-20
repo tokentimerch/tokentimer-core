@@ -22,6 +22,7 @@ const REQUIRED_PINS = {
   "brace-expansion": { "*": "2.1.2" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
+  "js-yaml": { "*": "4.3.0" },
   rollup: { "*": "4.60.0" },
   flatted: { "*": "3.4.2" },
   "serialize-javascript": { "*": "7.0.5" },
