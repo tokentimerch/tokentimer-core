@@ -109,6 +109,18 @@ const ALL_ACTION_TYPES = [
   'TOKENS_IMPORTED',
   'TOKENS_TRANSFERRED_BETWEEN_WORKSPACES',
   'TOKENS_REASSIGNED_CONTACT_GROUP',
+  // CertOps machine tokens, jobs, and inventory
+  'CERTOPS_API_TOKEN_CREATED',
+  'CERTOPS_API_TOKEN_REVOKED',
+  'CERTOPS_JOB_CREATED_MANUAL',
+  'CERTOPS_CERTIFICATE_REGISTERED',
+  'CERTOPS_CERTIFICATE_IMPORTED',
+  'CERTOPS_CERTIFICATE_RETIRED',
+  'CERTOPS_KEY_MATERIAL_REJECTED',
+  'CERTOPS_EVIDENCE_REJECTED',
+  'CERTOPS_EVIDENCE_ACCEPTED',
+  'CERTOPS_EXECUTOR_EVENT_ACCEPTED',
+  'CERTOPS_GENERIC_SECRET_REDACTION_APPLIED',
   // Alert operations
   'ALERT_QUEUED',
   'ALERT_SENT',
@@ -650,6 +662,111 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
+  function formatCertOpsInventoryMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.source) parts.push(`Source: ${md.source}`);
+      if (md.count != null) parts.push(`Certificates: ${md.count}`);
+      if (Array.isArray(md.fingerprints_sha256) && md.fingerprints_sha256.length > 0) {
+        parts.push(`Fingerprints: ${formatArrayValue(md.fingerprints_sha256)}`);
+      }
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsRetireMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.managedCertificateId)
+        parts.push(`Certificate: ${md.managedCertificateId}`);
+      if (md.tokenId) parts.push(`Token: ${md.tokenId}`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.reason) parts.push(`Reason: ${md.reason}`);
+      if (md.fingerprintSha256) parts.push(`Fingerprint: ${md.fingerprintSha256}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsKeyMaterialRejectedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.code) parts.push(`Rejection: ${md.code}`);
+      if (md.method) parts.push(`Method: ${md.method}`);
+      if (md.path) parts.push(`Path: ${md.path}`);
+      if (md.routeFamily) parts.push(`Route: ${md.routeFamily}`);
+      if (md.apiTokenId) parts.push(`Machine token: ${md.apiTokenId}`);
+      if (md.body_type) parts.push(`Body type: ${md.body_type}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsEvidenceRejectedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.eventId) parts.push(`Event: ${md.eventId}`);
+      if (md.eventType) parts.push(`Event type: ${md.eventType}`);
+      if (md.rejectionCode) parts.push(`Rejection: ${md.rejectionCode}`);
+      if (Array.isArray(md.evidenceIds) && md.evidenceIds.length > 0) {
+        parts.push(`Evidence items: ${md.evidenceIds.length}`);
+      }
+      if (md.redactionApplied != null) {
+        parts.push(`Redaction applied: ${md.redactionApplied ? 'yes' : 'no'}`);
+      }
+      if (md.redactionCount != null) parts.push(`Redacted fields: ${md.redactionCount}`);
+      if (md.routeFamily) parts.push(`Route: ${md.routeFamily}`);
+      if (md.createdByApiTokenId) parts.push(`Machine token: ${md.createdByApiTokenId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsExecutorEventMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.executorEventId) parts.push(`Event: ${md.executorEventId}`);
+      if (md.eventType) parts.push(`Event type: ${md.eventType}`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      if (Array.isArray(md.evidenceIds) && md.evidenceIds.length > 0) {
+        parts.push(`Evidence items: ${md.evidenceIds.length}`);
+      }
+      if (md.apiTokenId) parts.push(`Machine token: ${md.apiTokenId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsRedactionMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.executorEventId) parts.push(`Event: ${md.executorEventId}`);
+      if (Array.isArray(md.redactedFields) && md.redactedFields.length > 0) {
+        parts.push(`Redacted fields: ${formatArrayValue(md.redactedFields)}`);
+      }
+      if (md.redactionCount != null) parts.push(`Redaction count: ${md.redactionCount}`);
+      if (md.apiTokenId) parts.push(`Machine token: ${md.apiTokenId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   function formatAuthMetadata(ev) {
     try {
       const md = ev?.metadata || {};
@@ -1007,6 +1124,42 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
     if (action === 'CERTOPS_JOB_CREATED_MANUAL') {
       const formatted = formatCertOpsJobMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_CERTIFICATE_REGISTERED' ||
+      action === 'CERTOPS_CERTIFICATE_IMPORTED'
+    ) {
+      const formatted = formatCertOpsInventoryMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_CERTIFICATE_RETIRED') {
+      const formatted = formatCertOpsRetireMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_KEY_MATERIAL_REJECTED') {
+      const formatted = formatCertOpsKeyMaterialRejectedMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_EVIDENCE_REJECTED') {
+      const formatted = formatCertOpsEvidenceRejectedMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_EXECUTOR_EVENT_ACCEPTED' ||
+      action === 'CERTOPS_EVIDENCE_ACCEPTED'
+    ) {
+      const formatted = formatCertOpsExecutorEventMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_GENERIC_SECRET_REDACTION_APPLIED') {
+      const formatted = formatCertOpsRedactionMetadata(ev);
       if (formatted) return formatted;
     }
 
