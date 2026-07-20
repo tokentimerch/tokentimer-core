@@ -1322,6 +1322,18 @@ const migrations = [
         WHERE certops_api_token_id IS NOT NULL;
     `,
   },
+  {
+    version: 19,
+    name: "certops_workspace_kill_switch",
+    sql: `
+      -- M3-A1 workspace-scoped CertOps incident control. This is deliberately
+      -- separate from system_settings.certops_settings.enabled: the latter is
+      -- the deployment-wide rollout flag, while this column stops new work for
+      -- exactly one workspace. Existing rows receive the safe unpaused default.
+      ALTER TABLE workspaces
+        ADD COLUMN IF NOT EXISTS certops_paused BOOLEAN NOT NULL DEFAULT FALSE;
+    `,
+  },
 ];
 
 async function runMigrations() {

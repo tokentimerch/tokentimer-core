@@ -191,6 +191,9 @@ const certOpsJobsEvidenceMigration = migrations.find(
 const certOpsExecutorEventMigration = migrations.find(
   (migration) => migration.name === "certops_executor_event_idempotency",
 );
+const certOpsWorkspaceKillSwitchMigration = migrations.find(
+  (migration) => migration.name === "certops_workspace_kill_switch",
+);
 
 function getTableBlock(tableName, migration = certOpsMigration) {
   const marker = `CREATE TABLE IF NOT EXISTS ${tableName} (`;
@@ -245,8 +248,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-9).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15, 16, 17, 18],
+      migrations.slice(-10).map((migration) => migration.version),
+      [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -457,9 +460,17 @@ describe("CertOps inventory migration", () => {
       certOpsTokenLinkMigration.sql,
       /uq_tokens_certops_api_token_id/,
     );
-    assert.equal(
-      migrations.some((migration) => migration.version === 19),
-      false,
+  });
+
+  it("defines the additive M3-A1 workspace kill-switch migration", () => {
+    assert.ok(
+      certOpsWorkspaceKillSwitchMigration,
+      "expected certops_workspace_kill_switch migration",
+    );
+    assert.equal(certOpsWorkspaceKillSwitchMigration.version, 19);
+    assert.match(
+      certOpsWorkspaceKillSwitchMigration.sql,
+      /ALTER TABLE workspaces\s+ADD COLUMN IF NOT EXISTS certops_paused BOOLEAN NOT NULL DEFAULT FALSE/,
     );
   });
 
@@ -806,6 +817,18 @@ describe("CertOps inventory migration", () => {
       forbiddenHit,
       undefined,
       `tokens baseline contract allows ${forbiddenHit}`,
+    );
+  });
+
+  it("requires the workspace CertOps pause column in the baseline DB contract", () => {
+    const tableSchema = baselineMinimumSchema.properties.tables.properties;
+    const resolvedTableSchema = resolveBaselineSchema(tableSchema.workspaces);
+    const requiredColumns = resolvedTableSchema.properties.requiredColumns;
+
+    assert.match(
+      JSON.stringify(requiredColumns),
+      /"const":"certops_paused"/,
+      "workspaces must require certops_paused in the baseline contract",
     );
   });
 

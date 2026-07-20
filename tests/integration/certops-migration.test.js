@@ -32,6 +32,9 @@ const CERTOPS_MONITOR_IDENTITY_MIGRATION = migrations.find(
   (migration) =>
     migration.name === "certops_managed_certificate_monitor_identity",
 );
+const CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION = migrations.find(
+  (migration) => migration.name === "certops_workspace_kill_switch",
+);
 
 function quoteIdentifier(identifier) {
   return `"${String(identifier).replace(/"/g, '""')}"`;
@@ -154,6 +157,45 @@ describe("CertOps inventory migration", function () {
       [CERTOPS_MIGRATION.version],
     );
     expect(res.rows[0].count).to.equal(1);
+  });
+
+  it("adds the workspace-local CertOps pause flag safely with an unpaused default", async () => {
+    expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION).to.exist;
+    expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.version).to.equal(18);
+
+    await TestUtils.execQuery(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.sql);
+    await TestUtils.execQuery(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.sql);
+
+    const column = await TestUtils.execQuery(
+      `SELECT is_nullable, column_default, data_type
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'workspaces'
+          AND column_name = 'certops_paused'`,
+    );
+    expect(column.rows).to.have.length(1);
+    expect(column.rows[0].is_nullable).to.equal("NO");
+    expect(column.rows[0].data_type).to.equal("boolean");
+    expect(column.rows[0].column_default).to.match(/false/i);
+
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-kill-switch-default",
+    );
+    try {
+      const rows = await TestUtils.execQuery(
+        `SELECT id::text AS id, certops_paused
+           FROM workspaces
+          WHERE id = ANY($1::uuid[])
+          ORDER BY id`,
+        [[workspaceA, workspaceB]],
+      );
+      expect(rows.rows).to.have.length(2);
+      expect(rows.rows.every((row) => row.certops_paused === false)).to.equal(
+        true,
+      );
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
   });
 
   it("adds the nullable token certificate lifecycle status idempotently", async () => {

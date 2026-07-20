@@ -11,7 +11,10 @@ const {
 const {
   requireCertOpsEnabled,
 } = require("../middleware/require-certops-enabled");
-const { hasAtLeastRole } = require("../services/rbac");
+const {
+  requireWorkspaceCertOpsActive,
+} = require("../middleware/require-workspace-certops-active");
+const { authorize, hasAtLeastRole } = require("../services/rbac");
 const {
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
@@ -51,6 +54,13 @@ const {
   CERTOPS_EVIDENCE_TYPE_INVALID,
   listCertificateEvidence,
 } = require("../services/certops/evidence");
+const {
+  CERTOPS_WORKSPACE_NOT_FOUND,
+  CERTOPS_WORKSPACE_PAUSE_REASON_INVALID,
+  CERTOPS_WORKSPACE_PAUSE_STATE_INVALID,
+  getWorkspaceCertOpsPauseState,
+  setWorkspaceCertOpsPauseState,
+} = require("../services/certops/workspaceKillSwitch");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
 const Token = require("../db/models/Token");
@@ -227,6 +237,23 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (
+    err?.code === CERTOPS_WORKSPACE_PAUSE_STATE_INVALID ||
+    err?.code === CERTOPS_WORKSPACE_PAUSE_REASON_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps workspace pause request is invalid",
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_WORKSPACE_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Workspace not found",
+      code: "WORKSPACE_NOT_FOUND",
+    });
+  }
+
   return null;
 }
 
@@ -282,6 +309,16 @@ function jobCreateOptionsFromRequest(req) {
     // job through the manual-create surface.
     source: "api",
     requestedByUserId: req.user?.id || null,
+  };
+}
+
+function workspacePauseStateResponse(state) {
+  return {
+    workspaceId: state.workspaceId,
+    certOpsPaused: state.certOpsPaused,
+    certOpsEnabled: state.certOpsEnabled,
+    certOpsActive: state.certOpsActive,
+    ...(typeof state.changed === "boolean" ? { changed: state.changed } : {}),
   };
 }
 
@@ -655,6 +692,71 @@ router.get(
   },
 );
 
+// The kill-switch setting is intentionally small and workspace-local. It is
+// gated by the normal rollout flag, while its response makes the independent
+// stored pause and effective (global AND workspace) state explicit.
+router.get(
+  "/api/v1/workspaces/:id/certops/settings",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const state = await getWorkspaceCertOpsPauseState({
+        workspaceId: req.workspace.id,
+      });
+      return res.json(workspacePauseStateResponse(state));
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps workspace settings fetch failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to fetch CertOps workspace settings",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.put(
+  "/api/v1/workspaces/:id/certops/settings",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  authorize("certops.kill_switch.manage"),
+  async (req, res) => {
+    try {
+      const state = await setWorkspaceCertOpsPauseState({
+        workspaceId: req.workspace.id,
+        certOpsPaused: req.body?.certOpsPaused,
+        reason: req.body?.reason,
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.json(workspacePauseStateResponse(state));
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps workspace settings update failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to update CertOps workspace settings",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 router.post(
   "/api/v1/workspaces/:id/certops/jobs",
   getApiLimiter(),
@@ -664,6 +766,10 @@ router.post(
   // (queues an executor job), so it uses the same manager-only gate as
   // token issuance/revocation rather than the read-only jobs-list route.
   requireCertOpsWriteRole,
+  // Keep this after key-material rejection, rollout, and role checks. It
+  // blocks only new work; reads and existing machine event/evidence ingestion
+  // remain available while a workspace is paused.
+  requireWorkspaceCertOpsActive,
   async (req, res) => {
     try {
       const job = await createCertificateJob(jobCreateOptionsFromRequest(req));

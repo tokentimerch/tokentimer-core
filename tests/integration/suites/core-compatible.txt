@@ -71,7 +71,7 @@ tests/integration/endpoint-health-alerts.test.js
 tests/integration/endpoint-check-worker.integration.test.js
 tests/integration/domain-checker.integration.test.js
 
-# CertOps M1
+# CertOps M1-M3-A1
 tests/integration/certops-migration.test.js
 tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
@@ -84,6 +84,7 @@ tests/integration/certops-executor-events.test.js
 tests/integration/certops-docs-fixtures.test.js
 tests/integration/certops-fake-executor.test.js
 tests/integration/certops-job-read-apis.test.js
+tests/integration/certops-workspace-kill-switch-api.test.js
 
 # Integrations
 tests/integration/github.integration.test.js

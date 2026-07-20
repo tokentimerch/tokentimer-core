@@ -1,8 +1,8 @@
 {
   "contractName": "api.certops-route-compat",
   "version": "0.10.3",
-  "status": "m2-runtime-stable",
-  "description": "Frozen CertOps route namespaces and stable routes for M1/M2. M1/M2 Core workspace, machine-token executor, job read, job manual-create, evidence, and token-management routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
+  "status": "runtime-stable",
+  "description": "Frozen CertOps route namespaces and stable routes. Core workspace, machine-token executor, job read, job manual-create, evidence, token-management, and workspace kill-switch routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
   "namespacePolicy": {
     "workspaceScoped": {
       "prefix": "/api/v1/workspaces/{id}/certops",
@@ -53,6 +53,8 @@
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/instances", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/imports", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "PUT" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}", "method": "GET" },
@@ -74,6 +76,11 @@
         "status": 422,
         "code": "PRIVATE_KEY_MATERIAL_REJECTED",
         "notes": "Any request body containing private key material is rejected at the boundary. The control plane never stores, generates, exports, transmits, or processes private key material."
+      },
+      "workspaceCertOpsPaused": {
+        "status": 409,
+        "code": "CERTOPS_WORKSPACE_PAUSED",
+        "notes": "The M3-A1 workspace-local kill switch blocks new CertOps jobs and future dispatch/provision side effects only. It does not block inventory, status, audit, evidence, or executor event reporting for existing work. It composes with, and never replaces, the deployment-wide certops.enabled rollout flag."
       }
     }
   }

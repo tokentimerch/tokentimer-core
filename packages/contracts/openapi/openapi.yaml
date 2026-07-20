@@ -3472,6 +3472,95 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/settings:
+    get:
+      tags: [CertOps]
+      summary: Get workspace CertOps pause state
+      operationId: getCertOpsWorkspaceSettings
+      description: >-
+        Returns the workspace-local CertOps kill-switch state and the effective
+        side-effect availability. All authorized workspace members may read it.
+        The stored pause state remains distinct from the deployment-wide
+        certops.enabled rollout flag.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Workspace CertOps pause state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsWorkspacePauseState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [CertOps]
+      summary: Pause or resume new CertOps work for a workspace
+      operationId: updateCertOpsWorkspaceSettings
+      description: >-
+        Changes only the workspace-local M3-A1 kill switch. Requires a workspace
+        admin. A paused workspace rejects new manual jobs and future dispatch or
+        provision side effects with 409 CERTOPS_WORKSPACE_PAUSED; inventory,
+        status, audit, evidence, and existing-work reporting remain available.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsWorkspacePauseUpdateRequest"
+      responses:
+        "200":
+          description: Stored workspace CertOps pause state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsWorkspacePauseState"
+        "400":
+          description: Pause state or reason is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidState:
+                  value:
+                    error: CertOps workspace pause request is invalid
+                    code: CERTOPS_WORKSPACE_PAUSE_STATE_INVALID
+                invalidReason:
+                  value:
+                    error: CertOps workspace pause request is invalid
+                    code: CERTOPS_WORKSPACE_PAUSE_REASON_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Workspace admin role is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Forbidden: insufficient role"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs:
     get:
       tags: [CertOps]
@@ -3573,14 +3662,20 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: idempotencyKey was already used with a different job request
+          description: idempotencyKey conflict or workspace CertOps is paused
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-              example:
-                error: Idempotency key was already used with a different CertOps job request
-                code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+              examples:
+                idempotencyConflict:
+                  value:
+                    error: Idempotency key was already used with a different CertOps job request
+                    code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                workspacePaused:
+                  value:
+                    error: CertOps is paused for this workspace
+                    code: CERTOPS_WORKSPACE_PAUSED
         "422":
           description: The request contained private-key or forbidden secret material
           content:
@@ -3592,6 +3687,15 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps workspace state is unavailable
+                code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
     get:
       tags: [CertOps]
@@ -4762,6 +4866,38 @@ components:
         idempotencyKey:
           type: string
           maxLength: 128
+    CertOpsWorkspacePauseUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [certOpsPaused]
+      properties:
+        certOpsPaused:
+          type: boolean
+          description: True prevents new CertOps side effects in this workspace only.
+        reason:
+          type: string
+          maxLength: 500
+          description: Optional bounded operator reason, redacted before transactional audit persistence.
+    CertOpsWorkspacePauseState:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, certOpsPaused, certOpsEnabled, certOpsActive]
+      properties:
+        workspaceId:
+          type: string
+          format: uuid
+        certOpsPaused:
+          type: boolean
+          description: Stored workspace-local kill-switch state.
+        certOpsEnabled:
+          type: boolean
+          description: Current deployment-wide certops.enabled rollout state.
+        certOpsActive:
+          type: boolean
+          description: True only when certOpsEnabled is true and certOpsPaused is false.
+        changed:
+          type: boolean
+          description: Present on updates; false means the requested state already existed and no transition audit was written.
     CertOpsPublicObject:
       type: object
       additionalProperties: true

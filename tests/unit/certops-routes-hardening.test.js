@@ -95,9 +95,9 @@ function executorRouteBlock(routePath) {
 }
 
 describe("CertOps route hardening", () => {
-  it("implements only the frozen workspace inventory and M2 read routes", () => {
+  it("implements only the frozen workspace inventory, M2, and M3-A1 routes", () => {
     const routeMatches = Array.from(
-      routesSource.matchAll(/router\.(get|post)\(\n\s+"([^"]+)"/g),
+      routesSource.matchAll(/router\.(get|post|put)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
 
     assert.deepEqual(routeMatches.sort(), [
@@ -109,12 +109,14 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
       "GET /api/v1/workspaces/:id/certops/tokens",
+      "GET /api/v1/workspaces/:id/certops/settings",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
       "POST /api/v1/workspaces/:id/certops/jobs",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
+      "PUT /api/v1/workspaces/:id/certops/settings",
     ].sort());
 
     assert.equal(routesSource.includes("/api/v1/certops/executor"), false);
@@ -135,6 +137,8 @@ describe("CertOps route hardening", () => {
       ],
       ["get", "/api/v1/workspaces/:id/certops/certificates/:certId"],
       ["post", "/api/v1/workspaces/:id/certops/imports"],
+      ["get", "/api/v1/workspaces/:id/certops/settings"],
+      ["put", "/api/v1/workspaces/:id/certops/settings"],
       ["get", "/api/v1/workspaces/:id/certops/jobs"],
       ["post", "/api/v1/workspaces/:id/certops/jobs"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
@@ -206,27 +210,56 @@ describe("CertOps route hardening", () => {
   });
 
   it("runs private-key rejection before feature gating on write routes", () => {
-    for (const routePath of [
-      "/api/v1/workspaces/:id/certops/certificates",
-      "/api/v1/workspaces/:id/certops/certificates/:certId/retire",
-      "/api/v1/workspaces/:id/certops/imports",
-      "/api/v1/workspaces/:id/certops/jobs",
-      "/api/v1/workspaces/:id/certops/tokens",
-      "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
+    for (const [method, routePath] of [
+      ["post", "/api/v1/workspaces/:id/certops/certificates"],
+      ["post", "/api/v1/workspaces/:id/certops/certificates/:certId/retire"],
+      ["post", "/api/v1/workspaces/:id/certops/imports"],
+      ["put", "/api/v1/workspaces/:id/certops/settings"],
+      ["post", "/api/v1/workspaces/:id/certops/jobs"],
+      ["post", "/api/v1/workspaces/:id/certops/tokens"],
+      ["post", "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke"],
     ]) {
-      const block = routeBlock("post", routePath);
+      const block = routeBlock(method, routePath);
       assert.ok(
         block.indexOf("rejectKeyMaterial") <
           block.indexOf("requireCertOpsEnabled"),
         `${routePath} must reject private key material before the rollout gate`,
       );
-      const authorizationMiddleware = routePath.includes("/certops/tokens")
-        ? "requireCertOpsTokenManager"
-        : "requireCertOpsWriteRole";
+      const authorizationMiddleware = routePath.endsWith("/certops/settings")
+        ? 'authorize("certops.kill_switch.manage")'
+        : routePath.includes("/certops/tokens")
+          ? "requireCertOpsTokenManager"
+          : "requireCertOpsWriteRole";
       assert.ok(
         block.indexOf("requireCertOpsEnabled") <
           block.indexOf(authorizationMiddleware),
         `${routePath} must check the rollout gate before write authorization`,
+      );
+    }
+  });
+
+  it("applies the workspace pause gate only to manual CertOps job creation", () => {
+    const createBlock = routeBlock(
+      "post",
+      "/api/v1/workspaces/:id/certops/jobs",
+    );
+    assert.match(createBlock, /requireWorkspaceCertOpsActive/);
+    assert.ok(
+      createBlock.indexOf("requireCertOpsWriteRole") <
+        createBlock.indexOf("requireWorkspaceCertOpsActive"),
+      "role authorization must run before the pause gate",
+    );
+
+    for (const [method, routePath] of [
+      ["get", "/api/v1/workspaces/:id/certops/jobs"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
+      ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
+    ]) {
+      assert.doesNotMatch(
+        routeBlock(method, routePath),
+        /requireWorkspaceCertOpsActive/,
+        `${routePath} is a passive read and must remain available while paused`,
       );
     }
   });

@@ -90,8 +90,11 @@
         "requiredColumns": {
           "type": "array",
           "items": { "type": "string" },
-          "contains": { "const": "id" },
-          "minItems": 4
+          "minItems": 5,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "certops_paused" } }
+          ]
         }
       }
     },
