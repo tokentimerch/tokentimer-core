@@ -333,6 +333,21 @@ describe("CertOps API token management routes", function () {
       await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
     ).to.equal(auditsBefore);
 
+    const pastExpiry = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        name: "Already expired",
+        scopes: ["certops:events:write"],
+        expiresAt: new Date(Date.now() - 60 * 1000).toISOString(),
+      });
+    expect(pastExpiry.status).to.equal(400);
+    expect(pastExpiry.body.code).to.equal("CERTOPS_API_TOKEN_INVALID");
+    expectNoTokenLeak(pastExpiry.body);
+    expect(
+      await tokenAuditCount(fixture.workspaceId, "CERTOPS_API_TOKEN_CREATED"),
+    ).to.equal(auditsBefore);
+
     const response = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/tokens`)
       .set("Cookie", fixture.managerSession.cookie)

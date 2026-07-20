@@ -77,12 +77,18 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.postgresql.cloudnative.enabled }}
+            {{- include "tokentimer.pgCaVolumeMount" . | nindent 12 }}
+            {{- end }}
             {{- with .Values.api.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.postgresql.cloudnative.enabled }}
+        {{- include "tokentimer.pgCaVolume" . | nindent 8 }}
+        {{- end }}
         {{- with .Values.api.extraVolumes }}
         {{- include "tokentimer.renderExtraVolumes" (dict "root" $ "volumes" .) | nindent 8 }}
         {{- end }}

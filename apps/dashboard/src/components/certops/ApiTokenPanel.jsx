@@ -36,6 +36,7 @@ import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
+import { tokenAPI } from '../../utils/apiClient';
 import {
   CERTOPS_TOKEN_NAME_MAX_LENGTH,
   CERTOPS_TOKEN_SCOPES,
@@ -97,6 +98,12 @@ function toIsoExpiry(localValue) {
   return date.toISOString();
 }
 
+function nowLocalDatetimeValue() {
+  const date = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function createErrorMessage(err) {
   const code = err?.response?.data?.code;
   const status = err?.response?.status;
@@ -143,6 +150,8 @@ export default function ApiTokenPanel() {
   const [creating, setCreating] = useState(false);
   const [plaintextToken, setPlaintextToken] = useState('');
   const [showOnceOpen, setShowOnceOpen] = useState(false);
+  const [monitorExpiry, setMonitorExpiry] = useState(true);
+  const [createdTokenInfo, setCreatedTokenInfo] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [revoking, setRevoking] = useState(false);
   const revokeCancelRef = useRef(null);
@@ -155,6 +164,7 @@ export default function ApiTokenPanel() {
     activeWorkspaceRef.current = workspaceId;
     setPlaintextToken('');
     setShowOnceOpen(false);
+    setCreatedTokenInfo(null);
     setRevokeTarget(null);
   }, [workspaceId]);
 
@@ -168,9 +178,13 @@ export default function ApiTokenPanel() {
 
   if (enabled !== true) return null;
 
+  const expiresAtIso = toIsoExpiry(expiresLocal);
+  const expiryInPast = Boolean(expiresAtIso) && new Date(expiresAtIso).getTime() <= Date.now();
+
   const canSubmit =
     Boolean(name.trim()) &&
     scopes.length > 0 &&
+    !expiryInPast &&
     !creating &&
     Boolean(workspaceId);
 
@@ -209,6 +223,11 @@ export default function ApiTokenPanel() {
       setName('');
       setScopes([]);
       setExpiresLocal('');
+      setCreatedTokenInfo({
+        id: result?.token?.id || null,
+        name: result?.token?.name || name.trim(),
+        expiresAt: result?.token?.expiresAt || expiresAt || null,
+      });
       setPlaintextToken(plaintext);
       setShowOnceOpen(true);
       showSuccess('API token created');
@@ -220,9 +239,34 @@ export default function ApiTokenPanel() {
     }
   };
 
-  const handleShowOnceClose = () => {
+  const handleShowOnceClose = async () => {
+    if (monitorExpiry && createdTokenInfo?.expiresAt && workspaceId) {
+      try {
+        await tokenAPI.createToken({
+          name: `${createdTokenInfo.name || 'Machine token'} (CertOps)`,
+          type: 'api_key',
+          category: 'key_secret',
+          expiresAt: createdTokenInfo.expiresAt,
+          workspace_id: workspaceId,
+          certopsApiTokenId: createdTokenInfo.id || undefined,
+        });
+        // Tell the dashboard's token list (rendered on a different route) to
+        // reload, same as the import/endpoint flows do, so the new TokenTimer
+        // entry shows up without a manual refresh.
+        try {
+          window.dispatchEvent(new CustomEvent('tt:tokens-updated'));
+        } catch (_) {}
+      } catch (err) {
+        showError(
+          'Monitoring not added',
+          'The machine token was created, but TokenTimer could not add it for expiration monitoring. Add it manually if needed.'
+        );
+      }
+    }
     setShowOnceOpen(false);
     setPlaintextToken('');
+    setCreatedTokenInfo(null);
+    setMonitorExpiry(true);
     refresh();
   };
 
@@ -322,16 +366,21 @@ export default function ApiTokenPanel() {
               </CheckboxGroup>
             </FormControl>
 
-            <FormControl>
+            <FormControl isInvalid={expiryInPast}>
               <FormLabel fontSize='sm'>Expires (optional)</FormLabel>
               <Input
                 type='datetime-local'
                 value={expiresLocal}
                 onChange={event => setExpiresLocal(event.target.value)}
+                min={nowLocalDatetimeValue()}
                 size='sm'
                 maxW='280px'
               />
-              <FormHelperText>Leave empty for no expiry.</FormHelperText>
+              <FormHelperText>
+                {expiryInPast
+                  ? 'Expiry must be in the future.'
+                  : 'Leave empty for no expiry.'}
+              </FormHelperText>
             </FormControl>
 
             <Button
@@ -490,6 +539,23 @@ export default function ApiTokenPanel() {
                 copyable
                 monospace
               />
+              {createdTokenInfo?.expiresAt ? (
+                <Checkbox
+                  isChecked={monitorExpiry}
+                  onChange={event => setMonitorExpiry(event.target.checked)}
+                  size='sm'
+                >
+                  <Text as='span' fontSize='sm'>
+                    Monitor this token&apos;s expiration with TokenTimer
+                  </Text>
+                </Checkbox>
+              ) : null}
+              {createdTokenInfo?.expiresAt && monitorExpiry ? (
+                <Text fontSize='xs' color={muted}>
+                  The TokenTimer entry is removed automatically if this
+                  machine token is revoked.
+                </Text>
+              ) : null}
             </VStack>
           </ModalBody>
           <ModalFooter>

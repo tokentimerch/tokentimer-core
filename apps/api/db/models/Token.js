@@ -130,15 +130,17 @@ const create = async (tokenData) => {
     imported_at = null,
     last_used = null,
     created_at = null,
+    certops_api_token_id = null,
   } = tokenData;
 
   const query = `
     INSERT INTO tokens (
       user_id, workspace_id, created_by, name, expiration, type, category, domains, location, used_by, section, contact_group_id,
       issuer, serial_number, subject, key_size, algorithm, license_type, vendor, cost,
-      renewal_url, renewal_date, contacts, description, notes, privileges, imported_at, last_used, created_at, updated_at
+      renewal_url, renewal_date, contacts, description, notes, privileges, imported_at, last_used, created_at, updated_at,
+      certops_api_token_id
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW(), $30)
     RETURNING *
   `;
 
@@ -172,6 +174,7 @@ const create = async (tokenData) => {
     imported_at || null,
     last_used,
     created_at || null,
+    certops_api_token_id,
   ];
 
   try {
@@ -393,6 +396,17 @@ const deleteAllByUserId = async (userId) => {
   return result.rowCount;
 };
 
+// Delete the TokenTimer monitoring token linked to a revoked/deleted CertOps
+// machine token, if one was created via the "monitor this token" opt-in.
+const deleteByCertOpsApiTokenId = async (certopsApiTokenId, options = {}) => {
+  const db = options.client || pool;
+  const query =
+    "DELETE FROM tokens WHERE certops_api_token_id = $1 RETURNING *";
+  const result = await db.query(query, [certopsApiTokenId]);
+  const token = result.rows[0];
+  return token ? convertNumericFields(token) : null;
+};
+
 // Get tokens by category
 const findByCategory = async (userId, category) => {
   const query = `
@@ -466,6 +480,7 @@ module.exports = {
   update,
   delete: deleteById,
   deleteAllByUserId,
+  deleteByCertOpsApiTokenId,
   findByCategory,
   findExpiringSoon,
   findByDomain,

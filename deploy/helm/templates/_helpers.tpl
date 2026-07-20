@@ -148,6 +148,36 @@ Database host. CloudNativePG exposes <cluster>-rw as the read-write service.
 {{- if .Values.postgresql.cloudnative.enabled }}{{ .Values.postgresql.auth.username }}{{- else }}{{ .Values.postgresql.external.username }}{{- end }}
 {{- end }}
 
+{{/*
+Name of the CloudNativePG-generated CA secret (contains ca.crt) for the
+in-cluster Postgres cluster. Only meaningful when cloudnative is enabled.
+*/}}
+{{- define "tokentimer.pgCaSecretName" -}}
+{{- printf "%s-pg-ca" (include "tokentimer.fullname" .) }}
+{{- end }}
+
+{{- define "tokentimer.pgCaMountPath" -}}
+/etc/pg-ssl
+{{- end }}
+
+{{/*
+Pod volume for the CNPG CA cert. Include only when postgresql.cloudnative.enabled.
+*/}}
+{{- define "tokentimer.pgCaVolume" -}}
+- name: pg-ca
+  secret:
+    secretName: {{ include "tokentimer.pgCaSecretName" . | quote }}
+{{- end }}
+
+{{/*
+Container volume mount for the CNPG CA cert. Include only when postgresql.cloudnative.enabled.
+*/}}
+{{- define "tokentimer.pgCaVolumeMount" -}}
+- name: pg-ca
+  mountPath: {{ include "tokentimer.pgCaMountPath" . }}
+  readOnly: true
+{{- end }}
+
 {{/* ---- ConfigMap / Secret checksums (rollout on helm upgrade) ---- */}}
 
 {{/*
@@ -164,7 +194,8 @@ DB_PORT: {{ include "tokentimer.databasePort" . | quote }}
 DB_NAME: {{ include "tokentimer.databaseName" . | quote }}
 DB_USER: {{ include "tokentimer.databaseUser" . | quote }}
 {{- if .Values.postgresql.cloudnative.enabled }}
-DB_SSL: "require"
+DB_SSL: "verify"
+PGSSLROOTCERT: {{ printf "%s/ca.crt" (include "tokentimer.pgCaMountPath" .) | quote }}
 {{- else if and .Values.postgresql.external.enabled .Values.postgresql.external.sslMode }}
 DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 {{- end }}
@@ -353,11 +384,25 @@ secret.secretName and configMap.name may use Helm tpl.
     {{- if hasKey .secret "optional" }}
     optional: {{ .secret.optional }}
     {{- end }}
+    {{- if hasKey .secret "defaultMode" }}
+    defaultMode: {{ .secret.defaultMode }}
+    {{- end }}
+    {{- if .secret.items }}
+    items:
+      {{- toYaml .secret.items | nindent 6 }}
+    {{- end }}
   {{- else if .configMap }}
   configMap:
     name: {{ tpl (.configMap.name | toString) $root | quote }}
     {{- if hasKey .configMap "optional" }}
     optional: {{ .configMap.optional }}
+    {{- end }}
+    {{- if hasKey .configMap "defaultMode" }}
+    defaultMode: {{ .configMap.defaultMode }}
+    {{- end }}
+    {{- if .configMap.items }}
+    items:
+      {{- toYaml .configMap.items | nindent 6 }}
     {{- end }}
   {{- else }}
   {{- omit . "name" | toYaml | nindent 2 }}
