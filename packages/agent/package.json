@@ -1,0 +1,27 @@
+{
+  "name": "@tokentimer/agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps (M4/M5)",
+  "license": "BUSL-1.1",
+  "packageManager": "pnpm@11.13.0",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": {
+    "tokentimer-agent": "bin/tokentimer-agent.js"
+  },
+  "scripts": {
+    "start": "node bin/tokentimer-agent.js",
+    "build": "node --check bin/tokentimer-agent.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --test src/**/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "eslint": "9.39.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -333,6 +333,12 @@ importers:
         specifier: 9.39.2
         version: 9.39.2
 
+  packages/agent:
+    devDependencies:
+      eslint:
+        specifier: 9.39.2
+        version: 9.39.2
+
   packages/config: {}
 
   packages/contracts: {}
