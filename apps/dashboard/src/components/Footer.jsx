@@ -58,7 +58,8 @@ const Footer = () => {
   // Core has no marketing site beyond '/' (which just redirects to /login), so any
   // path that isn't a known shell page is the 404 catch-all route. Give it the
   // compact app footer instead of the full-height marketing footer.
-  const isUnknownRoute = !isLandingPage && !isDashboardShellPage && !isAuthShellPage;
+  const isUnknownRoute =
+    !isLandingPage && !isDashboardShellPage && !isAuthShellPage;
   const dashboardTheme = useDashboardThemeColors();
 
   // Use navigation colors to match the navigation bar

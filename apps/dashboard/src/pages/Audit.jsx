@@ -638,8 +638,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (Array.isArray(md.scopes) && md.scopes.length > 0)
         parts.push(`Scopes: ${md.scopes.join(', ')}`);
       if (md.status) parts.push(`Status: ${md.status}`);
-      if (md.expires_at)
-        parts.push(`Expiry: ${formatDateTime(md.expires_at)}`);
+      if (md.expires_at) parts.push(`Expiry: ${formatDateTime(md.expires_at)}`);
       if (md.revoked_at)
         parts.push(`Revoked: ${formatDateTime(md.revoked_at)}`);
       return parts.length > 0 ? parts.join(' | ') : '';
@@ -668,7 +667,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const parts = [];
       if (md.source) parts.push(`Source: ${md.source}`);
       if (md.count != null) parts.push(`Certificates: ${md.count}`);
-      if (Array.isArray(md.fingerprints_sha256) && md.fingerprints_sha256.length > 0) {
+      if (
+        Array.isArray(md.fingerprints_sha256) &&
+        md.fingerprints_sha256.length > 0
+      ) {
         parts.push(`Fingerprints: ${formatArrayValue(md.fingerprints_sha256)}`);
       }
       return parts.length > 0 ? parts.join(' | ') : '';
@@ -686,7 +688,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.tokenId) parts.push(`Token: ${md.tokenId}`);
       if (md.status) parts.push(`Status: ${md.status}`);
       if (md.reason) parts.push(`Reason: ${md.reason}`);
-      if (md.fingerprintSha256) parts.push(`Fingerprint: ${md.fingerprintSha256}`);
+      if (md.fingerprintSha256)
+        parts.push(`Fingerprint: ${md.fingerprintSha256}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -723,9 +726,11 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.redactionApplied != null) {
         parts.push(`Redaction applied: ${md.redactionApplied ? 'yes' : 'no'}`);
       }
-      if (md.redactionCount != null) parts.push(`Redacted fields: ${md.redactionCount}`);
+      if (md.redactionCount != null)
+        parts.push(`Redacted fields: ${md.redactionCount}`);
       if (md.routeFamily) parts.push(`Route: ${md.routeFamily}`);
-      if (md.createdByApiTokenId) parts.push(`Machine token: ${md.createdByApiTokenId}`);
+      if (md.createdByApiTokenId)
+        parts.push(`Machine token: ${md.createdByApiTokenId}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -759,7 +764,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (Array.isArray(md.redactedFields) && md.redactedFields.length > 0) {
         parts.push(`Redacted fields: ${formatArrayValue(md.redactedFields)}`);
       }
-      if (md.redactionCount != null) parts.push(`Redaction count: ${md.redactionCount}`);
+      if (md.redactionCount != null)
+        parts.push(`Redaction count: ${md.redactionCount}`);
       if (md.apiTokenId) parts.push(`Machine token: ${md.apiTokenId}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {

@@ -19,7 +19,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.9.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.9.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag
     pullPolicy: IfNotPresent
 
@@ -105,7 +105,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.9.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.9.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -152,7 +152,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.9.0"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.9.1"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 

@@ -9,6 +9,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-20
+
+### Added
+
+- **Machine-token expiration monitoring opt-in** — the CertOps machine API token creation modal now offers a checkbox (checked by default) that, on confirm, creates a linked TokenTimer token so the machine token's expiry is tracked and alerted on like any other credential.
+- **CertOps audit metadata coverage** — all 11 `CERTOPS_*` audit actions (certificate register/import/retire, key-material and evidence rejection, evidence/executor-event acceptance, generic-secret redaction) now render human-readable metadata on the Audit page and are selectable in the action-type filter; previously only 3 of 11 types were formatted.
+
+### Changed
+
+- **`pnpm docker:up` rebuilds stale images automatically** — added `--build` to the compose `up` command so a dashboard/API/worker image left over from a branch switch is rebuilt before the stack starts (cache hit is a no-op when nothing changed); `pnpm dev:help` text updated to match.
+- **Dashboard token list refreshes after machine-token monitoring is added** — creating the linked TokenTimer token now dispatches the same `tt:tokens-updated` event used by the import/endpoint flows, so the new entry (and its plaintext reveal) shows up without a manual page refresh.
+- **`brace-expansion` override bumped to 2.1.2** — closes a high-severity ReDoS advisory (GHSA-3jxr-9vmj-r5cp) pulled in transitively via `swagger-jsdoc` and `react-query`'s dependency tree.
+
+### Fixed
+
+- **CertOps machine tokens can no longer be created already expired** — both the create-token form (disabled submit, `min` datetime, inline helper text) and `POST /api/v1/workspaces/:id/certops/tokens` (400 `CERTOPS_API_TOKEN_INVALID`) reject an `expiresAt` in the past.
+- **Revoking a CertOps machine token now deletes its linked TokenTimer monitoring token** — prevents stale alerts firing for a credential that no longer works; recorded as a `TOKEN_DELETED` audit event with `reason: "certops_api_token_revoked"`.
+- **CloudNativePG TLS verification during migrations** — `DB_SSL=require` now sets `rejectUnauthorized` from `NODE_ENV=production` in `migrate.js`, matching the runtime API's connection pool instead of always disabling certificate verification.
+- **Self-hosted 404 page and footer** — dropped the stale Twitter/Instagram links in favor of Discord, LinkedIn, and GitHub, and fixed the "view pricing" and "read the docs" links that pointed at localhost / outdated destinations.
+
 ## [0.9.0] - 2026-07-19
 
 ### Added
