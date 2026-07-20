@@ -97,4 +97,3 @@ steps:
       tags: ${{ steps.meta.outputs.worker_tags }}
       cache-from: type=gha
       cache-to: type=gha,mode=max
-```
