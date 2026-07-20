@@ -26,7 +26,7 @@
     "@emotion/styled": "11.14.1",
     "axios": "1.18.0",
     "framer-motion": "11.18.2",
-    "js-yaml": "4.2.0",
+    "js-yaml": "4.3.0",
     "lucide-react": "0.553.0",
     "papaparse": "5.5.3",
     "react": "18.3.1",
