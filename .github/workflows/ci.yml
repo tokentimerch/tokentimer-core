@@ -86,6 +86,37 @@ jobs:
       - name: Check for security vulnerabilities (worker)
         run: pnpm audit --prod --audit-level=moderate
 
+  controller_quality:
+    name: Kubernetes Controller Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "11.13.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint controller code
+        run: pnpm --filter @tokentimer/k8s-controller lint
+
+      - name: Build controller package
+        run: pnpm --filter @tokentimer/k8s-controller build
+
+      - name: Run controller tests
+        run: pnpm --filter @tokentimer/k8s-controller test
+
   backend_quality:
     name: Backend Quality Checks
     runs-on: ubuntu-latest
@@ -325,6 +356,9 @@ jobs:
       - name: Validate production compose + images overlay
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
 
+      - name: Validate optional controller compose profile
+        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml --profile certops-controller config -q
+
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q
 
@@ -334,7 +368,7 @@ jobs:
   docker_build_and_scan:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest
-    needs: [frontend_quality, worker_quality, backend_quality, build_and_test, helm_chart]
+    needs: [frontend_quality, worker_quality, controller_quality, backend_quality, build_and_test, helm_chart]
     if: github.event_name != 'pull_request'
     timeout-minutes: 20
     permissions:
@@ -388,6 +422,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build Kubernetes controller image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: ./apps/k8s-controller/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: tokentimer/k8s-controller:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       # --- Trivy (disabled 2026-03-22, supply chain compromise) ---
       # Restore when aquasecurity/trivy ecosystem is confirmed safe.
       # See: https://www.stepsecurity.io/blog/trivy-compromised-a-second-time---malicious-v0-69-4-release
@@ -436,6 +482,11 @@ jobs:
           grype "tokentimer/worker:${{ github.sha }}" -o sarif --file grype-results-worker.sarif
           grype "tokentimer/worker:${{ github.sha }}" --fail-on high --only-fixed
 
+      - name: Scan Kubernetes controller image with Grype
+        run: |
+          grype "tokentimer/k8s-controller:${{ github.sha }}" -o sarif --file grype-results-k8s-controller.sarif
+          grype "tokentimer/k8s-controller:${{ github.sha }}" --fail-on high --only-fixed
+
       # SARIF upload to GitHub Security tab requires GitHub Advanced Security (paid for private repos).
       # Uncomment the upload-sarif steps below if GHAS is enabled.
       #
@@ -478,4 +529,5 @@ jobs:
             grype-results-api.sarif
             grype-results-dashboard.sarif
             grype-results-worker.sarif
+            grype-results-k8s-controller.sarif
           if-no-files-found: ignore

@@ -2,16 +2,14 @@ const winston = require("winston");
 const client = require("prom-client");
 const { getRuntimeLabels } = require("../config/runtime-labels");
 const {
-  PRIVATE_KEY_REDACTION_PLACEHOLDER,
-  containsPrivateKeyMaterial,
-  redactPrivateKeyMaterial,
-  redactGenericSecrets,
-} = require("./secretMaterial");
+  redactSensitiveFields: sharedRedactSensitiveFields,
+  sanitizeLogValue: sharedSanitizeLogValue,
+  scrubLogString: sharedScrubLogString,
+} = require("@tokentimer/log-scrub");
 
 const SERVICE_NAME = getRuntimeLabels().service;
 
 const LOG_FIELD_ORDER = ["level", "message", "service", "timestamp"];
-const MAX_REDACT_DEPTH = 8;
 
 const isDev =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
@@ -76,46 +74,11 @@ function isSensitiveKey(key) {
  * @returns {string}
  */
 function scrubLogString(value) {
-  if (typeof value !== "string") return value;
-  if (value.length === 0) return value;
-
-  let scrubbed = redactPrivateKeyMaterial(value);
-  // Header-only / non-block matches can survive replace; fail closed.
-  if (containsPrivateKeyMaterial(scrubbed)) {
-    return PRIVATE_KEY_REDACTION_PLACEHOLDER;
-  }
-  return redactGenericSecrets(scrubbed);
-}
-
-function scrubLogBuffer(value) {
-  if (!Buffer.isBuffer(value)) return value;
-  if (containsPrivateKeyMaterial(value)) {
-    return PRIVATE_KEY_REDACTION_PLACEHOLDER;
-  }
-  return value;
+  return sharedScrubLogString(value);
 }
 
 function redactSensitiveFields(value, depth = 0) {
-  if (value === null || value === undefined || depth > MAX_REDACT_DEPTH) {
-    return value;
-  }
-  if (typeof value === "string") return scrubLogString(value);
-  if (Buffer.isBuffer(value)) return scrubLogBuffer(value);
-  if (Array.isArray(value)) {
-    return value.map((v) => redactSensitiveFields(v, depth + 1));
-  }
-  if (typeof value === "object" && !(value instanceof Error)) {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (isSensitiveKey(k)) {
-        out[k] = "[REDACTED]";
-      } else {
-        out[k] = redactSensitiveFields(v, depth + 1);
-      }
-    }
-    return out;
-  }
-  return value;
+  return sharedRedactSensitiveFields(value, depth);
 }
 
 function sanitizeLogValue(value) {
@@ -123,28 +86,13 @@ function sanitizeLogValue(value) {
   const t = typeof value;
   if (t === "string") return scrubLogString(value);
   if (t === "number" || t === "boolean") return value;
-  if (Buffer.isBuffer(value)) return scrubLogBuffer(value);
-  if (value instanceof Error) {
-    return {
-      message: scrubLogString(String(value.message || "")),
-      stack:
-        value.stack == null ? value.stack : scrubLogString(String(value.stack)),
-      name: value.name,
-      code: value.code,
-    };
-  }
   if (t === "object") {
     if (typeof value.ip === "string" || value.headers || value.socket) {
       return resolveClientIp(value);
     }
-    try {
-      JSON.stringify(value);
-      return redactSensitiveFields(value);
-    } catch (_e) {
-      return "[Circular or Non-Serializable]";
-    }
+    return sharedSanitizeLogValue(value);
   }
-  return value;
+  return sharedSanitizeLogValue(value);
 }
 
 function sanitizeLogRecord(record) {

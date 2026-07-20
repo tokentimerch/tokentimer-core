@@ -70,7 +70,15 @@ jobs:
       contents: read
     strategy:
       matrix:
-        component: [api, worker, dashboard]
+        include:
+          - component: api
+            dockerfile: deploy/compose/Dockerfile.api
+          - component: worker
+            dockerfile: deploy/compose/Dockerfile.worker
+          - component: dashboard
+            dockerfile: deploy/compose/Dockerfile.dashboard
+          - component: k8s-controller
+            dockerfile: apps/k8s-controller/Dockerfile
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -92,7 +100,7 @@ jobs:
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: .
-          file: deploy/compose/Dockerfile.${{ matrix.component }}
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}

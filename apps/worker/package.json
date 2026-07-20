@@ -25,6 +25,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@tokentimer/log-scrub": "workspace:*",
     "axios": "1.18.0",
     "nodemailer": "9.0.1",
     "pg": "8.18.0",

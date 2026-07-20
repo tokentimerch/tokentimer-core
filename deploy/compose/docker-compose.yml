@@ -426,6 +426,30 @@ services:
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
+  # The controller remains opt-in until its Helm/RBAC deployment exists.
+  certops-controller:
+    profiles: ["certops-controller"]
+    build:
+      context: ../../
+      dockerfile: apps/k8s-controller/Dockerfile
+    image: tokentimer-core-k8s-controller
+    container_name: tokentimer-certops-controller
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      TOKENTIMER_API_URL: ${CERTOPS_CONTROLLER_API_URL:-}
+      TOKENTIMER_WORKSPACE_ID: ${CERTOPS_CONTROLLER_WORKSPACE_ID:-}
+      TOKENTIMER_CLUSTER_ID: ${CERTOPS_CONTROLLER_CLUSTER_ID:-}
+      TOKENTIMER_API_TOKEN_FILE: /run/secrets/tokentimer-api-token
+      CERTOPS_CONTROLLER_MODE: ${CERTOPS_CONTROLLER_MODE:-observe}
+      CERTOPS_WATCH_NAMESPACES: ${CERTOPS_WATCH_NAMESPACES:-}
+      CERTOPS_SECRET_FALLBACK_ENABLED: ${CERTOPS_SECRET_FALLBACK_ENABLED:-false}
+      CERTOPS_RECONCILE_INTERVAL: ${CERTOPS_RECONCILE_INTERVAL:-}
+      CERTOPS_HEALTH_PORT: ${CERTOPS_HEALTH_PORT:-8080}
+      CERTOPS_SHUTDOWN_TIMEOUT: ${CERTOPS_SHUTDOWN_TIMEOUT:-}
+    volumes:
+      - ${CERTOPS_CONTROLLER_TOKEN_FILE:-./.tokentimer-controller-token-missing}:/run/secrets/tokentimer-api-token:ro
+
   # Dashboard (Frontend)
   dashboard:
     build:

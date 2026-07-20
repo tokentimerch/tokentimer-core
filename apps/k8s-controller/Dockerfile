@@ -1,0 +1,35 @@
+FROM node:22.23.0-alpine3.23
+
+# Keep the controller base aligned with the worker image's patched Alpine base.
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+    && test "$(apk list -I libcrypto3 | cut -d- -f2- | cut -d' ' -f1)" = "3.5.7-r0"
+
+WORKDIR /app
+
+RUN addgroup -g 1001 -S tokentimer \
+    && adduser -u 1001 -S tokentimer -G tokentimer \
+    && corepack enable \
+    && corepack prepare pnpm@11.13.0 --activate
+
+ENV NODE_ENV=production
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY --chown=tokentimer:tokentimer packages ./packages
+COPY --chown=tokentimer:tokentimer apps/k8s-controller ./apps/k8s-controller
+# The shared log scrubber deliberately reuses the canonical key-material
+# detector without importing the API server or any Kubernetes client.
+COPY --chown=tokentimer:tokentimer apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
+
+RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller...
+
+WORKDIR /app/apps/k8s-controller
+
+USER tokentimer
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:8080/healthz',(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+CMD ["node", "src/index.js"]
