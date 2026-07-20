@@ -12,8 +12,17 @@ function createControllerLifecycle({
   }
 
   let phase = "starting";
+  let startupPromise = null;
+  let shutdownRequested = false;
   let shutdownPromise = null;
+  let exitCode = null;
   let removeSignalHandlers = () => {};
+
+  function exitOnce(code) {
+    if (exitCode !== null) return;
+    exitCode = code;
+    exitProcess(code);
+  }
 
   function runtimeState(method) {
     try {
@@ -32,27 +41,55 @@ function createControllerLifecycle({
     };
   }
 
-  async function start() {
-    await healthServer.listen();
-    try {
-      await runtime.start();
-      phase = "running";
-      logger.info("controller-started");
-    } catch (error) {
-      phase = "failed";
-      await Promise.allSettled([healthServer.close(), runtime.close()]);
-      throw error;
-    }
+  function start() {
+    if (startupPromise) return startupPromise;
+
+    startupPromise = (async () => {
+      try {
+        await healthServer.listen();
+        if (shutdownRequested) return;
+
+        await runtime.start();
+        if (shutdownRequested) return;
+
+        phase = "running";
+        logger.info("controller-started");
+      } catch (error) {
+        if (shutdownRequested) throw error;
+
+        phase = "failed";
+        await Promise.allSettled([
+          runtime.stopAcceptingWork(),
+          healthServer.close(),
+          runtime.close(),
+        ]);
+        logger.error("controller-startup-failed", {
+          code: error.code || "CONTROLLER_STARTUP_FAILED",
+        });
+        exitOnce(1);
+        throw error;
+      }
+    })();
+    return startupPromise;
   }
 
   async function shutdown(signal = "manual") {
     if (shutdownPromise) return shutdownPromise;
 
+    shutdownRequested = true;
+    phase = "stopping";
     shutdownPromise = (async () => {
-      phase = "stopping";
       removeSignalHandlers();
       logger.info("controller-stopping", { signal });
       let failure = null;
+
+      if (startupPromise) {
+        try {
+          await startupPromise;
+        } catch (error) {
+          failure = error;
+        }
+      }
 
       for (const step of [
         () => runtime.stopAcceptingWork(),
@@ -81,7 +118,7 @@ function createControllerLifecycle({
       } else {
         logger.info("controller-stopped", { signal });
       }
-      exitProcess(exitCode);
+      exitOnce(exitCode);
       return exitCode;
     })();
     return shutdownPromise;
@@ -102,7 +139,13 @@ function createControllerLifecycle({
   }
 
   return {
+    hasExited() {
+      return exitCode !== null;
+    },
     installSignalHandlers,
+    isShutdownRequested() {
+      return shutdownRequested;
+    },
     shutdown,
     start,
     status,

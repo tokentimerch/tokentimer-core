@@ -61,10 +61,16 @@ async function runController({
     await application.lifecycle.start();
     return application;
   } catch (error) {
-    logger.error("controller-startup-failed", {
-      code: error.code || "CONTROLLER_STARTUP_FAILED",
-    });
-    exitProcess(1);
+    if (
+      !application ||
+      (!application.lifecycle.isShutdownRequested() &&
+        !application.lifecycle.hasExited())
+    ) {
+      logger.error("controller-startup-failed", {
+        code: error.code || "CONTROLLER_STARTUP_FAILED",
+      });
+      exitProcess(1);
+    }
     return null;
   }
 }

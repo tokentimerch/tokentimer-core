@@ -17,6 +17,10 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(dockerfile).to.include("pnpm install --prod --frozen-lockfile");
     expect(dockerfile).to.include("USER tokentimer");
     expect(dockerfile).to.include('CMD ["node", "src/index.js"]');
+    expect(dockerfile).to.include("process.env.CERTOPS_HEALTH_PORT || 8080");
+    expect(dockerfile).to.include("Number.isInteger(port)");
+    expect(dockerfile).to.include("path:'/healthz'");
+    expect(dockerfile).to.not.include("127.0.0.1:8080/healthz");
     expect(dockerfile).to.not.match(/kubeconfig|tls\.key/i);
   });
 

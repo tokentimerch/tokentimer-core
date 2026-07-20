@@ -143,6 +143,26 @@ describe("CertOps Kubernetes controller lifecycle", () => {
     await active;
   });
 
+  it("attempts both stop-accepting hooks before propagating the first failure", async () => {
+    const events = [];
+    const runtime = createControllerRuntime({
+      kubernetesClient: {
+        async stopAcceptingWork() {
+          events.push("kubernetes-stop");
+          throw new Error("kubernetes stop failed");
+        },
+      },
+      reporter: {
+        async stopAcceptingWork() {
+          events.push("reporter-stop");
+        },
+      },
+    });
+
+    await assert.rejects(runtime.stopAcceptingWork(), /kubernetes stop failed/);
+    assert.deepEqual(events, ["kubernetes-stop", "reporter-stop"]);
+  });
+
   it("uses a non-zero exit code only when shutdown cleanup fails", async () => {
     const exits = [];
     const lifecycle = createControllerLifecycle({
@@ -190,6 +210,80 @@ describe("CertOps Kubernetes controller lifecycle", () => {
     await lifecycle.shutdown();
 
     assert.deepEqual(events, ["stop-accepting", "wait", "health-close", "close", "exit:0"]);
+  });
+
+  it("latches SIGTERM during deferred startup and closes the partial runtime once", async () => {
+    const events = [];
+    const processRef = new EventEmitter();
+    let resolveStart;
+    const lifecycle = createControllerLifecycle({
+      exitProcess: (code) => events.push(`exit:${code}`),
+      healthServer: {
+        async close() {
+          events.push("health-close");
+        },
+        async listen() {
+          events.push("health-listen");
+        },
+      },
+      logger: {
+        debug() {},
+        error() {},
+        info(message) {
+          events.push(message);
+        },
+        warn() {},
+      },
+      runtime: {
+        async close() {
+          events.push("runtime-close");
+        },
+        isAlive: () => true,
+        isReady: () => true,
+        async start() {
+          events.push("runtime-start");
+          await new Promise((resolve) => {
+            resolveStart = resolve;
+          });
+          events.push("runtime-started");
+        },
+        async stopAcceptingWork() {
+          events.push("stop-accepting");
+        },
+        async waitForIdle() {
+          events.push("wait");
+          return true;
+        },
+      },
+      shutdownTimeoutMs: 10,
+    });
+    lifecycle.installSignalHandlers(processRef);
+
+    const starting = lifecycle.start();
+    await Promise.resolve();
+    processRef.emit("SIGTERM");
+    assert.deepEqual(lifecycle.status(), {
+      healthy: false,
+      phase: "stopping",
+      ready: false,
+    });
+
+    resolveStart();
+    await starting;
+    assert.equal(await lifecycle.shutdown(), 0);
+
+    assert.equal(events.includes("runtime-started"), true);
+    assert.equal(events.includes("controller-started"), false);
+    assert.equal(events.indexOf("runtime-started") < events.indexOf("stop-accepting"), true);
+    assert.deepEqual(events.filter((event) => event === "stop-accepting"), ["stop-accepting"]);
+    assert.deepEqual(events.filter((event) => event === "health-close"), ["health-close"]);
+    assert.deepEqual(events.filter((event) => event === "runtime-close"), ["runtime-close"]);
+    assert.deepEqual(events.filter((event) => event === "exit:0"), ["exit:0"]);
+    assert.deepEqual(lifecycle.status(), {
+      healthy: false,
+      phase: "stopped",
+      ready: false,
+    });
   });
 
   it("returns a non-zero startup result without terminating injected tests", async () => {

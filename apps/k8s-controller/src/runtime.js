@@ -9,6 +9,10 @@ function invokePort(port, method) {
   return typeof port[method] === "function" ? port[method]() : undefined;
 }
 
+function settlePortInvocation(port, method) {
+  return Promise.resolve().then(() => invokePort(port, method));
+}
+
 function portState(port, method, fallback) {
   try {
     return typeof port[method] === "function" ? port[method]() === true : fallback;
@@ -48,8 +52,12 @@ function createControllerRuntime({
 
   async function stopAcceptingWork() {
     acceptingWork = false;
-    await invokePort(kubernetesClient, "stopAcceptingWork");
-    await invokePort(reporter, "stopAcceptingWork");
+    const results = await Promise.allSettled([
+      settlePortInvocation(kubernetesClient, "stopAcceptingWork"),
+      settlePortInvocation(reporter, "stopAcceptingWork"),
+    ]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
   }
 
   function trackWork(work) {

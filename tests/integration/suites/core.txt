@@ -100,6 +100,7 @@ tests/integration/certops-fake-executor.test.js
 tests/integration/certops-job-create-api.test.js
 tests/integration/certops-job-read-apis.test.js
 tests/integration/certops-workspace-kill-switch-api.test.js
+tests/integration/certops-k8s-controller-wiring.test.js
 tests/integration/database-schema.test.js
 tests/integration/frontend-integration.test.js
 tests/integration/email-content-formatting.test.js

@@ -30,6 +30,6 @@ USER tokentimer
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:8080/healthz',(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "const rawPort=process.env.CERTOPS_HEALTH_PORT || 8080;const port=Number(rawPort);if(!Number.isInteger(port)||port<1||port>65535||String(rawPort).trim()!==String(port))process.exit(1);require('http').get({host:'127.0.0.1',port,path:'/healthz'},(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 CMD ["node", "src/index.js"]

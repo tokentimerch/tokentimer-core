@@ -86,6 +86,7 @@ tests/integration/certops-fake-executor.test.js
 tests/integration/certops-job-create-api.test.js
 tests/integration/certops-job-read-apis.test.js
 tests/integration/certops-workspace-kill-switch-api.test.js
+tests/integration/certops-k8s-controller-wiring.test.js
 
 # Integrations
 tests/integration/github.integration.test.js
