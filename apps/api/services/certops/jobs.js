@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const { pool } = require("../../db/database");
 const {
   assertNoUnredactedGenericSecretMaterial,
@@ -143,6 +144,7 @@ const SAFE_JOB_SELECT_FIELDS = `
   requested_by_user_id,
   requested_by_api_token_id,
   idempotency_key,
+  creation_request_hash,
   subject_type,
   subject_id,
   payload,
@@ -237,6 +239,25 @@ function normalizeOptionalShortText(value, fieldName) {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (trimmed.length > MAX_SHORT_TEXT_LENGTH) {
+    throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
+  }
+  assertSafePublicValue(trimmed);
+  return trimmed;
+}
+
+function normalizeRequesterIdentity(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
+    }
+    return String(value);
+  }
+  if (typeof value !== "string") {
+    throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_SHORT_TEXT_LENGTH) {
     throw serviceError(`${fieldName} is invalid`, CERTOPS_JOB_INVALID);
   }
   assertSafePublicValue(trimmed);
@@ -463,21 +484,30 @@ function withStatusTransitionOutcome(job, decision) {
 function initialLifecycleTimestamps(options, status) {
   const now = new Date();
   const queuedAt =
-    normalizeOptionalDate(options.queuedAt, "queuedAt") ||
+    options.queuedAt ||
     (ACTIVE_JOB_STATUSES.has(status) ? now : null);
   const startedAt =
-    normalizeOptionalDate(options.startedAt, "startedAt") ||
+    options.startedAt ||
     (status === "running" ? now : null);
   const completedAt =
-    normalizeOptionalDate(options.completedAt, "completedAt") ||
+    options.completedAt ||
     (["succeeded", "failed", "blocked"].includes(status) ? now : null);
   // The database column retains the American spelling for compatibility. The
   // public job state and service option use the plan's canonical "cancelled".
   const cancelledAt =
-    normalizeOptionalDate(options.cancelledAt, "cancelledAt") ||
+    options.cancelledAt ||
     (status === "cancelled" ? now : null);
 
   return { queuedAt, startedAt, completedAt, cancelledAt };
+}
+
+function normalizeExplicitLifecycleTimestamps(options) {
+  return {
+    queuedAt: normalizeOptionalDate(options.queuedAt, "queuedAt"),
+    startedAt: normalizeOptionalDate(options.startedAt, "startedAt"),
+    completedAt: normalizeOptionalDate(options.completedAt, "completedAt"),
+    cancelledAt: normalizeOptionalDate(options.cancelledAt, "cancelledAt"),
+  };
 }
 
 function normalizeSubject(options) {
@@ -508,6 +538,7 @@ function jobFromRow(row) {
     requestedByUserId: row.requested_by_user_id,
     requestedByApiTokenId: row.requested_by_api_token_id,
     idempotencyKey: row.idempotency_key,
+    creationRequestHash: row.creation_request_hash,
     subjectType: row.subject_type,
     subjectId: row.subject_id,
     payload: parseJsonb(row.payload),
@@ -533,18 +564,51 @@ function canonicalizeJson(value) {
   );
 }
 
-function jobCreationIdentity(value) {
+function legacyJobCreationIdentity(value) {
   return JSON.stringify(
     canonicalizeJson({
       operation: value.operation,
       source: value.source,
-      requestedByUserId: value.requestedByUserId || null,
-      requestedByApiTokenId: value.requestedByApiTokenId || null,
+      requestedByUserId: normalizeRequesterIdentity(
+        value.requestedByUserId,
+        "requestedByUserId",
+      ),
+      requestedByApiTokenId: normalizeRequesterIdentity(
+        value.requestedByApiTokenId,
+        "requestedByApiTokenId",
+      ),
       subjectType: value.subjectType || null,
       subjectId: value.subjectId || null,
       payload: value.payload || {},
     }),
   );
+}
+
+function jobCreationRequestFingerprint(value) {
+  // Hash only normalized public creation inputs. This immutable record is
+  // intentionally separate from a job's mutable lifecycle state so an exact
+  // replay remains valid after executor transitions.
+  const canonicalRequest = canonicalizeJson({
+    operation: value.operation,
+    status: value.status,
+    source: value.source,
+    requestedByUserId: value.requestedByUserId ?? null,
+    requestedByApiTokenId: value.requestedByApiTokenId ?? null,
+    subjectType: value.subjectType ?? null,
+    subjectId: value.subjectId ?? null,
+    payload: value.payload ?? {},
+    resultMetadata: value.resultMetadata ?? {},
+    errorCode: value.errorCode ?? null,
+    errorMessage: value.errorMessage ?? null,
+    queuedAt: value.queuedAt ?? null,
+    startedAt: value.startedAt ?? null,
+    completedAt: value.completedAt ?? null,
+    cancelledAt: value.cancelledAt ?? null,
+  });
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(canonicalRequest), "utf8")
+    .digest("hex");
 }
 
 function jobLogFromRow(row) {
@@ -625,6 +689,14 @@ async function createCertificateJob(options) {
     "api",
   );
   const { subjectType, subjectId } = normalizeSubject(options);
+  const requestedByUserId = normalizeRequesterIdentity(
+    options.requestedByUserId,
+    "requestedByUserId",
+  );
+  const requestedByApiTokenId = normalizeRequesterIdentity(
+    options.requestedByApiTokenId,
+    "requestedByApiTokenId",
+  );
   const idempotencyKey = normalizeOptionalShortText(
     options.idempotencyKey,
     "idempotencyKey",
@@ -639,16 +711,25 @@ async function createCertificateJob(options) {
     options.errorMessage,
     "errorMessage",
   );
+  const explicitLifecycleTimestamps = normalizeExplicitLifecycleTimestamps(options);
   const { queuedAt, startedAt, completedAt, cancelledAt } =
-    initialLifecycleTimestamps(options, status);
-  const requestIdentity = jobCreationIdentity({
+    initialLifecycleTimestamps(explicitLifecycleTimestamps, status);
+  const creationRequestHash = jobCreationRequestFingerprint({
     operation,
+    status,
     source,
-    requestedByUserId: options.requestedByUserId,
-    requestedByApiTokenId: options.requestedByApiTokenId,
+    requestedByUserId,
+    requestedByApiTokenId,
     subjectType,
     subjectId,
     payload,
+    resultMetadata,
+    errorCode,
+    errorMessage,
+    queuedAt: dateToIso(explicitLifecycleTimestamps.queuedAt),
+    startedAt: dateToIso(explicitLifecycleTimestamps.startedAt),
+    completedAt: dateToIso(explicitLifecycleTimestamps.completedAt),
+    cancelledAt: dateToIso(explicitLifecycleTimestamps.cancelledAt),
   });
 
   try {
@@ -670,11 +751,12 @@ async function createCertificateJob(options) {
          queued_at,
          started_at,
          completed_at,
-        canceled_at
+        canceled_at,
+        creation_request_hash
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17
+         $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18
        )
        ON CONFLICT (workspace_id, idempotency_key)
          WHERE idempotency_key IS NOT NULL
@@ -685,8 +767,8 @@ async function createCertificateJob(options) {
         operation,
         status,
         source,
-        options.requestedByUserId || null,
-        options.requestedByApiTokenId || null,
+        requestedByUserId,
+        requestedByApiTokenId,
         idempotencyKey,
         subjectType,
         subjectId,
@@ -698,6 +780,7 @@ async function createCertificateJob(options) {
         startedAt,
         completedAt,
         cancelledAt,
+        creationRequestHash,
       ],
     );
 
@@ -716,7 +799,23 @@ async function createCertificateJob(options) {
         idempotencyKey,
       );
       if (existing) {
-        if (jobCreationIdentity(existing) === requestIdentity) {
+        // Rows created before migration 19 have no immutable request hash.
+        // Their original lifecycle inputs cannot be reconstructed from mutable
+        // state, so replay falls back to the historic immutable-subset check
+        // and deliberately leaves the legacy NULL value untouched.
+        const isMatchingReplay = existing.creationRequestHash
+          ? existing.creationRequestHash === creationRequestHash
+          : legacyJobCreationIdentity(existing) ===
+            legacyJobCreationIdentity({
+              operation,
+              source,
+              requestedByUserId,
+              requestedByApiTokenId,
+              subjectType,
+              subjectId,
+              payload,
+            });
+        if (isMatchingReplay) {
           return options.returnOutcome === true
             ? { job: existing, created: false }
             : existing;
@@ -743,7 +842,19 @@ async function createCertificateJob(options) {
         idempotencyKey,
       );
       if (existing) {
-        if (jobCreationIdentity(existing) === requestIdentity) {
+        const isMatchingReplay = existing.creationRequestHash
+          ? existing.creationRequestHash === creationRequestHash
+          : legacyJobCreationIdentity(existing) ===
+            legacyJobCreationIdentity({
+              operation,
+              source,
+              requestedByUserId,
+              requestedByApiTokenId,
+              subjectType,
+              subjectId,
+              payload,
+            });
+        if (isMatchingReplay) {
           return options.returnOutcome === true
             ? { job: existing, created: false }
             : existing;
@@ -758,7 +869,7 @@ async function createCertificateJob(options) {
   }
 }
 
-async function getCertificateJobById(options) {
+function getCertificateJobById(options) {
   const db = options.client || pool;
   return getJobById(
     db,
@@ -1046,7 +1157,7 @@ module.exports = {
   fieldNameLooksForbidden,
   getCertificateJobById,
   isTerminalJobStatus,
-  jobCreationIdentity,
+  jobCreationRequestFingerprint,
   jobFromRow,
   jobLogFromRow,
   listCertificateJobLog,

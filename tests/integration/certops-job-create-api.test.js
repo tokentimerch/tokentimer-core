@@ -170,10 +170,10 @@ async function cleanupWorkspaceFixture(fixture) {
   }
 }
 
-async function jobCreatedAuditEvents(workspaceId, subjectId) {
+async function jobCreatedAuditEvents(workspaceId, jobId) {
   // audit_events.target_id is an INTEGER column; writeAudit stores NULL for
-  // the certificate job's UUID id, so manual-create audits must be located
-  // by the subjectId recorded in metadata instead of target_id.
+  // the certificate job's UUID id. The public UUID in metadata is therefore
+  // the durable direct correlation key, including for bare noop jobs.
   const result = await TestUtils.execQuery(
     `SELECT actor_user_id,
             subject_user_id,
@@ -184,9 +184,9 @@ async function jobCreatedAuditEvents(workspaceId, subjectId) {
        FROM audit_events
       WHERE workspace_id = $1
         AND action = 'CERTOPS_JOB_CREATED_MANUAL'
-        AND metadata->>'subjectId' = $2
+        AND metadata->>'jobId' = $2
       ORDER BY id ASC`,
-    [workspaceId, subjectId],
+    [workspaceId, jobId],
   );
   return result.rows;
 }
@@ -274,7 +274,7 @@ describe("CertOps manual job creation API", function () {
 
     const audits = await jobCreatedAuditEvents(
       fixture.workspaceId,
-      "cert-manual-1",
+      response.body.job.id,
     );
     expect(audits).to.have.length(1);
     expect(audits[0]).to.include({
@@ -284,11 +284,13 @@ describe("CertOps manual job creation API", function () {
       workspace_id: fixture.workspaceId,
     });
     expect(audits[0].metadata).to.deep.include({
+      jobId: response.body.job.id,
       operation: "deploy",
       subjectType: "managed_certificate",
       subjectId: "cert-manual-1",
       source: "api",
     });
+    expectNoSensitiveValues(audits[0].metadata);
   });
 
   it("allows a bare operation with no subject", async () => {
@@ -305,6 +307,19 @@ describe("CertOps manual job creation API", function () {
       subjectId: null,
     });
     expectNoSensitiveValues(response.body);
+    const audits = await jobCreatedAuditEvents(
+      fixture.workspaceId,
+      response.body.job.id,
+    );
+    expect(audits).to.have.length(1);
+    expect(audits[0].metadata).to.deep.include({
+      jobId: response.body.job.id,
+      operation: "noop",
+      subjectType: null,
+      subjectId: null,
+      source: "api",
+    });
+    expectNoSensitiveValues(audits[0].metadata);
   });
 
   it("rejects invalid operations and subject combinations without creating a job", async () => {
@@ -401,7 +416,7 @@ describe("CertOps manual job creation API", function () {
       .set("Cookie", fixture.managerSession.cookie)
       .send(requestBody)
       .expect(201);
-    expect(await jobCreatedAuditEvents(fixture.workspaceId, subjectId)).to.have.length(1);
+    expect(await jobCreatedAuditEvents(fixture.workspaceId, first.body.job.id)).to.have.length(1);
 
     const running = await updateCertificateJobStatus({
       workspaceId: fixture.workspaceId,
@@ -421,14 +436,15 @@ describe("CertOps manual job creation API", function () {
     expect(replay.body.job.resultMetadata).to.deep.equal({ phase: "validated" });
 
     const jobs = await TestUtils.execQuery(
-      `SELECT id
+      `SELECT id, creation_request_hash
          FROM certificate_jobs
         WHERE workspace_id = $1
           AND idempotency_key = $2`,
       [fixture.workspaceId, idempotencyKey],
     );
     expect(jobs.rows).to.have.length(1);
-    expect(await jobCreatedAuditEvents(fixture.workspaceId, subjectId)).to.have.length(1);
+    expect(jobs.rows[0].creation_request_hash).to.match(/^[a-f0-9]{64}$/);
+    expect(await jobCreatedAuditEvents(fixture.workspaceId, first.body.job.id)).to.have.length(1);
 
     const conflicting = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
@@ -446,7 +462,7 @@ describe("CertOps manual job creation API", function () {
 
     const auditsForFirstJob = await jobCreatedAuditEvents(
       fixture.workspaceId,
-      subjectId,
+      first.body.job.id,
     );
     // The creation audit is written only for the newly inserted job. A replay
     // returns the current job, while a conflicting key reuse writes nothing.
@@ -454,6 +470,45 @@ describe("CertOps manual job creation API", function () {
     expect(auditsForFirstJob.every((row) => row.target_id === null)).to.equal(
       true,
     );
+    expect(auditsForFirstJob[0].metadata.jobId).to.equal(first.body.job.id);
+  });
+
+  it("keeps same-subject manual-job audits uniquely traceable by jobId", async () => {
+    const subjectId = `shared-subject-${crypto.randomUUID()}`;
+    const first = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId,
+        idempotencyKey: `first-${crypto.randomUUID()}`,
+      })
+      .expect(201);
+    const second = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        operation: "reload",
+        subjectType: "managed_certificate",
+        subjectId,
+        idempotencyKey: `second-${crypto.randomUUID()}`,
+      })
+      .expect(201);
+
+    expect(second.body.job.id).to.not.equal(first.body.job.id);
+    const [firstAudits, secondAudits] = await Promise.all([
+      jobCreatedAuditEvents(fixture.workspaceId, first.body.job.id),
+      jobCreatedAuditEvents(fixture.workspaceId, second.body.job.id),
+    ]);
+    expect(firstAudits).to.have.length(1);
+    expect(secondAudits).to.have.length(1);
+    expect(firstAudits[0].metadata.jobId).to.equal(first.body.job.id);
+    expect(secondAudits[0].metadata.jobId).to.equal(second.body.job.id);
+    expect(firstAudits[0].metadata.subjectId).to.equal(subjectId);
+    expect(secondAudits[0].metadata.subjectId).to.equal(subjectId);
+    expectNoSensitiveValues(firstAudits[0].metadata);
+    expectNoSensitiveValues(secondAudits[0].metadata);
   });
 
   it("scopes created jobs to the requesting workspace only", async () => {

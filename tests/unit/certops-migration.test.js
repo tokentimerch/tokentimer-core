@@ -121,6 +121,7 @@ const BASELINE_M2_COLUMNS = {
     "source",
     "payload",
     "result_metadata",
+    "creation_request_hash",
     "created_at",
     "updated_at",
   ],
@@ -193,6 +194,9 @@ const certOpsExecutorEventMigration = migrations.find(
 );
 const certOpsWorkspaceKillSwitchMigration = migrations.find(
   (migration) => migration.name === "certops_workspace_kill_switch",
+);
+const certOpsJobCreationFingerprintMigration = migrations.find(
+  (migration) => migration.name === "certops_job_creation_request_fingerprint",
 );
 
 function getTableBlock(tableName, migration = certOpsMigration) {
@@ -471,6 +475,26 @@ describe("CertOps inventory migration", () => {
     assert.match(
       certOpsWorkspaceKillSwitchMigration.sql,
       /ALTER TABLE workspaces\s+ADD COLUMN IF NOT EXISTS certops_paused BOOLEAN NOT NULL DEFAULT FALSE/,
+    );
+  });
+
+  it("defines the additive immutable CertOps job creation fingerprint migration", () => {
+    assert.ok(
+      certOpsJobCreationFingerprintMigration,
+      "expected certops_job_creation_request_fingerprint migration",
+    );
+    assert.equal(certOpsJobCreationFingerprintMigration.version, 19);
+    assert.match(
+      certOpsJobCreationFingerprintMigration.sql,
+      /ALTER TABLE certificate_jobs\s+ADD COLUMN IF NOT EXISTS creation_request_hash CHAR\(64\) NULL/,
+    );
+    assert.match(
+      certOpsJobCreationFingerprintMigration.sql,
+      /creation_request_hash ~ '\^\[a-f0-9\]\{64\}\$'/,
+    );
+    assert.match(
+      certOpsJobCreationFingerprintMigration.sql,
+      /Existing rows remain NULL/,
     );
   });
 

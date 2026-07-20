@@ -99,6 +99,16 @@ the global rollout is disabled, so incident controls can be inspected and
 staged. The stored workspace pause state is independent of the global flag;
 effective operational activity remains
 `certOpsActive = certOpsEnabled && !certOpsPaused`.
+The settings surface is human session-only: internal worker bearer credentials
+cannot read, pause, or resume a workspace. Private-key material remains
+rejected before the session-user and role checks on its body-bearing `PUT`.
+
+Manual-job idempotency stores a SHA-256 fingerprint of normalized original
+creation inputs. Lifecycle transitions never change it, so an exact original
+replay returns the current job state without a second creation audit. Rows
+created before the fingerprint migration retain a null hash and use only the
+historic immutable-subset comparison; they are never backfilled from mutable
+lifecycle state.
 
 M1 Core is dark-launched and env-gated: `CERTOPS_ENABLED` is the authoritative
 Core rollout control for M1. The optional

@@ -12,7 +12,9 @@ const {
   MAX_CERTOPS_PAUSE_REASON_LENGTH,
   assertWorkspaceCertOpsActive,
   createManualCertificateJob,
+  getWorkspaceCertOpsActivitySnapshot,
   getWorkspaceCertOpsPauseState,
+  lockWorkspaceForCertOpsSideEffect,
   normalizeReason,
   setWorkspaceCertOpsPauseState,
 } = require(
@@ -313,10 +315,10 @@ describe("CertOps workspace kill-switch service", () => {
     );
   });
 
-  it("provides a reusable non-HTTP side-effect assertion", async () => {
+  it("keeps the unlocked activity helper advisory and exposes it by snapshot name", async () => {
     await assert.rejects(
       () =>
-        assertWorkspaceCertOpsActive({
+        getWorkspaceCertOpsActivitySnapshot({
           workspaceId: "workspace-1",
           dbPool: createStatefulPool(true),
           certOpsEnabledResolver: async () => true,
@@ -331,6 +333,32 @@ describe("CertOps workspace kill-switch service", () => {
           certOpsEnabledResolver: async () => false,
         }),
       (error) => error?.code === "CERTOPS_DISABLED",
+    );
+  });
+
+  it("locks and checks workspace activity for an authoritative side effect", async () => {
+    const activePool = createStatefulPool(false);
+    const workspace = await lockWorkspaceForCertOpsSideEffect({
+      client: activePool.client,
+      workspaceId: "workspace-1",
+    });
+    assert.equal(workspace.id, "workspace-1");
+    assert.equal(
+      activePool.queries.some((query) => query.sql.endsWith("FOR SHARE")),
+      true,
+    );
+
+    await assert.rejects(
+      () =>
+        lockWorkspaceForCertOpsSideEffect({
+          client: createStatefulPool(true).client,
+          workspaceId: "workspace-1",
+        }),
+      (error) => error?.code === CERTOPS_WORKSPACE_PAUSED,
+    );
+    await assert.rejects(
+      () => lockWorkspaceForCertOpsSideEffect({ workspaceId: "workspace-1" }),
+      (error) => error?.code === CERTOPS_WORKSPACE_NOT_FOUND,
     );
   });
 });

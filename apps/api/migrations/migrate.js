@@ -1334,6 +1334,24 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS certops_paused BOOLEAN NOT NULL DEFAULT FALSE;
     `,
   },
+  {
+    version: 19,
+    name: "certops_job_creation_request_fingerprint",
+    sql: `
+      -- A new job stores a SHA-256 fingerprint of its normalized original
+      -- creation request. It is immutable so idempotent replays can be
+      -- distinguished from changed original requests even after lifecycle
+      -- status, result metadata, errors, or generated timestamps change.
+      -- Existing rows remain NULL: their complete original request cannot be
+      -- reconstructed safely from mutable lifecycle state.
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS creation_request_hash CHAR(64) NULL
+          CHECK (
+            creation_request_hash IS NULL OR
+            creation_request_hash ~ '^[a-f0-9]{64}$'
+          );
+    `,
+  },
 ];
 
 async function runMigrations() {

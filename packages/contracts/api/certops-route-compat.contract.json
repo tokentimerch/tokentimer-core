@@ -9,7 +9,8 @@
       "auth": "cookieAuth",
       "notes": [
         "Human/dashboard surface. Inherits global session + workspace membership + frozen-workspace guards.",
-        "Subject to CSRF protection like other workspace mutations."
+        "Subject to CSRF protection like other workspace mutations.",
+        "The workspace kill-switch settings GET and PUT routes require a human cookie/session user; internal worker bearer credentials are not accepted."
       ]
     },
     "executor": {
@@ -40,6 +41,7 @@
     "/api/v1/certops/executor/events": "certOpsTokenAuth",
     "/api/v1/certops/jobs/{jobId}/events": "certOpsTokenAuth",
     "/api/v1/certops/jobs/{jobId}/evidence": "certOpsTokenAuth",
+    "/api/v1/workspaces/{id}/certops/settings": "cookieAuth",
     "/api/v1/certops/agent/register": "agentBootstrapTokenAuth",
     "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",

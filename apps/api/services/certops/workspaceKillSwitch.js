@@ -128,11 +128,12 @@ async function getWorkspaceCertOpsPauseState({
 }
 
 /**
- * Guard for non-HTTP side-effect callers (future intent, dispatch, and
- * controller mutation paths). HTTP routes retain require-certops-enabled.js
- * as the primary rollout middleware and use the dedicated pause middleware.
+ * Advisory snapshot for UI and preflight callers. An unlocked activity check
+ * is not authoritative protection for a later side effect: a pause can commit
+ * after this read. Every authoritative side effect must recheck the pause
+ * state under a transactional workspace lock shared with its write and audit.
  */
-async function assertWorkspaceCertOpsActive(options = {}) {
+async function getWorkspaceCertOpsActivitySnapshot(options = {}) {
   const state = await getWorkspaceCertOpsPauseState(options);
   if (!state.certOpsEnabled) {
     const error = workspaceKillSwitchError(
@@ -151,6 +152,54 @@ async function assertWorkspaceCertOpsActive(options = {}) {
     throw error;
   }
   return state;
+}
+
+/**
+ * Backwards-compatible alias for the advisory snapshot helper. Do not use this
+ * unlocked assertion to authorize a later write; use
+ * lockWorkspaceForCertOpsSideEffect inside the write transaction instead.
+ */
+function assertWorkspaceCertOpsActive(options = {}) {
+  return getWorkspaceCertOpsActivitySnapshot(options);
+}
+
+/**
+ * Acquire the workspace lock required before any authoritative CertOps side
+ * effect. The caller must supply its already transaction-bound PostgreSQL
+ * client and retain this lock until the side effect and synchronous audit have
+ * committed or rolled back. FOR SHARE conflicts with the kill switch's FOR
+ * UPDATE transition lock.
+ */
+async function lockWorkspaceForCertOpsSideEffect({ client, workspaceId } = {}) {
+  if (!client || typeof client.query !== "function") {
+    throw workspaceKillSwitchError(
+      "A transaction-bound database client is required",
+      CERTOPS_WORKSPACE_NOT_FOUND,
+    );
+  }
+  if (!workspaceId) {
+    throw workspaceKillSwitchError(
+      "workspaceId is required",
+      CERTOPS_WORKSPACE_NOT_FOUND,
+    );
+  }
+
+  const workspace = await loadWorkspacePauseState(client, workspaceId, {
+    lock: "share",
+  });
+  if (workspace.certops_paused === true) {
+    const error = workspaceKillSwitchError(
+      "CertOps is paused for this workspace",
+      CERTOPS_WORKSPACE_PAUSED,
+    );
+    error.state = stateFromRow({
+      workspaceId: workspace.id,
+      certOpsPaused: true,
+      certOpsEnabled: true,
+    });
+    throw error;
+  }
+  return workspace;
 }
 
 /**
@@ -281,22 +330,10 @@ async function createManualCertificateJob({
     await client.query("BEGIN");
     transactionStarted = true;
 
-    // FOR SHARE conflicts with the pause transition's FOR UPDATE lock.
-    const workspace = await loadWorkspacePauseState(client, workspaceId, {
-      lock: "share",
+    const workspace = await lockWorkspaceForCertOpsSideEffect({
+      client,
+      workspaceId,
     });
-    if (workspace.certops_paused === true) {
-      const error = workspaceKillSwitchError(
-        "CertOps is paused for this workspace",
-        CERTOPS_WORKSPACE_PAUSED,
-      );
-      error.state = stateFromRow({
-        workspaceId: workspace.id,
-        certOpsPaused: true,
-        certOpsEnabled: true,
-      });
-      throw error;
-    }
 
     const outcome = await jobCreator({
       ...jobOptions,
@@ -318,6 +355,7 @@ async function createManualCertificateJob({
         targetId: job.id,
         workspaceId: workspace.id,
         metadata: {
+          jobId: job.id,
           operation: job.operation,
           subjectType: job.subjectType,
           subjectId: job.subjectId,
@@ -352,7 +390,9 @@ module.exports = {
   CertOpsWorkspaceKillSwitchError,
   assertWorkspaceCertOpsActive,
   createManualCertificateJob,
+  getWorkspaceCertOpsActivitySnapshot,
   getWorkspaceCertOpsPauseState,
+  lockWorkspaceForCertOpsSideEffect,
   normalizePaused,
   normalizeReason,
   setWorkspaceCertOpsPauseState,

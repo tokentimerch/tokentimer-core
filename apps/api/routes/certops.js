@@ -102,6 +102,20 @@ function requireCertOpsTokenManager(req, res, next) {
   return next();
 }
 
+// The workspace kill switch is an attributable human-admin incident control.
+// Shared workspace middleware intentionally grants internal workers an
+// effective admin role for unrelated machine work, so this route-local guard
+// must reject them rather than trusting that derived role.
+function requireCertOpsSessionUser(req, res, next) {
+  if (req.isWorkerCall || !req.user?.id) {
+    return res.status(403).json({
+      error: "Forbidden: session user required",
+      code: "INSUFFICIENT_ROLE",
+    });
+  }
+  return next();
+}
+
 function certificatePemFromBody(body) {
   if (typeof body === "string") return body;
   if (!body || typeof body !== "object") return null;
@@ -706,6 +720,7 @@ router.get(
 router.get(
   "/api/v1/workspaces/:id/certops/settings",
   getApiLimiter(),
+  requireCertOpsSessionUser,
   async (req, res) => {
     try {
       const state = await getWorkspaceCertOpsPauseState({
@@ -734,6 +749,7 @@ router.put(
   "/api/v1/workspaces/:id/certops/settings",
   getApiLimiter(),
   rejectKeyMaterial,
+  requireCertOpsSessionUser,
   authorize("certops.kill_switch.manage"),
   async (req, res) => {
     try {

@@ -159,6 +159,31 @@ describe("CertOps route hardening", () => {
     }
   });
 
+  it("requires a human session user for both workspace kill-switch settings routes", () => {
+    for (const [method, routePath] of [
+      ["get", "/api/v1/workspaces/:id/certops/settings"],
+      ["put", "/api/v1/workspaces/:id/certops/settings"],
+    ]) {
+      assert.match(
+        routeBlock(method, routePath),
+        /requireCertOpsSessionUser/,
+        `${method.toUpperCase()} settings must reject internal worker credentials`,
+      );
+    }
+
+    const putBlock = routeBlock("put", "/api/v1/workspaces/:id/certops/settings");
+    assert.ok(
+      putBlock.indexOf("rejectKeyMaterial") <
+        putBlock.indexOf("requireCertOpsSessionUser"),
+      "settings PUT must reject key material before session-user denial",
+    );
+    assert.ok(
+      putBlock.indexOf("requireCertOpsSessionUser") <
+        putBlock.indexOf('authorize("certops.kill_switch.manage")'),
+      "settings PUT must require a human session before role authorization",
+    );
+  });
+
   it("requires manager role for CertOps API token metadata enumeration", () => {
     // Token metadata enumeration (names, prefixes, scopes, status) must be
     // manager-only, matching token create/revoke, so viewers cannot enumerate
@@ -236,6 +261,13 @@ describe("CertOps route hardening", () => {
         block.indexOf("rejectKeyMaterial") < block.indexOf(authorizationMiddleware),
         `${routePath} must reject private key material before write authorization`,
       );
+      if (routePath.endsWith("/certops/settings")) {
+        assert.ok(
+          block.indexOf("rejectKeyMaterial") <
+            block.indexOf("requireCertOpsSessionUser"),
+          `${routePath} must reject private key material before session-user denial`,
+        );
+      }
       if (!routePath.endsWith("/certops/settings")) {
         assert.ok(
           block.indexOf("rejectKeyMaterial") <

@@ -24,6 +24,7 @@ const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 const CERTOPS_ENABLED = ["1", "true", "yes", "on", "enabled"].includes(
   String(process.env.CERTOPS_ENABLED || "").trim().toLowerCase(),
 );
+const INTERNAL_WORKER_KEY = process.env.WORKER_API_KEY || process.env.SESSION_SECRET;
 
 function deferred() {
   let resolve;
@@ -339,6 +340,68 @@ describe("CertOps workspace kill-switch API", function () {
     expect(otherWorkspace.rows[0].certops_paused).to.equal(false);
   });
 
+  it("rejects internal worker credentials from reading or changing settings", async function () {
+    if (!INTERNAL_WORKER_KEY) this.skip();
+    const authorization = `Bearer ${INTERNAL_WORKER_KEY}`;
+    const stateBefore = await TestUtils.execQuery(
+      "SELECT certops_paused FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    const auditsBefore = await pauseAudits(fixture.workspaceId);
+
+    const getResponse = await request(BASE)
+      .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Authorization", authorization);
+    expect(getResponse.status).to.equal(403);
+    expect(getResponse.body).to.deep.equal({
+      error: "Forbidden: session user required",
+      code: "INSUFFICIENT_ROLE",
+    });
+    expect(getResponse.body).to.not.have.property("workspaceId");
+
+    const putResponse = await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Authorization", authorization)
+      .send({ certOpsPaused: !stateBefore.rows[0].certops_paused });
+    expect(putResponse.status).to.equal(403);
+    expect(putResponse.body).to.deep.equal(getResponse.body);
+
+    const stateAfter = await TestUtils.execQuery(
+      "SELECT certops_paused FROM workspaces WHERE id = $1",
+      [fixture.workspaceId],
+    );
+    expect(stateAfter.rows[0].certops_paused).to.equal(
+      stateBefore.rows[0].certops_paused,
+    );
+    expect(await pauseAudits(fixture.workspaceId)).to.have.length(
+      auditsBefore.length,
+    );
+  });
+
+  it("rejects worker settings key material before the session-user denial", async function () {
+    if (!INTERNAL_WORKER_KEY) this.skip();
+    const rejectionAuditsBefore = await keyRejectionAudits(fixture.workspaceId);
+    const privateKey = "-----BEGIN PRIVATE KEY-----\nworker-secret\n-----END PRIVATE KEY-----";
+
+    const response = await request(BASE)
+      .put(`/api/v1/workspaces/${fixture.workspaceId}/certops/settings`)
+      .set("Authorization", `Bearer ${INTERNAL_WORKER_KEY}`)
+      .send({ certOpsPaused: true, reason: privateKey });
+    expect(response.status).to.equal(422);
+    expect(response.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+    expect(JSON.stringify(response.body)).to.not.include(privateKey);
+
+    const rejectionAuditsAfter = await keyRejectionAudits(fixture.workspaceId);
+    expect(rejectionAuditsAfter).to.have.length(rejectionAuditsBefore.length + 1);
+    const rejectionAudit = rejectionAuditsAfter.at(-1);
+    expect(JSON.stringify(rejectionAudit.metadata)).to.not.include(privateKey);
+    expect(rejectionAudit.metadata).to.deep.include({
+      code: "PRIVATE_KEY_MATERIAL_REJECTED",
+      method: "PUT",
+      path: "/api/v1/workspaces/:id/certops/settings",
+    });
+  });
+
   it("blocks only new manual jobs while paused, preserves reads, and resumes cleanly", async function () {
     if (!CERTOPS_ENABLED) {
       const unavailable = await request(BASE)
@@ -354,6 +417,7 @@ describe("CertOps workspace kill-switch API", function () {
     }
     const blockedSubjectId = "paused-workspace-job";
     const privateKey = "-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----";
+    const rejectionAuditsBefore = await keyRejectionAudits(fixture.workspaceId);
 
     const blocked = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
@@ -375,11 +439,12 @@ describe("CertOps workspace kill-switch API", function () {
     expect(keyRejected.status).to.equal(422);
     expect(keyRejected.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
     const rejectionAudits = await keyRejectionAudits(fixture.workspaceId);
-    expect(rejectionAudits).to.have.length(1);
-    expect(rejectionAudits[0]).to.include({
+    expect(rejectionAudits).to.have.length(rejectionAuditsBefore.length + 1);
+    const keyRejectionAudit = rejectionAudits.at(-1);
+    expect(keyRejectionAudit).to.include({
       action: "CERTOPS_KEY_MATERIAL_REJECTED",
     });
-    expect(rejectionAudits[0].metadata).to.deep.include({
+    expect(keyRejectionAudit.metadata).to.deep.include({
       code: "PRIVATE_KEY_MATERIAL_REJECTED",
       method: "POST",
       path: "/api/v1/workspaces/:id/certops/jobs",

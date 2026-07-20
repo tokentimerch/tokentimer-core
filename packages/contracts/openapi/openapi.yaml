@@ -3480,9 +3480,13 @@ paths:
       description: >-
         Returns the workspace-local CertOps kill-switch state and the effective
         side-effect availability. All authorized workspace members may read it.
+        This is a human cookie/session-authenticated workspace surface; internal
+        worker bearer credentials are not accepted.
         The stored pause state remains distinct from the deployment-wide
         certops.enabled rollout flag, and this settings endpoint remains
         available when that rollout flag is disabled.
+      security:
+        - cookieAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       responses:
@@ -3506,10 +3510,13 @@ paths:
       operationId: updateCertOpsWorkspaceSettings
       description: >-
         Changes only the workspace-local M3-A1 kill switch and remains available
-        while the deployment-wide rollout flag is disabled. Requires a workspace
-        admin. A paused workspace rejects new manual jobs and future dispatch or
+        while the deployment-wide rollout flag is disabled. Requires a human
+        cookie/session-authenticated workspace admin; internal worker bearer
+        credentials are not accepted. A paused workspace rejects new manual jobs and future dispatch or
         provision side effects with 409 CERTOPS_WORKSPACE_PAUSED; inventory,
         status, audit, evidence, and existing-work reporting remain available.
+      security:
+        - cookieAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -3543,7 +3550,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Workspace admin role is required
+          description: A human session user with the workspace admin role is required; internal worker bearer credentials are not accepted
           content:
             application/json:
               schema:

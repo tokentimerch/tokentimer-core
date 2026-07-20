@@ -175,6 +175,7 @@ describe("CertOps jobs and evidence persistence", function () {
       "requested_by_user_id",
       "requested_by_api_token_id",
       "idempotency_key",
+      "creation_request_hash",
       "payload",
       "result_metadata",
       "created_at",
@@ -280,6 +281,17 @@ describe("CertOps jobs and evidence persistence", function () {
       expect(job.workspaceId).to.equal(workspaceA);
       expect(job.status).to.equal("pending");
       expect(job.payload.target).to.equal("kubernetes/default/web-cert");
+      expect(job.creationRequestHash).to.match(/^[a-f0-9]{64}$/);
+
+      const persistedFingerprint = await TestUtils.execQuery(
+        `SELECT creation_request_hash
+           FROM certificate_jobs
+          WHERE workspace_id = $1 AND id = $2`,
+        [workspaceA, job.id],
+      );
+      expect(persistedFingerprint.rows[0].creation_request_hash).to.equal(
+        job.creationRequestHash,
+      );
 
       const idempotent = await createCertificateJob({
         workspaceId: workspaceA,
