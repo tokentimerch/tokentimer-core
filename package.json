@@ -52,7 +52,7 @@
     "test:down": "docker compose -f deploy/compose/docker-compose.test.yml down --volumes --remove-orphans",
     "// --- Full stack in Docker (postgres + API + worker + dashboard) ---": "",
     "docker:build": "docker compose -f deploy/compose/docker-compose.yml build",
-    "docker:up": "docker compose -f deploy/compose/docker-compose.yml up",
+    "docker:up": "docker compose -f deploy/compose/docker-compose.yml up --build",
     "docker:down": "node scripts/docker-down-local.js",
     "docker:down:stack": "docker compose -f deploy/compose/docker-compose.yml down --remove-orphans",
     "docker:down:dev": "docker compose -f deploy/compose/docker-compose.dev.yml down --remove-orphans",

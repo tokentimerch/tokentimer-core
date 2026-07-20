@@ -30,8 +30,11 @@ HOST-NATIVE (fast iteration; processes run on your machine)
 FULL STACK IN DOCKER (all services containerized)
 -------------------------------------------------
   pnpm docker:up
-      deploy/compose/docker-compose.yml up (foreground).
-      Postgres + API + worker + dashboard all in containers.
+      deploy/compose/docker-compose.yml up --build (foreground).
+      Postgres + API + worker + dashboard all in containers. --build
+      re-checks the image against the Dockerfile/context/build args on
+      every run, so a stale image from a branch switch gets rebuilt
+      automatically (cache hit = no-op if nothing changed).
 
   pnpm docker:down
       Stop all local Docker infra: full stack, dev stack, and postgres-only
