@@ -65,11 +65,11 @@ grep -n "TRUST_PROXY_HOPS" "${OUT}/rendered-full-test.yaml" | head -3 || true
 grep -n "kind: HorizontalPodAutoscaler" "${OUT}/rendered-full-test.yaml" | head -3 || true
 grep -n "kind: Cluster" "${OUT}/rendered-full-test.yaml" | head -3 || true
 
-echo "==> assert DB_SSL=require when CloudNativePG is enabled (defaults + minimal)"
+echo "==> assert DB_SSL=verify when CloudNativePG is enabled (defaults + minimal)"
 for name in defaults minimal; do
   rendered="${OUT}/rendered-${name}.yaml"
-  if ! grep -qE 'DB_SSL:[[:space:]]*"?require"?' "${rendered}"; then
-    echo "helm-template-verify: FAIL missing DB_SSL=require in ${name} render" >&2
+  if ! grep -qE 'DB_SSL:[[:space:]]*"?verify"?' "${rendered}"; then
+    echo "helm-template-verify: FAIL missing DB_SSL=verify in ${name} render" >&2
     grep -n 'DB_SSL\|cloudnative' "${rendered}" | head -20 >&2 || true
     exit 1
   fi
