@@ -1304,6 +1304,24 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS check_claim_id UUID NULL;
     `,
   },
+  {
+    version: 18,
+    name: "tokens_certops_api_token_link",
+    sql: `
+      -- Links a TokenTimer monitoring token to the CertOps machine token it
+      -- was created to track (opt-in checkbox on "store this token now").
+      -- Revoking the CertOps token must delete this row explicitly (revoke
+      -- is an UPDATE, not a DELETE, so ON DELETE CASCADE alone never fires
+      -- on the common path); the FK is a defense-in-depth backstop only.
+      ALTER TABLE tokens
+        ADD COLUMN IF NOT EXISTS certops_api_token_id UUID NULL
+          REFERENCES api_tokens(id) ON DELETE CASCADE;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_tokens_certops_api_token_id
+        ON tokens(certops_api_token_id)
+        WHERE certops_api_token_id IS NOT NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

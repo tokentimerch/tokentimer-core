@@ -53,6 +53,7 @@ const {
 } = require("../services/certops/evidence");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
+const Token = require("../db/models/Token");
 
 const CERTOPS_API_TOKEN_NOT_FOUND = "CERTOPS_API_TOKEN_NOT_FOUND";
 
@@ -553,6 +554,30 @@ router.post(
             token: result.token,
             includeRevocation: true,
           });
+          // The user may have opted in to monitor this machine token's
+          // expiration in TokenTimer when it was created; a revoked token
+          // is dead, so keep TokenTimer from tracking (and alerting on) a
+          // credential that no longer works.
+          const deletedMonitoringToken = await Token.deleteByCertOpsApiTokenId(
+            tokenId,
+            { client },
+          );
+          if (deletedMonitoringToken) {
+            await writeAudit({
+              client,
+              actorUserId: req.user.id,
+              subjectUserId: req.user.id,
+              action: "TOKEN_DELETED",
+              targetType: "token",
+              targetId: deletedMonitoringToken.id,
+              channel: null,
+              workspaceId: req.workspace.id,
+              metadata: {
+                name: deletedMonitoringToken.name,
+                reason: "certops_api_token_revoked",
+              },
+            });
+          }
         }
         return result;
       });

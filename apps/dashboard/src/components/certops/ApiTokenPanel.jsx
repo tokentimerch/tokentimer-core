@@ -214,6 +214,7 @@ export default function ApiTokenPanel() {
       setScopes([]);
       setExpiresLocal('');
       setCreatedTokenInfo({
+        id: result?.token?.id || null,
         name: result?.token?.name || name.trim(),
         expiresAt: result?.token?.expiresAt || expiresAt || null,
       });
@@ -237,6 +238,7 @@ export default function ApiTokenPanel() {
           category: 'key_secret',
           expiresAt: createdTokenInfo.expiresAt,
           workspace_id: workspaceId,
+          certopsApiTokenId: createdTokenInfo.id || undefined,
         });
       } catch (err) {
         showError(
@@ -526,6 +528,12 @@ export default function ApiTokenPanel() {
                     Monitor this token&apos;s expiration with TokenTimer
                   </Text>
                 </Checkbox>
+              ) : null}
+              {createdTokenInfo?.expiresAt && monitorExpiry ? (
+                <Text fontSize='xs' color={muted}>
+                  The TokenTimer entry is removed automatically if this
+                  machine token is revoked.
+                </Text>
               ) : null}
             </VStack>
           </ModalBody>

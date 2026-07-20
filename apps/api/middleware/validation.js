@@ -99,6 +99,10 @@ const validateToken = [
         throw new Error("Cost must be less than 1 trillion");
       return true;
     }),
+  body("certopsApiTokenId")
+    .optional()
+    .isUUID()
+    .withMessage("certopsApiTokenId must be a valid UUID"),
   body("key_size")
     .optional()
     .custom((value) => {

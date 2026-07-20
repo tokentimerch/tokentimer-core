@@ -358,6 +358,7 @@ router.post(
         last_used,
         imported_at,
         created_at,
+        certopsApiTokenId,
       } = req.body;
 
       // Log the request for debugging
@@ -636,6 +637,25 @@ router.post(
         ...tokenData,
         contact_group_id: normalizedContactGroupId,
       };
+
+      // Validate certopsApiTokenId belongs to this workspace before linking,
+      // so a token in one workspace can't be wired to another workspace's
+      // CertOps machine token (and inherit its future revoke-cascade delete).
+      let normalizedCertOpsApiTokenId = null;
+      if (certopsApiTokenId) {
+        const certopsTokenCheck = await pool.query(
+          "SELECT 1 FROM api_tokens WHERE id = $1 AND workspace_id = $2",
+          [certopsApiTokenId, workspaceId],
+        );
+        if (certopsTokenCheck.rowCount === 0) {
+          return res.status(400).json({
+            error: "certopsApiTokenId does not belong to this workspace",
+            code: "VALIDATION_ERROR",
+          });
+        }
+        normalizedCertOpsApiTokenId = certopsApiTokenId;
+      }
+
       const token = await Token.create({
         ...tokenDataWithGroup,
         workspaceId,
@@ -644,6 +664,7 @@ router.post(
         last_used,
         imported_at: imported_at || null,
         created_at: created_at || null,
+        certops_api_token_id: normalizedCertOpsApiTokenId,
       });
       // Audit: token created
       try {
