@@ -163,6 +163,27 @@ describe("CertOps Kubernetes controller lifecycle", () => {
     assert.deepEqual(events, ["kubernetes-stop", "reporter-stop"]);
   });
 
+  it("attempts both close hooks after a synchronous reporter close failure", async () => {
+    const events = [];
+    const reporterFailure = new Error("reporter close failed");
+    const runtime = createControllerRuntime({
+      kubernetesClient: {
+        close() {
+          events.push("kubernetes-close");
+        },
+      },
+      reporter: {
+        close() {
+          events.push("reporter-close");
+          throw reporterFailure;
+        },
+      },
+    });
+
+    await assert.rejects(runtime.close(), (error) => error === reporterFailure);
+    assert.deepEqual(events, ["reporter-close", "kubernetes-close"]);
+  });
+
   it("uses a non-zero exit code only when shutdown cleanup fails", async () => {
     const exits = [];
     const lifecycle = createControllerLifecycle({

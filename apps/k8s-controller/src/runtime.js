@@ -87,8 +87,8 @@ function createControllerRuntime({
   async function close() {
     acceptingWork = false;
     const results = await Promise.allSettled([
-      invokePort(reporter, "close"),
-      invokePort(kubernetesClient, "close"),
+      settlePortInvocation(reporter, "close"),
+      settlePortInvocation(kubernetesClient, "close"),
     ]);
     const failure = results.find((result) => result.status === "rejected");
     if (failure) throw failure.reason;
