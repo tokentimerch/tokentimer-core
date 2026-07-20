@@ -13,6 +13,7 @@ const {
   appendCertificateJobLog,
   createCertificateJob,
   getCertificateJobById,
+  jobCreationIdentity,
   listCertificateJobLog,
   listCertificateJobs,
   updateCertificateJobStatus,
@@ -774,6 +775,39 @@ describe("CertOps jobs service", () => {
     );
   });
 
+  it("canonicalizes immutable job creation identity", () => {
+    const first = jobCreationIdentity({
+      operation: "renew",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { nested: { alpha: 1, beta: 2 }, labels: ["a", "b"] },
+    });
+    const reordered = jobCreationIdentity({
+      operation: "renew",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { labels: ["a", "b"], nested: { beta: 2, alpha: 1 } },
+    });
+    const different = jobCreationIdentity({
+      operation: "renew",
+      source: "api",
+      requestedByUserId: "user-2",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { nested: { alpha: 1, beta: 2 }, labels: ["a", "b"] },
+    });
+
+    assert.equal(reordered, first);
+    assert.notEqual(different, first);
+  });
+
   it("applies idempotency per workspace", async () => {
     const client = createMemoryClient();
     const first = await createCertificateJob({
@@ -806,7 +840,8 @@ describe("CertOps jobs service", () => {
       { payload: { certificateId: "cert-2" } },
       { subjectType: "managed_certificate", subjectId: "cert-2" },
       { source: "external" },
-      { status: "approved" },
+      { requestedByUserId: "33333333-3333-4333-8333-333333333333" },
+      { requestedByApiTokenId: "44444444-4444-4444-8444-444444444444" },
     ]) {
       await assert.rejects(
         () =>
@@ -821,6 +856,43 @@ describe("CertOps jobs service", () => {
         (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
       );
     }
+  });
+
+  it("keeps idempotent replays valid after lifecycle updates", async () => {
+    const client = createMemoryClient();
+    const request = {
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      idempotencyKey: "idem-lifecycle",
+      subjectType: "managed_certificate",
+      subjectId: "cert-lifecycle",
+      payload: { certificateId: "cert-lifecycle", labels: { environment: "test" } },
+    };
+    const created = await createCertificateJob({ client, ...request });
+    const running = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: created.id,
+      status: "running",
+      resultMetadata: { phase: "validated" },
+    });
+    const replay = await createCertificateJob({ client, ...request });
+
+    assert.equal(replay.id, created.id);
+    assert.equal(replay.status, "running");
+    assert.deepEqual(replay.resultMetadata, { phase: "validated" });
+    assert.equal(running.id, replay.id);
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          ...request,
+          payload: { certificateId: "cert-lifecycle", labels: { environment: "prod" } },
+        }),
+      (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+    );
   });
 
   it("throws not found for missing or wrong-workspace status updates", async () => {

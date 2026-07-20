@@ -533,20 +533,16 @@ function canonicalizeJson(value) {
   );
 }
 
-function idempotencyIdentity(value) {
+function jobCreationIdentity(value) {
   return JSON.stringify(
     canonicalizeJson({
       operation: value.operation,
-      status: value.status,
       source: value.source,
       requestedByUserId: value.requestedByUserId || null,
       requestedByApiTokenId: value.requestedByApiTokenId || null,
       subjectType: value.subjectType || null,
       subjectId: value.subjectId || null,
       payload: value.payload || {},
-      resultMetadata: value.resultMetadata || {},
-      errorCode: value.errorCode || null,
-      errorMessage: value.errorMessage || null,
     }),
   );
 }
@@ -645,18 +641,14 @@ async function createCertificateJob(options) {
   );
   const { queuedAt, startedAt, completedAt, cancelledAt } =
     initialLifecycleTimestamps(options, status);
-  const requestIdentity = idempotencyIdentity({
+  const requestIdentity = jobCreationIdentity({
     operation,
-    status,
     source,
     requestedByUserId: options.requestedByUserId,
     requestedByApiTokenId: options.requestedByApiTokenId,
     subjectType,
     subjectId,
     payload,
-    resultMetadata,
-    errorCode,
-    errorMessage,
   });
 
   try {
@@ -724,7 +716,7 @@ async function createCertificateJob(options) {
         idempotencyKey,
       );
       if (existing) {
-        if (idempotencyIdentity(existing) === requestIdentity) {
+        if (jobCreationIdentity(existing) === requestIdentity) {
           return options.returnOutcome === true
             ? { job: existing, created: false }
             : existing;
@@ -751,7 +743,7 @@ async function createCertificateJob(options) {
         idempotencyKey,
       );
       if (existing) {
-        if (idempotencyIdentity(existing) === requestIdentity) {
+        if (jobCreationIdentity(existing) === requestIdentity) {
           return options.returnOutcome === true
             ? { job: existing, created: false }
             : existing;
@@ -1054,6 +1046,7 @@ module.exports = {
   fieldNameLooksForbidden,
   getCertificateJobById,
   isTerminalJobStatus,
+  jobCreationIdentity,
   jobFromRow,
   jobLogFromRow,
   listCertificateJobLog,

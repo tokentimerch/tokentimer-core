@@ -53,6 +53,43 @@ function singleClientPool(client, onQuery = null) {
   };
 }
 
+const LOCK_WAIT_TIMEOUT_MS = 5_000;
+const LOCK_WAIT_POLL_INTERVAL_MS = 25;
+
+async function backendPid(client) {
+  const result = await client.query("SELECT pg_backend_pid() AS pid");
+  return Number(result.rows[0].pid);
+}
+
+async function waitForBlockingBackend({
+  observerClient,
+  waiterPid,
+  blockerPid,
+  description,
+}) {
+  const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+  let blockingPids = [];
+
+  while (Date.now() < deadline) {
+    const result = await observerClient.query(
+      "SELECT pg_blocking_pids($1) AS blocking_pids",
+      [waiterPid],
+    );
+    blockingPids = result.rows[0]?.blocking_pids || [];
+    if (blockingPids.map(Number).includes(blockerPid)) {
+      console.info(
+        `[certops workspace race] ${description}: waiter=${waiterPid}, blocker=${blockerPid}, pg_blocking_pids=[${blockingPids.join(", ")}]`,
+      );
+      return blockingPids.map(Number);
+    }
+    await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_POLL_INTERVAL_MS));
+  }
+
+  throw new Error(
+    `${description}: expected PostgreSQL backend ${waiterPid} to be blocked by ${blockerPid} within ${LOCK_WAIT_TIMEOUT_MS}ms; last pg_blocking_pids=[${blockingPids.join(", ")}]`,
+  );
+}
+
 async function primaryWorkspaceId(session) {
   const response = await request(BASE)
     .get("/api/v1/workspaces?limit=50&offset=0")
@@ -600,11 +637,20 @@ describe("CertOps workspace kill-switch API", function () {
     const subjectAfterPause = `pause-first-${crypto.randomUUID()}`;
     const pauseAuditEntered = deferred();
     const releasePauseCommit = deferred();
-    const pauseClient = await pool.connect();
-    const jobClient = await pool.connect();
+    let pauseClient;
+    let jobClient;
+    let pauseFirstObserver;
+    let pauseFirst;
+    let pauseFirstJob;
 
     try {
-      const pause = setWorkspaceCertOpsPauseState({
+      pauseClient = await pool.connect();
+      jobClient = await pool.connect();
+      pauseFirstObserver = await pool.connect();
+      const pausePid = await backendPid(pauseClient);
+      const jobPid = await backendPid(jobClient);
+
+      pauseFirst = setWorkspaceCertOpsPauseState({
         workspaceId: fixture.workspaceId,
         certOpsPaused: true,
         reason: "pause wins race",
@@ -619,7 +665,7 @@ describe("CertOps workspace kill-switch API", function () {
       await pauseAuditEntered.promise;
 
       const shareRequested = deferred();
-      const job = createManualCertificateJob({
+      pauseFirstJob = createManualCertificateJob({
         workspaceId: fixture.workspaceId,
         operation: "deploy",
         subjectType: "managed_certificate",
@@ -631,20 +677,37 @@ describe("CertOps workspace kill-switch API", function () {
         }),
       });
       await shareRequested.promise;
+      const pauseFirstBlockingPids = await waitForBlockingBackend({
+        observerClient: pauseFirstObserver,
+        waiterPid: jobPid,
+        blockerPid: pausePid,
+        description: "pause-first FOR SHARE waits for FOR UPDATE",
+      });
+      expect(pauseFirstBlockingPids).to.include(pausePid);
       releasePauseCommit.resolve();
-      await pause;
+      await pauseFirst;
       await assert.rejects(
-        () => job,
+        () => pauseFirstJob,
         (error) => error?.code === "CERTOPS_WORKSPACE_PAUSED",
       );
+      const pauseFirstState = await TestUtils.execQuery(
+        "SELECT certops_paused FROM workspaces WHERE id = $1",
+        [fixture.workspaceId],
+      );
+      expect(pauseFirstState.rows[0].certops_paused).to.equal(true);
       expect(await jobsForSubject(fixture.workspaceId, subjectAfterPause)).to.have.length(0);
       expect(await manualJobAudits(fixture.workspaceId, subjectAfterPause)).to.have.length(0);
     } finally {
+      releasePauseCommit.resolve();
+      await Promise.allSettled([pauseFirst, pauseFirstJob].filter(Boolean));
       try {
-        pauseClient.release();
+        pauseFirstObserver?.release();
       } catch (_) {}
       try {
-        jobClient.release();
+        pauseClient?.release();
+      } catch (_) {}
+      try {
+        jobClient?.release();
       } catch (_) {}
     }
 
@@ -656,11 +719,20 @@ describe("CertOps workspace kill-switch API", function () {
     const subjectBeforePause = `job-first-${crypto.randomUUID()}`;
     const jobAuditEntered = deferred();
     const releaseJobCommit = deferred();
-    const firstJobClient = await pool.connect();
-    const secondPauseClient = await pool.connect();
+    let firstJobClient;
+    let secondPauseClient;
+    let jobFirstObserver;
+    let jobFirst;
+    let jobFirstPause;
 
     try {
-      const job = createManualCertificateJob({
+      firstJobClient = await pool.connect();
+      secondPauseClient = await pool.connect();
+      jobFirstObserver = await pool.connect();
+      const jobPid = await backendPid(firstJobClient);
+      const pausePid = await backendPid(secondPauseClient);
+
+      jobFirst = createManualCertificateJob({
         workspaceId: fixture.workspaceId,
         operation: "deploy",
         subjectType: "managed_certificate",
@@ -677,7 +749,7 @@ describe("CertOps workspace kill-switch API", function () {
       await jobAuditEntered.promise;
 
       const updateLockRequested = deferred();
-      const pause = setWorkspaceCertOpsPauseState({
+      jobFirstPause = setWorkspaceCertOpsPauseState({
         workspaceId: fixture.workspaceId,
         certOpsPaused: true,
         reason: "job wins race",
@@ -687,19 +759,36 @@ describe("CertOps workspace kill-switch API", function () {
         }),
       });
       await updateLockRequested.promise;
+      const jobFirstBlockingPids = await waitForBlockingBackend({
+        observerClient: jobFirstObserver,
+        waiterPid: pausePid,
+        blockerPid: jobPid,
+        description: "job-first FOR UPDATE waits for FOR SHARE",
+      });
+      expect(jobFirstBlockingPids).to.include(jobPid);
       releaseJobCommit.resolve();
 
-      const [created, paused] = await Promise.all([job, pause]);
+      const [created, paused] = await Promise.all([jobFirst, jobFirstPause]);
       expect(created.created).to.equal(true);
       expect(paused.certOpsPaused).to.equal(true);
       expect(await jobsForSubject(fixture.workspaceId, subjectBeforePause)).to.have.length(1);
       expect(await manualJobAudits(fixture.workspaceId, subjectBeforePause)).to.have.length(1);
+      const jobFirstState = await TestUtils.execQuery(
+        "SELECT certops_paused FROM workspaces WHERE id = $1",
+        [fixture.workspaceId],
+      );
+      expect(jobFirstState.rows[0].certops_paused).to.equal(true);
     } finally {
+      releaseJobCommit.resolve();
+      await Promise.allSettled([jobFirst, jobFirstPause].filter(Boolean));
       try {
-        firstJobClient.release();
+        jobFirstObserver?.release();
       } catch (_) {}
       try {
-        secondPauseClient.release();
+        firstJobClient?.release();
+      } catch (_) {}
+      try {
+        secondPauseClient?.release();
       } catch (_) {}
     }
 

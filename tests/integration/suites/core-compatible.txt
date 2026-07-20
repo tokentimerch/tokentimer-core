@@ -83,6 +83,7 @@ tests/integration/certops-jobs-evidence.test.js
 tests/integration/certops-executor-events.test.js
 tests/integration/certops-docs-fixtures.test.js
 tests/integration/certops-fake-executor.test.js
+tests/integration/certops-job-create-api.test.js
 tests/integration/certops-job-read-apis.test.js
 tests/integration/certops-workspace-kill-switch-api.test.js
 

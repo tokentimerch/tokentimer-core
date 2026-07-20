@@ -93,6 +93,13 @@ routes and UI are hidden, so milestone code can ship dark, Cloud can run staged
 per-workspace previews, and Enterprise enables it deliberately. Edition, plan,
 and license gating apply on top once the flag is on.
 
+The explicit exception is the workspace kill-switch settings surface:
+`GET` and `PUT /api/v1/workspaces/:id/certops/settings` remain available while
+the global rollout is disabled, so incident controls can be inspected and
+staged. The stored workspace pause state is independent of the global flag;
+effective operational activity remains
+`certOpsActive = certOpsEnabled && !certOpsPaused`.
+
 M1 Core is dark-launched and env-gated: `CERTOPS_ENABLED` is the authoritative
 Core rollout control for M1. The optional
 `system_settings.certops_settings.enabled` read path is forward-compatible only;
