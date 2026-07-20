@@ -36,6 +36,7 @@ import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
+import { tokenAPI } from '../../utils/apiClient';
 import {
   CERTOPS_TOKEN_NAME_MAX_LENGTH,
   CERTOPS_TOKEN_SCOPES,
@@ -143,6 +144,8 @@ export default function ApiTokenPanel() {
   const [creating, setCreating] = useState(false);
   const [plaintextToken, setPlaintextToken] = useState('');
   const [showOnceOpen, setShowOnceOpen] = useState(false);
+  const [monitorExpiry, setMonitorExpiry] = useState(true);
+  const [createdTokenInfo, setCreatedTokenInfo] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [revoking, setRevoking] = useState(false);
   const revokeCancelRef = useRef(null);
@@ -155,6 +158,7 @@ export default function ApiTokenPanel() {
     activeWorkspaceRef.current = workspaceId;
     setPlaintextToken('');
     setShowOnceOpen(false);
+    setCreatedTokenInfo(null);
     setRevokeTarget(null);
   }, [workspaceId]);
 
@@ -209,6 +213,10 @@ export default function ApiTokenPanel() {
       setName('');
       setScopes([]);
       setExpiresLocal('');
+      setCreatedTokenInfo({
+        name: result?.token?.name || name.trim(),
+        expiresAt: result?.token?.expiresAt || expiresAt || null,
+      });
       setPlaintextToken(plaintext);
       setShowOnceOpen(true);
       showSuccess('API token created');
@@ -220,9 +228,27 @@ export default function ApiTokenPanel() {
     }
   };
 
-  const handleShowOnceClose = () => {
+  const handleShowOnceClose = async () => {
+    if (monitorExpiry && createdTokenInfo?.expiresAt && workspaceId) {
+      try {
+        await tokenAPI.createToken({
+          name: `${createdTokenInfo.name || 'Machine token'} (CertOps)`,
+          type: 'api_key',
+          category: 'key_secret',
+          expiresAt: createdTokenInfo.expiresAt,
+          workspace_id: workspaceId,
+        });
+      } catch (err) {
+        showError(
+          'Monitoring not added',
+          'The machine token was created, but TokenTimer could not add it for expiration monitoring. Add it manually if needed.'
+        );
+      }
+    }
     setShowOnceOpen(false);
     setPlaintextToken('');
+    setCreatedTokenInfo(null);
+    setMonitorExpiry(true);
     refresh();
   };
 
@@ -490,6 +516,17 @@ export default function ApiTokenPanel() {
                 copyable
                 monospace
               />
+              {createdTokenInfo?.expiresAt ? (
+                <Checkbox
+                  isChecked={monitorExpiry}
+                  onChange={event => setMonitorExpiry(event.target.checked)}
+                  size='sm'
+                >
+                  <Text as='span' fontSize='sm'>
+                    Monitor this token&apos;s expiration with TokenTimer
+                  </Text>
+                </Checkbox>
+              ) : null}
             </VStack>
           </ModalBody>
           <ModalFooter>

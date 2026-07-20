@@ -26,7 +26,13 @@ export default function NotFound() {
           <Button as={RouterLink} to='/' colorScheme='blue'>
             Go Home
           </Button>
-          <Button as={RouterLink} to='/pricing' variant='ghost'>
+          <Button
+            as='a'
+            href='https://tokentimer.ch/pricing'
+            target='_blank'
+            rel='noopener noreferrer'
+            variant='ghost'
+          >
             View Pricing
           </Button>
           <Button

@@ -43,6 +43,8 @@ Verify the CRDs are registered:
 kubectl get crd clusters.postgresql.cnpg.io
 ```
 
+When `postgresql.cloudnative.enabled` is true (the default), the chart connects to the in-cluster database with `DB_SSL=verify` and automatically mounts the CA CloudNativePG generates (`<release>-pg-ca` secret) into the API and worker/cronjob pods at `/etc/pg-ssl/ca.crt`. No manual TLS setup is required for the default in-cluster database.
+
 If you already have a PostgreSQL instance, skip the operator entirely and point the chart at your database instead:
 
 ```yaml
@@ -112,7 +114,7 @@ Any env var not exposed as a dedicated values key can be passed through:
 - `api.extraVolumes` / `api.extraVolumeMounts` for the API
 - `worker.extraVolumes` / `worker.extraVolumeMounts` for all workers
 
-Example -- setting delivery window and DB SSL cert for workers:
+Example -- setting delivery window and DB SSL cert for an **external** PostgreSQL instance on workers (not needed for the default in-cluster CloudNativePG database, whose CA is mounted automatically):
 
 ```yaml
 worker:

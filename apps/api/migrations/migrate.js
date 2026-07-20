@@ -5,6 +5,10 @@ const { logger } = require("../utils/logger");
 const caPath = process.env.PGSSLROOTCERT;
 const sslMode = process.env.DB_SSL;
 const hasCA = !!caPath;
+const isProduction = process.env.NODE_ENV === "production";
+
+// SSL semantics mirrored from apps/api/db/database.js so migrations don't
+// silently skip server-identity verification when the main API enforces it.
 const sslConfig =
   sslMode === "verify" || hasCA
     ? {
@@ -13,8 +17,10 @@ const sslConfig =
         minVersion: "TLSv1.3",
       }
     : sslMode === "require"
-      ? { rejectUnauthorized: false, minVersion: "TLSv1.3" }
-      : false;
+      ? { rejectUnauthorized: isProduction, minVersion: "TLSv1.3" }
+      : sslMode === "require-no-verify"
+        ? { rejectUnauthorized: false, minVersion: "TLSv1.3" }
+        : false;
 
 // Reusable pool for migrations
 const migrationPool = new Pool({

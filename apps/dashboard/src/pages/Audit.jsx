@@ -617,6 +617,39 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
+  function formatCertOpsTokenMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.name) parts.push(`Name: ${md.name}`);
+      if (md.token_prefix) parts.push(`Prefix: ${md.token_prefix}`);
+      if (Array.isArray(md.scopes) && md.scopes.length > 0)
+        parts.push(`Scopes: ${md.scopes.join(', ')}`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.expires_at)
+        parts.push(`Expiry: ${formatDateTime(md.expires_at)}`);
+      if (md.revoked_at)
+        parts.push(`Revoked: ${formatDateTime(md.revoked_at)}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsJobMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.operation) parts.push(`Operation: ${md.operation}`);
+      if (md.subjectType) parts.push(`Subject: ${md.subjectType}`);
+      if (md.subjectId) parts.push(`Subject ID: ${md.subjectId}`);
+      if (md.source) parts.push(`Source: ${md.source}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   function formatAuthMetadata(ev) {
     try {
       const md = ev?.metadata || {};
@@ -960,6 +993,20 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       action === 'TOKENS_REASSIGNED_CONTACT_GROUP'
     ) {
       const formatted = formatTokenMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    // CertOps machine tokens and manual jobs
+    if (
+      action === 'CERTOPS_API_TOKEN_CREATED' ||
+      action === 'CERTOPS_API_TOKEN_REVOKED'
+    ) {
+      const formatted = formatCertOpsTokenMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_JOB_CREATED_MANUAL') {
+      const formatted = formatCertOpsJobMetadata(ev);
       if (formatted) return formatted;
     }
 
