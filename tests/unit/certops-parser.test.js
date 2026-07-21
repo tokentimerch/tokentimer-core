@@ -143,9 +143,10 @@ describe("CertOps public certificate parser", () => {
     const der = pemToDer(PUBLIC_LEAF_CERT);
     const [fromPem] = parsePublicCertificateMaterial(PUBLIC_LEAF_CERT);
     const [fromDer] = parsePublicCertificateMaterial(der);
+    const [fromUint8Array] = parsePublicCertificateMaterial(new Uint8Array(der));
 
     assert.deepEqual(fromDer, fromPem);
-    assert.equal(parsePublicCertificateMaterial(new Uint8Array(der)).length, 1);
+    assert.deepEqual(fromUint8Array, fromPem);
   });
 
   it("extracts SAN values", () => {
@@ -280,6 +281,12 @@ describe("CertOps public certificate parser", () => {
   it("rejects DER private-key and key-container material before certificate parsing", () => {
     for (const input of [fakePrivateKeyDer(), fakePfxDer(), fakeJks()]) {
       assertParserCode(input, PRIVATE_KEY_MATERIAL_REJECTED);
+    }
+  });
+
+  it("applies binary private-material detection to Uint8Array inputs", () => {
+    for (const input of [fakePrivateKeyDer(), fakePfxDer(), fakeJks()]) {
+      assertParserCode(new Uint8Array(input), PRIVATE_KEY_MATERIAL_REJECTED);
     }
   });
 

@@ -65,6 +65,14 @@ function assertBoundedPublicCertificateInput(value) {
   }
 }
 
+function normalizePublicCertificateInput(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return value;
+}
+
 function normalizePemBlock(pemBlock) {
   const body = pemBlock
     .replace(/-----BEGIN CERTIFICATE-----/g, "")
@@ -371,11 +379,13 @@ function isAsciiPemInput(value) {
 
 function parsePublicCertificateMaterial(input) {
   assertBoundedPublicCertificateInput(input);
-  rejectPrivateKeyMaterial(input);
-  if (Buffer.isBuffer(input) || input instanceof Uint8Array) {
-    const der = Buffer.isBuffer(input)
-      ? input
-      : Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  // The detector classifies binary material only when it receives a Buffer.
+  // Normalize bounded Uint8Array views first so every accepted binary input
+  // gets the same private-key, PFX, and JKS checks before parsing.
+  const normalizedInput = normalizePublicCertificateInput(input);
+  rejectPrivateKeyMaterial(normalizedInput);
+  if (Buffer.isBuffer(normalizedInput)) {
+    const der = normalizedInput;
     // Kubernetes tls.crt values are commonly base64-encoded PEM bytes. Decode
     // those bytes only after proving they are ASCII text; arbitrary binary is
     // never coerced to UTF-8 and remains subject to exact DER validation.
@@ -385,7 +395,7 @@ function parsePublicCertificateMaterial(input) {
     }
     return [parseExactDerCertificate(der)];
   }
-  const pemBlocks = extractCertificatePemBlocks(input);
+  const pemBlocks = extractCertificatePemBlocks(normalizedInput);
   return pemBlocks.map(parseCertificateBlock);
 }
 
