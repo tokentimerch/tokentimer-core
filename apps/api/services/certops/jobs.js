@@ -107,6 +107,9 @@ const JOB_SOURCES = Object.freeze([
   "endpoint-monitor",
   "control-plane",
   "external",
+  // This provenance is assigned only by the human provision-intent service.
+  // It distinguishes narrow M3 controller commands from generic deploy jobs.
+  "controller_provisioning",
 ]);
 const JOB_SOURCE_SET = new Set(JOB_SOURCES);
 

@@ -1511,6 +1511,30 @@ const migrations = [
         ON certificate_controller_provision_deliveries(workspace_id, controller_cluster_id, delivered_at);
     `,
   },
+  {
+    version: 22,
+    name: "certops_controller_provisioning_event_timestamps",
+    sql: `
+      -- First accepted M3 controller-event times make deterministic event
+      -- retries truthful without adding M4 attempts, claims, or leases.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_source_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_source_check CHECK (
+          source IN (
+            'api', 'executor', 'system', 'automation', 'domain-monitor',
+            'endpoint-monitor', 'control-plane', 'external',
+            'controller_provisioning'
+          )
+        );
+      ALTER TABLE certificate_controller_provision_deliveries
+        ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_controller_provision_deliveries
+        ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_controller_provision_deliveries
+        ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

@@ -30,6 +30,7 @@ const {
   CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
   CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  recordControllerProvisioningEventTimestamp,
   takeNextControllerProvisioningCommand,
 } = require("../services/certops/controllerProvisioning");
 const { CERTOPS_WORKSPACE_PAUSED } = require("../services/certops/workspaceKillSwitch");
@@ -1597,6 +1598,14 @@ async function executorEventsHandler(req, res, options = {}) {
           });
         }
 
+        await recordControllerProvisioningEventTimestamp({
+          client,
+          workspaceId,
+          jobId: event.jobId,
+          eventType: event.eventType,
+          occurredAt: event.occurredAt,
+        });
+
         const log = await appendCertificateJobLog({
           client,
           workspaceId,
@@ -1886,9 +1895,9 @@ function controllerProvisioningCommandErrorResponse(res, error) {
 async function controllerProvisioningCommandsHandler(req, res, options = {}) {
   try {
     const takeNext = options.takeNextControllerProvisioningCommand || takeNextControllerProvisioningCommand;
-    const command = await takeNext({ apiToken: req.apiToken });
-    if (!command) return res.status(204).end();
-    return res.status(200).json({ command });
+    const delivery = await takeNext({ apiToken: req.apiToken });
+    if (!delivery) return res.status(204).end();
+    return res.status(200).json(delivery);
   } catch (error) {
     const response = controllerProvisioningCommandErrorResponse(res, error);
     if (response) return response;

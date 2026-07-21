@@ -120,15 +120,20 @@ function executorEventPayload(workspaceId, jobId) {
   };
 }
 
-function createHumanProvisioningApp(ownerId) {
+function createHumanProvisioningApp(ownerId, {
+  userId = ownerId,
+  workspaceRole = "workspace_manager",
+  isWorkerCall = false,
+} = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     const match = /^\/api\/v1\/workspaces\/([^/]+)\/certops(?:\/|$)/.exec(req.path);
     if (match) {
       req.workspace = { id: match[1] };
-      req.user = { id: ownerId };
-      req.authz = { workspaceRole: "workspace_manager" };
+      if (userId) req.user = { id: userId };
+      req.authz = { workspaceRole };
+      if (isWorkerCall) req.isWorkerCall = true;
     }
     next();
   });
@@ -277,6 +282,48 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
+  it("upgrades the M3-A7 delivery shape from migration 21 to 22", async () => {
+    const migration = migrations.find((item) => item.version === 22);
+    expect(migration?.name).to.equal("certops_controller_provisioning_event_timestamps");
+    const schema = `m3a7_delivery_${crypto.randomUUID().replaceAll("-", "")}`;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`CREATE SCHEMA ${schema}`);
+      await client.query(`SET LOCAL search_path TO ${schema}, public`);
+      await client.query(`
+        CREATE TABLE certificate_jobs (
+          id UUID PRIMARY KEY,
+          source TEXT NOT NULL CHECK (source IN ('api', 'executor', 'system', 'automation', 'domain-monitor', 'endpoint-monitor', 'control-plane', 'external'))
+        );
+        CREATE TABLE certificate_controller_provision_deliveries (
+          job_id UUID PRIMARY KEY,
+          workspace_id UUID NOT NULL,
+          controller_cluster_id TEXT NOT NULL,
+          delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await client.query(migration.sql);
+      await client.query(
+        "INSERT INTO certificate_jobs (id, source) VALUES ($1, 'controller_provisioning')",
+        [crypto.randomUUID()],
+      );
+      const columns = await client.query(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_schema = $1 AND table_name = 'certificate_controller_provision_deliveries'
+          ORDER BY column_name`,
+        [schema],
+      );
+      expect(columns.rows.map((row) => row.column_name)).to.include.members([
+        "started_at", "completed_at", "failed_at",
+      ]);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+
   it("requires and preserves the immutable controller cluster binding for provisioning tokens", async () => {
     const fixture = await createWorkspace("controller-provisioning-token");
     try {
@@ -351,6 +398,146 @@ describe("CertOps controller provisioning", function () {
         audits: 1,
         deliveries: 0,
       });
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("requires a human manager session and preserves private-material precedence", async () => {
+    const fixture = await createWorkspace("controller-provisioning-session");
+    try {
+      const manager = createHumanProvisioningApp(fixture.ownerId);
+      await postProvisionIntent(manager, fixture.workspaceId, `manager-${crypto.randomUUID()}`, provisionRequest()).expect(201);
+
+      const viewer = createHumanProvisioningApp(fixture.ownerId, { workspaceRole: "viewer" });
+      await postProvisionIntent(viewer, fixture.workspaceId, `viewer-${crypto.randomUUID()}`, provisionRequest({ certificateName: "viewer-cert", secretName: "viewer-tls" })).expect(403);
+      const worker = createHumanProvisioningApp(fixture.ownerId, { isWorkerCall: true });
+      await postProvisionIntent(worker, fixture.workspaceId, `worker-${crypto.randomUUID()}`, provisionRequest({ certificateName: "worker-cert", secretName: "worker-tls" })).expect(403);
+      const anonymous = createHumanProvisioningApp(fixture.ownerId, { userId: null });
+      await postProvisionIntent(anonymous, fixture.workspaceId, `anonymous-${crypto.randomUUID()}`, provisionRequest({ certificateName: "anonymous-cert", secretName: "anonymous-tls" })).expect(403);
+
+      const previous = process.env.CERTOPS_ENABLED;
+      process.env.CERTOPS_ENABLED = "false";
+      try {
+        const privateBeforeGate = await postProvisionIntent(
+          viewer,
+          fixture.workspaceId,
+          `private-${crypto.randomUUID()}`,
+          { ...provisionRequest({ certificateName: "private-cert", secretName: "private-tls" }), privateKey: "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----" },
+        ).expect(422);
+        expect(privateBeforeGate.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
+      } finally {
+        if (previous === undefined) delete process.env.CERTOPS_ENABLED;
+        else process.env.CERTOPS_ENABLED = previous;
+      }
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("preserves observed public certificate state across intent creation and replays", async () => {
+    const fixture = await createWorkspace("controller-provisioning-observed-state");
+    const app = createHumanProvisioningApp(fixture.ownerId);
+    try {
+      const firstKey = `observed-first-${crypto.randomUUID()}`;
+      const first = await postProvisionIntent(app, fixture.workspaceId, firstKey, provisionRequest()).expect(201);
+      const observed = {
+        fingerprint: "f".repeat(64),
+        spki: "e".repeat(64),
+        pem: "-----BEGIN CERTIFICATE-----\nPUBLIC\n-----END CERTIFICATE-----",
+        issuer: "CN=issuer",
+        subject: "CN=example.com",
+        serial: "01ab",
+        algorithm: "RSA",
+        signature: "sha256WithRSAEncryption",
+        metadata: { controllerObservation: { resourceVersion: "77", certificateUid: crypto.randomUUID() }, retained: true },
+      };
+      await TestUtils.execQuery(
+        `UPDATE managed_certificates
+            SET fingerprint_sha256 = $2, spki_fingerprint_sha256 = $3,
+                certificate_pem = $4, issuer = $5, subject = $6,
+                serial_number = $7, not_before = $8, not_after = $9,
+                public_key_algorithm = $10, public_key_size = 2048,
+                signature_algorithm = $11, public_metadata = $12::jsonb
+          WHERE id = $1`,
+        [
+          first.body.managedCertificateId, observed.fingerprint, observed.spki,
+          observed.pem, observed.issuer, observed.subject, observed.serial,
+          "2025-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z",
+          observed.algorithm, observed.signature, JSON.stringify(observed.metadata),
+        ],
+      );
+      await postProvisionIntent(app, fixture.workspaceId, firstKey, provisionRequest()).expect(200);
+      // Exact replay must never run the planning update differently.
+      await postProvisionIntent(app, fixture.workspaceId, `observed-replay-${crypto.randomUUID()}`, provisionRequest()).expect(201);
+      const persisted = await TestUtils.execQuery(
+        `SELECT fingerprint_sha256, spki_fingerprint_sha256, certificate_pem,
+                issuer, subject, serial_number, not_before, not_after,
+                public_key_algorithm, public_key_size, signature_algorithm,
+                public_metadata
+           FROM managed_certificates WHERE id = $1`,
+        [first.body.managedCertificateId],
+      );
+      expect(persisted.rows[0]).to.include({
+        fingerprint_sha256: observed.fingerprint,
+        spki_fingerprint_sha256: observed.spki,
+        certificate_pem: observed.pem,
+        issuer: observed.issuer,
+        subject: observed.subject,
+        serial_number: observed.serial,
+        public_key_algorithm: observed.algorithm,
+        public_key_size: 2048,
+        signature_algorithm: observed.signature,
+      });
+      expect(persisted.rows[0].public_metadata).to.include({ retained: true });
+      expect(persisted.rows[0].public_metadata.controllerObservation).to.deep.include({ resourceVersion: "77" });
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("never turns generic or forged jobs into provisioning commands", async () => {
+    const fixture = await createWorkspace("controller-provisioning-provenance");
+    const humanApp = createHumanProvisioningApp(fixture.ownerId);
+    const executorApp = createControllerExecutorApp();
+    try {
+      const manual = await supertest(humanApp)
+        .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+        .send({
+          operation: "deploy",
+          subjectType: "managed_certificate",
+          subjectId: crypto.randomUUID(),
+          payload: { kind: "cert_manager_provision" },
+          idempotencyKey: `manual-${crypto.randomUUID()}`,
+        })
+        .expect(201);
+      expect(manual.body.job.source).to.equal("api");
+      const token = await createControllerToken(fixture);
+      await commandRequest(executorApp, token.plaintextToken).expect(204);
+
+      const valid = await postProvisionIntent(humanApp, fixture.workspaceId, `valid-${crypto.randomUUID()}`, provisionRequest()).expect(201);
+      const forgedJobId = crypto.randomUUID();
+      const forgedDesired = {
+        ...valid.body.job.payload.desiredCertificate,
+        jobId: forgedJobId,
+        managedCertificateId: crypto.randomUUID(),
+      };
+      await TestUtils.execQuery(
+        `INSERT INTO certificate_jobs (
+           id, workspace_id, operation, status, source, subject_type, subject_id,
+           payload, created_at, updated_at
+         ) VALUES ($1, $2, 'deploy', 'pending', 'controller_provisioning',
+           'managed_certificate', $3, $4::jsonb, NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')`,
+        [
+          forgedJobId, fixture.workspaceId, forgedDesired.managedCertificateId,
+          JSON.stringify({ kind: "cert_manager_provision", desiredCertificate: forgedDesired }),
+        ],
+      );
+      await commandRequest(executorApp, token.plaintextToken).expect(204);
+      const blocked = await TestUtils.execQuery("SELECT status, error_code FROM certificate_jobs WHERE id = $1", [forgedJobId]);
+      expect(blocked.rows[0]).to.deep.equal({ status: "blocked", error_code: "CERTOPS_CONTROLLER_PROVISIONING_INVALID_COMMAND" });
+      const delivered = await commandRequest(executorApp, token.plaintextToken).expect(200);
+      expect(delivered.body.command.jobId).to.equal(valid.body.job.id);
     } finally {
       await cleanupWorkspace(fixture);
     }

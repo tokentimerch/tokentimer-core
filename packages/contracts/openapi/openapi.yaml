@@ -3598,7 +3598,7 @@ paths:
           name: source
           schema:
             type: string
-            enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+            enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
         - in: query
           name: subjectType
           schema:
@@ -4928,7 +4928,7 @@ components:
             - cancelled
         source:
           type: string
-          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
         subjectType:
           type: string
           nullable: true
@@ -5054,7 +5054,7 @@ components:
           enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
         source:
           type: string
-          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external]
+          enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
         subjectType:
           type: string
           nullable: true
@@ -5366,6 +5366,14 @@ components:
       required: [command]
       properties:
         command: { $ref: "#/components/schemas/CertOpsControllerProvisioningCommand" }
+        eventTimestamps:
+          type: object
+          additionalProperties: false
+          description: First accepted real executor-event times for bounded M3 command redelivery; not an M4 attempt or lease record.
+          properties:
+            started: { type: string, format: date-time }
+            completed: { type: string, format: date-time }
+            failed: { type: string, format: date-time }
     CertOpsApiTokenScope:
       type: string
       enum:

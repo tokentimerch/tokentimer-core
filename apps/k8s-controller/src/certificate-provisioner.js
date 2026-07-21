@@ -4,7 +4,7 @@ const { containsPrivateKeyMaterial } = require("@tokentimer/log-scrub");
 
 const OWNERSHIP_LABELS = Object.freeze({
   managedBy: "app.kubernetes.io/managed-by",
-  intentId: "certops.tokentimer.io/intent-id",
+  lastIntentId: "certops.tokentimer.io/last-intent-id",
   workspaceId: "certops.tokentimer.io/workspace-id",
   clusterId: "certops.tokentimer.io/cluster-id",
   managedCertificateId: "certops.tokentimer.io/managed-certificate-id",
@@ -24,13 +24,21 @@ function isNotFound(error) {
   return Number(error?.statusCode || error?.status || error?.code) === 404;
 }
 
-function ownershipFor(command) {
+function stableOwnershipFor(command) {
   return {
     [OWNERSHIP_LABELS.managedBy]: "tokentimer",
-    [OWNERSHIP_LABELS.intentId]: command.jobId,
     [OWNERSHIP_LABELS.workspaceId]: command.workspaceId,
     [OWNERSHIP_LABELS.clusterId]: command.clusterId,
     [OWNERSHIP_LABELS.managedCertificateId]: command.managedCertificateId,
+  };
+}
+
+function ownershipFor(command) {
+  return {
+    ...stableOwnershipFor(command),
+    // Informational only: a later intent for the same managed certificate
+    // remains entitled to reconcile the locally owned Certificate.
+    [OWNERSHIP_LABELS.lastIntentId]: command.jobId,
   };
 }
 
@@ -57,7 +65,7 @@ function certificateFor(command) {
 
 function isOwnedByCommand(existing, command) {
   const labels = existing?.metadata?.labels || {};
-  const expected = ownershipFor(command);
+  const expected = stableOwnershipFor(command);
   return Object.entries(expected).every(([key, value]) => labels[key] === value);
 }
 
@@ -82,6 +90,23 @@ function createCertificateProvisioner({ client, clusterId, clusterWide = false, 
     }
   }
 
+  async function reconcileExisting(existing, command, desired) {
+    if (!isOwnedByCommand(existing, command)) {
+      throw provisionerError("CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT");
+    }
+    if (hasDesiredState(existing, command)) return { operation: "unchanged", resource: existing };
+    const patched = responseBody(await client.patchCertificate({
+      namespace: command.namespace,
+      name: command.certificateName,
+      certificate: desired,
+    }));
+    return { operation: "reconciled", resource: patched || null };
+  }
+
+  function isAlreadyExists(error) {
+    return Number(error?.statusCode || error?.status || error?.code) === 409;
+  }
+
   async function reconcile(command) {
     if (containsPrivateKeyMaterial(command)) {
       throw provisionerError("PRIVATE_KEY_MATERIAL_REJECTED");
@@ -96,23 +121,23 @@ function createCertificateProvisioner({ client, clusterId, clusterWide = false, 
       }));
     } catch (error) {
       if (!isNotFound(error)) throw error;
-      const created = responseBody(await client.createCertificate({
-        namespace: command.namespace,
-        name: command.certificateName,
-        certificate: desired,
-      }));
-      return { operation: "created", resource: created || null };
+      try {
+        const created = responseBody(await client.createCertificate({
+          namespace: command.namespace,
+          name: command.certificateName,
+          certificate: desired,
+        }));
+        return { operation: "created", resource: created || null };
+      } catch (createError) {
+        if (!isAlreadyExists(createError)) throw createError;
+        const raced = responseBody(await client.getCertificate({
+          namespace: command.namespace,
+          name: command.certificateName,
+        }));
+        return reconcileExisting(raced, command, desired);
+      }
     }
-    if (!isOwnedByCommand(existing, command)) {
-      throw provisionerError("CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT");
-    }
-    if (hasDesiredState(existing, command)) return { operation: "unchanged", resource: existing };
-    const patched = responseBody(await client.patchCertificate({
-      namespace: command.namespace,
-      name: command.certificateName,
-      certificate: desired,
-    }));
-    return { operation: "reconciled", resource: patched || null };
+    return reconcileExisting(existing, command, desired);
   }
 
   return Object.freeze({
@@ -130,4 +155,5 @@ module.exports = {
   hasDesiredState,
   isOwnedByCommand,
   ownershipFor,
+  stableOwnershipFor,
 };

@@ -4,7 +4,7 @@ const { pool } = require("../../db/database");
 const { writeAudit } = require("../audit");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const { createCertificateJob } = require("./jobs");
-const { upsertManagedCertificateByMonitorSource } = require("./inventory");
+const { upsertManagedCertificateForControllerProvisioning } = require("./inventory");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 
 const CERTOPS_CONTROLLER_PROVISIONING_INVALID =
@@ -19,6 +19,8 @@ const CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY =
   "CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY";
 const CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT =
   "CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT";
+const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
+const INVALID_COMMAND_ERROR_CODE = "CERTOPS_CONTROLLER_PROVISIONING_INVALID_COMMAND";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -217,24 +219,17 @@ async function createControllerProvisionIntent({
         CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
       );
     }
-    const managedCertificate = await upsertManagedCertificateByMonitorSource(
+    const managedCertificate = await upsertManagedCertificateForControllerProvisioning(
       client,
-      { commonName: initial.dnsNames[0], subjectAltNames: initial.dnsNames },
       {
         workspaceId: initial.workspaceId,
-        status: "discovered",
-        source: "cert_manager",
         sourceRef: sourceRefFor(initial),
         name: initial.certificateName,
-        keyMode: "cert-manager-managed",
         keyReference: keyReferenceFor(initial),
-        controllerProvisioningMetadata: {
-          clusterId: initial.clusterId,
-          namespace: initial.namespace,
-          certificateName: initial.certificateName,
-        },
+        clusterId: initial.clusterId,
+        namespace: initial.namespace,
+        certificateName: initial.certificateName,
       },
-      0,
     );
     const target = await upsertProvisioningTarget(client, initial);
     // The initial immutable creation hash intentionally uses a null job ID;
@@ -247,7 +242,9 @@ async function createControllerProvisionIntent({
       client,
       workspaceId: initial.workspaceId,
       operation: "deploy",
-      source: "api",
+      // This source is server-owned; generic manual deploy jobs must never be
+      // interpreted as executable cert-manager provisioning commands.
+      source: CONTROLLER_PROVISIONING_JOB_SOURCE,
       requestedByUserId: actorUserId,
       subjectType: "managed_certificate",
       subjectId: managedCertificate.id,
@@ -322,10 +319,12 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
     await client.query("BEGIN");
     await lockWorkspaceForCertOpsSideEffect({ client, workspaceId: apiToken.workspaceId });
     const selected = await client.query(
-      `SELECT j.id, j.payload
+      `SELECT j.id, j.payload, j.subject_type, j.subject_id,
+              d.started_at, d.completed_at, d.failed_at
          FROM certificate_jobs j
          LEFT JOIN certificate_controller_provision_deliveries d ON d.job_id = j.id
         WHERE j.workspace_id = $1
+          AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
           AND j.operation = 'deploy'
           AND j.status NOT IN ('rejected', 'succeeded', 'failed', 'blocked', 'cancelled')
           AND j.payload->>'kind' = 'cert_manager_provision'
@@ -341,8 +340,58 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
       await client.query("COMMIT");
       return null;
     }
-    const desired = normalizeDesiredCertificate(row.payload?.desiredCertificate);
-    validateAuthenticatedProvisioningBinding(apiToken, desired);
+
+    let desired;
+    try {
+      desired = normalizeDesiredCertificate(row.payload?.desiredCertificate);
+      if (
+        row.subject_type !== "managed_certificate" ||
+        row.subject_id !== desired.managedCertificateId ||
+        row.id !== desired.jobId
+      ) {
+        throw provisioningError("Provisioning command identity is invalid");
+      }
+      validateAuthenticatedProvisioningBinding(apiToken, desired);
+      const identity = await client.query(
+        `SELECT mc.id
+           FROM managed_certificates mc
+          WHERE mc.id = $1
+            AND mc.workspace_id = $2
+            AND mc.source = 'cert_manager'
+            AND mc.source_ref = $3
+            AND mc.status NOT IN ('revoked', 'decommissioned')
+            AND EXISTS (
+              SELECT 1
+                FROM certificate_targets ct
+               WHERE ct.workspace_id = mc.workspace_id
+                 AND ct.source = 'cert_manager'
+                 AND ct.source_ref = $4
+                 AND ct.target_type = 'kubernetes-secret'
+            )`,
+        [
+          desired.managedCertificateId,
+          apiToken.workspaceId,
+          sourceRefFor(desired),
+          targetSourceRefFor(desired),
+        ],
+      );
+      if (!identity.rows[0]) {
+        throw provisioningError("Provisioning command inventory identity is invalid");
+      }
+    } catch (_error) {
+      // A malformed or stale server-owned row is never command work. Mark it
+      // terminal so it cannot hot-loop while still preserving an auditable job.
+      await client.query(
+        `UPDATE certificate_jobs
+            SET status = 'blocked', error_code = $2,
+                error_message = 'Controller provisioning command rejected',
+                updated_at = NOW()
+          WHERE id = $1`,
+        [row.id, INVALID_COMMAND_ERROR_CODE],
+      );
+      await client.query("COMMIT");
+      return null;
+    }
     await client.query(
       `INSERT INTO certificate_controller_provision_deliveries
          (job_id, workspace_id, controller_cluster_id, delivered_at, updated_at)
@@ -353,13 +402,53 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
       [row.id, apiToken.workspaceId, apiToken.controllerClusterId],
     );
     await client.query("COMMIT");
-    return desired;
+    const eventTimestamps = Object.fromEntries(
+      [
+        ["started", row.started_at],
+        ["completed", row.completed_at],
+        ["failed", row.failed_at],
+      ]
+        .filter(([, value]) => value)
+        .map(([stage, value]) => [stage, new Date(value).toISOString()]),
+    );
+    return { command: desired, eventTimestamps };
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch (_) { /* preserve failure */ }
     throw error;
   } finally {
     client.release();
   }
+}
+
+/**
+ * Persist first-seen real event times for the narrow M3 delivery only. These
+ * are idempotency aids, not M4 attempts, claims, leases, or heartbeats.
+ */
+async function recordControllerProvisioningEventTimestamp({
+  client,
+  workspaceId,
+  jobId,
+  eventType,
+  occurredAt,
+} = {}) {
+  const columnByEventType = {
+    "job.started": "started_at",
+    "job.completed": "completed_at",
+    "job.failed": "failed_at",
+  };
+  const column = columnByEventType[eventType];
+  if (!column || !occurredAt) return;
+  await client.query(
+    `UPDATE certificate_controller_provision_deliveries d
+        SET ${column} = COALESCE(d.${column}, $3::timestamptz),
+            updated_at = NOW()
+       FROM certificate_jobs j
+      WHERE d.job_id = j.id
+        AND j.id = $1
+        AND j.workspace_id = $2
+        AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'`,
+    [jobId, workspaceId, occurredAt],
+  );
 }
 
 module.exports = {
@@ -369,10 +458,12 @@ module.exports = {
   CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
   CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
   CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT,
+  CONTROLLER_PROVISIONING_JOB_SOURCE,
   DELIVERY_RETRY_INTERVAL_SECONDS,
   createControllerProvisionIntent,
   normalizeDesiredCertificate,
   normalizeHumanProvisionRequest,
+  recordControllerProvisioningEventTimestamp,
   takeNextControllerProvisioningCommand,
   validateAuthenticatedProvisioningBinding,
 };

@@ -11,6 +11,7 @@ const {
   isTransientError,
   isTransientStatus,
   parseRetryAfter,
+  readBoundedJsonResponse,
   retryDelay,
 } = require("./observation-reporter");
 
@@ -20,30 +21,14 @@ function commandClientError(code) {
   return error;
 }
 
-async function boundedJson(response) {
-  const text = await response.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
-    throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
-  }
-  try { return JSON.parse(text); } catch (_) {
-    throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
-  }
-}
-
 function stableId(jobId, stage) {
   return crypto.createHash("sha256").update(`${jobId}:${stage}`, "utf8").digest("hex").slice(0, 48);
 }
 
-function stableOccurredAt(jobId, stage) {
-  const value = crypto.createHash("sha256").update(`${jobId}:${stage}:time`, "utf8").digest().readUInt32BE(0);
-  const start = Date.UTC(2020, 0, 1);
-  const span = 20 * 366 * 24 * 60 * 60 * 1000;
-  return new Date(start + (value / 0xffffffff) * span).toISOString();
-}
-
 function validateCommand(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).length !== 1 || !value.command || typeof value.command !== "object") {
+      Object.keys(value).some((key) => key !== "command" && key !== "eventTimestamps") ||
+      !value.command || typeof value.command !== "object") {
     throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
   }
   const command = value.command;
@@ -58,7 +43,14 @@ function validateCommand(value) {
   if (containsPrivateKeyMaterial(command)) {
     throw commandClientError("PRIVATE_KEY_MATERIAL_REJECTED");
   }
-  return command;
+  const eventTimestamps = value.eventTimestamps === undefined ? {} : value.eventTimestamps;
+  if (!eventTimestamps || typeof eventTimestamps !== "object" || Array.isArray(eventTimestamps) ||
+      Object.keys(eventTimestamps).some((stage) => !["started", "completed", "failed"].includes(stage)) ||
+      Object.values(eventTimestamps).some((timestamp) =>
+        typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp)))) {
+    throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
+  }
+  return { command, eventTimestamps };
 }
 
 function createControllerProvisioningCommandClient({
@@ -72,6 +64,7 @@ function createControllerProvisioningCommandClient({
   clearTimeoutFn = clearTimeout,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
   sleep,
+  clock = () => new Date(),
 } = {}) {
   if (typeof fetchImpl !== "function") throw new TypeError("fetch is required");
   const root = parseApiUrl(apiUrl);
@@ -80,6 +73,28 @@ function createControllerProvisioningCommandClient({
   let started = false;
   const abortControllers = new Map();
   const retryWaiters = new Set();
+  const stageTimestampCache = new Map();
+  const MAX_STAGE_TIMESTAMPS = 256;
+
+  function stageTimestampKey(command, stage) {
+    return `${command.jobId}:${stage}`;
+  }
+  function rememberStageTimestamp(command, stage, timestamp) {
+    if (typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp))) return null;
+    const key = stageTimestampKey(command, stage);
+    stageTimestampCache.delete(key);
+    stageTimestampCache.set(key, timestamp);
+    while (stageTimestampCache.size > MAX_STAGE_TIMESTAMPS) {
+      stageTimestampCache.delete(stageTimestampCache.keys().next().value);
+    }
+    return timestamp;
+  }
+  function occurredAtFor(command, stage) {
+    const persisted = command.eventTimestamps?.[stage];
+    const cached = stageTimestampCache.get(stageTimestampKey(command, stage));
+    const timestamp = persisted || cached || clock().toISOString();
+    return rememberStageTimestamp(command, stage, timestamp);
+  }
 
   function stoppingError() { return commandClientError("CONTROLLER_PROVISIONING_STOPPING"); }
   function cancelRetryWaits() {
@@ -128,7 +143,13 @@ function createControllerProvisioningCommandClient({
         });
         if (state.stopping) throw stoppingError();
         if (response.status === 204) return null;
-        if (response.status >= 200 && response.status < 300) return boundedJson(response);
+        if (response.status >= 200 && response.status < 300) {
+          return await readBoundedJsonResponse(response, {
+            errorFactory: commandClientError,
+            maxResponseBytes: MAX_RESPONSE_BYTES,
+            invalidResponseCode: "CONTROLLER_PROVISIONING_INVALID_RESPONSE",
+          });
+        }
         if (!isTransientStatus(response.status)) throw commandClientError(`CONTROLLER_PROVISIONING_HTTP_${response.status}`);
         lastError = commandClientError(`CONTROLLER_PROVISIONING_HTTP_${response.status}`);
         delay = response.status === 429
@@ -163,7 +184,12 @@ function createControllerProvisioningCommandClient({
     isReady: () => started && acceptingWork,
     async nextCommand() {
       const result = await request(commandEndpoint, {});
-      return result === null ? null : validateCommand(result);
+      if (result === null) return null;
+      const delivery = validateCommand(result);
+      for (const [stage, timestamp] of Object.entries(delivery.eventTimestamps)) {
+        rememberStageTimestamp(delivery.command, stage, timestamp);
+      }
+      return { ...delivery.command, eventTimestamps: delivery.eventTimestamps };
     },
     async reportEvent(command, stage, { status, eventType, message, evidence } = {}) {
       const event = {
@@ -175,7 +201,7 @@ function createControllerProvisioningCommandClient({
         executorId: command.clusterId,
         status,
         eventType,
-        occurredAt: stableOccurredAt(command.jobId, stage),
+        occurredAt: occurredAtFor(command, stage),
         ...(message ? { message } : {}),
         ...(evidence ? { evidence: [evidence] } : {}),
       };
@@ -193,6 +219,5 @@ function createControllerProvisioningCommandClient({
 module.exports = {
   createControllerProvisioningCommandClient,
   stableId,
-  stableOccurredAt,
   validateCommand,
 };

@@ -92,7 +92,12 @@ function validateResponse(value) {
   };
 }
 
-async function boundedJson(response) {
+async function readBoundedJsonResponse(response, {
+  errorFactory = reporterError,
+  maxResponseBytes = MAX_RESPONSE_BYTES,
+  allowTextFallback = false,
+  invalidResponseCode = "CONTROLLER_REPORTER_INVALID_RESPONSE",
+} = {}) {
   let text;
   const body = response?.body;
   if (body && typeof body.getReader === "function") {
@@ -105,7 +110,7 @@ async function boundedJson(response) {
         if (done) break;
         const chunk = Buffer.from(value);
         totalBytes += chunk.length;
-        if (totalBytes > MAX_RESPONSE_BYTES) {
+        if (totalBytes > maxResponseBytes) {
           if (typeof reader.cancel === "function") {
             try {
               await reader.cancel();
@@ -113,34 +118,42 @@ async function boundedJson(response) {
               // The response is already rejected; cancellation is best effort.
             }
           }
-          throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+          throw errorFactory(invalidResponseCode);
         }
         chunks.push(chunk);
       }
       text = Buffer.concat(chunks, totalBytes).toString("utf8");
     } catch (error) {
-      if (error?.code === "CONTROLLER_REPORTER_INVALID_RESPONSE") throw error;
-      throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+      if (error?.code === invalidResponseCode) throw error;
+      // Preserve transport failures so callers can apply their normal retry
+      // classification while the request timeout remains active.
+      throw error;
     } finally {
       if (typeof reader.releaseLock === "function") reader.releaseLock();
     }
-  } else {
+  } else if (allowTextFallback) {
     // Test doubles without a Fetch ReadableStream retain the legacy text()
     // path. Real Fetch responses always use the bounded streaming path above.
     try {
       text = await response.text();
     } catch (_error) {
-      throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+      throw errorFactory(invalidResponseCode);
     }
-    if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
-      throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+    if (Buffer.byteLength(text, "utf8") > maxResponseBytes) {
+      throw errorFactory(invalidResponseCode);
     }
+  } else {
+    throw errorFactory(invalidResponseCode);
   }
   try {
     return JSON.parse(text);
   } catch (_error) {
-    throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+    throw errorFactory(invalidResponseCode);
   }
+}
+
+async function boundedJson(response) {
+  return readBoundedJsonResponse(response, { allowTextFallback: true });
 }
 
 function createControllerObservationReporter({
@@ -310,6 +323,7 @@ module.exports = {
   REQUEST_TIMEOUT_MS,
   TRANSIENT_NETWORK_CODES,
   boundedJson,
+  readBoundedJsonResponse,
   createControllerObservationReporter,
   isTransientError,
   isTransientStatus,

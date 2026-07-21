@@ -672,6 +672,53 @@ async function upsertManagedCertificateByMonitorSource(
   return toInventoryRecord(result.rows[0]);
 }
 
+/**
+ * Create or update only controller-provisioning-owned fields for a stable
+ * cert-manager identity. Planning must never overwrite certificate material
+ * or observation metadata that a cert-manager observer has already recorded.
+ */
+async function upsertManagedCertificateForControllerProvisioning(client, options) {
+  const sourceRef = options.sourceRef || null;
+  if (!sourceRef) {
+    throw new Error("sourceRef is required for controller provisioning upsert");
+  }
+  const result = await client.query(
+    `INSERT INTO managed_certificates (
+       workspace_id, status, source, source_ref, name, key_mode,
+       key_reference, public_metadata
+     ) VALUES ($1, 'discovered', 'cert_manager', $2, $3, 'cert-manager-managed', $4, $5::jsonb)
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source_ref IS NOT NULL
+         AND source IN ('endpoint_monitor', 'domain_checker', 'cert_manager')
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       key_mode = EXCLUDED.key_mode,
+       key_reference = EXCLUDED.key_reference,
+       public_metadata = jsonb_set(
+         COALESCE(managed_certificates.public_metadata, '{}'::jsonb),
+         '{controllerProvisioning}',
+         EXCLUDED.public_metadata->'controllerProvisioning',
+         true
+       ),
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      sourceRef,
+      options.name || null,
+      normalizeKeyReference(options.keyReference),
+      JSON.stringify({
+        controllerProvisioning: {
+          clusterId: options.clusterId,
+          namespace: options.namespace,
+          certificateName: options.certificateName,
+        },
+      }),
+    ],
+  );
+  return toInventoryRecord(result.rows[0]);
+}
+
 async function importPublicCertificates(options) {
   const certificates = parsePublicCertificateMaterial(options.certificatePem);
   const normalizedOptions = {
@@ -967,4 +1014,5 @@ module.exports = {
   toInventoryRecord,
   upsertManagedCertificate,
   upsertManagedCertificateByMonitorSource,
+  upsertManagedCertificateForControllerProvisioning,
 };

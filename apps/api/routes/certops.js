@@ -895,6 +895,7 @@ router.post(
   getApiLimiter(),
   rejectKeyMaterial,
   requireCertOpsEnabled,
+  requireCertOpsSessionUser,
   requireCertOpsWriteRole,
   requireWorkspaceCertOpsActive,
   createControllerProvisionIntentHandler(),
@@ -1237,5 +1238,6 @@ module.exports = router;
 module.exports._test = {
   createManualCertificateJobHandler,
   createControllerProvisionIntentHandler,
+  requireCertOpsSessionUser,
   handleCertOpsError,
 };
