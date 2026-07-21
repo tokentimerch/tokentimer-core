@@ -76,6 +76,7 @@ tests/integration/certops-migration.test.js
 tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
 tests/integration/certops-controller-observations.test.js
+tests/integration/certops-controller-provisioning.test.js
 tests/integration/certops-api-tokens.test.js
 tests/integration/certops-api-token-routes.test.js
 tests/integration/certops-api-token-auth.test.js

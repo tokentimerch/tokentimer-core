@@ -95,7 +95,7 @@ function executorRouteBlock(routePath) {
 }
 
 describe("CertOps route hardening", () => {
-  it("implements only the frozen workspace, M2, and M3-A6 routes", () => {
+  it("implements only the frozen workspace, M2, and M3-A7 routes", () => {
     const routeMatches = Array.from(
       routesSource.matchAll(/router\.(get|post|put)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
@@ -114,6 +114,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
       "POST /api/v1/workspaces/:id/certops/jobs",
+      "POST /api/v1/workspaces/:id/certops/provision-intents",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
       "PUT /api/v1/workspaces/:id/certops/settings",
@@ -139,6 +140,7 @@ describe("CertOps route hardening", () => {
       ["post", "/api/v1/workspaces/:id/certops/imports"],
       ["get", "/api/v1/workspaces/:id/certops/jobs"],
       ["post", "/api/v1/workspaces/:id/certops/jobs"],
+      ["post", "/api/v1/workspaces/:id/certops/provision-intents"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId"],
@@ -400,6 +402,8 @@ describe("CertOps route hardening", () => {
     );
     assertOpenApiRoute("/api/v1/certops/executor/events", "POST");
     assertOpenApiRoute("/api/v1/certops/executor/observations", "POST");
+    assertOpenApiRoute("/api/v1/certops/executor/provisioning-commands/next", "POST");
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/provision-intents", "POST");
     assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/events", "POST");
     assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/evidence", "POST");
   });
@@ -407,6 +411,9 @@ describe("CertOps route hardening", () => {
   it("keeps machine-token executor writes in the executor router", () => {
     const observationBlock = executorRouteBlock(
       "/api/v1/certops/executor/observations",
+    );
+    const provisioningBlock = executorRouteBlock(
+      "/api/v1/certops/executor/provisioning-commands/next",
     );
     const aggregateBlock = executorRouteBlock(
       "/api/v1/certops/executor/events",
@@ -433,6 +440,9 @@ describe("CertOps route hardening", () => {
     assert.match(observationBlock, /rejectControllerObservationPrivateMaterial/);
     assert.match(observationBlock, /controllerObservationGateMiddleware/);
     assert.match(observationBlock, /requireControllerObservationScope/);
+    assert.match(provisioningBlock, /controllerProvisioningAuthMiddleware/);
+    assert.match(provisioningBlock, /rejectControllerProvisioningPrivateMaterial/);
+    assert.match(provisioningBlock, /requireControllerProvisioningScope/);
     assert.match(executorRoutesSource, /CONTROLLER_OBSERVATION_SCOPE = OBSERVATION_WRITE_SCOPE/);
 
     assert.equal(routesSource.includes("/api/v1/certops/jobs/:jobId"), false);

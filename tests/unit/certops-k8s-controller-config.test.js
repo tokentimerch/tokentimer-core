@@ -91,11 +91,13 @@ describe("CertOps Kubernetes controller configuration", () => {
     }
   });
 
-  it("does not let any provision or unknown mode enable mutation", () => {
-    assert.throws(
-      () => loadControllerConfig(validEnv({ CERTOPS_CONTROLLER_MODE: "provision" })),
-      { code: "CERTOPS_CONTROLLER_PROVISION_UNSUPPORTED" },
-    );
+  it("allows only the explicit M3-A7 provision mode", () => {
+    const provision = loadControllerConfig(validEnv({
+      CERTOPS_CONTROLLER_MODE: "provision",
+      CERTOPS_CLUSTER_WIDE: "true",
+    }));
+    assert.equal(provision.mode, "provision");
+    assert.equal(provision.clusterWide, true);
     assert.throws(
       () => loadControllerConfig(validEnv({ CERTOPS_CONTROLLER_MODE: "mutate" })),
       { code: "CONTROLLER_CONFIG_INVALID_MODE" },

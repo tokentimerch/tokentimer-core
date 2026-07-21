@@ -40,6 +40,7 @@ function normalizeListResponse(response) {
 function createInClusterCertManagerClient({
   loadClient = () => import("@kubernetes/client-node"),
   secretFallbackEnabled = false,
+  provisionEnabled = false,
 } = {}) {
   let apiClient;
   let coreApiClient;
@@ -167,6 +168,47 @@ function createInClusterCertManagerClient({
     return typeof encodedCertificate === "string" ? encodedCertificate : undefined;
   }
 
+  function provisioningDisabled() {
+    const error = new Error("Certificate provisioning is disabled");
+    error.code = "CERTOPS_PROVISIONING_DISABLED";
+    return error;
+  }
+
+  function certificateRequest({ namespace, name, body } = {}) {
+    if (!provisionEnabled) throw provisioningDisabled();
+    if (typeof namespace !== "string" || !namespace || typeof name !== "string" || !name) {
+      throw new TypeError("A Certificate namespace and name are required");
+    }
+    return {
+      group: CERT_MANAGER_GROUP,
+      version: CERT_MANAGER_VERSION,
+      namespace,
+      plural: RESOURCE_SPECS.Certificate.plural,
+      name,
+      ...(body ? { body } : {}),
+    };
+  }
+
+  async function getCertificate({ namespace, name } = {}) {
+    requireStarted();
+    return apiClient.getNamespacedCustomObject(certificateRequest({ namespace, name }));
+  }
+
+  async function createCertificate({ namespace, name, certificate } = {}) {
+    requireStarted();
+    return apiClient.createNamespacedCustomObject(
+      certificateRequest({ namespace, name, body: certificate }),
+    );
+  }
+
+  async function patchCertificate({ namespace, name, certificate } = {}) {
+    requireStarted();
+    return apiClient.patchNamespacedCustomObject({
+      ...certificateRequest({ namespace, name, body: certificate }),
+      fieldManager: "tokentimer-certops-controller",
+    });
+  }
+
   async function close() {
     const controllers = [...activeControllers];
     activeControllers.clear();
@@ -177,7 +219,10 @@ function createInClusterCertManagerClient({
 
   return Object.freeze({
     close,
+    createCertificate,
+    getCertificate,
     list,
+    patchCertificate,
     readTlsCertificate,
     start,
     watch,

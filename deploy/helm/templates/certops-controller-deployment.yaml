@@ -10,6 +10,11 @@ metadata:
     {{- include "tokentimer.labels" . | nindent 4 }}
     app.kubernetes.io/component: certops-controller
 spec:
+  {{- if eq ($controller.mode | toString) "provision" }}
+  # Provision writes must never overlap without leader election.
+  strategy:
+    type: Recreate
+  {{- end }}
   # The validation helper rejects values other than one until leader election
   # exists. Keeping this explicit makes the single-replica contract visible.
   replicas: {{ $controller.replicaCount }}
@@ -74,6 +79,8 @@ spec:
               value: /var/run/tokentimer-api-token/token
             - name: CERTOPS_CONTROLLER_MODE
               value: {{ $controller.mode | quote }}
+            - name: CERTOPS_CLUSTER_WIDE
+              value: {{ $controller.clusterWide | quote }}
             - name: CERTOPS_SECRET_FALLBACK_ENABLED
               value: {{ $controller.secretFallbackEnabled | quote }}
             - name: CERTOPS_HEALTH_PORT

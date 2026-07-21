@@ -269,8 +269,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-10).map((migration) => migration.version),
-      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      migrations.slice(-11).map((migration) => migration.version),
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,

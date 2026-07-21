@@ -157,13 +157,15 @@ twilio:
 
 When `existingSecret` is set for a group, the chart renders **no keys** for that group in the ConfigMap or generated Secret, so the existing secret becomes the single source of truth with no empty-value conflicts.
 
-### CertOps Controller (observe-only)
+### CertOps Controller
 
-The CertOps controller is disabled by default. In M3-A3 it receives only
-read-level access to cert-manager `Certificate` and `CertificateRequest`
-resources; provisioning is deliberately not supported. It uses a dedicated
-ServiceAccount and reads its TokenTimer API token exclusively from an existing
-Kubernetes Secret volume.
+The CertOps controller is disabled by default and defaults to `observe`. In
+M3-A7, explicit `mode: provision` adds only `create` and `patch` for
+cert-manager `Certificate` resources; CertificateRequests remain read-only and
+the controller never writes or reads Secret key material. Provision mode uses a
+`Recreate` deployment strategy to avoid overlapping write-capable pods until
+leader election exists. It uses a dedicated ServiceAccount and reads its
+TokenTimer API token exclusively from an existing Kubernetes Secret volume.
 
 ```yaml
 certops:

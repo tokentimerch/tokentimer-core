@@ -15,13 +15,24 @@ const {
 } = require("../middleware/certops-executor-body-parser");
 const {
   requireCertOpsEnabled,
+  CERTOPS_DISABLED,
+  NOT_FOUND_RESPONSE,
 } = require("../middleware/require-certops-enabled");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   OBSERVATION_WRITE_SCOPE,
+  PROVISION_EXECUTE_SCOPE,
 } = require("../services/certops/apiTokens");
+const {
+  CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+  CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
+  CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  takeNextControllerProvisioningCommand,
+} = require("../services/certops/controllerProvisioning");
+const { CERTOPS_WORKSPACE_PAUSED } = require("../services/certops/workspaceKillSwitch");
 const {
   CERTOPS_CONTROLLER_CLUSTER_BINDING_REQUIRED,
   CERTOPS_CONTROLLER_OBSERVATION_CLUSTER_MISMATCH,
@@ -1798,12 +1809,99 @@ async function rejectControllerObservationPrivateMaterial(req, res, next) {
   }
 }
 
+async function rejectControllerProvisioningPrivateMaterial(req, res, next) {
+  try {
+    rejectPrivateKeyMaterial(req.body);
+    return next();
+  } catch (error) {
+    if (error?.code !== PRIVATE_KEY_MATERIAL_REJECTED) return next(error);
+    try {
+      await writeExecutorRejectionAudit({
+        action: "CERTOPS_KEY_MATERIAL_REJECTED",
+        workspaceId: req.apiToken?.workspaceId || null,
+        apiTokenId: req.apiToken?.id || null,
+        rejectionCode: PRIVATE_KEY_MATERIAL_REJECTED,
+        routeFamily: "controller-provisioning-commands",
+      });
+    } catch (auditError) {
+      logger.error("CertOps controller provisioning rejection audit failed", {
+        code: auditError?.code || null,
+        routeFamily: "controller-provisioning-commands",
+      });
+      return res.status(503).json({
+        error: "CertOps security audit is unavailable",
+        code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
+      });
+    }
+    return res.status(422).json({
+      error: "Private key material is not accepted in CertOps provisioning commands",
+      code: PRIVATE_KEY_MATERIAL_REJECTED,
+    });
+  }
+}
+
 function requireControllerObservationScope(req, res, next) {
   if (req.apiTokenScopeDenied !== true) return next();
   return res.status(403).json({
     error: "CertOps API token scope denied",
     code: CERTOPS_API_TOKEN_SCOPE_DENIED,
   });
+}
+
+function requireControllerProvisioningScope(req, res, next) {
+  if (req.apiTokenScopeDenied !== true) return next();
+  return res.status(403).json({
+    error: "CertOps API token scope denied",
+    code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+  });
+}
+
+function controllerProvisioningCommandErrorResponse(res, error) {
+  if (error?.code === CERTOPS_DISABLED) return res.status(404).json(NOT_FOUND_RESPONSE);
+  if (error?.code === CERTOPS_WORKSPACE_PAUSED) {
+    return res.status(409).json({
+      error: "CertOps is paused for this workspace",
+      code: CERTOPS_WORKSPACE_PAUSED,
+    });
+  }
+  if (new Set([
+    CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+    CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
+    CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  ]).has(error?.code)) {
+    return res.status(403).json({
+      error: "Controller provisioning token binding did not match",
+      code: error.code,
+    });
+  }
+  if (error?.code === CERTOPS_CONTROLLER_PROVISIONING_INVALID) {
+    return res.status(400).json({
+      error: "Controller provisioning command is invalid",
+      code: error.code,
+    });
+  }
+  return null;
+}
+
+async function controllerProvisioningCommandsHandler(req, res, options = {}) {
+  try {
+    const takeNext = options.takeNextControllerProvisioningCommand || takeNextControllerProvisioningCommand;
+    const command = await takeNext({ apiToken: req.apiToken });
+    if (!command) return res.status(204).end();
+    return res.status(200).json({ command });
+  } catch (error) {
+    const response = controllerProvisioningCommandErrorResponse(res, error);
+    if (response) return response;
+    logger.error("CertOps controller provisioning command failed", {
+      code: error?.code || null,
+      workspaceId: req.apiToken?.workspaceId || null,
+      routeFamily: "controller-provisioning-commands",
+    });
+    return res.status(500).json({
+      error: "Failed to load controller provisioning command",
+      code: "CERTOPS_CONTROLLER_PROVISIONING_COMMAND_FAILED",
+    });
+  }
 }
 
 function controllerObservationErrorResponse(res, error) {
@@ -1907,6 +2005,15 @@ function createCertOpsExecutorRouter(options = {}) {
     });
   const controllerObservationGateMiddleware =
     options.controllerObservationGateMiddleware || ((_req, _res, next) => next());
+  const controllerProvisioningAuthMiddleware =
+    options.controllerProvisioningAuthMiddleware ||
+    createCertOpsApiTokenAuth({
+      scopes: [PROVISION_EXECUTE_SCOPE],
+      allowTokenWorkspace: true,
+      deferScopeEnforcement: true,
+    });
+  const controllerProvisioningGateMiddleware =
+    options.controllerProvisioningGateMiddleware || ((_req, _res, next) => next());
   const perJobEventAuthMiddleware =
     options.perJobEventAuthMiddleware ||
     createCertOpsApiTokenAuth({
@@ -1939,6 +2046,18 @@ function createCertOpsExecutorRouter(options = {}) {
     controllerObservationGateMiddleware,
     requireControllerObservationScope,
     (req, res) => controllerObservationsHandler(req, res, options),
+  );
+
+  certOpsExecutorRouter.post(
+    "/api/v1/certops/executor/provisioning-commands/next",
+    preAuthRateLimitFallback,
+    controllerProvisioningAuthMiddleware,
+    rateLimitMiddleware,
+    rejectControllerProvisioningPrivateMaterial,
+    certOpsEnabledMiddleware,
+    controllerProvisioningGateMiddleware,
+    requireControllerProvisioningScope,
+    (req, res) => controllerProvisioningCommandsHandler(req, res, options),
   );
 
   certOpsExecutorRouter.post(
@@ -2022,6 +2141,10 @@ module.exports._test = {
   requireExecutorEvidenceScope,
   controllerObservationsHandler,
   controllerObservationErrorResponse,
+  controllerProvisioningCommandsHandler,
+  controllerProvisioningCommandErrorResponse,
   rejectControllerObservationPrivateMaterial,
+  rejectControllerProvisioningPrivateMaterial,
   requireControllerObservationScope,
+  requireControllerProvisioningScope,
 };

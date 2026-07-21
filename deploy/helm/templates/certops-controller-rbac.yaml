@@ -16,6 +16,17 @@ rules:
       - cert-manager.io
     resources:
       - certificates
+    verbs:
+      - get
+      - list
+      - watch
+      {{- if eq ($controller.mode | toString) "provision" }}
+      - create
+      - patch
+      {{- end }}
+  - apiGroups:
+      - cert-manager.io
+    resources:
       - certificaterequests
     verbs:
       - get
@@ -62,6 +73,17 @@ rules:
       - cert-manager.io
     resources:
       - certificates
+    verbs:
+      - get
+      - list
+      - watch
+      {{- if eq ($controller.mode | toString) "provision" }}
+      - create
+      - patch
+      {{- end }}
+  - apiGroups:
+      - cert-manager.io
+    resources:
       - certificaterequests
     verbs:
       - get

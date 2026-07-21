@@ -59,7 +59,7 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "mode": { "type": "string" },
+            "mode": { "type": "string", "enum": ["observe", "provision"] },
             "replicaCount": { "type": "integer", "minimum": 1 },
             "clusterWide": { "type": "boolean" },
             "watchNamespaces": {

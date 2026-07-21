@@ -37,6 +37,7 @@ const BARE_BEARER_CREDENTIAL_PATTERN =
   /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}\b/i;
 const RFC1123_LABEL_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const OBSERVATION_WRITE_SCOPE = "certops:observations:write";
+const PROVISION_EXECUTE_SCOPE = "certops:provision:execute";
 
 const ALLOWED_SCOPES = Object.freeze([
   "certops:read",
@@ -44,6 +45,7 @@ const ALLOWED_SCOPES = Object.freeze([
   "certops:jobs:read",
   "certops:evidence:write",
   OBSERVATION_WRITE_SCOPE,
+  PROVISION_EXECUTE_SCOPE,
 ]);
 const ALLOWED_SCOPE_SET = new Set(ALLOWED_SCOPES);
 const IMPLIED_SCOPE_GRANTS = Object.freeze({
@@ -154,11 +156,13 @@ function normalizeScopes(scopes) {
 }
 
 function normalizeControllerClusterId(value, scopes) {
-  const requiresBinding = Array.isArray(scopes) && scopes.includes(OBSERVATION_WRITE_SCOPE);
+  const requiresBinding = Array.isArray(scopes) && scopes.some(
+    (scope) => scope === OBSERVATION_WRITE_SCOPE || scope === PROVISION_EXECUTE_SCOPE,
+  );
   if (value === undefined || value === null || value === "") {
     if (requiresBinding) {
       throw serviceError(
-        "Controller cluster ID is required for observation tokens",
+        "Controller cluster ID is required for controller tokens",
         CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
       );
     }
@@ -167,7 +171,7 @@ function normalizeControllerClusterId(value, scopes) {
 
   if (!requiresBinding || typeof value !== "string") {
     throw serviceError(
-      "Controller cluster ID is only allowed for observation tokens",
+      "Controller cluster ID is only allowed for controller tokens",
       CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
     );
   }
@@ -636,6 +640,7 @@ module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   TOKEN_PREFIX,
   OBSERVATION_WRITE_SCOPE,
+  PROVISION_EXECUTE_SCOPE,
   createApiToken,
   getApiTokenById,
   listApiTokens,

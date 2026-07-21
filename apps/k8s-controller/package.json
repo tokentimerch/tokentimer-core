@@ -6,7 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "build": "node --check src/cert-manager-client.js && node --check src/cert-manager-observer.js && node --check src/config.js && node --check src/health-server.js && node --check src/index.js && node --check src/lifecycle.js && node --check src/logger.js && node --check src/observation-envelope.js && node --check src/observation-reporter.js && node --check src/ports.js && node --check src/public-certificate-parser.js && node --check src/runtime.js && node --check src/tls-certificate-fallback.js",
+    "build": "node --check src/cert-manager-client.js && node --check src/cert-manager-observer.js && node --check src/certificate-provisioner.js && node --check src/config.js && node --check src/health-server.js && node --check src/index.js && node --check src/lifecycle.js && node --check src/logger.js && node --check src/observation-envelope.js && node --check src/observation-reporter.js && node --check src/ports.js && node --check src/provisioning-command-client.js && node --check src/provisioning-runner.js && node --check src/public-certificate-parser.js && node --check src/runtime.js && node --check src/tls-certificate-fallback.js",
     "lint": "eslint .",
     "test": "node --test ../../tests/unit/certops-k8s-controller-*.test.js"
   },

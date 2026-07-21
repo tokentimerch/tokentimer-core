@@ -113,12 +113,13 @@ const SAFE_METADATA_NAMES = [
   "executor",
 ];
 
-const CANONICAL_M2_SCOPES = [
+const CANONICAL_M3_A7_SCOPES = [
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
   "certops:evidence:write",
   "certops:observations:write",
+  "certops:provision:execute",
 ];
 
 const PLAN_M2_JOB_STATUSES = [
@@ -1195,13 +1196,14 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(executorNotes, /empty required-scope configuration is invalid/i);
   });
 
-  it("uses the additive M3-A6 observation scope without broad write implication", () => {
+  it("uses additive M3 controller scopes without broad write implication", () => {
     const canonicalScopes = [
       "certops:read",
       "certops:events:write",
       "certops:jobs:read",
       "certops:evidence:write",
       "certops:observations:write",
+      "certops:provision:execute",
     ];
 
     for (const scope of canonicalScopes) {
@@ -1246,7 +1248,7 @@ describe("CertOps M2 contract skeletons", () => {
 
     assert.deepEqual(
       openApiComponentEnum("CertOpsApiTokenScope"),
-      CANONICAL_M2_SCOPES,
+      CANONICAL_M3_A7_SCOPES,
     );
 
     for (const componentName of [

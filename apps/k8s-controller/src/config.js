@@ -116,12 +116,7 @@ function parseNamespaces(value) {
 
 function parseMode(value) {
   if (value === undefined || value === "" || value === "observe") return "observe";
-  if (value === "provision") {
-    throw new ControllerConfigError(
-      "CERTOPS_CONTROLLER_PROVISION_UNSUPPORTED",
-      "CERTOPS_CONTROLLER_MODE",
-    );
-  }
+  if (value === "provision") return "provision";
   throw new ControllerConfigError(
     "CONTROLLER_CONFIG_INVALID_MODE",
     "CERTOPS_CONTROLLER_MODE",
@@ -203,6 +198,10 @@ function loadControllerConfig(env = process.env, options = {}) {
     apiUrl: parseApiUrl(requiredString(env, "TOKENTIMER_API_URL")),
     apiTokenFile: tokenFile,
     clusterId: parseClusterId(requiredString(env, "TOKENTIMER_CLUSTER_ID")),
+    clusterWide: parseBoolean(
+      env.CERTOPS_CLUSTER_WIDE,
+      "CERTOPS_CLUSTER_WIDE",
+    ),
     healthPort: parsePort(
       env.CERTOPS_HEALTH_PORT,
       "CERTOPS_HEALTH_PORT",

@@ -421,16 +421,12 @@ secret.secretName and configMap.name may use Helm tpl.
 {{- include "tokentimer.certopsControllerName" . -}}
 {{- end -}}
 
-{{/*
-The M3-A3 chart surface installs only the M3-A2 observe runtime. Keep these
-checks in templates so invalid values fail even when values.schema.json is not
-available to a downstream Helm implementation.
-*/}}
+{{/* Keep these safety checks in templates when values.schema.json is unavailable. */}}
 {{- define "tokentimer.certopsControllerValidate" -}}
 {{- $controller := .Values.certops.controller -}}
 {{- if $controller.enabled -}}
-  {{- if ne ($controller.mode | toString) "observe" -}}
-    {{- fail "certops.controller.mode must be observe; provision is not available in M3-A3" -}}
+  {{- if not (or (eq ($controller.mode | toString) "observe") (eq ($controller.mode | toString) "provision")) -}}
+    {{- fail "certops.controller.mode must be observe or provision" -}}
   {{- end -}}
   {{- if ne (int $controller.replicaCount) 1 -}}
     {{- fail "certops.controller.replicaCount must be 1 until leader election exists" -}}

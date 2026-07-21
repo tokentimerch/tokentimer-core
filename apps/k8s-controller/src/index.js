@@ -9,6 +9,40 @@ const { createControllerLifecycle } = require("./lifecycle");
 const { createControllerLogger } = require("./logger");
 const { createControllerRuntime } = require("./runtime");
 const { createControllerObservationReporter } = require("./observation-reporter");
+const { createCertificateProvisioner } = require("./certificate-provisioner");
+const { createControllerProvisioningCommandClient } = require("./provisioning-command-client");
+const { createProvisioningRunner } = require("./provisioning-runner");
+
+function createControllerWorkPort(observer, provisioningRunner = null) {
+  return Object.freeze({
+    async close() {
+      const results = await Promise.allSettled([
+        observer.close(),
+        provisioningRunner?.close(),
+      ]);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
+    },
+    isAlive() {
+      return observer.isAlive() && (!provisioningRunner || provisioningRunner.isAlive());
+    },
+    isReady() {
+      return observer.isReady() && (!provisioningRunner || provisioningRunner.isReady());
+    },
+    async start(options) {
+      await observer.start(options);
+      if (provisioningRunner) await provisioningRunner.start(options);
+    },
+    async stopAcceptingWork() {
+      const results = await Promise.allSettled([
+        observer.stopAcceptingWork(),
+        provisioningRunner?.stopAcceptingWork(),
+      ]);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
+    },
+  });
+}
 
 function createControllerApplication({
   createKubernetesClient = createInClusterCertManagerClient,
@@ -19,6 +53,9 @@ function createControllerApplication({
   createLogger = createControllerLogger,
   createRuntime = createControllerRuntime,
   createReporter = createControllerObservationReporter,
+  createProvisioner = createCertificateProvisioner,
+  createProvisioningClient = createControllerProvisioningCommandClient,
+  createProvisioningRunnerPort = createProvisioningRunner,
   createHealth = createHealthServer,
   createLifecycle = createControllerLifecycle,
   exitProcess,
@@ -33,6 +70,7 @@ function createControllerApplication({
   });
   const kubernetesClient = createKubernetesClient({
     secretFallbackEnabled: config.secretFallbackEnabled,
+    provisionEnabled: config.mode === "provision",
   });
   const tlsFallback = createTlsFallback({
     enabled: config.secretFallbackEnabled,
@@ -49,7 +87,27 @@ function createControllerApplication({
     watchNamespaces: config.watchNamespaces,
     workspaceId: config.workspaceId,
   });
-  const runtime = createRuntime({ kubernetesClient: observer, reporter });
+  const provisioningRunner = config.mode === "provision"
+    ? createProvisioningRunnerPort({
+      commandClient: createProvisioningClient({
+        apiTokenFile: config.apiTokenFile,
+        apiUrl: config.apiUrl,
+        fsOptions,
+      }),
+      intervalMs: config.reconcileIntervalMs,
+      logger,
+      provisioner: createProvisioner({
+        client: kubernetesClient,
+        clusterId: config.clusterId,
+        clusterWide: config.clusterWide,
+        watchNamespaces: config.watchNamespaces,
+      }),
+    })
+    : null;
+  const runtime = createRuntime({
+    kubernetesClient: createControllerWorkPort(observer, provisioningRunner),
+    reporter,
+  });
   const lifecycleRef = { current: null };
   const healthServer = createHealth({
     getStatus: () =>
@@ -114,5 +172,6 @@ if (require.main === module) {
 
 module.exports = {
   createControllerApplication,
+  createControllerWorkPort,
   runController,
 };

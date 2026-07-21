@@ -65,6 +65,11 @@ const {
   getWorkspaceCertOpsPauseState,
   setWorkspaceCertOpsPauseState,
 } = require("../services/certops/workspaceKillSwitch");
+const {
+  CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
+  createControllerProvisionIntent,
+} = require("../services/certops/controllerProvisioning");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
 const Token = require("../db/models/Token");
@@ -366,6 +371,58 @@ function createManualCertificateJobHandler({
       return res.status(500).json({
         error: "Failed to create CertOps job",
         code: "INTERNAL_ERROR",
+      });
+    }
+  };
+}
+
+function controllerProvisioningIdempotencyKey(req) {
+  const value = typeof req.get === "function"
+    ? req.get("Idempotency-Key")
+    : req.headers?.["idempotency-key"];
+  return typeof value === "string" ? value : null;
+}
+
+function createControllerProvisionIntentHandler({
+  provisionIntentCreator = createControllerProvisionIntent,
+} = {}) {
+  return async function createControllerProvisionIntentHandler(req, res) {
+    try {
+      const result = await provisionIntentCreator({
+        request: req.body,
+        workspaceId: req.workspace.id,
+        idempotencyKey: controllerProvisioningIdempotencyKey(req),
+        actorUserId: req.user?.id || null,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({
+        job: jobDetail(result.job),
+        managedCertificateId: result.managedCertificateId,
+        targetId: result.targetId,
+        duplicate: Boolean(result.duplicate),
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      if (err?.code === CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY) {
+        return res.status(409).json({
+          error: "Provisioning cannot reactivate a terminal managed certificate",
+          code: err.code,
+        });
+      }
+      if (err?.code === CERTOPS_CONTROLLER_PROVISIONING_INVALID) {
+        return res.status(400).json({
+          error: "CertOps provision request is invalid",
+          code: err.code,
+        });
+      }
+      logger.error("CertOps controller provision intent creation failed", {
+        code: err?.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps provision intent",
+        code: "CERTOPS_CONTROLLER_PROVISIONING_CREATE_FAILED",
       });
     }
   };
@@ -833,6 +890,16 @@ router.post(
   createManualCertificateJobHandler(),
 );
 
+router.post(
+  "/api/v1/workspaces/:id/certops/provision-intents",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  requireWorkspaceCertOpsActive,
+  createControllerProvisionIntentHandler(),
+);
+
 router.get(
   "/api/v1/workspaces/:id/certops/jobs/:jobId/log",
   getApiLimiter(),
@@ -1169,5 +1236,6 @@ router.post(
 module.exports = router;
 module.exports._test = {
   createManualCertificateJobHandler,
+  createControllerProvisionIntentHandler,
   handleCertOpsError,
 };

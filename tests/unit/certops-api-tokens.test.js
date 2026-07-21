@@ -27,12 +27,13 @@ const {
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
-const CANONICAL_M2_SCOPES = [
+const CANONICAL_M3_A7_SCOPES = [
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
   "certops:evidence:write",
   "certops:observations:write",
+  "certops:provision:execute",
 ];
 
 function date(offsetMs) {
@@ -262,7 +263,7 @@ describe("CertOps API token service", () => {
   });
 
   it("uses canonical scopes and keeps jobs claim deferred to M4", async () => {
-    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_M2_SCOPES);
+    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_M3_A7_SCOPES);
 
     const client = createMemoryClient();
     const created = await createApiToken({
@@ -292,6 +293,7 @@ describe("CertOps API token service", () => {
       "certops:events:write",
       "certops:evidence:write",
       "certops:observations:write",
+      "certops:provision:execute",
     ]) {
       const result = await validateApiToken({
         client,
@@ -321,7 +323,7 @@ describe("CertOps API token service", () => {
     }
   });
 
-  it("requires an immutable RFC 1123 cluster binding only for observation tokens", async () => {
+  it("requires an immutable RFC 1123 cluster binding for either controller token scope", async () => {
     const client = createMemoryClient();
     await assert.rejects(
       () => createApiToken({
@@ -351,6 +353,14 @@ describe("CertOps API token service", () => {
     });
     assert.equal(created.token.controllerClusterId, "controller-a");
     assert.equal(client.rows[0].controller_cluster_id, "controller-a");
+    const provision = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Provision controller",
+      scopes: ["certops:provision:execute"],
+      controllerClusterId: "controller-a",
+    });
+    assert.equal(provision.token.controllerClusterId, "controller-a");
   });
 
   it("rejects private key material in persisted token metadata", async () => {

@@ -194,6 +194,12 @@
           "status": "existing"
         },
         {
+          "id": "certops-controller-provisioning-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/controller-provisioning.schema.json",
+          "status": "existing"
+        },
+        {
           "id": "certops-agent-protocol-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",

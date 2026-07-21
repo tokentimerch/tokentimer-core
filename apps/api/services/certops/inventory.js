@@ -344,6 +344,11 @@ function publicMetadataFor(certificate, options, chainIndex) {
       typeof options.controllerObservationMetadata === "object"
         ? options.controllerObservationMetadata
         : null,
+    controllerProvisioning:
+      options.controllerProvisioningMetadata &&
+      typeof options.controllerProvisioningMetadata === "object"
+        ? options.controllerProvisioningMetadata
+        : null,
   });
 }
 

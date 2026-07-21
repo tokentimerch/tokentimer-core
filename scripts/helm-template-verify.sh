@@ -117,6 +117,7 @@ component_blocks() {
 assert_controller_rbac_hardening() {
   local rendered="$1"
   local fallback_enabled="$2"
+  local mode="${3:-observe}"
   local blocks
   local kind
   local secret_verbs
@@ -126,9 +127,13 @@ assert_controller_rbac_hardening() {
     blocks="$(component_blocks "${rendered}" "${kind}")"
     [[ -z "${blocks}" ]] && continue
 
-    assert_not_contains "${blocks}" $'      - create' "${kind} controller RBAC"
+    if [[ "${mode}" == "observe" ]]; then
+      assert_not_contains "${blocks}" $'      - create' "${kind} observe controller RBAC"
+      assert_not_contains "${blocks}" $'      - patch' "${kind} observe controller RBAC"
+    else
+      assert_contains "${blocks}" $'    resources:\n      - certificates\n    verbs:\n      - get\n      - list\n      - watch\n      - create\n      - patch' "${kind} provision Certificate verbs"
+    fi
     assert_not_contains "${blocks}" $'      - update' "${kind} controller RBAC"
-    assert_not_contains "${blocks}" $'      - patch' "${kind} controller RBAC"
     assert_not_contains "${blocks}" $'      - delete' "${kind} controller RBAC"
 
     if [[ "${fallback_enabled}" == "true" ]]; then
@@ -175,9 +180,7 @@ expect_controller_failure() {
   fi
 }
 
-# M3-A3 is intentionally a chart-only controller slice. Keep the following
-# renders release-blocking so a values change cannot broaden the controller's
-# identity, RBAC, or egress before runtime reconciliation exists.
+# M3-A7 retains an explicit, narrowly bounded controller capability surface.
 controller_base_args=(
   --namespace certops-system
   --set config.adminEmail=ci@example.com
@@ -205,7 +208,8 @@ controller_default_bindings="$(component_blocks "${controller_default}" RoleBind
 assert_contains "${controller_default_roles}" 'namespace: "certops-system"' "default namespace Role"
 assert_contains "${controller_default_bindings}" 'namespace: "certops-system"' "default namespace RoleBinding"
 assert_contains "${controller_default_roles}" 'cert-manager.io' "controller cert-manager group"
-assert_contains "${controller_default_roles}" $'      - certificates\n      - certificaterequests' "controller cert-manager resources"
+assert_contains "${controller_default_roles}" $'      - certificates' "controller Certificate resource"
+assert_contains "${controller_default_roles}" $'      - certificaterequests' "controller CertificateRequest resource"
 assert_contains "${controller_default_roles}" $'      - get\n      - list\n      - watch' "controller read verbs"
 assert_controller_rbac_hardening "${controller_default}" false
 if grep -Eq '^kind: ClusterRole(Binding)?$' "${controller_default}"; then
@@ -280,7 +284,11 @@ expect_controller_failure missing-cluster-id --set certops.controller.api.cluste
 expect_controller_failure missing-token-secret --set certops.controller.apiToken.existingSecret=
 expect_controller_failure missing-token-key --set certops.controller.apiToken.key=
 expect_controller_failure invalid-mode --set certops.controller.mode=invalid
-expect_controller_failure provision-mode --set certops.controller.mode=provision
+controller_provision="$(render_controller provision-mode --set certops.controller.mode=provision)"
+controller_provision_roles="$(component_blocks "${controller_provision}" Role)"
+controller_provision_deployment="$(component_blocks "${controller_provision}" Deployment)"
+assert_controller_rbac_hardening "${controller_provision}" false provision
+assert_contains "${controller_provision_deployment}" $'strategy:\n    type: Recreate' "provision no-overlap strategy"
 expect_controller_failure replica-count-two --set certops.controller.replicaCount=2
 expect_controller_failure cluster-wide-with-namespaces \
   --set certops.controller.clusterWide=true \

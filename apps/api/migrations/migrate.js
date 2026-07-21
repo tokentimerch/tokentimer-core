@@ -1466,6 +1466,51 @@ const migrations = [
         ON certificate_controller_observations(workspace_id, created_at DESC);
     `,
   },
+  {
+    version: 21,
+    name: "certops_controller_provisioning",
+    sql: `
+      -- M3-A7 adds a second narrow controller scope. A cluster binding is
+      -- required exactly for either controller-owned scope; legacy M1/M2
+      -- tokens remain valid with no binding.
+      ALTER TABLE api_tokens
+        DROP CONSTRAINT IF EXISTS api_tokens_scopes_check;
+      ALTER TABLE api_tokens
+        ADD CONSTRAINT api_tokens_scopes_check CHECK (
+          COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+          scopes <@ ARRAY[
+            'certops:read',
+            'certops:events:write',
+            'certops:jobs:read',
+            'certops:evidence:write',
+            'certops:observations:write',
+            'certops:provision:execute'
+          ]::text[] AND
+          ((scopes && ARRAY[
+              'certops:observations:write',
+              'certops:provision:execute'
+            ]::text[]) = (controller_cluster_id IS NOT NULL)) AND
+          (controller_cluster_id IS NULL OR
+            controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') AND
+          (controller_cluster_id IS NULL OR char_length(controller_cluster_id) BETWEEN 1 AND 63)
+        );
+
+      -- This is intentionally only a bounded redelivery throttle for the
+      -- narrow M3 controller command endpoint. It has no agent identity,
+      -- attempt, lease, heartbeat, or general job-claim semantics.
+      CREATE TABLE IF NOT EXISTS certificate_controller_provision_deliveries (
+        job_id UUID PRIMARY KEY REFERENCES certificate_jobs(id) ON DELETE CASCADE,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        controller_cluster_id TEXT NOT NULL
+          CHECK (controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+          CHECK (char_length(controller_cluster_id) BETWEEN 1 AND 63),
+        delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_controller_provision_deliveries_lookup
+        ON certificate_controller_provision_deliveries(workspace_id, controller_cluster_id, delivered_at);
+    `,
+  },
 ];
 
 async function runMigrations() {

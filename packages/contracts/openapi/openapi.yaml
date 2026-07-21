@@ -3705,6 +3705,46 @@ paths:
               example:
                 error: CertOps workspace state is unavailable
                 code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
+  /api/v1/workspaces/{id}/certops/provision-intents:
+    post:
+      tags: [CertOps Controller]
+      summary: Create a cert-manager provisioning intent
+      operationId: createCertOpsProvisionIntent
+      description: >-
+        Manager-only M3-A7 human surface. It creates an idempotent `deploy` job
+        with a strict public cert-manager desired state. The route is blocked by
+        both CertOps rollout and workspace pause gates and never accepts a
+        Kubernetes manifest, Secret data, CSR, or private key material.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:-]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsProvisionIntentRequest"
+      responses:
+        "201":
+          description: Provisioning intent created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsProvisionIntentResponse" }
+        "200":
+          description: Exact idempotent replay
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsProvisionIntentResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Idempotency conflict, terminal identity, or paused workspace
+        "422":
+          description: Request rejected because it contained private key material
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
     get:
       tags: [CertOps]
@@ -4177,6 +4217,32 @@ paths:
           description: CertOps machine-token rate limit exceeded
         "503":
           description: Security audit sink unavailable while rejecting private material
+  /api/v1/certops/executor/provisioning-commands/next:
+    post:
+      tags: [CertOps Controller]
+      summary: Fetch one narrow cert-manager provisioning command
+      operationId: nextCertOpsControllerProvisioningCommand
+      description: >-
+        M3-A7 controller-specific command transport. Requires exactly
+        `certops:provision:execute` and immutable controller cluster binding.
+        It is not M4 agent polling or claim protocol. Non-terminal work may be
+        redelivered after a bounded throttle; no Secrets or private material are
+        returned.
+      security:
+        - certOpsTokenAuth: []
+      responses:
+        "200":
+          description: One cluster-bound provisioning command
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsProvisioningCommandResponse" }
+        "204": { description: No work assigned to the authenticated cluster }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Workspace CertOps is paused }
+        "422": { description: Request rejected because it contained private key material }
+        "429": { description: CertOps machine-token rate limit exceeded }
   /api/v1/certops/executor/events:
     post:
       tags: [CertOps Agent]
@@ -5236,6 +5302,70 @@ components:
         targetId: { type: string, format: uuid, nullable: true }
         certificateInstanceId: { type: string, format: uuid, nullable: true }
         duplicate: { type: boolean }
+    CertOpsProvisionIntentRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, clusterId, namespace, certificateName, secretName, issuerRef, dnsNames]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        namespace: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        certificateName: { type: string, minLength: 1, maxLength: 253 }
+        secretName: { type: string, minLength: 1, maxLength: 253 }
+        issuerRef:
+          type: object
+          additionalProperties: false
+          required: [group, kind, name]
+          properties:
+            group: { type: string, minLength: 1, maxLength: 253 }
+            kind: { type: string, enum: [Issuer, ClusterIssuer] }
+            name: { type: string, minLength: 1, maxLength: 253 }
+        dnsNames:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+    CertOpsProvisionIntentResponse:
+      type: object
+      additionalProperties: false
+      required: [job, managedCertificateId, targetId, duplicate]
+      properties:
+        job: { $ref: "#/components/schemas/CertOpsJob" }
+        managedCertificateId: { type: string, format: uuid }
+        targetId: { type: string, format: uuid }
+        duplicate: { type: boolean }
+    CertOpsControllerProvisioningCommand:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, workspaceId, clusterId, jobId, managedCertificateId, namespace, certificateName, secretName, issuerRef, dnsNames]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        workspaceId: { type: string, format: uuid }
+        clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        jobId: { type: string, format: uuid }
+        managedCertificateId: { type: string, format: uuid }
+        namespace: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        certificateName: { type: string, minLength: 1, maxLength: 253 }
+        secretName: { type: string, minLength: 1, maxLength: 253 }
+        issuerRef:
+          type: object
+          additionalProperties: false
+          required: [group, kind, name]
+          properties:
+            group: { type: string, minLength: 1, maxLength: 253 }
+            kind: { type: string, enum: [Issuer, ClusterIssuer] }
+            name: { type: string, minLength: 1, maxLength: 253 }
+        dnsNames:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+    CertOpsProvisioningCommandResponse:
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command: { $ref: "#/components/schemas/CertOpsControllerProvisioningCommand" }
     CertOpsApiTokenScope:
       type: string
       enum:
@@ -5244,7 +5374,8 @@ components:
         - certops:jobs:read
         - certops:evidence:write
         - certops:observations:write
-      description: Canonical CertOps API-token scope. The M3-A6 observation write scope requires a controller cluster binding; job-claim and signed-agent scopes remain deferred to M4.
+        - certops:provision:execute
+      description: Canonical CertOps API-token scope. Either M3 controller scope requires a controller cluster binding; job-claim and signed-agent scopes remain deferred to M4.
     CertOpsApiToken:
       type: object
       additionalProperties: false
@@ -5287,7 +5418,7 @@ components:
           minLength: 1
           maxLength: 63
           pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-          description: Immutable binding required exactly when scopes includes certops:observations:write.
+          description: Immutable binding required exactly when scopes includes either M3 controller scope.
         status:
           type: string
           enum: [active, revoked, expired]
@@ -5351,7 +5482,7 @@ components:
           minLength: 1
           maxLength: 63
           pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-          description: Required exactly when scopes includes certops:observations:write; creation-only and immutable.
+          description: Required exactly when scopes includes either M3 controller scope; creation-only and immutable.
     CertOpsApiTokenCreateResponse:
       type: object
       additionalProperties: false
