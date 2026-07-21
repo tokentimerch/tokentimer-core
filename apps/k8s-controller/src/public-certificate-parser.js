@@ -15,6 +15,8 @@ const MAX_CERTIFICATE_PEM_LENGTH = MAX_PUBLIC_PEM_BYTES;
 const MAX_CERTIFICATE_TEXT_LENGTH = MAX_PUBLIC_TEXT_LENGTH;
 const MAX_SUBJECT_ALT_NAME_LENGTH = MAX_PUBLIC_SAN_LENGTH;
 const MAX_SUBJECT_ALT_NAMES = MAX_PUBLIC_SAN_ENTRIES;
+const MIN_PUBLIC_KEY_SIZE = 1;
+const MAX_PUBLIC_KEY_SIZE = 16_384;
 
 function boundedText(value, maximumLength = MAX_CERTIFICATE_TEXT_LENGTH) {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
@@ -44,6 +46,14 @@ function boundedSubjectAltNames(value) {
 function boundedCertificatePem(value) {
   if (typeof value !== "string" || value === "") return undefined;
   return Buffer.byteLength(value, "utf8") <= MAX_CERTIFICATE_PEM_LENGTH
+    ? value
+    : undefined;
+}
+
+function boundedPublicKeySize(value) {
+  return Number.isSafeInteger(value) &&
+    value >= MIN_PUBLIC_KEY_SIZE &&
+    value <= MAX_PUBLIC_KEY_SIZE
     ? value
     : undefined;
 }
@@ -78,9 +88,7 @@ function parsePublicCertificateObservation(
   const issuer = boundedText(leaf.issuer);
   const subjectAltNames = boundedSubjectAltNames(leaf.subjectAltNames);
   const publicKeyAlgorithm = boundedText(leaf.publicKeyAlgorithm);
-  const publicKeySize = Number.isSafeInteger(leaf.publicKeySize)
-    ? leaf.publicKeySize
-    : undefined;
+  const publicKeySize = boundedPublicKeySize(leaf.publicKeySize);
   const signatureAlgorithm = boundedText(leaf.signatureAlgorithm);
   const certificatePem = boundedCertificatePem(leaf.certificatePem);
 
@@ -103,9 +111,12 @@ function parsePublicCertificateObservation(
 module.exports = {
   MAX_CERTIFICATE_PEM_LENGTH,
   MAX_CERTIFICATE_TEXT_LENGTH,
+  MAX_PUBLIC_KEY_SIZE,
+  MIN_PUBLIC_KEY_SIZE,
   MAX_SUBJECT_ALT_NAME_LENGTH,
   MAX_SUBJECT_ALT_NAMES,
   boundedCertificatePem,
+  boundedPublicKeySize,
   boundedSubjectAltNames,
   boundedText,
   parsePublicCertificateObservation,

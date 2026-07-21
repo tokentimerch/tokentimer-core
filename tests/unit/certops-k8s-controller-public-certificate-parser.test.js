@@ -127,6 +127,17 @@ describe("controller public-certificate observation adapter", () => {
     assert.equal(Object.hasOwn(oversizedSubject.publicCertificate, "issuer"), false);
   });
 
+  it("emits only API-valid public key-size boundaries", () => {
+    for (const publicKeySize of [1, 16_384]) {
+      const parsed = publicObservationFor(certificateLeaf({ publicKeySize }));
+      assert.equal(parsed.publicCertificate.publicKeySize, publicKeySize);
+    }
+    for (const publicKeySize of [0, -1, 16_385, 1.5, NaN, Infinity, "2048", null, undefined]) {
+      const parsed = publicObservationFor(certificateLeaf({ publicKeySize }));
+      assert.equal(Object.hasOwn(parsed.publicCertificate, "publicKeySize"), false);
+    }
+  });
+
   it("keeps valid SAN forms, accepts 253 characters, and omits 254-character identities", () => {
     const maximumSan = publicSanAtLength(MAX_PUBLIC_SAN_LENGTH);
     const oversizedSan = publicSanAtLength(MAX_PUBLIC_SAN_LENGTH + 1);
