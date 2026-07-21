@@ -22,6 +22,7 @@ COPY --chown=tokentimer:tokentimer apps/k8s-controller ./apps/k8s-controller
 COPY --chown=tokentimer:tokentimer apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/parser.js ./apps/api/services/certops/parser.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/identitySafety.js ./apps/api/services/certops/identitySafety.js
+COPY --chown=tokentimer:tokentimer apps/api/services/certops/controllerObservationLimits.js ./apps/api/services/certops/controllerObservationLimits.js
 
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller...
 

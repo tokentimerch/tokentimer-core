@@ -4,26 +4,48 @@ const { scrubLogString } = require("@tokentimer/log-scrub");
 const {
   parsePublicCertificateMaterial: parseCanonicalPublicCertificateMaterial,
 } = require("../../api/services/certops/parser");
+const {
+  MAX_PUBLIC_PEM_BYTES,
+  MAX_PUBLIC_SAN_ENTRIES,
+  MAX_PUBLIC_SAN_LENGTH,
+  MAX_PUBLIC_TEXT_LENGTH,
+} = require("../../api/services/certops/controllerObservationLimits");
 
-const MAX_CERTIFICATE_PEM_LENGTH = 96 * 1024;
-const MAX_CERTIFICATE_TEXT_LENGTH = 2_048;
-const MAX_SUBJECT_ALT_NAMES = 64;
+const MAX_CERTIFICATE_PEM_LENGTH = MAX_PUBLIC_PEM_BYTES;
+const MAX_CERTIFICATE_TEXT_LENGTH = MAX_PUBLIC_TEXT_LENGTH;
+const MAX_SUBJECT_ALT_NAME_LENGTH = MAX_PUBLIC_SAN_LENGTH;
+const MAX_SUBJECT_ALT_NAMES = MAX_PUBLIC_SAN_ENTRIES;
 
 function boundedText(value, maximumLength = MAX_CERTIFICATE_TEXT_LENGTH) {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
   const scrubbed = scrubLogString(String(value).trim());
-  if (typeof scrubbed !== "string" || scrubbed === "") return undefined;
-  return scrubbed.slice(0, maximumLength);
+  if (
+    typeof scrubbed !== "string" ||
+    scrubbed === "" ||
+    scrubbed.length > maximumLength
+  ) {
+    return undefined;
+  }
+  return scrubbed;
 }
 
 function boundedSubjectAltNames(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(
-    value
-      .slice(0, MAX_SUBJECT_ALT_NAMES)
-      .map((item) => boundedText(item))
-      .filter(Boolean),
-  )].sort();
+  const names = new Set();
+  for (const item of value) {
+    const name = boundedText(item, MAX_SUBJECT_ALT_NAME_LENGTH);
+    if (!name || names.has(name)) continue;
+    names.add(name);
+    if (names.size === MAX_SUBJECT_ALT_NAMES) break;
+  }
+  return [...names].sort();
+}
+
+function boundedCertificatePem(value) {
+  if (typeof value !== "string" || value === "") return undefined;
+  return Buffer.byteLength(value, "utf8") <= MAX_CERTIFICATE_PEM_LENGTH
+    ? value
+    : undefined;
 }
 
 /**
@@ -31,8 +53,11 @@ function boundedSubjectAltNames(value) {
  * observation allowlist. The parser receives the complete PEM chain or exact
  * DER certificate; only its first certificate becomes public observation data.
  */
-function parsePublicCertificateObservation(input) {
-  const certificates = parseCanonicalPublicCertificateMaterial(input);
+function parsePublicCertificateObservation(
+  input,
+  { parsePublicCertificateMaterial = parseCanonicalPublicCertificateMaterial } = {},
+) {
+  const certificates = parsePublicCertificateMaterial(input);
   const leaf = certificates[0];
   if (!leaf || typeof leaf !== "object") {
     const error = new Error("No public leaf certificate was parsed");
@@ -48,16 +73,16 @@ function parsePublicCertificateObservation(input) {
   }
 
   const publicCertificate = { fingerprintSha256 };
-  const serialNumber = boundedText(leaf.serialNumber, 256);
+  const serialNumber = boundedText(leaf.serialNumber);
   const subject = boundedText(leaf.subject);
   const issuer = boundedText(leaf.issuer);
   const subjectAltNames = boundedSubjectAltNames(leaf.subjectAltNames);
-  const publicKeyAlgorithm = boundedText(leaf.publicKeyAlgorithm, 128);
+  const publicKeyAlgorithm = boundedText(leaf.publicKeyAlgorithm);
   const publicKeySize = Number.isSafeInteger(leaf.publicKeySize)
     ? leaf.publicKeySize
     : undefined;
-  const signatureAlgorithm = boundedText(leaf.signatureAlgorithm, 256);
-  const certificatePem = boundedText(leaf.certificatePem, MAX_CERTIFICATE_PEM_LENGTH);
+  const signatureAlgorithm = boundedText(leaf.signatureAlgorithm);
+  const certificatePem = boundedCertificatePem(leaf.certificatePem);
 
   if (serialNumber) publicCertificate.serialNumber = serialNumber;
   if (subject) publicCertificate.subject = subject;
@@ -78,6 +103,10 @@ function parsePublicCertificateObservation(input) {
 module.exports = {
   MAX_CERTIFICATE_PEM_LENGTH,
   MAX_CERTIFICATE_TEXT_LENGTH,
+  MAX_SUBJECT_ALT_NAME_LENGTH,
   MAX_SUBJECT_ALT_NAMES,
+  boundedCertificatePem,
+  boundedSubjectAltNames,
+  boundedText,
   parsePublicCertificateObservation,
 };

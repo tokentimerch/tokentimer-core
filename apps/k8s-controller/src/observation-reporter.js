@@ -153,7 +153,7 @@ function createControllerObservationReporter({
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
-  sleep = (delay) => new Promise((resolve) => setTimeoutFn(resolve, delay)),
+  sleep,
 } = {}) {
   if (typeof fetchImpl !== "function") throw new TypeError("fetch is required");
   const normalizedApiUrl = parseApiUrl(apiUrl);
@@ -161,6 +161,7 @@ function createControllerObservationReporter({
   let acceptingWork = false;
   let started = false;
   const abortControllers = new Map();
+  const retryWaiters = new Set();
 
   function stoppingError() {
     return reporterError("CONTROLLER_REPORTER_STOPPING");
@@ -169,13 +170,46 @@ function createControllerObservationReporter({
   function stopInFlightRequests() {
     for (const [controller, state] of abortControllers) {
       state.stopping = true;
+      if (state.timeout !== null) clearTimeoutFn(state.timeout);
       controller.abort();
+    }
+  }
+
+  function cancelRetryWaits() {
+    for (const waiter of [...retryWaiters]) {
+      waiter.cancel();
     }
   }
 
   async function sleepBeforeRetry(delay) {
     if (!acceptingWork) throw stoppingError();
-    await sleep(delay);
+    let rejectCancellation;
+    const cancellation = new Promise((_, reject) => {
+      rejectCancellation = reject;
+    });
+    const waiter = {
+      timeout: null,
+      cancel() {
+        if (waiter.timeout !== null) clearTimeoutFn(waiter.timeout);
+        retryWaiters.delete(waiter);
+        rejectCancellation(stoppingError());
+      },
+    };
+    retryWaiters.add(waiter);
+    let wait;
+    try {
+      // Production waits use this tracked timer; the injected sleep seam keeps
+      // deterministic unit tests fast without changing delivery semantics.
+      wait = typeof sleep === "function"
+        ? Promise.resolve(sleep(delay))
+        : new Promise((resolve) => {
+          waiter.timeout = setTimeoutFn(resolve, delay);
+        });
+      await Promise.race([wait, cancellation]);
+    } finally {
+      if (waiter.timeout !== null) clearTimeoutFn(waiter.timeout);
+      retryWaiters.delete(waiter);
+    }
     if (!acceptingWork) throw stoppingError();
   }
 
@@ -191,12 +225,13 @@ function createControllerObservationReporter({
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       if (!acceptingWork) throw stoppingError();
       const controller = new AbortController();
-      const requestState = { stopping: false, timedOut: false };
+      const requestState = { stopping: false, timedOut: false, timeout: null };
       abortControllers.set(controller, requestState);
       const timeout = setTimeoutFn(() => {
         requestState.timedOut = true;
         controller.abort();
       }, requestTimeoutMs);
+      requestState.timeout = timeout;
       let delay = null;
       try {
         // Re-read the mounted credential for each delivery so Kubernetes Secret
@@ -213,10 +248,11 @@ function createControllerObservationReporter({
           },
           body,
         });
-        if (!acceptingWork || requestState.stopping) throw stoppingError();
+        if (requestState.stopping) throw stoppingError();
         if (response.status === 200 || response.status === 201) {
           return validateResponse(await boundedJson(response));
         }
+        if (!acceptingWork) throw stoppingError();
         if (!isTransientStatus(response.status)) {
           throw reporterError(`CONTROLLER_REPORTER_HTTP_${response.status}`);
         }
@@ -235,6 +271,7 @@ function createControllerObservationReporter({
         clearTimeoutFn(timeout);
         abortControllers.delete(controller);
       }
+      if (!acceptingWork) throw stoppingError();
       if (delay === null || attempt === MAX_ATTEMPTS - 1 || totalDelay + delay > MAX_TOTAL_DELAY_MS) {
         break;
       }
@@ -248,6 +285,7 @@ function createControllerObservationReporter({
     async close() {
       acceptingWork = false;
       stopInFlightRequests();
+      cancelRetryWaits();
     },
     isAlive: () => true,
     isReady: () => started && acceptingWork,
@@ -259,7 +297,6 @@ function createControllerObservationReporter({
     },
     async stopAcceptingWork() {
       acceptingWork = false;
-      stopInFlightRequests();
     },
     report,
   });

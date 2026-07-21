@@ -231,13 +231,72 @@ describe("controller observation reporter", () => {
     }
   });
 
-  it("stops an in-flight request without scheduling another retry", async () => {
+  it("allows an active request to finish successfully after stopping", async () => {
+    let attempts = 0;
+    let requestStarted;
+    const started = new Promise((resolve) => { requestStarted = resolve; });
+    let resolveResponse;
+    let aborted = false;
+    const reporter = createControllerObservationReporter(reporterOptions({
+      fetchImpl: async (_url, options) => {
+        attempts += 1;
+        requestStarted();
+        return new Promise((resolve, reject) => {
+          resolveResponse = () => resolve(successfulResponse());
+          options.signal.addEventListener("abort", () => {
+            aborted = true;
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          }, { once: true });
+        });
+      },
+    }));
+    await reporter.start();
+    const reporting = reporter.report(observation());
+    await started;
+    await reporter.stopAcceptingWork();
+    assert.equal(aborted, false);
+    resolveResponse();
+    assert.deepEqual(await reporting, {
+      managedCertificateId: "33333333-3333-4333-8333-333333333333",
+      targetId: "44444444-4444-4444-8444-444444444444",
+      certificateInstanceId: null,
+      duplicate: false,
+    });
+    assert.equal(attempts, 1);
+    await assert.rejects(() => reporter.report(observation()), { code: "CONTROLLER_REPORTER_STOPPING" });
+  });
+
+  it("does not retry or sleep after an active transient failure during shutdown", async () => {
     let attempts = 0;
     let sleepCalls = 0;
     let requestStarted;
+    let resolveResponse;
     const started = new Promise((resolve) => { requestStarted = resolve; });
     const reporter = createControllerObservationReporter(reporterOptions({
       sleep: async () => { sleepCalls += 1; },
+      fetchImpl: async () => {
+        attempts += 1;
+        requestStarted();
+        return new Promise((resolve) => { resolveResponse = resolve; });
+      },
+    }));
+    await reporter.start();
+    const reporting = reporter.report(observation());
+    await started;
+    await reporter.stopAcceptingWork();
+    resolveResponse({ status: 503, headers: { get: () => null }, text: async () => "{}" });
+    await assert.rejects(() => reporting, { code: "CONTROLLER_REPORTER_STOPPING" });
+    assert.equal(attempts, 1);
+    assert.equal(sleepCalls, 0);
+  });
+
+  it("close aborts an active request with the stable stopping code", async () => {
+    let attempts = 0;
+    let requestStarted;
+    const started = new Promise((resolve) => { requestStarted = resolve; });
+    const reporter = createControllerObservationReporter(reporterOptions({
       fetchImpl: async (_url, options) => {
         attempts += 1;
         requestStarted();
@@ -253,10 +312,31 @@ describe("controller observation reporter", () => {
     await reporter.start();
     const reporting = reporter.report(observation());
     await started;
-    await reporter.stopAcceptingWork();
+    await reporter.close();
     await assert.rejects(() => reporting, { code: "CONTROLLER_REPORTER_STOPPING" });
     assert.equal(attempts, 1);
-    assert.equal(sleepCalls, 0);
+  });
+
+  it("close interrupts a pending retry delay before another attempt starts", async () => {
+    let attempts = 0;
+    let sleepStarted;
+    const waiting = new Promise((resolve) => { sleepStarted = resolve; });
+    const reporter = createControllerObservationReporter(reporterOptions({
+      sleep: () => {
+        sleepStarted();
+        return new Promise(() => {});
+      },
+      fetchImpl: async () => {
+        attempts += 1;
+        return { status: 503, headers: { get: () => null }, text: async () => "{}" };
+      },
+    }));
+    await reporter.start();
+    const reporting = reporter.report(observation());
+    await waiting;
+    await reporter.close();
+    await assert.rejects(() => reporting, { code: "CONTROLLER_REPORTER_STOPPING" });
+    assert.equal(attempts, 1);
   });
 
   it("bounds streamed response bodies before consuming an unbounded payload", async () => {

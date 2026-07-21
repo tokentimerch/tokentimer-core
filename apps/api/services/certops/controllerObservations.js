@@ -11,6 +11,12 @@ const {
 } = require("../../utils/secretMaterial");
 const { upsertManagedCertificateByMonitorSource } = require("./inventory");
 const { createControllerObservationEvidence } = require("./evidence");
+const {
+  MAX_PUBLIC_PEM_BYTES,
+  MAX_PUBLIC_SAN_ENTRIES,
+  MAX_PUBLIC_SAN_LENGTH,
+  MAX_PUBLIC_TEXT_LENGTH,
+} = require("./controllerObservationLimits");
 
 const CERTOPS_CONTROLLER_OBSERVATION_INVALID =
   "CERTOPS_CONTROLLER_OBSERVATION_INVALID";
@@ -79,11 +85,11 @@ const URI_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 const EMAIL_SAN_PATTERN = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([a-z0-9]([-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)$/;
 const RFC3339_PATTERN =
   /^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$/;
-const MAX_DNS_NAMES = 64;
+const MAX_DNS_NAMES = MAX_PUBLIC_SAN_ENTRIES;
 const MAX_CONDITIONS = 16;
-const MAX_TEXT = 1024;
-const MAX_IDENTITY = 253;
-const MAX_PUBLIC_PEM = 64 * 1024;
+const MAX_TEXT = MAX_PUBLIC_TEXT_LENGTH;
+const MAX_IDENTITY = MAX_PUBLIC_SAN_LENGTH;
+const MAX_PUBLIC_PEM = MAX_PUBLIC_PEM_BYTES;
 
 function observationError(message, code = CERTOPS_CONTROLLER_OBSERVATION_INVALID) {
   const error = new Error(message);
@@ -809,6 +815,12 @@ module.exports = {
   _test: {
     certificateFor,
     commonNameFromSubject,
+    limits: {
+      MAX_DNS_NAMES,
+      MAX_IDENTITY,
+      MAX_PUBLIC_PEM,
+      MAX_TEXT,
+    },
     normalizeControllerObservation,
     validCertificateDnsName,
     validKubernetesLabel,

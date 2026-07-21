@@ -19,6 +19,7 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(dockerfile).to.include('CMD ["node", "src/index.js"]');
     expect(dockerfile).to.include("apps/api/services/certops/parser.js");
     expect(dockerfile).to.include("apps/api/services/certops/identitySafety.js");
+    expect(dockerfile).to.include("apps/api/services/certops/controllerObservationLimits.js");
     expect(dockerfile).to.include("process.env.CERTOPS_HEALTH_PORT || 8080");
     expect(dockerfile).to.include("Number.isInteger(port)");
     expect(dockerfile).to.include("path:'/healthz'");
