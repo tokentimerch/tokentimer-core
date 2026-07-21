@@ -188,6 +188,12 @@
           "status": "existing"
         },
         {
+          "id": "certops-controller-observation-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/controller-observation.schema.json",
+          "status": "existing"
+        },
+        {
           "id": "certops-agent-protocol-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",

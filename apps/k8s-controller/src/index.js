@@ -8,6 +8,7 @@ const { createHealthServer } = require("./health-server");
 const { createControllerLifecycle } = require("./lifecycle");
 const { createControllerLogger } = require("./logger");
 const { createControllerRuntime } = require("./runtime");
+const { createControllerObservationReporter } = require("./observation-reporter");
 
 function createControllerApplication({
   createKubernetesClient = createInClusterCertManagerClient,
@@ -17,6 +18,7 @@ function createControllerApplication({
   fsOptions,
   createLogger = createControllerLogger,
   createRuntime = createControllerRuntime,
+  createReporter = createControllerObservationReporter,
   createHealth = createHealthServer,
   createLifecycle = createControllerLifecycle,
   exitProcess,
@@ -24,6 +26,11 @@ function createControllerApplication({
 } = {}) {
   const config = loadControllerConfig(env, fsOptions);
   const logger = createLogger();
+  const reporter = createReporter({
+    apiTokenFile: config.apiTokenFile,
+    apiUrl: config.apiUrl,
+    fsOptions,
+  });
   const kubernetesClient = createKubernetesClient({
     secretFallbackEnabled: config.secretFallbackEnabled,
   });
@@ -36,11 +43,13 @@ function createControllerApplication({
     clusterId: config.clusterId,
     enrichObservation: tlsFallback.enrichObservation,
     logger,
-    observationHandler,
+    observationHandler:
+      observationHandler ||
+      ((observation) => reporter.report(observation)),
     watchNamespaces: config.watchNamespaces,
     workspaceId: config.workspaceId,
   });
-  const runtime = createRuntime({ kubernetesClient: observer });
+  const runtime = createRuntime({ kubernetesClient: observer, reporter });
   const lifecycleRef = { current: null };
   const healthServer = createHealth({
     getStatus: () =>
@@ -53,6 +62,7 @@ function createControllerApplication({
     exitProcess,
     healthServer,
     logger,
+    reporter,
     runtime,
     shutdownTimeoutMs: config.shutdownTimeoutMs,
   });

@@ -309,6 +309,72 @@ async function createCertificateEvidence(options) {
   return evidenceFromRow(result.rows[0]);
 }
 
+// This is deliberately narrower than createCertificateEvidence(): controller
+// observations have no certificate job, but still need one bounded,
+// detector-scanned, transaction-owned evidence record. It is not exported to a
+// public route and cannot be used for arbitrary jobless evidence.
+async function createControllerObservationEvidence(options) {
+  assertNoPrivateKeyMaterial(options.evidenceType);
+  assertNoPrivateKeyMaterial(options.subjectId);
+  assertNoPrivateKeyMaterial(options.metadata);
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const evidenceType = normalizeEnum(
+    options.evidenceType,
+    EVIDENCE_TYPE_SET,
+    CERTOPS_EVIDENCE_TYPE_INVALID,
+    "evidenceType",
+  );
+  if (evidenceType !== "certificate.observed") {
+    throw serviceError(
+      "Controller observation evidence type is invalid",
+      CERTOPS_EVIDENCE_TYPE_INVALID,
+    );
+  }
+  const { subjectType, subjectId } = normalizeSubject(options);
+  const output = normalizeRedactedOutput(options.output);
+  const metadata = buildPersistedEvidenceMetadata(
+    normalizePublicObject(options.metadata, "metadata"),
+    output,
+  );
+  const observedAt = normalizeOptionalDate(options.observedAt, "observedAt");
+
+  const result = await db.query(
+    `INSERT INTO certificate_evidence (
+       workspace_id,
+       job_id,
+       evidence_type,
+       subject_type,
+       subject_id,
+       metadata,
+       redacted_output,
+       output_truncated,
+       output_sha256,
+       output_size_bytes,
+       observed_at,
+       created_by_user_id,
+       created_by_api_token_id
+     )
+     VALUES ($1, NULL, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, NULL, $11)
+     RETURNING ${SAFE_EVIDENCE_SELECT_FIELDS}`,
+    [
+      workspaceId,
+      evidenceType,
+      subjectType,
+      subjectId,
+      JSON.stringify(metadata),
+      output.redactedOutput,
+      output.outputTruncated,
+      output.outputSha256,
+      output.outputSizeBytes,
+      observedAt,
+      options.createdByApiTokenId || null,
+    ],
+  );
+
+  return evidenceFromRow(result.rows[0]);
+}
+
 async function getCertificateEvidenceById(options) {
   const db = options.client || pool;
   const result = await db.query(
@@ -382,6 +448,7 @@ module.exports = {
   MAX_REDACTED_OUTPUT_BYTES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   createCertificateEvidence,
+  createControllerObservationEvidence,
   evidenceFromRow,
   getCertificateEvidenceById,
   listCertificateEvidence,

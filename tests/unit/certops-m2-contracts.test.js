@@ -118,6 +118,7 @@ const CANONICAL_M2_SCOPES = [
   "certops:events:write",
   "certops:jobs:read",
   "certops:evidence:write",
+  "certops:observations:write",
 ];
 
 const PLAN_M2_JOB_STATUSES = [
@@ -1194,12 +1195,13 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(executorNotes, /empty required-scope configuration is invalid/i);
   });
 
-  it("uses only plan-defined M2 scopes outside migration compatibility code", () => {
+  it("uses the additive M3-A6 observation scope without broad write implication", () => {
     const canonicalScopes = [
       "certops:read",
       "certops:events:write",
       "certops:jobs:read",
       "certops:evidence:write",
+      "certops:observations:write",
     ];
 
     for (const scope of canonicalScopes) {

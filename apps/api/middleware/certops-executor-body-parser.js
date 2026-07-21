@@ -6,10 +6,13 @@ const {
 } = require("./machine-token-rate-limit");
 
 const CERTOPS_EXECUTOR_EVENTS_PATH = "/api/v1/certops/executor/events";
+const CERTOPS_CONTROLLER_OBSERVATIONS_PATH =
+  "/api/v1/certops/executor/observations";
 const CERTOPS_JOB_EVENTS_PATH = "/api/v1/certops/jobs/:jobId/events";
 const CERTOPS_JOB_EVIDENCE_PATH = "/api/v1/certops/jobs/:jobId/evidence";
 const CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES = Object.freeze({
   aggregateExecutorEvents: "aggregate-executor-events",
+  controllerObservations: "controller-observations",
   perJobEvents: "per-job-events",
   perJobEvidence: "per-job-evidence",
 });
@@ -46,6 +49,12 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
     if (normalizedPath === `${prefix}/executor/events` ||
         normalizedPath === `${prefix}/executor/events/`) {
       return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.aggregateExecutorEvents;
+    }
+    if (
+      normalizedPath === `${prefix}/executor/observations` ||
+      normalizedPath === `${prefix}/executor/observations/`
+    ) {
+      return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.controllerObservations;
     }
     if (
       new RegExp(`^${prefix}/jobs/[^/]+/events/?$`).test(normalizedPath)
@@ -148,6 +157,7 @@ function createCertOpsMachineWritePreParserBoundary(options = {}) {
 
 module.exports = {
   CERTOPS_EXECUTOR_EVENTS_PATH,
+  CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
   CERTOPS_JOB_EVENTS_PATH,
   CERTOPS_JOB_EVIDENCE_PATH,
   CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES,

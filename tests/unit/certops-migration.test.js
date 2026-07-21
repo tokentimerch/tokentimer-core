@@ -32,6 +32,7 @@ const CERTOPS_JOB_TABLES = [
 ];
 
 const CERTOPS_EXECUTOR_EVENT_TABLES = ["certificate_executor_events"];
+const CERTOPS_CONTROLLER_OBSERVATION_TABLES = ["certificate_controller_observations"];
 
 const BASELINE_CERTOPS_COLUMNS = {
   certificate_profiles: [
@@ -109,6 +110,7 @@ const BASELINE_M2_COLUMNS = {
     "token_prefix",
     "token_hash",
     "scopes",
+    "controller_cluster_id",
     "status",
     "created_at",
     "updated_at",
@@ -147,6 +149,18 @@ const BASELINE_M2_COLUMNS = {
     "job_id",
     "executor_event_id",
     "request_hash",
+    "status",
+    "created_at",
+  ],
+  certificate_controller_observations: [
+    "id",
+    "workspace_id",
+    "controller_cluster_id",
+    "idempotency_key",
+    "request_hash",
+    "managed_certificate_id",
+    "target_id",
+    "certificate_instance_id",
     "status",
     "created_at",
   ],
@@ -197,6 +211,9 @@ const certOpsWorkspaceKillSwitchMigration = migrations.find(
 );
 const certOpsJobCreationFingerprintMigration = migrations.find(
   (migration) => migration.name === "certops_job_creation_request_fingerprint",
+);
+const certOpsControllerObservationMigration = migrations.find(
+  (migration) => migration.name === "certops_controller_observation_reporting",
 );
 
 function getTableBlock(tableName, migration = certOpsMigration) {
@@ -253,7 +270,7 @@ describe("CertOps inventory migration", () => {
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
       migrations.slice(-10).map((migration) => migration.version),
-      [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -920,6 +937,17 @@ describe("CertOps inventory migration", () => {
         `missing ${indexName}`,
       );
     }
+  });
+
+  it("adds controller observation binding and idempotency without storing raw payloads", () => {
+    assert.ok(certOpsControllerObservationMigration);
+    for (const tableName of CERTOPS_CONTROLLER_OBSERVATION_TABLES) {
+      assert.match(certOpsControllerObservationMigration.sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName}`));
+    }
+    assert.match(certOpsControllerObservationMigration.sql, /ADD COLUMN IF NOT EXISTS controller_cluster_id TEXT NULL/);
+    assert.match(certOpsControllerObservationMigration.sql, /certops:observations:write/);
+    assert.match(certOpsControllerObservationMigration.sql, /uq_certificate_controller_observations_workspace_cluster_key/);
+    assert.doesNotMatch(certOpsControllerObservationMigration.sql, /\braw_request\b|\brequest_body\b|\bauthorization_header\b/i);
   });
 
   it("defers dedicated security events and audit hash-chain storage beyond M2", () => {

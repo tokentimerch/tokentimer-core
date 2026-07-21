@@ -1352,6 +1352,120 @@ const migrations = [
           );
     `,
   },
+  {
+    version: 20,
+    name: "certops_controller_observation_reporting",
+    sql: `
+      -- M3-A6 binds the narrow controller-observation scope to one immutable
+      -- workspace-local cluster label. Existing M1/M2 tokens remain valid with
+      -- a NULL binding; the binding is only meaningful for this new write scope.
+      ALTER TABLE api_tokens
+        ADD COLUMN IF NOT EXISTS controller_cluster_id TEXT NULL;
+      ALTER TABLE api_tokens
+        DROP CONSTRAINT IF EXISTS api_tokens_scopes_check;
+      ALTER TABLE api_tokens
+        ADD CONSTRAINT api_tokens_scopes_check CHECK (
+          COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+          scopes <@ ARRAY[
+            'certops:read',
+            'certops:events:write',
+            'certops:jobs:read',
+            'certops:evidence:write',
+            'certops:observations:write'
+          ]::text[] AND
+          ((scopes @> ARRAY['certops:observations:write']::text[]) =
+            (controller_cluster_id IS NOT NULL)) AND
+          (controller_cluster_id IS NULL OR
+            controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') AND
+          (controller_cluster_id IS NULL OR char_length(controller_cluster_id) BETWEEN 1 AND 63)
+        );
+
+      -- Stable controller identity is source based, not fingerprint based. A
+      -- cert-manager observation must never merge a different cluster or
+      -- namespace merely because it reports the same public certificate.
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_source_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_source_check CHECK (
+          source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync', 'cert_manager')
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_source_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_source_check CHECK (
+          source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync', 'cert_manager')
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_cert_manager_observation_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_cert_manager_observation_check CHECK (
+          source <> 'cert_manager' OR
+          (target_type = 'kubernetes-secret' AND source_ref IS NOT NULL)
+        );
+      ALTER TABLE certificate_instances
+        DROP CONSTRAINT IF EXISTS certificate_instances_source_check;
+      ALTER TABLE certificate_instances
+        ADD CONSTRAINT certificate_instances_source_check CHECK (
+          source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync', 'cert_manager')
+        );
+
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker', 'cert_manager');
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker', 'cert_manager');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_targets_workspace_cert_manager_source_ref
+        ON certificate_targets(workspace_id, source, source_ref)
+        WHERE source = 'cert_manager' AND source_ref IS NOT NULL;
+
+      -- Controller observation idempotency never stores a raw request,
+      -- authorization header, public PEM, Kubernetes object, or token. The
+      -- semantic request hash excludes retry diagnostics at the service layer.
+      CREATE TABLE IF NOT EXISTS certificate_controller_observations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        controller_cluster_id TEXT NOT NULL
+          CHECK (controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+          CHECK (char_length(controller_cluster_id) BETWEEN 1 AND 63),
+        idempotency_key CHAR(64) NOT NULL
+          CHECK (idempotency_key ~ '^[a-f0-9]{64}$'),
+        request_hash CHAR(64) NOT NULL
+          CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+        managed_certificate_id UUID NULL,
+        target_id UUID NULL,
+        certificate_instance_id UUID NULL,
+        status TEXT NOT NULL CHECK (status IN ('accepted', 'redacted')),
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_controller_observations_workspace_cluster_key
+          UNIQUE (workspace_id, controller_cluster_id, idempotency_key),
+        CONSTRAINT fk_certificate_controller_observations_managed_certificate
+          FOREIGN KEY (workspace_id, managed_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id)
+          ON DELETE SET NULL (managed_certificate_id),
+        CONSTRAINT fk_certificate_controller_observations_target
+          FOREIGN KEY (workspace_id, target_id)
+          REFERENCES certificate_targets(workspace_id, id)
+          ON DELETE SET NULL (target_id),
+        CONSTRAINT fk_certificate_controller_observations_instance
+          FOREIGN KEY (certificate_instance_id)
+          REFERENCES certificate_instances(id)
+          ON DELETE SET NULL,
+        CONSTRAINT fk_certificate_controller_observations_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_controller_observations_workspace_created
+        ON certificate_controller_observations(workspace_id, created_at DESC);
+    `,
+  },
 ];
 
 async function runMigrations() {

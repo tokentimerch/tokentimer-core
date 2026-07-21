@@ -8,6 +8,7 @@ const RFC1123_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_PORT = 8080;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
+const MACHINE_TOKEN_PATTERN = /^ttx_[a-f0-9]{16}_[a-f0-9]{64}$/;
 
 class ControllerConfigError extends Error {
   constructor(code, field) {
@@ -164,7 +165,13 @@ function loadApiTokenFromFile(
     );
   }
   const token = String(contents).trim();
-  if (token === "" || token.includes("\0") || containsPrivateKeyMaterial(token)) {
+  if (
+    token === "" ||
+    token.length !== 85 ||
+    !MACHINE_TOKEN_PATTERN.test(token) ||
+    token.includes("\0") ||
+    containsPrivateKeyMaterial(token)
+  ) {
     throw new ControllerConfigError(
       "CONTROLLER_CONFIG_INVALID_TOKEN_FILE",
       "TOKENTIMER_API_TOKEN_FILE",
@@ -188,9 +195,8 @@ function loadControllerConfig(env = process.env, options = {}) {
   }
 
   const tokenFile = requiredString(env, "TOKENTIMER_API_TOKEN_FILE");
-  // Validate by loading from the only permitted source, then discard it. M3-A2
-  // has no reporting transport yet, so the credential is intentionally never
-  // retained in the config object or runtime state.
+  // Validate the bounded machine credential at the only permitted source, then
+  // discard it. The reporter re-reads this mounted file for each delivery.
   loadApiTokenFromFile(tokenFile, options);
 
   return Object.freeze({
@@ -236,4 +242,5 @@ module.exports = {
   parseMode,
   parseNamespaces,
   parsePort,
+  parseApiUrl,
 };

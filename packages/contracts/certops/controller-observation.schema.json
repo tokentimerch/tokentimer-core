@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/controller-observation.schema.json",
+  "title": "CertOps Controller Observation",
+  "description": "M3-A6 normalized public cert-manager observation. This controller-specific transport is not the M4 agent protocol and cannot carry private keys, credentials, Kubernetes Secret objects, CSRs, or metadata bags.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "observationId", "idempotencyKey", "workspaceId", "clusterId", "namespace", "certificateName", "certificateUid", "issuerRef", "secretName", "certificateRequestRef", "dnsNames", "conditions", "ready", "publicCertificate", "observationSource", "observedAt"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "observationId": { "type": "string", "format": "uuid" },
+    "idempotencyKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "workspaceId": { "type": "string", "format": "uuid" },
+    "clusterId": { "type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "namespace": { "$ref": "#/definitions/kubernetesName" },
+    "certificateName": { "$ref": "#/definitions/kubernetesName" },
+    "certificateUid": { "type": "string", "format": "uuid" },
+    "certificateGeneration": { "type": "integer", "minimum": 0 },
+    "resourceVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "issuerRef": { "$ref": "#/definitions/issuerRef" },
+    "secretName": { "anyOf": [{ "$ref": "#/definitions/kubernetesName" }, { "type": "null" }] },
+    "certificateRequestRef": { "anyOf": [{ "$ref": "#/definitions/certificateRequestRef" }, { "type": "null" }] },
+    "dnsNames": { "type": "array", "maxItems": 64, "items": { "$ref": "#/definitions/kubernetesName" } },
+    "revision": { "type": "integer", "minimum": 0 },
+    "conditions": { "type": "array", "maxItems": 16, "items": { "$ref": "#/definitions/condition" } },
+    "ready": { "type": "boolean" },
+    "failureReason": { "type": "string", "maxLength": 1024 },
+    "failureMessage": { "type": "string", "maxLength": 1024 },
+    "notBefore": { "type": "string", "format": "date-time" },
+    "notAfter": { "type": "string", "format": "date-time" },
+    "renewalTime": { "type": "string", "format": "date-time" },
+    "publicCertificate": { "anyOf": [{ "$ref": "#/definitions/publicCertificate" }, { "type": "null" }] },
+    "observationSource": { "type": "string", "const": "cert_manager" },
+    "observedAt": { "type": "string", "format": "date-time" }
+  },
+  "definitions": {
+    "kubernetesName": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" },
+    "issuerRef": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "group": { "type": "string", "maxLength": 253 }, "kind": { "type": "string", "maxLength": 253 }, "name": { "$ref": "#/definitions/kubernetesName" } } },
+    "certificateRequestRef": { "type": "object", "additionalProperties": false, "required": ["name"], "properties": { "name": { "$ref": "#/definitions/kubernetesName" }, "uid": { "type": "string", "format": "uuid" } } },
+    "condition": { "type": "object", "additionalProperties": false, "required": ["type", "status"], "properties": { "type": { "type": "string", "maxLength": 253 }, "status": { "type": "string", "maxLength": 32 }, "reason": { "type": "string", "maxLength": 1024 }, "message": { "type": "string", "maxLength": 1024 }, "lastTransitionTime": { "type": "string", "format": "date-time" } } },
+    "publicCertificate": { "type": "object", "additionalProperties": false, "properties": { "fingerprintSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "serialNumber": { "type": "string", "maxLength": 1024 }, "subject": { "type": "string", "maxLength": 1024 }, "issuer": { "type": "string", "maxLength": 1024 }, "subjectAltNames": { "type": "array", "maxItems": 64, "items": { "$ref": "#/definitions/kubernetesName" } }, "publicKeyAlgorithm": { "type": "string", "maxLength": 1024 }, "publicKeySize": { "type": "integer", "minimum": 1, "maximum": 16384 }, "signatureAlgorithm": { "type": "string", "maxLength": 1024 }, "certificatePem": { "type": "string", "maxLength": 65536 } } }
+  }
+}

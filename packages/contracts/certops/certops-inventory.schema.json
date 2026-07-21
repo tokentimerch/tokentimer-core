@@ -49,6 +49,7 @@
         "endpoint_monitor",
         "integration",
         "auto_sync",
+        "cert_manager",
         null
       ],
       "description": "How this public certificate inventory record entered the control plane."

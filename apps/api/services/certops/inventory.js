@@ -339,6 +339,11 @@ function publicMetadataFor(certificate, options, chainIndex) {
     publicKeyMetadata: certificate.publicKeyMetadata || null,
     signatureAlgorithmOid: certificate.signatureAlgorithmOid || null,
     requestSource: options.source || null,
+    controllerObservation:
+      options.controllerObservationMetadata &&
+      typeof options.controllerObservationMetadata === "object"
+        ? options.controllerObservationMetadata
+        : null,
   });
 }
 
@@ -554,10 +559,9 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
 }
 
 /**
- * Upsert a managed certificate keyed by monitor identity (workspace, source,
- * source_ref). Does not require fingerprint uniqueness, so a second monitor
- * observing the same cert material inserts a new row instead of stealing the
- * first monitor's provenance.
+ * Upsert a managed certificate keyed by source identity (workspace, source,
+ * source_ref). This supports observers whose stable identity must not merge on
+ * a shared public certificate fingerprint.
  */
 async function upsertManagedCertificateByMonitorSource(
   client,
@@ -629,7 +633,7 @@ async function upsertManagedCertificateByMonitorSource(
      )
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
-         AND source IN ('endpoint_monitor', 'domain_checker')
+         AND source IN ('endpoint_monitor', 'domain_checker', 'cert_manager')
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE

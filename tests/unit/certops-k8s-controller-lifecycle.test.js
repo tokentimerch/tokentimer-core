@@ -312,7 +312,7 @@ describe("CertOps Kubernetes controller lifecycle", () => {
       path.join(os.tmpdir(), "tokentimer-controller-startup-"),
     );
     const tokenFile = path.join(temporaryDirectory, "token");
-    fs.writeFileSync(tokenFile, "controller-token", { mode: 0o600 });
+    fs.writeFileSync(tokenFile, `ttx_${"a".repeat(16)}_${"b".repeat(64)}`, { mode: 0o600 });
     const exits = [];
     const processRef = new EventEmitter();
     const logger = { debug() {}, error() {}, info() {}, warn() {} };

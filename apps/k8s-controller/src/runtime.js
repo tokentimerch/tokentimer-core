@@ -44,10 +44,10 @@ function createControllerRuntime({
   let started = false;
 
   async function start() {
-    acceptingWork = true;
     try {
-      await invokePort(kubernetesClient, "start", { trackWork });
       await invokePort(reporter, "start");
+      acceptingWork = true;
+      await invokePort(kubernetesClient, "start", { trackWork });
       started = true;
     } catch (error) {
       acceptingWork = false;

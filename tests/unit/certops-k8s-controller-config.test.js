@@ -16,7 +16,8 @@ const {
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-controller-"));
 const tokenPath = path.join(tempDir, "api-token");
-fs.writeFileSync(tokenPath, "controller-token-value\n", { mode: 0o600 });
+const controllerToken = `ttx_${"a".repeat(16)}_${"b".repeat(64)}`;
+fs.writeFileSync(tokenPath, `${controllerToken}\n`, { mode: 0o600 });
 after(() => fs.rmSync(tempDir, { force: true, recursive: true }));
 
 function validEnv(overrides = {}) {
@@ -44,7 +45,7 @@ describe("CertOps Kubernetes controller configuration", () => {
     assert.deepEqual(config.watchNamespaces, ["cert-manager", "platform"]);
     assert.equal(config.reconcileIntervalMs, 45_000);
     assert.equal(config.shutdownTimeoutMs, 12_000);
-    assert.doesNotMatch(JSON.stringify(config), /controller-token-value/);
+    assert.doesNotMatch(JSON.stringify(config), /ttx_/);
   });
 
   it("fails closed when a required field is absent or malformed", () => {
@@ -127,7 +128,7 @@ describe("CertOps Kubernetes controller configuration", () => {
   });
 
   it("accepts credentials only from a safe non-empty token file", () => {
-    assert.equal(loadApiTokenFromFile(tokenPath), "controller-token-value");
+    assert.equal(loadApiTokenFromFile(tokenPath), controllerToken);
 
     const emptyTokenPath = path.join(tempDir, "empty-token");
     fs.writeFileSync(emptyTokenPath, "", { mode: 0o600 });

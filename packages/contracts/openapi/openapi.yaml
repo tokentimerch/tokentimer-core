@@ -4120,6 +4120,63 @@ paths:
                 code: CERTOPS_MACHINE_RATE_LIMITED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/executor/observations:
+    post:
+      tags: [CertOps Controller]
+      summary: Report a public cert-manager observation
+      operationId: createCertOpsControllerObservation
+      description: >-
+        Additive M3-A6 controller transport, not the M4 agent protocol. Requires
+        `certops:observations:write` and a token immutable controllerClusterId
+        binding. Workspace and cluster provenance are derived from that token;
+        body values must match. Private material is audited and rejected before
+        rollout, extension, or scope denial. The passive route remains available
+        while a workspace is paused. Idempotency is semantic and excludes only
+        retry diagnostic observationId and observedAt fields.
+      security:
+        - certOpsTokenAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-f0-9]{64}$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsControllerObservationRequest"
+      responses:
+        "201":
+          description: Observation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsControllerObservationResponse"
+        "200":
+          description: Exact idempotent replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsControllerObservationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Idempotency key conflicts with a different semantic observation
+        "422":
+          description: Request rejected because it contained private key material
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
   /api/v1/certops/executor/events:
     post:
       tags: [CertOps Agent]
@@ -4561,6 +4618,7 @@ components:
             - endpoint_monitor
             - integration
             - auto_sync
+            - cert_manager
             - null
         sourceRef:
           type: string
@@ -5088,6 +5146,87 @@ components:
             $ref: "#/components/schemas/CertOpsEvidenceItem"
         pagination:
           $ref: "#/components/schemas/Pagination"
+    CertOpsControllerObservationRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, observationId, idempotencyKey, workspaceId, clusterId, namespace, certificateName, certificateUid, issuerRef, secretName, certificateRequestRef, dnsNames, conditions, ready, publicCertificate, observationSource, observedAt]
+      properties:
+        schemaVersion: { type: integer, enum: [1] }
+        observationId: { type: string, format: uuid }
+        idempotencyKey: { type: string, pattern: "^[a-f0-9]{64}$" }
+        workspaceId: { type: string, format: uuid }
+        clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        certificateName: { type: string, minLength: 1, maxLength: 253 }
+        certificateUid: { type: string, format: uuid }
+        certificateGeneration: { type: integer, minimum: 0 }
+        resourceVersion: { type: string, maxLength: 256 }
+        issuerRef:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            group: { type: string, maxLength: 253 }
+            kind: { type: string, maxLength: 253 }
+            name: { type: string, minLength: 1, maxLength: 253 }
+        secretName: { type: string, nullable: true, maxLength: 253 }
+        certificateRequestRef:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: { type: string, minLength: 1, maxLength: 253 }
+            uid: { type: string, format: uuid }
+        dnsNames:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 253 }
+        revision: { type: integer, minimum: 0 }
+        conditions:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, status]
+            properties:
+              type: { type: string, maxLength: 253 }
+              status: { type: string, maxLength: 32 }
+              reason: { type: string, maxLength: 1024 }
+              message: { type: string, maxLength: 1024 }
+              lastTransitionTime: { type: string, format: date-time }
+        ready: { type: boolean }
+        failureReason: { type: string, maxLength: 1024 }
+        failureMessage: { type: string, maxLength: 1024 }
+        notBefore: { type: string, format: date-time }
+        notAfter: { type: string, format: date-time }
+        renewalTime: { type: string, format: date-time }
+        publicCertificate:
+          type: object
+          nullable: true
+          additionalProperties: false
+          properties:
+            fingerprintSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+            serialNumber: { type: string, maxLength: 1024 }
+            subject: { type: string, maxLength: 1024 }
+            issuer: { type: string, maxLength: 1024 }
+            subjectAltNames: { type: array, maxItems: 64, items: { type: string, maxLength: 253 } }
+            publicKeyAlgorithm: { type: string, maxLength: 1024 }
+            publicKeySize: { type: integer, minimum: 1, maximum: 16384 }
+            signatureAlgorithm: { type: string, maxLength: 1024 }
+            certificatePem: { type: string, maxLength: 65536 }
+        observationSource: { type: string, enum: [cert_manager] }
+        observedAt: { type: string, format: date-time }
+    CertOpsControllerObservationResponse:
+      type: object
+      additionalProperties: false
+      required: [managedCertificateId, targetId, certificateInstanceId, duplicate]
+      properties:
+        managedCertificateId: { type: string, format: uuid, nullable: true }
+        targetId: { type: string, format: uuid, nullable: true }
+        certificateInstanceId: { type: string, format: uuid, nullable: true }
+        duplicate: { type: boolean }
     CertOpsApiTokenScope:
       type: string
       enum:
@@ -5095,7 +5234,8 @@ components:
         - certops:events:write
         - certops:jobs:read
         - certops:evidence:write
-      description: Canonical M2 CertOps API-token scope. Job-claim and signed-agent scopes are deferred to M4.
+        - certops:observations:write
+      description: Canonical CertOps API-token scope. The M3-A6 observation write scope requires a controller cluster binding; job-claim and signed-agent scopes remain deferred to M4.
     CertOpsApiToken:
       type: object
       additionalProperties: false
@@ -5132,6 +5272,13 @@ components:
           uniqueItems: true
           items:
             $ref: "#/components/schemas/CertOpsApiTokenScope"
+        controllerClusterId:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 63
+          pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          description: Immutable binding required exactly when scopes includes certops:observations:write.
         status:
           type: string
           enum: [active, revoked, expired]
@@ -5189,6 +5336,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        controllerClusterId:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 63
+          pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          description: Required exactly when scopes includes certops:observations:write; creation-only and immutable.
     CertOpsApiTokenCreateResponse:
       type: object
       additionalProperties: false

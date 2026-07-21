@@ -95,7 +95,7 @@ function executorRouteBlock(routePath) {
 }
 
 describe("CertOps route hardening", () => {
-  it("implements only the frozen workspace inventory, M2, and M3-A1 routes", () => {
+  it("implements only the frozen workspace, M2, and M3-A6 routes", () => {
     const routeMatches = Array.from(
       routesSource.matchAll(/router\.(get|post|put)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
@@ -399,11 +399,15 @@ describe("CertOps route hardening", () => {
       "POST",
     );
     assertOpenApiRoute("/api/v1/certops/executor/events", "POST");
+    assertOpenApiRoute("/api/v1/certops/executor/observations", "POST");
     assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/events", "POST");
     assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/evidence", "POST");
   });
 
   it("keeps machine-token executor writes in the executor router", () => {
+    const observationBlock = executorRouteBlock(
+      "/api/v1/certops/executor/observations",
+    );
     const aggregateBlock = executorRouteBlock(
       "/api/v1/certops/executor/events",
     );
@@ -425,7 +429,33 @@ describe("CertOps route hardening", () => {
     assert.match(executorRoutesSource, /allowTokenWorkspace: true/);
     assert.match(executorRoutesSource, /certops:events:write/);
     assert.match(executorRoutesSource, /certops:evidence:write/);
+    assert.match(observationBlock, /controllerObservationAuthMiddleware/);
+    assert.match(observationBlock, /rejectControllerObservationPrivateMaterial/);
+    assert.match(observationBlock, /controllerObservationGateMiddleware/);
+    assert.match(observationBlock, /requireControllerObservationScope/);
+    assert.match(executorRoutesSource, /CONTROLLER_OBSERVATION_SCOPE = OBSERVATION_WRITE_SCOPE/);
 
     assert.equal(routesSource.includes("/api/v1/certops/jobs/:jobId"), false);
+  });
+
+  it("keeps controller observations passive and key-rejection-first", () => {
+    const block = executorRouteBlock("/api/v1/certops/executor/observations");
+    assert.ok(
+      block.indexOf("controllerObservationAuthMiddleware") <
+        block.indexOf("rejectControllerObservationPrivateMaterial"),
+    );
+    assert.ok(
+      block.indexOf("rejectControllerObservationPrivateMaterial") <
+        block.indexOf("certOpsEnabledMiddleware"),
+    );
+    assert.ok(
+      block.indexOf("certOpsEnabledMiddleware") <
+        block.indexOf("controllerObservationGateMiddleware"),
+    );
+    assert.ok(
+      block.indexOf("controllerObservationGateMiddleware") <
+        block.indexOf("requireControllerObservationScope"),
+    );
+    assert.doesNotMatch(block, /requireWorkspaceCertOpsActive/);
   });
 });

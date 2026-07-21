@@ -1,8 +1,8 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.10.3",
+  "version": "0.11.0",
   "status": "runtime-stable",
-  "description": "Frozen CertOps route namespaces and stable routes. Core workspace, machine-token executor, job read, job manual-create, evidence, token-management, and workspace kill-switch routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
+  "description": "Frozen CertOps route namespaces and stable routes. Core workspace, machine-token executor, controller observation, job read, job manual-create, evidence, token-management, and workspace kill-switch routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
   "namespacePolicy": {
     "workspaceScoped": {
       "prefix": "/api/v1/workspaces/{id}/certops",
@@ -17,12 +17,12 @@
       "prefix": "/api/v1/certops/executor",
       "auth": "certOpsTokenAuth",
       "notes": [
-        "Machine surface for M2 executor writes. Scoped API-token bearer auth only; machine routes never use cookies.",
-        "Allowed M2 scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope; empty required-scope configuration is invalid.",
-        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
+        "Machine surface for M2 executor writes and the additive M3-A6 controller observation transport. Scoped API-token bearer auth only; machine routes never use cookies.",
+        "Allowed scopes are certops:read, certops:events:write, certops:jobs:read, certops:evidence:write, and certops:observations:write. certops:read implies certops:jobs:read only, never a write scope; the observation scope is not implied by any other scope and requires an immutable controllerClusterId binding. Empty required-scope configuration is invalid.",
+        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events, controller observations, and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
         "POST /api/v1/certops/executor/events is the aggregate M2 ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped M2 machine routes.",
-        "All three machine routes reuse the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior."
+        "The three M2 executor routes retain the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior. POST /api/v1/certops/executor/observations is controller-specific M3 transport, not M4 agent protocol. It derives workspace and cluster provenance from the bound token, rejects private material before scope or extension gates, remains available while a workspace is paused, and uses transaction-owned semantic idempotency that excludes observationId and observedAt."
       ]
     },
     "agent": {
@@ -39,6 +39,7 @@
   },
   "routeAuth": {
     "/api/v1/certops/executor/events": "certOpsTokenAuth",
+    "/api/v1/certops/executor/observations": "certOpsTokenAuth",
     "/api/v1/certops/jobs/{jobId}/events": "certOpsTokenAuth",
     "/api/v1/certops/jobs/{jobId}/evidence": "certOpsTokenAuth",
     "/api/v1/workspaces/{id}/certops/settings": "cookieAuth",
@@ -66,6 +67,7 @@
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke", "method": "POST" },
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
+      { "path": "/api/v1/certops/executor/observations", "method": "POST" },
       { "path": "/api/v1/certops/jobs/{jobId}/events", "method": "POST" },
       { "path": "/api/v1/certops/jobs/{jobId}/evidence", "method": "POST" },
       { "path": "/api/v1/certops/agent/register", "method": "POST" },

@@ -34,6 +34,7 @@ const {
   CERTOPS_API_TOKEN_INVALID,
   CERTOPS_API_TOKEN_NAME_INVALID,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
+  CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
   createApiToken,
   listApiTokens,
   revokeApiTokenWithResult,
@@ -220,7 +221,8 @@ function handleCertOpsError(res, err) {
   if (
     err?.code === CERTOPS_API_TOKEN_INVALID ||
     err?.code === CERTOPS_API_TOKEN_NAME_INVALID ||
-    err?.code === CERTOPS_API_TOKEN_SCOPE_INVALID
+    err?.code === CERTOPS_API_TOKEN_SCOPE_INVALID ||
+    err?.code === CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID
   ) {
     return res.status(400).json({
       error: "CertOps API token request is invalid",
@@ -604,6 +606,7 @@ router.post(
           workspaceId: req.workspace.id,
           name: req.body?.name,
           scopes: req.body?.scopes,
+          controllerClusterId: req.body?.controllerClusterId,
           expiresAt: req.body?.expiresAt,
           createdBy: req.user.id,
         });
