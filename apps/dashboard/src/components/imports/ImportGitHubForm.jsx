@@ -437,8 +437,10 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           </Checkbox>
           {cleanupObsolete ? (
             <Text fontSize='xs' color='red.400' pl={6}>
-              Deletes TokenTimer entries (scoped to the scanned GitHub item
-              types) that are missing from this scan. This cannot be undone.
+              Deletes previously imported tokens of the item types scanned above
+              that no longer appear anywhere in this scan's results, regardless
+              of which items you select for import below. Item types you did not
+              scan for are never affected. This cannot be undone.
             </Text>
           ) : null}
         </VStack>

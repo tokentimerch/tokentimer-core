@@ -53,7 +53,6 @@ export const CONTROL_CENTER_STATUSES = Object.freeze([
  * @property {string} generatedAt
  * @property {boolean} isComplete
  */
-
 /**
  * @param {{
  *   isLoading: boolean,
@@ -204,4 +203,79 @@ export function useControlCenterStats() {
     error,
     refetch,
   };
+}
+
+const PAGINATED_LIST_PAGE_SIZE = 20;
+
+/**
+ * Infinite-scroll pagination for a Control Center list endpoint (e.g.
+ * perpetual assets or scopes/privileges) that returns `{ items, total,
+ * hasMore }`. Seeds its initial page from the values already embedded in
+ * the aggregate `/control-center/stats` payload so the list renders
+ * immediately, without an extra round trip on first paint.
+ *
+ * @param {(workspaceId: string) => string} endpointFn
+ * @param {{ items: Array<object>, hasMore: boolean }} seed
+ * @returns {{
+ *   items: Array<object>,
+ *   hasMore: boolean,
+ *   isLoadingMore: boolean,
+ *   error: string | null,
+ *   loadMore: () => Promise<void>,
+ * }}
+ */
+export function useControlCenterListPage(endpointFn, seed) {
+  const { workspaceId } = useWorkspace();
+  const [items, setItems] = useState(seed.items);
+  const [hasMore, setHasMore] = useState(seed.hasMore);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [error, setError] = useState(/** @type {string | null} */ (null));
+  const seedKeyRef = useRef(null);
+  const inFlightRef = useRef(false);
+
+  // Re-seed whenever the underlying stats payload changes (e.g. a manual
+  // refresh, or switching workspaces) rather than on every render, so
+  // in-progress infinite-scroll pagination isn't reset by unrelated
+  // re-renders.
+  const seedKey = `${workspaceId || ''}:${seed.items.length}:${seed.hasMore}`;
+  if (seedKeyRef.current !== seedKey) {
+    seedKeyRef.current = seedKey;
+    if (items !== seed.items) {
+      setItems(seed.items);
+      setHasMore(seed.hasMore);
+      setError(null);
+    }
+  }
+
+  const loadMore = useCallback(async () => {
+    if (!workspaceId || inFlightRef.current || !hasMore) return;
+    inFlightRef.current = true;
+    setIsLoadingMore(true);
+    setError(null);
+    try {
+      const response = await apiClient.get(endpointFn(workspaceId), {
+        params: { limit: PAGINATED_LIST_PAGE_SIZE, offset: items.length },
+        _suppressLog: true,
+      });
+      const page = response?.data || {};
+      const nextItems = Array.isArray(page.items) ? page.items : [];
+      setItems(prev => {
+        const seen = new Set(prev.map(item => item.id));
+        const deduped = nextItems.filter(item => !seen.has(item.id));
+        return [...prev, ...deduped];
+      });
+      setHasMore(Boolean(page.hasMore));
+    } catch (err) {
+      const message =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to load more items';
+      setError(message);
+    } finally {
+      inFlightRef.current = false;
+      setIsLoadingMore(false);
+    }
+  }, [workspaceId, hasMore, items.length, endpointFn]);
+
+  return { items, hasMore, isLoadingMore, error, loadMore };
 }

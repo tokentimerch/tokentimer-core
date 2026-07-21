@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
 import {
   Alert,
@@ -59,9 +59,12 @@ import SEO from '../components/SEO.jsx';
 import TruncatedText from '../components/TruncatedText';
 import { resolveCategoryVisual } from '../components/AssetInventoryTable';
 import { useControlCenterData } from '../hooks/useControlCenterData';
-import { useControlCenterStats } from '../hooks/useControlCenterStats';
+import {
+  useControlCenterStats,
+  useControlCenterListPage,
+} from '../hooks/useControlCenterStats';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
-import { formatDate } from '../utils/apiClient';
+import { formatDate, API_ENDPOINTS } from '../utils/apiClient';
 
 const EMPTY_BUCKETS = Object.freeze({});
 const EMPTY_LIST = Object.freeze([]);
@@ -379,12 +382,32 @@ function InsightPanelSummary({ icon: Icon, accent, label, value, detail }) {
 
 const INSIGHT_LIST_VISIBLE_ROWS = 6;
 const INSIGHT_LIST_MAX_H = `${INSIGHT_LIST_VISIBLE_ROWS * 64}px`;
+const INSIGHT_LIST_LOAD_MORE_THRESHOLD_PX = 48;
 
-function InsightListShell({ children, emptyMessage }) {
-  const { border } = useDashboardTheme();
+function InsightListShell({
+  children,
+  emptyMessage,
+  onLoadMore,
+  hasMore,
+  isLoadingMore,
+}) {
+  const { border, muted } = useDashboardTheme();
   const listBg = useColorModeValue(
     'rgba(248, 250, 252, 0.72)',
     'rgba(8, 13, 22, 0.42)'
+  );
+
+  const handleScroll = useCallback(
+    e => {
+      if (!onLoadMore || !hasMore || isLoadingMore) return;
+      const el = e.currentTarget;
+      const distanceFromBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom <= INSIGHT_LIST_LOAD_MORE_THRESHOLD_PX) {
+        onLoadMore();
+      }
+    },
+    [onLoadMore, hasMore, isLoadingMore]
   );
 
   if (!children) {
@@ -402,9 +425,15 @@ function InsightListShell({ children, emptyMessage }) {
       maxH={INSIGHT_LIST_MAX_H}
       overflowY='auto'
       flexShrink={0}
+      onScroll={onLoadMore ? handleScroll : undefined}
     >
       <VStack align='stretch' spacing={0} divider={<Box h='1px' bg={border} />}>
         {children}
+        {onLoadMore && isLoadingMore ? (
+          <Flex align='center' justify='center' py={2}>
+            <Spinner size='xs' color={muted} />
+          </Flex>
+        ) : null}
       </VStack>
     </Box>
   );
@@ -978,8 +1007,30 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const totalAssets = statsData?.totalAssets || 0;
   const sources = statsData?.sources || EMPTY_LIST;
   const needsAttention = statsData?.needsAttention || EMPTY_LIST;
-  const neverExpires = statsData?.neverExpires || EMPTY_LIST;
-  const privilegeHighlights = statsData?.privilegeHighlights || EMPTY_LIST;
+  const neverExpiresSeed = useMemo(
+    () => ({
+      items: statsData?.neverExpires || EMPTY_LIST,
+      hasMore: Boolean(statsData?.neverExpiresHasMore),
+    }),
+    [statsData?.neverExpires, statsData?.neverExpiresHasMore]
+  );
+  const neverExpiresPage = useControlCenterListPage(
+    API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_NEVER_EXPIRES,
+    neverExpiresSeed
+  );
+  const neverExpires = neverExpiresPage.items;
+  const privilegeHighlightsSeed = useMemo(
+    () => ({
+      items: statsData?.privilegeHighlights || EMPTY_LIST,
+      hasMore: Boolean(statsData?.privilegeHighlightsHasMore),
+    }),
+    [statsData?.privilegeHighlights, statsData?.privilegeHighlightsHasMore]
+  );
+  const privilegeHighlightsPage = useControlCenterListPage(
+    API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_PRIVILEGE_HIGHLIGHTS,
+    privilegeHighlightsSeed
+  );
+  const privilegeHighlights = privilegeHighlightsPage.items;
   const autoSyncRows = Array.isArray(statsData?.autoSync)
     ? statsData.autoSync
     : EMPTY_LIST;
@@ -996,6 +1047,14 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     });
     return list;
   }, [privilegeHighlights, privilegeSortDesc]);
+
+  // Prefer the workspace-wide aggregate: privilegeHighlights is a preview
+  // list loaded incrementally via infinite scroll, so its current length
+  // undercounts workspaces with many scoped credentials until fully loaded.
+  const privilegeHighlightsCount =
+    statsData?.privilegeHighlightsTotal ?? privilegeHighlights.length ?? 0;
+  const isPrivilegeListCapped =
+    privilegeHighlightsCount > privilegeHighlights.length;
 
   const autoSyncHealthSummary = useMemo(() => {
     const healthy = autoSyncRows.filter(row => row.health === 'healthy').length;
@@ -1287,7 +1346,12 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                 : 'Across this workspace'
                             }
                           />
-                          <InsightListShell emptyMessage='No perpetual assets in this workspace.'>
+                          <InsightListShell
+                            emptyMessage='No perpetual assets in this workspace.'
+                            onLoadMore={neverExpiresPage.loadMore}
+                            hasMore={neverExpiresPage.hasMore}
+                            isLoadingMore={neverExpiresPage.isLoadingMore}
+                          >
                             {neverExpires.length > 0
                               ? neverExpires.map(item => {
                                   const chip = getCategoryChipProps(
@@ -1374,7 +1438,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             icon={KeyRound}
                             accent='#8b5cf6'
                             label='Scoped credentials'
-                            value={privilegeHighlights.length}
+                            value={privilegeHighlightsCount}
                             detail={
                               privilegeHighlights.filter(
                                 item => item.level === 'high'
@@ -1384,10 +1448,19 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                       item => item.level === 'high'
                                     ).length
                                   } high-privilege asset(s) need review`
-                                : 'Review API keys with the broadest scopes'
+                                : isPrivilegeListCapped
+                                  ? `Loaded ${privilegeHighlights.length} of ${privilegeHighlightsCount}, scroll to load more`
+                                  : 'Review API keys with the broadest scopes'
                             }
                           />
-                          <InsightListShell emptyMessage='No scopes or privileges recorded on assets yet.'>
+                          <InsightListShell
+                            emptyMessage='No scopes or privileges recorded on assets yet.'
+                            onLoadMore={privilegeHighlightsPage.loadMore}
+                            hasMore={privilegeHighlightsPage.hasMore}
+                            isLoadingMore={
+                              privilegeHighlightsPage.isLoadingMore
+                            }
+                          >
                             {sortedPrivilegeHighlights.length > 0
                               ? sortedPrivilegeHighlights.map(item => (
                                   <InsightListRow

@@ -26,8 +26,148 @@ async function loadWorkspaceTimeZone(workspaceId) {
   return resolveTimeZone(rows[0]?.delivery_window_tz);
 }
 
+// Default/initial page size shared between the aggregate stats payload and
+// the dedicated pagination endpoints, so the first "page" rendered from
+// /control-center/stats lines up exactly with what infinite-scroll appends.
+const LIST_PAGE_SIZE_DEFAULT = 20;
+const LIST_PAGE_SIZE_MAX = 100;
+// Scoring/sorting the privileges list happens in JS (see scorePrivileges),
+// so pagination over it requires a bounded candidate pool fetched from SQL
+// rather than a plain OFFSET/LIMIT. This cap keeps that query cheap while
+// comfortably covering realistic workspace sizes.
+const PRIVILEGE_CANDIDATE_POOL_CAP = 2000;
+
+function clampLimit(limit) {
+  return Math.max(1, Math.min(LIST_PAGE_SIZE_MAX, Number(limit) || LIST_PAGE_SIZE_DEFAULT));
+}
+
+function clampOffset(offset) {
+  return Math.max(0, Number(offset) || 0);
+}
+
+/**
+ * Paginated "never expires" (perpetual asset) list, ordered by name.
+ *
+ * @param {string} workspaceId
+ * @param {{ limit?: number, offset?: number }} [options]
+ * @returns {Promise<{ items: Array<object>, total: number, hasMore: boolean }>}
+ */
+async function fetchNeverExpiresPage(workspaceId, options = {}) {
+  const limit = clampLimit(options.limit);
+  const offset = clampOffset(options.offset);
+
+  const [rowsRes, totalRes] = await Promise.all([
+    pool.query(
+      `SELECT t.id,
+              t.name,
+              t.type,
+              t.category,
+              t.section
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          AND (
+            t.expiration >= DATE '9999-01-01'
+            OR t.expiration::text LIKE '2099%'
+            OR t.expiration::text LIKE '9999%'
+          )
+        ORDER BY LOWER(t.name) ASC
+        LIMIT $2 OFFSET $3`,
+      [workspaceId, limit, offset],
+    ),
+    pool.query(
+      `SELECT COUNT(*)::int AS total
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          AND (
+            t.expiration >= DATE '9999-01-01'
+            OR t.expiration::text LIKE '2099%'
+            OR t.expiration::text LIKE '9999%'
+          )`,
+      [workspaceId],
+    ),
+  ]);
+
+  const items = rowsRes.rows.map((row) => {
+    const { key, name } = formatSourceEntry(row.category);
+    const section = Array.isArray(row.section)
+      ? row.section.filter(Boolean).join(", ")
+      : row.section || null;
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      category: key,
+      categoryLabel: name,
+      section,
+    };
+  });
+
+  const total = Number(totalRes.rows[0]?.total) || 0;
+  return {
+    items,
+    total,
+    hasMore: offset + items.length < total,
+  };
+}
+
+/**
+ * Paginated scopes/privileges highlight list, ordered by privilege score
+ * (highest risk first). Scoring runs in JS over a bounded candidate pool,
+ * so `hasMore` also respects that pool cap in addition to the true total.
+ *
+ * @param {string} workspaceId
+ * @param {{ limit?: number, offset?: number }} [options]
+ * @returns {Promise<{ items: Array<object>, total: number, hasMore: boolean }>}
+ */
+async function fetchPrivilegeHighlightsPage(workspaceId, options = {}) {
+  const limit = clampLimit(options.limit);
+  const offset = clampOffset(options.offset);
+
+  const [candidatesRes, totalRes] = await Promise.all([
+    pool.query(
+      `SELECT t.id,
+              t.name,
+              t.type,
+              t.category,
+              t.privileges
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          AND t.privileges IS NOT NULL
+          AND LENGTH(TRIM(t.privileges)) > 0
+        ORDER BY LENGTH(t.privileges) DESC, LOWER(t.name) ASC
+        LIMIT $2`,
+      [workspaceId, PRIVILEGE_CANDIDATE_POOL_CAP],
+    ),
+    pool.query(
+      `SELECT COUNT(*)::int AS total
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          AND t.privileges IS NOT NULL
+          AND LENGTH(TRIM(t.privileges)) > 0`,
+      [workspaceId],
+    ),
+  ]);
+
+  const scored = candidatesRes.rows
+    .map((row) => buildPrivilegeHighlight(row, row.privileges))
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+  const items = scored.slice(offset, offset + limit);
+  const total = Number(totalRes.rows[0]?.total) || 0;
+
+  return {
+    items,
+    total,
+    hasMore: offset + items.length < scored.length,
+  };
+}
+
 /**
  * Aggregate Control Center stats for a workspace (server-side SQL only).
+ * The `neverExpires` and `privilegeHighlights` arrays only contain the
+ * first page (see LIST_PAGE_SIZE_DEFAULT); use fetchNeverExpiresPage /
+ * fetchPrivilegeHighlightsPage with an offset to load more.
  *
  * @param {string} workspaceId
  * @returns {Promise<{
@@ -36,7 +176,10 @@ async function loadWorkspaceTimeZone(workspaceId) {
  *   sources: Array<{ key: string, name: string, count: number }>,
  *   needsAttention: Array<object>,
  *   neverExpires: Array<object>,
+ *   neverExpiresHasMore: boolean,
  *   privilegeHighlights: Array<object>,
+ *   privilegeHighlightsTotal: number,
+ *   privilegeHighlightsHasMore: boolean,
  *   autoSync: Array<object>,
  *   generatedAt: string,
  *   isComplete: boolean,
@@ -51,8 +194,8 @@ async function fetchControlCenterStats(workspaceId) {
     bucketRes,
     sourcesRes,
     attentionRes,
-    neverExpiresRes,
-    privilegeRes,
+    neverExpiresPage,
+    privilegePage,
     autoSyncRes,
   ] = await Promise.all([
     pool.query(
@@ -99,37 +242,8 @@ async function fetchControlCenterStats(workspaceId) {
         LIMIT 10`,
       [workspaceId, timezone],
     ),
-    pool.query(
-      `SELECT t.id,
-              t.name,
-              t.type,
-              t.category,
-              t.section
-         FROM tokens t
-        WHERE t.workspace_id = $1
-          AND (
-            t.expiration >= DATE '9999-01-01'
-            OR t.expiration::text LIKE '2099%'
-            OR t.expiration::text LIKE '9999%'
-          )
-        ORDER BY LOWER(t.name) ASC
-        LIMIT 12`,
-      [workspaceId],
-    ),
-    pool.query(
-      `SELECT t.id,
-              t.name,
-              t.type,
-              t.category,
-              t.privileges
-         FROM tokens t
-        WHERE t.workspace_id = $1
-          AND t.privileges IS NOT NULL
-          AND LENGTH(TRIM(t.privileges)) > 0
-        ORDER BY LENGTH(t.privileges) DESC, LOWER(t.name) ASC
-        LIMIT 40`,
-      [workspaceId],
-    ),
+    fetchNeverExpiresPage(workspaceId, { limit: LIST_PAGE_SIZE_DEFAULT, offset: 0 }),
+    fetchPrivilegeHighlightsPage(workspaceId, { limit: LIST_PAGE_SIZE_DEFAULT, offset: 0 }),
     pool.query(
       `SELECT id,
               provider,
@@ -181,27 +295,6 @@ async function fetchControlCenterStats(workspaceId) {
     };
   });
 
-  const neverExpires = neverExpiresRes.rows.map((row) => {
-    const { key, name } = formatSourceEntry(row.category);
-    const section = Array.isArray(row.section)
-      ? row.section.filter(Boolean).join(", ")
-      : row.section || null;
-    return {
-      id: row.id,
-      name: row.name,
-      type: row.type,
-      category: key,
-      categoryLabel: name,
-      section,
-    };
-  });
-
-  const privilegeHighlights = privilegeRes.rows
-    .map((row) => buildPrivilegeHighlight(row, row.privileges))
-    .filter(Boolean)
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    .slice(0, 12);
-
   const autoSync = autoSyncRes.rows.map(formatAutoSyncStatusRow);
 
   return {
@@ -209,8 +302,11 @@ async function fetchControlCenterStats(workspaceId) {
     buckets,
     sources,
     needsAttention,
-    neverExpires,
-    privilegeHighlights,
+    neverExpires: neverExpiresPage.items,
+    neverExpiresHasMore: neverExpiresPage.hasMore,
+    privilegeHighlights: privilegePage.items,
+    privilegeHighlightsTotal: privilegePage.total,
+    privilegeHighlightsHasMore: privilegePage.hasMore,
     autoSync,
     generatedAt: new Date().toISOString(),
     isComplete: true,
@@ -219,4 +315,8 @@ async function fetchControlCenterStats(workspaceId) {
 
 module.exports = {
   fetchControlCenterStats,
+  fetchNeverExpiresPage,
+  fetchPrivilegeHighlightsPage,
+  LIST_PAGE_SIZE_DEFAULT,
+  LIST_PAGE_SIZE_MAX,
 };
