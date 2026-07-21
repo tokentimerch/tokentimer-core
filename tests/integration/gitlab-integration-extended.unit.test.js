@@ -125,6 +125,73 @@ describe("GitLab integration helper coverage", () => {
     expect(projects.map((p) => p.id)).to.deep.equal([1, 2, 3]);
   });
 
+  it("does not filter listProjects by owned, so group projects with Maintainer-only access are included", async () => {
+    const seenParams = [];
+    const axiosMock = async (config) => {
+      seenParams.push(config.params);
+      return { data: [], headers: {} };
+    };
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+    await gitlab._test.listProjects({
+      baseUrl: "https://gitlab.example.com",
+      token: "token",
+      maxItems: 100,
+    });
+    expect(seenParams).to.have.length(1);
+    expect(seenParams[0]).to.not.have.property("owned");
+    expect(seenParams[0].membership).to.equal(true);
+    expect(seenParams[0].min_access_level).to.equal(40);
+  });
+
+  it("paginates listPipelineTriggers across multiple pages", async () => {
+    let page = 0;
+    const axiosMock = async () => {
+      page += 1;
+      if (page === 1) {
+        return {
+          data: Array.from({ length: 100 }, (_, idx) => ({ id: idx + 1 })),
+          headers: {},
+        };
+      }
+      if (page === 2) return { data: [{ id: 101 }], headers: {} };
+      return { data: [], headers: {} };
+    };
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+    const triggers = await gitlab._test.listPipelineTriggers({
+      baseUrl: "https://gitlab.example.com",
+      token: "token",
+      projectId: 7,
+      maxItems: 101,
+    });
+    expect(triggers).to.have.length(101);
+    expect(triggers[0].id).to.equal(1);
+    expect(triggers[100].id).to.equal(101);
+  });
+
+  it("propagates 403 from listPipelineTriggers so callers can distinguish permission errors from empty results", async () => {
+    const axiosMock = async () => {
+      const err = new Error("forbidden");
+      err.response = { status: 403, data: {} };
+      throw err;
+    };
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+    await expectReject(
+      () =>
+        gitlab._test.listPipelineTriggers({
+          baseUrl: "https://gitlab.example.com",
+          token: "token",
+          projectId: 7,
+        }),
+      /Permission denied|Forbidden|403/i,
+    );
+  });
+
   it("returns empty arrays for 404 token listing helpers", async () => {
     const axiosMock = async () => {
       const err = new Error("not found");
@@ -166,5 +233,95 @@ describe("GitLab integration helper coverage", () => {
       userId: 42,
     });
     expect(keys).to.deep.equal([]);
+  });
+
+  it("carries GitLab's real description field through to scan items for PATs, project tokens, and group tokens (issue: filter rules on the 'description' field always fell back to name, because the scan never copied GitLab's own description into the item)", async () => {
+    const axiosMock = async (config) => {
+      const { pathname } = new URL(config.url);
+      if (pathname === "/api/v4/user") {
+        return { data: { id: 1, username: "alice", is_admin: false } };
+      }
+      if (pathname === "/api/v4/projects") {
+        return { data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }] };
+      }
+      if (pathname === "/api/v4/projects/10/access_tokens") {
+        return {
+          data: [
+            {
+              id: 100,
+              name: "proj-token",
+              description: "real project token description",
+              active: true,
+              scopes: ["api"],
+            },
+          ],
+        };
+      }
+      if (pathname === "/api/v4/groups") {
+        return { data: [{ id: 20, name: "grp", full_path: "grp" }] };
+      }
+      if (pathname === "/api/v4/groups/20/access_tokens") {
+        return {
+          data: [
+            {
+              id: 200,
+              name: "group-token",
+              description: "real group token description",
+              active: true,
+              scopes: ["api"],
+            },
+          ],
+        };
+      }
+      if (pathname === "/api/v4/personal_access_tokens") {
+        return {
+          data: [
+            {
+              id: 300,
+              name: "pat-name",
+              description:
+                "To be renewed and put back in tokentimer for auto-sync to work. Only requires read_api",
+              active: true,
+              scopes: ["read_api"],
+            },
+          ],
+        };
+      }
+      return { data: [] };
+    };
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+    const { items } = await gitlab.scanGitLab({
+      baseUrl: "https://gitlab.example.com",
+      token: "token",
+      include: { tokens: true, keys: false },
+      filters: {
+        includePATs: true,
+        includeProjectTokens: true,
+        includeGroupTokens: true,
+        includeDeployTokens: false,
+        includeTriggerTokens: false,
+        includeSSHKeys: false,
+        excludeUserPATs: false,
+        includeExpired: false,
+        includeRevoked: false,
+      },
+    });
+
+    const pat = items.find((i) => i.source === "gitlab-pat");
+    const projectToken = items.find((i) => i.source === "gitlab-project-token");
+    const groupToken = items.find((i) => i.source === "gitlab-group-token");
+
+    expect(pat).to.exist;
+    expect(pat.description).to.equal(
+      "To be renewed and put back in tokentimer for auto-sync to work. Only requires read_api",
+    );
+    expect(projectToken).to.exist;
+    expect(projectToken.description).to.equal(
+      "real project token description",
+    );
+    expect(groupToken).to.exist;
+    expect(groupToken.description).to.equal("real group token description");
   });
 });

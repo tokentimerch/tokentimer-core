@@ -2200,6 +2200,7 @@ paths:
                   - needsAttention
                   - neverExpires
                   - privilegeHighlights
+                  - privilegeHighlightsTotal
                   - autoSync
                   - generatedAt
                   - isComplete
@@ -2231,11 +2232,31 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+                    description: >-
+                      First page of perpetual (never-expiring) assets. Use
+                      GET .../control-center/never-expires with an offset to
+                      load additional pages.
+                  neverExpiresHasMore:
+                    type: boolean
+                    description: True if more perpetual assets exist beyond this first page.
                   privilegeHighlights:
                     type: array
                     items:
                       type: object
                       additionalProperties: true
+                    description: >-
+                      First page of the scopes/privileges highlight list. Use
+                      GET .../control-center/privilege-highlights with an
+                      offset to load additional pages.
+                  privilegeHighlightsTotal:
+                    type: integer
+                    description: >-
+                      Total count of tokens with recorded scopes/privileges in the
+                      workspace. privilegeHighlights is a capped preview list
+                      (top matches only), so use this field for the headline count.
+                  privilegeHighlightsHasMore:
+                    type: boolean
+                    description: True if more privilege highlights exist beyond this first page.
                   autoSync:
                     type: array
                     items:
@@ -2245,6 +2266,97 @@ paths:
                     type: string
                     format: date-time
                   isComplete:
+                    type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/never-expires:
+    get:
+      tags: [Workspaces]
+      summary: Paginated perpetual (never-expiring) assets
+      operationId: getControlCenterNeverExpires
+      description: >-
+        Returns a page of perpetual assets for infinite-scroll loading in the
+        Control Center. Requires workspace admin or workspace manager role.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: A page of perpetual assets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  total:
+                    type: integer
+                  hasMore:
+                    type: boolean
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/control-center/privilege-highlights:
+    get:
+      tags: [Workspaces]
+      summary: Paginated scopes/privileges highlight list
+      operationId: getControlCenterPrivilegeHighlights
+      description: >-
+        Returns a page of the scopes/privileges highlight list (sorted by
+        privilege risk score) for infinite-scroll loading in the Control
+        Center. Requires workspace admin or workspace manager role.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: A page of privilege highlights
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  total:
+                    type: integer
+                  hasMore:
                     type: boolean
         "403":
           $ref: "#/components/responses/Forbidden"

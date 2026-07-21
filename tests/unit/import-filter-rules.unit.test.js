@@ -69,6 +69,53 @@ describe("importFilterRules.validateFilterRules", () => {
     ]);
     assert.strictEqual(err, null);
   });
+
+  it("rejects a classic catastrophic-backtracking pattern (nested +)", () => {
+    const err = validateFilterRules([
+      { action: "include", matchType: "regex", field: "name", value: "^(a+)+$" },
+    ]);
+    assert.match(err, /potentially unsafe regular expression pattern/);
+    assert.match(err, /nested quantifiers detected/);
+  });
+
+  it("rejects other common nested-quantifier shapes", () => {
+    const unsafeValues = ["(a*)*", "(a+)*", "(a*)+", "(a{2,})+", "((a+))+"];
+    for (const value of unsafeValues) {
+      const err = validateFilterRules([
+        { action: "include", matchType: "regex", field: "name", value },
+      ]);
+      assert.match(
+        err,
+        /nested quantifiers detected/,
+        `expected ${value} to be rejected`,
+      );
+    }
+  });
+
+  it("rejects a pattern with too many quantifiers even without nesting", () => {
+    const value =
+      "a{1,3}b{1,3}c{1,3}d{1,3}e{1,3}f{1,3}g{1,3}h{1,3}i{1,3}j{1,3}k{1,3}";
+    const err = validateFilterRules([
+      { action: "include", matchType: "regex", field: "name", value },
+    ]);
+    assert.match(err, /too many quantifiers/);
+  });
+
+  it("still accepts common, safe regex patterns", () => {
+    const safeValues = [
+      "^iac-provisioned:.*",
+      "^v\\d+\\.\\d+\\.\\d+$",
+      "(foo|bar)+",
+      "^[a-z0-9_-]+$",
+      "temp-[0-9]{1,4}$",
+    ];
+    for (const value of safeValues) {
+      const err = validateFilterRules([
+        { action: "include", matchType: "regex", field: "name", value },
+      ]);
+      assert.strictEqual(err, null, `expected ${value} to be accepted`);
+    }
+  });
 });
 
 describe("importFilterRules.evaluateFilterRules", () => {
@@ -168,11 +215,59 @@ describe("importFilterRules.evaluateFilterRules", () => {
     );
   });
 
-  it("treats missing fields as empty strings", () => {
+  it("treats a wholly empty item as an empty string", () => {
     const rules = [
       { action: "exclude", matchType: "regex", field: "description", value: "^$" },
     ];
-    assert.strictEqual(evaluateFilterRules(rules, { name: "x" }), false);
+    assert.strictEqual(evaluateFilterRules(rules, {}), false);
+  });
+
+  it("falls back to name for description when no description/notes exist (issue: description matching found nothing for token types with no separate description field, e.g. GitLab PATs/project/group/deploy tokens)", () => {
+    const rules = [
+      { action: "include", matchType: "exact", field: "description", value: "prod-ci-token" },
+    ];
+    assert.strictEqual(
+      evaluateFilterRules(rules, { name: "prod-ci-token" }),
+      true,
+    );
+    assert.strictEqual(
+      evaluateFilterRules(rules, { name: "other-token" }),
+      false,
+    );
+  });
+
+  it("prefers a real description/notes value over the name fallback", () => {
+    const rules = [
+      { action: "include", matchType: "exact", field: "description", value: "real description" },
+    ];
+    assert.strictEqual(
+      evaluateFilterRules(rules, {
+        name: "unrelated-name",
+        description: "real description",
+      }),
+      true,
+    );
+    assert.strictEqual(
+      evaluateFilterRules(rules, { name: "real description" }),
+      true,
+    );
+  });
+
+  it("truncates the matched field value so very long input cannot slow down regex matching", () => {
+    // "TARGET" sits well past the input-length cap used for regex matching,
+    // so a truncation-aware implementation will not find it. This proves
+    // the cap is actually enforced at match time (not just documented),
+    // without ever running a genuinely catastrophic pattern against a
+    // large string.
+    const longValue = "a".repeat(50000) + "TARGET";
+    const rules = [
+      { action: "include", matchType: "regex", field: "name", value: "TARGET$" },
+    ];
+    const start = Date.now();
+    const result = evaluateFilterRules(rules, { name: longValue });
+    const elapsed = Date.now() - start;
+    assert.strictEqual(result, false);
+    assert.ok(elapsed < 500, `expected a fast, bounded match, took ${elapsed}ms`);
   });
 });
 

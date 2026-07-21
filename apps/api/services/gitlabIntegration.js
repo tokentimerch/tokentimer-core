@@ -181,7 +181,15 @@ async function listProjects({ baseUrl, token, maxItems = 2000 }) {
           page,
           per_page: perPage,
           simple: true,
-          owned: true, // Only projects owned by current user (works on both cloud and self-hosted)
+          // NOTE: Do not combine with owned:true. GitLab's ProjectsFinder checks
+          // owned before membership/min_access_level (see app/finders/projects_finder.rb
+          // collection_with_user): when owned is present it short-circuits to
+          // current_user.owned_projects and membership/min_access_level are never
+          // applied. That silently excludes group/subgroup projects where the user
+          // has Maintainer access but is not the literal project owner, which is
+          // exactly where token-management endpoints (project/deploy/trigger tokens)
+          // are commonly used. membership + min_access_level alone already covers
+          // owned projects too, since owners are members of their own projects.
           membership: true, // Include projects user is a member of
           min_access_level: 40, // Maintainer level or above (needed for token management)
         },
@@ -347,19 +355,39 @@ async function listDeployTokens({ baseUrl, token, projectId }) {
   }
 }
 
-async function listPipelineTriggers({ baseUrl, token, projectId }) {
-  try {
+async function listPipelineTriggers({
+  baseUrl,
+  token,
+  projectId,
+  maxItems = 1000,
+}) {
+  // GitLab paginates this endpoint like any other list endpoint (default
+  // page size 20), so a project with many trigger tokens needs more than
+  // one request to see all of them.
+  // Note: unlike the other per-project token helpers in this file, this one
+  // lets 401/403/404 propagate instead of swallowing them, so the trigger
+  // token scan below can count permission-denied projects separately from
+  // projects that genuinely have zero triggers.
+  const triggers = [];
+  let page = 1;
+  const perPage = Math.min(100, maxItems);
+
+  while (triggers.length < maxItems) {
     const data = await gitlabRequest({
       baseUrl,
       token,
       method: "GET",
       path: `/api/v4/projects/${projectId}/triggers`,
+      params: { page, per_page: perPage },
     });
-    return Array.isArray(data) ? data : [];
-  } catch (e) {
-    if (e.status === 404 || e.status === 403) return [];
-    throw e;
+
+    if (!Array.isArray(data) || data.length === 0) break;
+
+    triggers.push(...data);
+    if (data.length < perPage) break;
+    page++;
   }
+  return triggers.slice(0, maxItems);
 }
 
 async function listSSHKeys({ baseUrl, token, userId = null }) {
@@ -558,6 +586,7 @@ async function scanGitLab({
                     name: pt.name || `Project Access Token (${pt.id})`,
                     category: "key_secret",
                     type: "api_key",
+                    description: pt.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                     location: `gitlab:projects/${project.id}/access_tokens/${pt.id}`,
                     project_id: project.id,
@@ -682,6 +711,7 @@ async function scanGitLab({
                     name: gt.name || `Group Access Token (${gt.id})`,
                     category: "key_secret",
                     type: "api_key",
+                    description: gt.description || null,
                     expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                     location: `gitlab:groups/${group.id}/access_tokens/${gt.id}`,
                     group_id: group.id,
@@ -891,6 +921,10 @@ async function scanGitLab({
                   name: pat.name || `Personal Access Token (${pat.id})`,
                   category: "key_secret",
                   type: "api_key",
+                  // GitLab's PAT API returns a free-text `description` set by
+                  // whoever created the token (GitLab 13.3+); this is what
+                  // filter rules match against for the "description" field.
+                  description: pat.description || null,
                   expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                   location: username
                     ? `gitlab:users/${username}/personal_access_tokens/${pat.id}`
@@ -961,6 +995,7 @@ async function scanGitLab({
                 name: pat.name || `Personal Access Token (${pat.id})`,
                 category: "key_secret",
                 type: "api_key",
+                description: pat.description || null,
                 expiration: expiresAt ? formatDateYmd(expiresAt) : null,
                 location: `gitlab:personal_access_tokens/${pat.id}`,
                 scopes: pat.scopes || [],
@@ -1105,7 +1140,8 @@ async function scanGitLab({
 
     // Scan Pipeline Trigger Tokens
     // Note: Requires Maintainer/Owner role on the project (GitLab returns
-    // 403/404 otherwise, which we silently skip). Trigger tokens never expire.
+    // 403/404 otherwise, which we count as skipped below). Trigger tokens
+    // never expire.
     if (include.tokens && filters.includeTriggerTokens) {
       try {
         const projects = await listProjects({
@@ -1116,6 +1152,7 @@ async function scanGitLab({
         let triggerTokensCount = 0;
         let projectsScanned = 0;
         let projectsWithTriggers = 0;
+        let projectsSkipped = 0; // Permission-denied (401/403/404) or not-found projects
 
         logger.info("Scanning GitLab pipeline trigger tokens", {
           totalProjects: projects.length,
@@ -1148,6 +1185,11 @@ async function scanGitLab({
                       `Pipeline Trigger Token (${trigger.id})`,
                     category: "key_secret",
                     type: "api_key",
+                    // Trigger tokens have no separate name in GitLab, only a
+                    // description, which we use as both `name` and
+                    // `description` above so filter rules on either field
+                    // behave the same way.
+                    description: trigger.description || null,
                     // Pipeline trigger tokens have no expiry in GitLab
                     expiration: null,
                     location: `gitlab:projects/${project.id}/triggers/${trigger.id}`,
@@ -1159,9 +1201,20 @@ async function scanGitLab({
                   });
                   triggerTokensCount++;
                 }
-              } catch (_e) {
-                // Expected: user may see project but can't access its triggers
-                // (401/403/404). This is normal and we silently skip.
+              } catch (e) {
+                if ([401, 403, 404].includes(e.status)) {
+                  // Expected: user may see project but can't access its
+                  // triggers (needs Maintainer role). Silently skip, but
+                  // count it so a systemic permission issue is visible in
+                  // the logs even though it never surfaces to the user.
+                  projectsSkipped++;
+                } else {
+                  logger.debug("Unexpected error scanning trigger tokens", {
+                    projectId: project.id,
+                    error: e.message,
+                    status: e.status,
+                  });
+                }
               }
             }),
           );
@@ -1169,11 +1222,14 @@ async function scanGitLab({
         logger.info("GitLab pipeline trigger tokens scan completed", {
           projectsScanned,
           projectsWithTriggers,
+          projectsSkipped,
           tokensFound: triggerTokensCount,
         });
         summary.push({
           type: "pipeline_trigger_tokens",
           found: triggerTokensCount,
+          projectsScanned,
+          projectsSkipped,
         });
       } catch (e) {
         logger.warn("Pipeline trigger tokens scan failed", {
@@ -1364,6 +1420,7 @@ if (process.env.NODE_ENV === "test") {
     listPersonalAccessTokens,
     listProjectAccessTokens,
     listDeployTokens,
+    listPipelineTriggers,
     listSSHKeys,
   };
 }

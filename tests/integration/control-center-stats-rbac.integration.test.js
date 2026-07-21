@@ -216,4 +216,42 @@ describe("Control Center stats RBAC", function () {
     expect(attentionB).to.include("CC-Stats-B-Secret-Leak-Probe");
     expect(attentionB).not.to.include("CC-Stats-A-Expired");
   });
+
+  it("rejects non-members and viewers from the pagination endpoints", async () => {
+    for (const path of [
+      `/api/v1/workspaces/${workspaceAId}/control-center/never-expires`,
+      `/api/v1/workspaces/${workspaceAId}/control-center/privilege-highlights`,
+    ]) {
+      const outsiderRes = await request(BASE)
+        .get(path)
+        .set("Cookie", outsiderCookie);
+      expect(outsiderRes.status).to.equal(403);
+
+      const viewerRes = await request(BASE)
+        .get(path)
+        .set("Cookie", viewerCookie);
+      expect(viewerRes.status).to.equal(403);
+    }
+  });
+
+  it("does not leak other workspaces' items via the pagination endpoints", async () => {
+    const neverExpiresB = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${workspaceBId}/control-center/never-expires`,
+      )
+      .set("Cookie", ownerCookie)
+      .expect(200);
+    const namesB = neverExpiresB.body.items.map((item) => item.name);
+    expect(namesB).not.to.include("CC-Stats-A-Expired");
+    expect(namesB).not.to.include("CC-Stats-A-Healthy");
+
+    const privilegesA = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${workspaceAId}/control-center/privilege-highlights`,
+      )
+      .set("Cookie", managerCookie)
+      .expect(200);
+    const idsA = privilegesA.body.items.map((item) => item.id);
+    expect(idsA).not.to.include(tokenBSecretId);
+  });
 });
