@@ -41,6 +41,10 @@ const DESIRED_FIELDS = new Set([
 ]);
 const ISSUER_FIELDS = new Set(["group", "kind", "name"]);
 const DELIVERY_RETRY_INTERVAL_SECONDS = 30;
+const CONTROLLER_PROVISIONING_TERMINAL_EVENTS = new Set([
+  "job.completed",
+  "job.failed",
+]);
 
 function provisioningError(message, code = CERTOPS_CONTROLLER_PROVISIONING_INVALID) {
   const error = new Error(message);
@@ -473,15 +477,11 @@ async function recordControllerProvisioningEventTimestamp({
   }
   const column = terminalColumnByEventType[eventType];
   if (!column) return;
-  // The API owns the persisted timeline: accept the first terminal timestamp,
-  // but clamp it to the first accepted start if an older/malformed terminal
-  // event reaches the route.
+  // The executor route has already canonicalized this value against the
+  // server-owned start time. Preserve that exact first accepted timestamp.
   await client.query(
     `UPDATE certificate_controller_provision_deliveries d
-        SET ${column} = COALESCE(
-              d.${column},
-              GREATEST($3::timestamptz, COALESCE(d.started_at, $3::timestamptz))
-            ),
+        SET ${column} = COALESCE(d.${column}, $3::timestamptz),
             updated_at = NOW()
        FROM certificate_jobs j
       WHERE d.job_id = j.id
@@ -490,6 +490,46 @@ async function recordControllerProvisioningEventTimestamp({
         AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'`,
     [jobId, workspaceId, occurredAt],
   );
+}
+
+/**
+ * Resolve the authoritative terminal time while the executor-event ingestion
+ * transaction holds the job row lock. Generic jobs and non-terminal events
+ * retain their caller-supplied, already-normalized timestamp unchanged.
+ */
+async function canonicalizeControllerProvisioningTerminalOccurredAt({
+  client,
+  workspaceId,
+  jobId,
+  eventType,
+  occurredAt,
+} = {}) {
+  if (!CONTROLLER_PROVISIONING_TERMINAL_EVENTS.has(eventType)) {
+    return occurredAt;
+  }
+
+  const result = await client.query(
+    `SELECT j.source, d.started_at
+       FROM certificate_jobs j
+       LEFT JOIN certificate_controller_provision_deliveries d
+         ON d.job_id = j.id
+      WHERE j.workspace_id = $1
+        AND j.id = $2
+      LIMIT 1`,
+    [workspaceId, jobId],
+  );
+  const row = result.rows[0];
+  if (
+    row?.source !== CONTROLLER_PROVISIONING_JOB_SOURCE ||
+    !row.started_at
+  ) {
+    return occurredAt;
+  }
+
+  const startedAt = new Date(row.started_at).toISOString();
+  return Date.parse(occurredAt) < Date.parse(startedAt)
+    ? startedAt
+    : occurredAt;
 }
 
 module.exports = {
@@ -501,6 +541,7 @@ module.exports = {
   CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT,
   CONTROLLER_PROVISIONING_JOB_SOURCE,
   DELIVERY_RETRY_INTERVAL_SECONDS,
+  canonicalizeControllerProvisioningTerminalOccurredAt,
   createControllerProvisionIntent,
   normalizeDesiredCertificate,
   normalizeHumanProvisionRequest,

@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  canonicalizeControllerProvisioningTerminalOccurredAt,
   normalizeDesiredCertificate,
   normalizeHumanProvisionRequest,
   validateAuthenticatedProvisioningBinding,
@@ -62,6 +63,78 @@ describe("M3-A7 controller provisioning normalization", () => {
     assert.throws(
       () => validateAuthenticatedProvisioningBinding({ workspaceId, controllerClusterId: "cluster-b" }, normalized),
       { code: "CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH" },
+    );
+  });
+
+  it("canonicalizes only older controller-provisioning terminal timestamps", async () => {
+    const startedAt = "2026-07-21T12:00:00.000Z";
+    const olderAt = "2026-07-21T11:00:00.000Z";
+    const laterAt = "2026-07-21T13:00:00.000Z";
+    const controllerClient = {
+      query: async () => ({
+        rows: [
+          {
+            source: "controller_provisioning",
+            started_at: new Date(startedAt),
+          },
+        ],
+      }),
+    };
+
+    for (const eventType of ["job.completed", "job.failed"]) {
+      assert.equal(
+        await canonicalizeControllerProvisioningTerminalOccurredAt({
+          client: controllerClient,
+          workspaceId,
+          jobId: desired.jobId,
+          eventType,
+          occurredAt: olderAt,
+        }),
+        startedAt,
+      );
+      assert.equal(
+        await canonicalizeControllerProvisioningTerminalOccurredAt({
+          client: controllerClient,
+          workspaceId,
+          jobId: desired.jobId,
+          eventType,
+          occurredAt: laterAt,
+        }),
+        laterAt,
+      );
+    }
+
+    let nonTerminalQueries = 0;
+    assert.equal(
+      await canonicalizeControllerProvisioningTerminalOccurredAt({
+        client: {
+          query: async () => {
+            nonTerminalQueries += 1;
+            return { rows: [] };
+          },
+        },
+        workspaceId,
+        jobId: desired.jobId,
+        eventType: "job.started",
+        occurredAt: olderAt,
+      }),
+      olderAt,
+    );
+    assert.equal(nonTerminalQueries, 0);
+
+    assert.equal(
+      await canonicalizeControllerProvisioningTerminalOccurredAt({
+        client: {
+          query: async () => ({
+            rows: [{ source: "api", started_at: new Date(startedAt) }],
+          }),
+        },
+        workspaceId,
+        jobId: desired.jobId,
+        eventType: "job.completed",
+        occurredAt: olderAt,
+      }),
+      olderAt,
     );
   });
 });

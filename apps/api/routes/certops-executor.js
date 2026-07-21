@@ -30,6 +30,7 @@ const {
   CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
   CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  canonicalizeControllerProvisioningTerminalOccurredAt,
   recordControllerProvisioningEventTimestamp,
   takeNextControllerProvisioningCommand,
 } = require("../services/certops/controllerProvisioning");
@@ -1568,12 +1569,38 @@ async function executorEventsHandler(req, res, options = {}) {
     rejectPrivateKeyMaterial(eventBody);
     assertRequiredEvidenceItems(eventBody, options.mode || null);
     requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
-    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    let event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    const prepareCanonicalRequest =
+      event.eventType === "job.completed" || event.eventType === "job.failed"
+        ? async (client) => {
+            const occurredAt =
+              await canonicalizeControllerProvisioningTerminalOccurredAt({
+                client,
+                workspaceId,
+                jobId: event.jobId,
+                eventType: event.eventType,
+                occurredAt: event.occurredAt,
+              });
+            if (occurredAt !== event.occurredAt) {
+              // Re-normalizing from the validated public body propagates the
+              // canonical parent time to log metadata and inherited evidence,
+              // while preserving an evidence item's explicit observedAt.
+              event = normalizeExecutorEventBody(
+                { ...eventBody, occurredAt },
+                req.apiToken,
+              );
+            }
+            return executorEventIdempotencyPayload(event);
+          }
+        : null;
     const result = await ingestExecutorEvent({
       workspaceId,
       jobId: event.jobId,
       eventId: event.eventId,
-      request: executorEventIdempotencyPayload(event),
+      request: prepareCanonicalRequest
+        ? null
+        : executorEventIdempotencyPayload(event),
+      prepareRequest: prepareCanonicalRequest,
       apiTokenId: req.apiToken.id,
       process: async (client, executorEventRecord) => {
         const job = await getCertificateJobById({

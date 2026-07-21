@@ -16,8 +16,21 @@ const {
   getApiTokenById,
   revokeApiTokenWithResult,
 } = require("../../apps/api/services/certops/apiTokens");
-const { createCertOpsExecutorRouter } = require("../../apps/api/routes/certops-executor");
+const certOpsExecutorRoutes = require("../../apps/api/routes/certops-executor");
+const {
+  createCertOpsExecutorRouter,
+  _test: {
+    executorEventIdempotencyPayload,
+    normalizeExecutorEventBody,
+  },
+} = certOpsExecutorRoutes;
 const certOpsRouter = require("../../apps/api/routes/certops");
+const {
+  createCertificateJob,
+} = require("../../apps/api/services/certops/jobs");
+const {
+  _test: { requestHash },
+} = require("../../apps/api/services/certops/executorEvents");
 const {
   takeNextControllerProvisioningCommand,
 } = require("../../apps/api/services/certops/controllerProvisioning");
@@ -957,14 +970,18 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
-  it("clamps older terminal event timestamps to the first accepted started timestamp", async () => {
+  it("uses one canonical server timeline for older completed and failed controller events", async () => {
     const fixture = await createWorkspace("controller-provisioning-timestamps");
     const humanApp = createHumanProvisioningApp(fixture.ownerId);
     const executorApp = createControllerExecutorApp();
     try {
       const token = await createControllerToken({
         ...fixture,
-        scopes: ["certops:provision:execute", "certops:events:write"],
+        scopes: [
+          "certops:provision:execute",
+          "certops:events:write",
+          "certops:evidence:write",
+        ],
       });
       const startedAt = "2026-07-21T12:00:00.000Z";
       const olderAt = "2026-07-21T11:00:00.000Z";
@@ -992,32 +1009,252 @@ describe("CertOps controller provisioning", function () {
             status: "running",
           }))
           .expect(202);
-        await supertest(executorApp)
-          .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
-          .set("Authorization", `Bearer ${token.plaintextToken}`)
-          .send(executorEventPayload(fixture.workspaceId, intent.body.job.id, {
-            eventId: `event-${crypto.randomUUID()}`,
+
+        const terminalEventId = `event-${crypto.randomUUID()}`;
+        const terminalPayload = executorEventPayload(
+          fixture.workspaceId,
+          intent.body.job.id,
+          {
+            eventId: terminalEventId,
             eventType: terminalEventType,
             occurredAt: olderAt,
             status: terminalStatus,
-          }))
+            evidence: [
+              {
+                schemaVersion: 1,
+                evidenceId: `evidence-${crypto.randomUUID()}`,
+                eventType:
+                  terminalEventType === "job.failed"
+                    ? "validation.failed"
+                    : "deployment.updated",
+                source: "executor",
+                status:
+                  terminalEventType === "job.failed" ? "failed" : "accepted",
+                summary: "Public cert-manager reconciliation result",
+              },
+            ],
+          },
+        );
+        const accepted = await supertest(executorApp)
+          .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send(terminalPayload)
           .expect(202);
-      }
-      const timestamps = await TestUtils.execQuery(
-        `SELECT j.payload #>> '{desiredCertificate,certificateName}' AS certificate_name,
-                d.started_at, d.completed_at, d.failed_at
+        expect(accepted.body.duplicate).to.equal(false);
+
+        for (const retryOccurredAt of [olderAt, startedAt]) {
+          const replay = await supertest(executorApp)
+            .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+            .set("Authorization", `Bearer ${token.plaintextToken}`)
+            .send({ ...terminalPayload, occurredAt: retryOccurredAt })
+            .expect(202);
+          expect(replay.body.duplicate).to.equal(true);
+          expect(replay.body.logId).to.equal(accepted.body.logId);
+          expect(replay.body.evidenceIds).to.deep.equal(
+            accepted.body.evidenceIds,
+          );
+        }
+
+        const conflict = await supertest(executorApp)
+          .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send({ ...terminalPayload, occurredAt: "2026-07-21T12:01:00.000Z" })
+          .expect(409);
+        expect(conflict.body.code).to.equal("CERTOPS_EXECUTOR_EVENT_CONFLICT");
+
+        const canonicalPayload = { ...terminalPayload, occurredAt: startedAt };
+        const canonicalEvent = normalizeExecutorEventBody(canonicalPayload, {
+          workspaceId: fixture.workspaceId,
+        });
+        const expectedRequestHash = requestHash(
+          executorEventIdempotencyPayload(canonicalEvent),
+        );
+        const terminalColumn =
+          terminalEventType === "job.completed" ? "completed_at" : "failed_at";
+        const persisted = await TestUtils.execQuery(
+          `SELECT j.status, d.started_at, d.${terminalColumn} AS terminal_at,
+                  ee.request_hash,
+                  jl.metadata->>'occurredAt' AS log_occurred_at,
+                  e.observed_at,
+                  (SELECT COUNT(*)::int FROM certificate_executor_events
+                    WHERE workspace_id = $1 AND job_id = $2) AS event_count,
+                  (SELECT COUNT(*)::int FROM certificate_job_log
+                    WHERE workspace_id = $1 AND job_id = $2) AS log_count,
+                  (SELECT COUNT(*)::int FROM certificate_evidence
+                    WHERE workspace_id = $1 AND job_id = $2) AS evidence_count,
+                  (SELECT COUNT(*)::int FROM audit_events
+                    WHERE workspace_id = $1
+                      AND metadata->>'jobId' = $2::text
+                      AND action = 'CERTOPS_EXECUTOR_EVENT_ACCEPTED') AS event_audit_count,
+                  (SELECT COUNT(*)::int FROM audit_events
+                    WHERE workspace_id = $1
+                      AND metadata->>'jobId' = $2::text
+                      AND action = 'CERTOPS_EVIDENCE_ACCEPTED') AS evidence_audit_count
            FROM certificate_jobs j
            JOIN certificate_controller_provision_deliveries d ON d.job_id = j.id
-          WHERE j.workspace_id = $1 AND j.payload #>> '{desiredCertificate,certificateName}'
-                IN ('timestamp-completed', 'timestamp-failed')
-          ORDER BY certificate_name`,
-        [fixture.workspaceId],
-      );
-      expect(timestamps.rows).to.have.length(2);
-      for (const row of timestamps.rows) {
-        const terminalAt = row.completed_at || row.failed_at;
-        expect(new Date(terminalAt).getTime()).to.equal(new Date(row.started_at).getTime());
+           JOIN certificate_executor_events ee
+             ON ee.job_id = j.id AND ee.executor_event_id = $3
+           JOIN certificate_job_log jl
+             ON jl.job_id = j.id
+            AND jl.metadata->>'executorEventId' = $3
+           JOIN certificate_evidence e ON e.job_id = j.id
+          WHERE j.workspace_id = $1 AND j.id = $2`,
+          [fixture.workspaceId, intent.body.job.id, terminalEventId],
+        );
+        expect(persisted.rows).to.have.length(1);
+        const row = persisted.rows[0];
+        expect(row.status).to.equal(terminalStatus);
+        expect(new Date(row.started_at).toISOString()).to.equal(startedAt);
+        expect(new Date(row.terminal_at).toISOString()).to.equal(startedAt);
+        expect(row.request_hash).to.equal(expectedRequestHash);
+        expect(row.log_occurred_at).to.equal(startedAt);
+        expect(new Date(row.observed_at).toISOString()).to.equal(startedAt);
+        expect(row).to.include({
+          event_count: 2,
+          log_count: 2,
+          evidence_count: 1,
+          event_audit_count: 2,
+          evidence_audit_count: 1,
+        });
       }
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("preserves later controller times, explicit evidence times, and generic M2 event times", async () => {
+    const fixture = await createWorkspace("controller-provisioning-timestamp-scope");
+    const humanApp = createHumanProvisioningApp(fixture.ownerId);
+    const executorApp = createControllerExecutorApp();
+    try {
+      const controllerToken = await createControllerToken({
+        ...fixture,
+        scopes: [
+          "certops:provision:execute",
+          "certops:events:write",
+          "certops:evidence:write",
+        ],
+      });
+      const intent = await postProvisionIntent(
+        humanApp,
+        fixture.workspaceId,
+        `later-timestamp-${crypto.randomUUID()}`,
+        provisionRequest({
+          certificateName: "timestamp-later",
+          secretName: "timestamp-later-tls",
+        }),
+      ).expect(201);
+      await commandRequest(executorApp, controllerToken.plaintextToken).expect(200);
+
+      const startedAt = "2026-07-21T12:00:00.000Z";
+      const laterAt = "2026-07-21T13:00:00.000Z";
+      const explicitEvidenceAt = "2026-07-21T12:30:00.000Z";
+      await supertest(executorApp)
+        .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+        .set("Authorization", `Bearer ${controllerToken.plaintextToken}`)
+        .send(executorEventPayload(fixture.workspaceId, intent.body.job.id, {
+          eventType: "job.started",
+          occurredAt: startedAt,
+          status: "running",
+        }))
+        .expect(202);
+      const laterEventId = `event-${crypto.randomUUID()}`;
+      const laterPayload = executorEventPayload(
+        fixture.workspaceId,
+        intent.body.job.id,
+        {
+          eventId: laterEventId,
+          eventType: "job.completed",
+          occurredAt: laterAt,
+          status: "succeeded",
+          evidence: [
+            {
+              schemaVersion: 1,
+              evidenceId: `evidence-${crypto.randomUUID()}`,
+              eventType: "deployment.updated",
+              source: "executor",
+              status: "accepted",
+              observedAt: explicitEvidenceAt,
+            },
+          ],
+        },
+      );
+      await supertest(executorApp)
+        .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+        .set("Authorization", `Bearer ${controllerToken.plaintextToken}`)
+        .send(laterPayload)
+        .expect(202);
+
+      const controllerTimeline = await TestUtils.execQuery(
+        `SELECT d.completed_at,
+                jl.metadata->>'occurredAt' AS log_occurred_at,
+                e.observed_at
+           FROM certificate_controller_provision_deliveries d
+           JOIN certificate_job_log jl
+             ON jl.job_id = d.job_id
+            AND jl.metadata->>'executorEventId' = $2
+           JOIN certificate_evidence e ON e.job_id = d.job_id
+          WHERE d.workspace_id = $1 AND d.job_id = $3`,
+        [fixture.workspaceId, laterEventId, intent.body.job.id],
+      );
+      expect(new Date(controllerTimeline.rows[0].completed_at).toISOString()).to.equal(laterAt);
+      expect(controllerTimeline.rows[0].log_occurred_at).to.equal(laterAt);
+      expect(new Date(controllerTimeline.rows[0].observed_at).toISOString()).to.equal(explicitEvidenceAt);
+
+      const genericToken = await createApiToken({
+        workspaceId: fixture.workspaceId,
+        name: "Generic M2 executor",
+        scopes: ["certops:events:write"],
+        createdBy: fixture.ownerId,
+      });
+      const genericJob = await createCertificateJob({
+        workspaceId: fixture.workspaceId,
+        operation: "deploy",
+        source: "api",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${crypto.randomUUID()}`,
+        payload: { deploymentTarget: "generic/public-target" },
+        requestedByUserId: fixture.ownerId,
+      });
+      const genericOccurredAt = "2026-07-21T11:00:00.000Z";
+      const genericEventId = `event-${crypto.randomUUID()}`;
+      const genericPayload = executorEventPayload(
+        fixture.workspaceId,
+        genericJob.id,
+        {
+          eventId: genericEventId,
+          eventType: "job.completed",
+          occurredAt: genericOccurredAt,
+          status: "succeeded",
+        },
+      );
+      await supertest(executorApp)
+        .post(`/api/v1/certops/jobs/${genericJob.id}/events`)
+        .set("Authorization", `Bearer ${genericToken.plaintextToken}`)
+        .send(genericPayload)
+        .expect(202);
+
+      const genericTimeline = await TestUtils.execQuery(
+        `SELECT jl.metadata->>'occurredAt' AS log_occurred_at,
+                ee.request_hash
+           FROM certificate_job_log jl
+           JOIN certificate_executor_events ee
+             ON ee.job_id = jl.job_id
+            AND ee.executor_event_id = $3
+          WHERE jl.workspace_id = $1
+            AND jl.job_id = $2
+            AND jl.metadata->>'executorEventId' = $3`,
+        [fixture.workspaceId, genericJob.id, genericEventId],
+      );
+      const expectedGenericHash = requestHash(
+        executorEventIdempotencyPayload(
+          normalizeExecutorEventBody(genericPayload, {
+            workspaceId: fixture.workspaceId,
+          }),
+        ),
+      );
+      expect(genericTimeline.rows[0].log_occurred_at).to.equal(genericOccurredAt);
+      expect(genericTimeline.rows[0].request_hash).to.equal(expectedGenericHash);
     } finally {
       await cleanupWorkspace(fixture);
     }
