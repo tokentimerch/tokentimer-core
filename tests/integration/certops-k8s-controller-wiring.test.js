@@ -40,8 +40,10 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(release).to.include("component: k8s-controller");
   });
 
-  it("contains ports and lifecycle seams only, not Kubernetes or reporting behavior", () => {
+  it("uses the official in-cluster cert-manager observer without Secret or reporting access", () => {
     const source = [
+      "apps/k8s-controller/src/cert-manager-client.js",
+      "apps/k8s-controller/src/cert-manager-observer.js",
       "apps/k8s-controller/src/ports.js",
       "apps/k8s-controller/src/runtime.js",
       "apps/k8s-controller/src/index.js",
@@ -49,10 +51,13 @@ describe("CertOps Kubernetes controller wiring", () => {
       .map(read)
       .join("\n");
 
-    expect(source).to.not.match(/@kubernetes-client|kubernetes-client\/node/i);
-    expect(source).to.not.match(/\.watch\s*\(/);
+    expect(source).to.include('@kubernetes/client-node');
+    expect(source).to.include("loadFromCluster()");
+    expect(source).to.not.match(/\.loadFromDefault\s*\(/);
+    expect(source).to.not.match(/CoreV1Api|readNamespacedSecret|listNamespacedSecret|\bsecrets\b/i);
+    expect(source).to.not.match(/tls\.key|\.spec\.request|\.status\.certificate/i);
     expect(source).to.not.match(/\.reconcile\s*\(/);
     expect(source).to.not.match(/https?\.request\s*\(|\bfetch\s*\(|\baxios\b/);
-    expect(source).to.not.match(/tls\.key/i);
+    expect(source).to.not.match(/certificate_jobs|certificate_evidence|managed_certificates/i);
   });
 });

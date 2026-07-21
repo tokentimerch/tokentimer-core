@@ -1,12 +1,16 @@
 "use strict";
 
 const { loadControllerConfig } = require("./config");
+const { createInClusterCertManagerClient } = require("./cert-manager-client");
+const { createCertManagerObserver } = require("./cert-manager-observer");
 const { createHealthServer } = require("./health-server");
 const { createControllerLifecycle } = require("./lifecycle");
 const { createControllerLogger } = require("./logger");
 const { createControllerRuntime } = require("./runtime");
 
 function createControllerApplication({
+  createKubernetesClient = createInClusterCertManagerClient,
+  createObserver = createCertManagerObserver,
   env = process.env,
   fsOptions,
   createLogger = createControllerLogger,
@@ -14,10 +18,20 @@ function createControllerApplication({
   createHealth = createHealthServer,
   createLifecycle = createControllerLifecycle,
   exitProcess,
+  observationHandler,
 } = {}) {
   const config = loadControllerConfig(env, fsOptions);
   const logger = createLogger();
-  const runtime = createRuntime();
+  const kubernetesClient = createKubernetesClient();
+  const observer = createObserver({
+    client: kubernetesClient,
+    clusterId: config.clusterId,
+    logger,
+    observationHandler,
+    watchNamespaces: config.watchNamespaces,
+    workspaceId: config.workspaceId,
+  });
+  const runtime = createRuntime({ kubernetesClient: observer });
   const lifecycleRef = { current: null };
   const healthServer = createHealth({
     getStatus: () =>

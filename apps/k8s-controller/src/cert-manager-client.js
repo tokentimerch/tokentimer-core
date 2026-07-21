@@ -1,0 +1,152 @@
+"use strict";
+
+const CERT_MANAGER_GROUP = "cert-manager.io";
+const CERT_MANAGER_VERSION = "v1";
+
+const RESOURCE_SPECS = Object.freeze({
+  Certificate: Object.freeze({ plural: "certificates" }),
+  CertificateRequest: Object.freeze({ plural: "certificaterequests" }),
+});
+
+function resourceSpec(resource) {
+  const spec = RESOURCE_SPECS[resource];
+  if (!spec) {
+    throw new TypeError(`Unsupported cert-manager resource: ${resource}`);
+  }
+  return spec;
+}
+
+function resourcePath({ resource, namespace }) {
+  const { plural } = resourceSpec(resource);
+  const base = `/apis/${CERT_MANAGER_GROUP}/${CERT_MANAGER_VERSION}`;
+  return namespace
+    ? `${base}/namespaces/${encodeURIComponent(namespace)}/${plural}`
+    : `${base}/${plural}`;
+}
+
+function normalizeListResponse(response) {
+  const body = response && typeof response === "object" && response.body
+    ? response.body
+    : response;
+  return {
+    items: Array.isArray(body?.items) ? body.items : [],
+    resourceVersion:
+      typeof body?.metadata?.resourceVersion === "string"
+        ? body.metadata.resourceVersion
+        : undefined,
+  };
+}
+
+function createInClusterCertManagerClient({
+  loadClient = () => import("@kubernetes/client-node"),
+} = {}) {
+  let apiClient;
+  let watchClient;
+  let started = false;
+  const activeControllers = new Set();
+
+  async function start() {
+    if (started) return;
+
+    const kubernetes = await loadClient();
+    if (
+      !kubernetes?.KubeConfig ||
+      !kubernetes?.CustomObjectsApi ||
+      !kubernetes?.Watch
+    ) {
+      throw new TypeError("Kubernetes client does not expose cert-manager watch APIs");
+    }
+
+    const config = new kubernetes.KubeConfig();
+    // Deliberately do not call loadFromDefault(): controller access is only
+    // through the mounted ServiceAccount credentials in its own cluster.
+    config.loadFromCluster();
+    apiClient = config.makeApiClient(kubernetes.CustomObjectsApi);
+    watchClient = new kubernetes.Watch(config);
+    started = true;
+  }
+
+  function requireStarted() {
+    if (!started) {
+      throw new Error("Cert-manager client has not started");
+    }
+  }
+
+  async function list({ resource, namespace } = {}) {
+    requireStarted();
+    const { plural } = resourceSpec(resource);
+    const response = namespace
+      ? await apiClient.listNamespacedCustomObject(
+        CERT_MANAGER_GROUP,
+        CERT_MANAGER_VERSION,
+        namespace,
+        plural,
+      )
+      : await apiClient.listClusterCustomObject(
+        CERT_MANAGER_GROUP,
+        CERT_MANAGER_VERSION,
+        plural,
+      );
+    return normalizeListResponse(response);
+  }
+
+  async function watch({
+    resource,
+    namespace,
+    resourceVersion,
+    onEvent,
+    onError,
+  } = {}) {
+    requireStarted();
+    const watchState = { controller: null };
+    const controller = await watchClient.watch(
+      resourcePath({ resource, namespace }),
+      {
+        allowWatchBookmarks: true,
+        resourceVersion: resourceVersion || undefined,
+      },
+      (phase, object) => {
+        if (typeof onEvent === "function") onEvent(phase, object);
+      },
+      (error) => {
+        if (watchState.controller) {
+          activeControllers.delete(watchState.controller);
+        }
+        if (typeof onError === "function") onError(error);
+      },
+    );
+    watchState.controller = controller;
+    activeControllers.add(controller);
+
+    return {
+      close() {
+        activeControllers.delete(controller);
+        controller.abort();
+      },
+    };
+  }
+
+  async function close() {
+    const controllers = [...activeControllers];
+    activeControllers.clear();
+    for (const controller of controllers) {
+      controller.abort();
+    }
+  }
+
+  return Object.freeze({
+    close,
+    list,
+    start,
+    watch,
+  });
+}
+
+module.exports = {
+  CERT_MANAGER_GROUP,
+  CERT_MANAGER_VERSION,
+  RESOURCE_SPECS,
+  createInClusterCertManagerClient,
+  normalizeListResponse,
+  resourcePath,
+};

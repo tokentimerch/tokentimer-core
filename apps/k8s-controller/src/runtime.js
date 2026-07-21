@@ -5,8 +5,8 @@ const {
   createUnavailableReporterPort,
 } = require("./ports");
 
-function invokePort(port, method) {
-  return typeof port[method] === "function" ? port[method]() : undefined;
+function invokePort(port, method, ...args) {
+  return typeof port[method] === "function" ? port[method](...args) : undefined;
 }
 
 function settlePortInvocation(port, method) {
@@ -44,10 +44,15 @@ function createControllerRuntime({
   let started = false;
 
   async function start() {
-    await invokePort(kubernetesClient, "start");
-    await invokePort(reporter, "start");
-    started = true;
     acceptingWork = true;
+    try {
+      await invokePort(kubernetesClient, "start", { trackWork });
+      await invokePort(reporter, "start");
+      started = true;
+    } catch (error) {
+      acceptingWork = false;
+      throw error;
+    }
   }
 
   async function stopAcceptingWork() {
