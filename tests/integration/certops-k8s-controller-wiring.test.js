@@ -53,6 +53,8 @@ describe("CertOps Kubernetes controller wiring", () => {
 
     expect(source).to.include('@kubernetes/client-node');
     expect(source).to.include("loadFromCluster()");
+    expect(source).to.match(/listNamespacedCustomObject\(\s*\{/);
+    expect(source).to.match(/listClusterCustomObject\(\s*\{/);
     expect(source).to.not.match(/\.loadFromDefault\s*\(/);
     expect(source).to.not.match(/CoreV1Api|readNamespacedSecret|listNamespacedSecret|\bsecrets\b/i);
     expect(source).to.not.match(/tls\.key|\.spec\.request|\.status\.certificate/i);

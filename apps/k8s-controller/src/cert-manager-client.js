@@ -76,17 +76,17 @@ function createInClusterCertManagerClient({
     requireStarted();
     const { plural } = resourceSpec(resource);
     const response = namespace
-      ? await apiClient.listNamespacedCustomObject(
-        CERT_MANAGER_GROUP,
-        CERT_MANAGER_VERSION,
+      ? await apiClient.listNamespacedCustomObject({
+        group: CERT_MANAGER_GROUP,
         namespace,
         plural,
-      )
-      : await apiClient.listClusterCustomObject(
-        CERT_MANAGER_GROUP,
-        CERT_MANAGER_VERSION,
+        version: CERT_MANAGER_VERSION,
+      })
+      : await apiClient.listClusterCustomObject({
+        group: CERT_MANAGER_GROUP,
         plural,
-      );
+        version: CERT_MANAGER_VERSION,
+      });
     return normalizeListResponse(response);
   }
 

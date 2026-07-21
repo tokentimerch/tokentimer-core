@@ -13,6 +13,7 @@ const {
   certificateRequestMatches,
   createCertManagerObserver,
   mapCertificateObservation,
+  selectCertificateRequest,
 } = require(
   path.resolve(__dirname, "../../apps/k8s-controller/src/cert-manager-observer.js"),
 );
@@ -74,6 +75,8 @@ function certificateRequest({
   certificateName = "web",
   revision = "7",
   certificateUid = "certificate-uid",
+  creationTimestamp = "2026-07-21T09:00:00Z",
+  resourceVersion = "20",
 } = {}) {
   return {
     apiVersion: "cert-manager.io/v1",
@@ -83,10 +86,11 @@ function certificateRequest({
         "cert-manager.io/certificate-name": certificateName,
         "cert-manager.io/certificate-revision": revision,
       },
+      creationTimestamp,
       name,
       namespace,
       ownerReferences: [{ kind: "Certificate", name: certificateName, uid: certificateUid }],
-      resourceVersion: "20",
+      resourceVersion,
       uid,
     },
     spec: {
@@ -107,6 +111,7 @@ function certificateRequest({
 
 function createFakeClient({ lists = {} } = {}) {
   const listCalls = [];
+  const listResponseIndexes = new Map();
   const watchCalls = [];
   let closeCalls = 0;
   let startCalls = 0;
@@ -122,7 +127,12 @@ function createFakeClient({ lists = {} } = {}) {
     async list(options) {
       listCalls.push(options);
       const key = `${options.resource}:${options.namespace || "all"}`;
-      const result = lists[key] || { items: [], resourceVersion: `${key}-rv` };
+      const configured = lists[key];
+      const responseIndex = listResponseIndexes.get(key) || 0;
+      listResponseIndexes.set(key, responseIndex + 1);
+      const result = Array.isArray(configured)
+        ? configured[Math.min(responseIndex, configured.length - 1)]
+        : configured || { items: [], resourceVersion: `${key}-rv` };
       return {
         items: result.items || [],
         resourceVersion: result.resourceVersion || `${key}-rv`,
@@ -242,12 +252,12 @@ describe("CertOps cert-manager status observer", () => {
     const calls = [];
     const abortController = { abort: () => calls.push("abort") };
     const apiClient = {
-      async listClusterCustomObject(...args) {
-        calls.push(["list-cluster", ...args]);
+      async listClusterCustomObject(options) {
+        calls.push(["list-cluster", options]);
         return { items: [], metadata: { resourceVersion: "rv-cluster" } };
       },
-      async listNamespacedCustomObject(...args) {
-        calls.push(["list-namespace", ...args]);
+      async listNamespacedCustomObject(options) {
+        calls.push(["list-namespace", options]);
         return { items: [], metadata: { resourceVersion: "rv-namespace" } };
       },
     };
@@ -298,17 +308,17 @@ describe("CertOps cert-manager status observer", () => {
     assert.deepEqual(namespaceList, { items: [], resourceVersion: "rv-namespace" });
     assert.equal(calls.includes("load-from-cluster"), true);
     assert.equal(calls.some((call) => call === "load-from-default"), false);
-    assert.deepEqual(calls.find((call) => call[0] === "list-cluster").slice(1), [
-      "cert-manager.io",
-      "v1",
-      "certificates",
-    ]);
-    assert.deepEqual(calls.find((call) => call[0] === "list-namespace").slice(1), [
-      "cert-manager.io",
-      "v1",
-      "team-a",
-      "certificaterequests",
-    ]);
+    assert.deepEqual(calls.find((call) => call[0] === "list-cluster")[1], {
+      group: "cert-manager.io",
+      plural: "certificates",
+      version: "v1",
+    });
+    assert.deepEqual(calls.find((call) => call[0] === "list-namespace")[1], {
+      group: "cert-manager.io",
+      namespace: "team-a",
+      plural: "certificaterequests",
+      version: "v1",
+    });
     assert.deepEqual(calls.find((call) => call[0] === "watch").slice(1), [
       "/apis/cert-manager.io/v1/namespaces/team-a/certificates",
       { allowWatchBookmarks: true, resourceVersion: "rv-namespace" },
@@ -422,7 +432,7 @@ describe("CertOps cert-manager status observer", () => {
     assert.deepEqual(observations.map((observation) => observation.resourceVersion), ["1", "3"]);
   });
 
-  it("re-lists after an expired resource version using bounded restart scheduling", async () => {
+  it("re-lists after a 410 ERROR watch event using base-delay restart scheduling", async () => {
     const client = createFakeClient();
     const timers = [];
     const scheduler = {
@@ -448,7 +458,7 @@ describe("CertOps cert-manager status observer", () => {
       (call) => call.resource === "Certificate",
     );
 
-    certificateWatch.onError({ statusCode: 410 });
+    certificateWatch.onEvent("ERROR", { code: 410 });
     assert.equal(observer.isReady(), false);
     assert.equal(timers.length, 1);
     assert.equal(timers[0].delay, 250);
@@ -467,7 +477,7 @@ describe("CertOps cert-manager status observer", () => {
     assert.equal(observer.isReady(), true);
   });
 
-  it("exponentially backs off repeated watch failures and resets after a live watch event", async () => {
+  it("exponentially backs off 500 ERROR watch events and resets after a live watch event", async () => {
     const client = createFakeClient();
     const timers = [];
     const scheduler = {
@@ -492,12 +502,12 @@ describe("CertOps cert-manager status observer", () => {
     const certificateWatch = () =>
       client.watchCalls.filter((call) => call.resource === "Certificate").at(-1);
 
-    certificateWatch().onError({ code: "ECONNRESET" });
+    certificateWatch().onEvent("ERROR", { code: 500 });
     assert.equal(timers[0].delay, 250);
     timers[0].callback();
     await tick();
     await tick();
-    certificateWatch().onError({ code: "ECONNRESET" });
+    certificateWatch().onEvent("ERROR", { code: 500 });
     assert.equal(timers[1].delay, 500);
     timers[1].callback();
     await tick();
@@ -505,8 +515,185 @@ describe("CertOps cert-manager status observer", () => {
     certificateWatch().onEvent("BOOKMARK", {
       metadata: { resourceVersion: "live-rv" },
     });
-    certificateWatch().onError({ code: "ECONNRESET" });
+    certificateWatch().onEvent("ERROR", { code: 500 });
     assert.equal(timers[2].delay, 250);
+  });
+
+  it("prunes a Certificate missing from a relist and permits a later same-version add", async () => {
+    const observedCertificate = certificate({ resourceVersion: "10" });
+    const client = createFakeClient({
+      lists: {
+        "Certificate:all": [
+          { items: [observedCertificate], resourceVersion: "certificate-rv-1" },
+          { items: [], resourceVersion: "certificate-rv-2" },
+        ],
+      },
+    });
+    const timers = [];
+    const scheduler = {
+      clearTimeout() {},
+      setTimeout(callback, delay) {
+        const timer = { callback, delay };
+        timers.push(timer);
+        return timer;
+      },
+    };
+    const observations = [];
+    const observer = createCertManagerObserver({
+      client,
+      clusterId: "cluster-a",
+      observationHandler: async (observation) => observations.push(observation),
+      random: () => 0,
+      scheduler,
+      workspaceId: "workspace-a",
+    });
+    await observer.start({ trackWork: (work) => work });
+    await tick();
+    const certificateWatch = () =>
+      client.watchCalls.filter((call) => call.resource === "Certificate").at(-1);
+
+    certificateWatch().onError({ code: "DISCONNECTED" });
+    timers[0].callback();
+    await tick();
+    await tick();
+    certificateWatch().onEvent("ADDED", observedCertificate);
+    await tick();
+
+    assert.deepEqual(
+      observations.map((observation) => observation.resourceVersion),
+      ["10", "10"],
+    );
+  });
+
+  it("removes stale CertificateRequest enrichment after a relist and accepts it again", async () => {
+    const observedCertificate = certificate();
+    const currentRequest = certificateRequest();
+    const client = createFakeClient({
+      lists: {
+        "Certificate:all": [
+          { items: [observedCertificate], resourceVersion: "certificate-rv-1" },
+          { items: [observedCertificate], resourceVersion: "certificate-rv-2" },
+        ],
+        "CertificateRequest:all": [
+          { items: [currentRequest], resourceVersion: "request-rv-1" },
+          { items: [], resourceVersion: "request-rv-2" },
+        ],
+      },
+    });
+    const timers = [];
+    const scheduler = {
+      clearTimeout() {},
+      setTimeout(callback, delay) {
+        const timer = { callback, delay };
+        timers.push(timer);
+        return timer;
+      },
+    };
+    const observations = [];
+    const observer = createCertManagerObserver({
+      client,
+      clusterId: "cluster-a",
+      observationHandler: async (observation) => observations.push(observation),
+      random: () => 0,
+      scheduler,
+      workspaceId: "workspace-a",
+    });
+    await observer.start({ trackWork: (work) => work });
+    await tick();
+    await tick();
+    const requestWatch = () =>
+      client.watchCalls.filter((call) => call.resource === "CertificateRequest").at(-1);
+    assert.equal(observations.at(-1).certificateRequestRef.name, "web-7");
+
+    requestWatch().onError({ code: "DISCONNECTED" });
+    timers[0].callback();
+    await tick();
+    await tick();
+    assert.equal(observations.at(-1).certificateRequestRef, null);
+
+    requestWatch().onEvent("ADDED", currentRequest);
+    await tick();
+    await tick();
+    assert.equal(observations.at(-1).certificateRequestRef.name, "web-7");
+  });
+
+  it("selects the current CertificateRequest deterministically when old requests arrive last", async () => {
+    const observedCertificate = certificate({ revision: 7 });
+    const currentRequest = certificateRequest({
+      creationTimestamp: "2026-07-21T10:00:00Z",
+      name: "web-current",
+      resourceVersion: "10",
+      revision: "7",
+      uid: "request-current",
+    });
+    const oldRequest = certificateRequest({
+      creationTimestamp: "2026-07-21T11:00:00Z",
+      name: "web-old",
+      resourceVersion: "999",
+      revision: "6",
+      uid: "request-old",
+    });
+    assert.equal(
+      selectCertificateRequest(observedCertificate, [oldRequest, currentRequest]).metadata.name,
+      "web-current",
+    );
+    assert.equal(
+      selectCertificateRequest(observedCertificate, [currentRequest, oldRequest]).metadata.name,
+      "web-current",
+    );
+    const newerRequest = certificateRequest({
+      creationTimestamp: "2026-07-21T12:00:00Z",
+      name: "web-newer",
+      resourceVersion: "1",
+      uid: "request-newer",
+    });
+    assert.equal(
+      selectCertificateRequest(observedCertificate, [currentRequest, newerRequest]).metadata.name,
+      "web-newer",
+    );
+    const higherVersionRequest = certificateRequest({
+      creationTimestamp: "2026-07-21T12:00:00Z",
+      name: "web-higher-version",
+      resourceVersion: "11",
+      uid: "request-higher-version",
+    });
+    assert.equal(
+      selectCertificateRequest(observedCertificate, [newerRequest, higherVersionRequest]).metadata.name,
+      "web-higher-version",
+    );
+    const alphabeticallyEarlierRequest = certificateRequest({
+      creationTimestamp: "2026-07-21T12:00:00Z",
+      name: "web-a",
+      resourceVersion: "11",
+      uid: "request-a",
+    });
+    assert.equal(
+      selectCertificateRequest(
+        observedCertificate,
+        [higherVersionRequest, alphabeticallyEarlierRequest],
+      ).metadata.name,
+      "web-a",
+    );
+
+    const client = createFakeClient();
+    const observations = [];
+    const observer = createCertManagerObserver({
+      client,
+      clusterId: "cluster-a",
+      observationHandler: async (observation) => observations.push(observation),
+      workspaceId: "workspace-a",
+    });
+    await observer.start({ trackWork: (work) => work });
+    const certificateWatch = client.watchCalls.find((call) => call.resource === "Certificate");
+    const requestWatch = client.watchCalls.find((call) => call.resource === "CertificateRequest");
+
+    certificateWatch.onEvent("ADDED", observedCertificate);
+    requestWatch.onEvent("ADDED", currentRequest);
+    requestWatch.onEvent("ADDED", oldRequest);
+    await tick();
+    await tick();
+
+    assert.equal(observations.at(-1).certificateRequestRef.name, "web-current");
   });
 
   it("cleans deleted Certificate cache entries before later CertificateRequest events", async () => {

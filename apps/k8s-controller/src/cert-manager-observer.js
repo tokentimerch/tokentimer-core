@@ -131,6 +131,12 @@ function certificateRequestMatches(certificateRequest, certificate) {
     });
   }
 
+  return certificateRequestRevisionMatches(certificateRequest, certificate);
+}
+
+function certificateRequestRevisionMatches(certificateRequest, certificate) {
+  const requestMetadata = objectValue(certificateRequest?.metadata);
+  const certificateMetadata = objectValue(certificate?.metadata);
   const annotations = objectValue(requestMetadata.annotations);
   const revision = normalizedInteger(objectValue(certificate?.status).revision);
   return (
@@ -138,6 +144,53 @@ function certificateRequestMatches(certificateRequest, certificate) {
     annotations[CERTIFICATE_NAME_ANNOTATION] === certificateMetadata.name &&
     annotations[CERTIFICATE_REVISION_ANNOTATION] === String(revision)
   );
+}
+
+function compareNewestResourceVersion(left, right) {
+  const leftVersion = resourceVersion(left) || "";
+  const rightVersion = resourceVersion(right) || "";
+  if (/^\d+$/.test(leftVersion) && /^\d+$/.test(rightVersion)) {
+    const normalizedLeft = leftVersion.replace(/^0+(?=\d)/, "");
+    const normalizedRight = rightVersion.replace(/^0+(?=\d)/, "");
+    if (normalizedLeft.length !== normalizedRight.length) {
+      return normalizedRight.length - normalizedLeft.length;
+    }
+    return compareText(normalizedRight, normalizedLeft);
+  }
+  return compareText(rightVersion, leftVersion);
+}
+
+function compareCertificateRequests(left, right, certificate) {
+  const leftRevisionMatch = certificateRequestRevisionMatches(left, certificate);
+  const rightRevisionMatch = certificateRequestRevisionMatches(right, certificate);
+  if (leftRevisionMatch !== rightRevisionMatch) return leftRevisionMatch ? -1 : 1;
+
+  const leftMetadata = objectValue(left?.metadata);
+  const rightMetadata = objectValue(right?.metadata);
+  const leftCreatedAt = normalizedTimestamp(leftMetadata.creationTimestamp) || "";
+  const rightCreatedAt = normalizedTimestamp(rightMetadata.creationTimestamp) || "";
+  const createdAtComparison = compareText(rightCreatedAt, leftCreatedAt);
+  if (createdAtComparison !== 0) return createdAtComparison;
+
+  const resourceVersionComparison = compareNewestResourceVersion(left, right);
+  if (resourceVersionComparison !== 0) return resourceVersionComparison;
+
+  const nameComparison = compareText(
+    boundedText(leftMetadata.name, MAX_IDENTIFIER_LENGTH) || "",
+    boundedText(rightMetadata.name, MAX_IDENTIFIER_LENGTH) || "",
+  );
+  if (nameComparison !== 0) return nameComparison;
+  return compareText(
+    boundedText(leftMetadata.uid, MAX_IDENTIFIER_LENGTH) || "",
+    boundedText(rightMetadata.uid, MAX_IDENTIFIER_LENGTH) || "",
+  );
+}
+
+function selectCertificateRequest(certificate, certificateRequests) {
+  if (!Array.isArray(certificateRequests)) return null;
+  return certificateRequests
+    .filter((request) => certificateRequestMatches(request, certificate))
+    .sort((left, right) => compareCertificateRequests(left, right, certificate))[0] || null;
 }
 
 function safeCertificateRequestReference(certificateRequest) {
@@ -290,7 +343,6 @@ function createCertManagerObserver({
   let closed = false;
   let started = false;
   let trackWork = (work) => Promise.resolve(work);
-  let requestSequence = 0;
 
   const namespaces = watchNamespaces.length === 0 ? [undefined] : [...watchNamespaces];
   for (const namespace of namespaces) {
@@ -314,12 +366,10 @@ function createCertManagerObserver({
   }
 
   function relevantCertificateRequest(certificate) {
-    let selected = null;
-    for (const entry of certificateRequestByIdentity.values()) {
-      if (!certificateRequestMatches(entry.resource, certificate)) continue;
-      if (!selected || entry.sequence > selected.sequence) selected = entry;
-    }
-    return selected?.resource || null;
+    return selectCertificateRequest(
+      certificate,
+      [...certificateRequestByIdentity.values()],
+    );
   }
 
   function queueObservation(certificate) {
@@ -403,6 +453,17 @@ function createCertManagerObserver({
     }
   }
 
+  function removeProcessedResourceVersion(resource, identity) {
+    if (identity) processedResourceVersions.delete(`${resource}:${identity}`);
+  }
+
+  function resourceIsInNamespace(resource, namespace) {
+    return (
+      namespace === undefined ||
+      objectValue(resource?.metadata).namespace === namespace
+    );
+  }
+
   function updateCertificate(certificate) {
     const identity = resourceIdentity(certificate);
     const nameIdentity = resourceNameIdentity(certificate);
@@ -420,11 +481,7 @@ function createCertManagerObserver({
   function updateCertificateRequest(certificateRequest) {
     const identity = resourceIdentity(certificateRequest);
     if (!identity) return;
-    requestSequence += 1;
-    certificateRequestByIdentity.set(identity, {
-      resource: certificateRequest,
-      sequence: requestSequence,
-    });
+    certificateRequestByIdentity.set(identity, certificateRequest);
     for (const certificate of certificateByIdentity.values()) {
       if (certificateRequestMatches(certificateRequest, certificate)) {
         queueObservation(certificate);
@@ -434,7 +491,45 @@ function createCertManagerObserver({
 
   function removeCertificateRequest(certificateRequest) {
     const identity = resourceIdentity(certificateRequest);
-    if (identity) certificateRequestByIdentity.delete(identity);
+    const cachedRequest = identity && certificateRequestByIdentity.get(identity);
+    if (!cachedRequest) return;
+
+    const affectedCertificates = [...certificateByIdentity.values()].filter(
+      (certificate) => relevantCertificateRequest(certificate) === cachedRequest,
+    );
+    certificateRequestByIdentity.delete(identity);
+    for (const certificate of affectedCertificates) queueObservation(certificate);
+  }
+
+  function reconcileRelistedResources(resource, namespace, items) {
+    const listedIdentities = new Set(
+      (Array.isArray(items) ? items : [])
+        .map((item) => resourceIdentity(item))
+        .filter(Boolean),
+    );
+
+    if (resource === "Certificate") {
+      for (const [identity, certificate] of certificateByIdentity.entries()) {
+        if (
+          resourceIsInNamespace(certificate, namespace) &&
+          !listedIdentities.has(identity)
+        ) {
+          removeProcessedResourceVersion(resource, identity);
+          removeCertificate(certificate);
+        }
+      }
+      return;
+    }
+
+    for (const [identity, certificateRequest] of certificateRequestByIdentity.entries()) {
+      if (
+        resourceIsInNamespace(certificateRequest, namespace) &&
+        !listedIdentities.has(identity)
+      ) {
+        removeProcessedResourceVersion(resource, identity);
+        removeCertificateRequest(certificateRequest);
+      }
+    }
   }
 
   function processResourceEvent(resource, phase, object, state) {
@@ -445,7 +540,7 @@ function createCertManagerObserver({
       return;
     }
     if (phase === "ERROR") {
-      handleWatchFailure(state, object);
+      scheduleRestart(state, object);
       return;
     }
 
@@ -517,6 +612,7 @@ function createCertManagerObserver({
       for (const item of list.items) {
         processResourceEvent(state.resource, "ADDED", item, state);
       }
+      reconcileRelistedResources(state.resource, state.namespace, list.items);
       // The list response's resourceVersion is the consistent cursor for the
       // follow-on watch. Individual list items may have older revisions.
       state.resourceVersion = list.resourceVersion || state.resourceVersion;
@@ -602,4 +698,5 @@ module.exports = {
   mapCertificateObservation,
   normalizedConditions,
   restartDelay,
+  selectCertificateRequest,
 };
