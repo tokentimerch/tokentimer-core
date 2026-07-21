@@ -13,6 +13,11 @@ const {
 
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 const CERTOPS_CERTIFICATE_PARSE_FAILED = "CERTOPS_CERTIFICATE_PARSE_FAILED";
+// Certificate chains are public metadata, but they still need a hard bound at
+// the shared parser boundary. This matches the existing CertOps evidence
+// payload ceiling and is deliberately independent of Kubernetes Secret limits.
+const MAX_PUBLIC_CERTIFICATE_INPUT_BYTES = 64 * 1024;
+const CERTOPS_CERTIFICATE_TOO_LARGE = "CERTOPS_CERTIFICATE_TOO_LARGE";
 
 const CERTIFICATE_PEM_BLOCK_PATTERN =
   /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
@@ -35,6 +40,29 @@ function rejectPrivateKeyMaterial(value) {
     "Private key material is not accepted by CertOps certificate parsing",
     PRIVATE_KEY_MATERIAL_REJECTED,
   );
+}
+
+function publicCertificateInputSize(value) {
+  if (typeof value === "string") return Buffer.byteLength(value, "utf8");
+  if (Buffer.isBuffer(value)) return value.length;
+  if (value instanceof Uint8Array) return value.byteLength;
+  return null;
+}
+
+function assertBoundedPublicCertificateInput(value) {
+  const size = publicCertificateInputSize(value);
+  if (size === null || size === 0) {
+    throw createParserError(
+      "Certificate input must be a non-empty PEM string or DER byte sequence",
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  }
+  if (size > MAX_PUBLIC_CERTIFICATE_INPUT_BYTES) {
+    throw createParserError(
+      "Certificate input exceeds the public certificate size limit",
+      CERTOPS_CERTIFICATE_TOO_LARGE,
+    );
+  }
 }
 
 function normalizePemBlock(pemBlock) {
@@ -242,16 +270,28 @@ function spkiFingerprintSha256(publicKey) {
   }
 }
 
-function parseCertificateBlock(certificatePem, index) {
+function certificatePemFromRaw(raw) {
+  const body = Buffer.from(raw).toString("base64");
+  const lines = body.match(/.{1,64}/g) || [];
+  return [
+    "-----BEGIN CERTIFICATE-----",
+    ...lines,
+    "-----END CERTIFICATE-----",
+  ].join("\n");
+}
+
+function parseCertificateBlock(certificateInput, index) {
   let certificate;
   try {
-    certificate = new X509Certificate(certificatePem);
+    certificate = new X509Certificate(certificateInput);
   } catch (_err) {
     throw createParserError(
-      `Certificate PEM block ${index + 1} is malformed`,
+      `Certificate input ${index + 1} is malformed`,
       CERTOPS_CERTIFICATE_PARSE_FAILED,
     );
   }
+
+  const certificatePem = certificatePemFromRaw(certificate.raw);
 
   const subject = normalizeDistinguishedName(certificate.subject);
   const issuer = normalizeDistinguishedName(certificate.issuer);
@@ -293,8 +333,58 @@ function parseCertificateBlock(certificatePem, index) {
   };
 }
 
+function parseExactDerCertificate(der) {
+  let certificate;
+  try {
+    certificate = new X509Certificate(der);
+  } catch (_err) {
+    throw createParserError(
+      "Certificate input 1 is malformed",
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  }
+  // X509Certificate accepts a certificate prefix. Require byte-for-byte
+  // identity so trailing data, concatenated certificates, and containers
+  // cannot be accepted as a single public certificate.
+  if (!certificate.raw.equals(der)) {
+    throw createParserError(
+      "DER certificate input contains trailing or bundled material",
+      CERTOPS_CERTIFICATE_PARSE_FAILED,
+    );
+  }
+  return parseCertificateBlock(der, 0);
+}
+
+function isAsciiPemInput(value) {
+  for (const byte of value) {
+    if (
+      byte !== 0x09 &&
+      byte !== 0x0a &&
+      byte !== 0x0d &&
+      (byte < 0x20 || byte > 0x7e)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parsePublicCertificateMaterial(input) {
+  assertBoundedPublicCertificateInput(input);
   rejectPrivateKeyMaterial(input);
+  if (Buffer.isBuffer(input) || input instanceof Uint8Array) {
+    const der = Buffer.isBuffer(input)
+      ? input
+      : Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+    // Kubernetes tls.crt values are commonly base64-encoded PEM bytes. Decode
+    // those bytes only after proving they are ASCII text; arbitrary binary is
+    // never coerced to UTF-8 and remains subject to exact DER validation.
+    if (isAsciiPemInput(der)) {
+      const pemBlocks = extractCertificatePemBlocks(der.toString("ascii"));
+      return pemBlocks.map(parseCertificateBlock);
+    }
+    return [parseExactDerCertificate(der)];
+  }
   const pemBlocks = extractCertificatePemBlocks(input);
   return pemBlocks.map(parseCertificateBlock);
 }
@@ -302,6 +392,8 @@ function parsePublicCertificateMaterial(input) {
 module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
+  CERTOPS_CERTIFICATE_TOO_LARGE,
+  MAX_PUBLIC_CERTIFICATE_INPUT_BYTES,
   CertOpsCertificateParserError,
   classifySanType,
   parsePublicCertificateMaterial,

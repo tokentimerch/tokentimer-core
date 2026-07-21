@@ -17,6 +17,8 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(dockerfile).to.include("pnpm install --prod --frozen-lockfile");
     expect(dockerfile).to.include("USER tokentimer");
     expect(dockerfile).to.include('CMD ["node", "src/index.js"]');
+    expect(dockerfile).to.include("apps/api/services/certops/parser.js");
+    expect(dockerfile).to.include("apps/api/services/certops/identitySafety.js");
     expect(dockerfile).to.include("process.env.CERTOPS_HEALTH_PORT || 8080");
     expect(dockerfile).to.include("Number.isInteger(port)");
     expect(dockerfile).to.include("path:'/healthz'");
@@ -40,12 +42,15 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(release).to.include("component: k8s-controller");
   });
 
-  it("uses the official in-cluster cert-manager observer without Secret or reporting access", () => {
+  it("keeps CoreV1Api limited to the narrow tls.crt fallback without reporting access", () => {
+    const clientSource = read("apps/k8s-controller/src/cert-manager-client.js");
     const source = [
       "apps/k8s-controller/src/cert-manager-client.js",
       "apps/k8s-controller/src/cert-manager-observer.js",
+      "apps/k8s-controller/src/public-certificate-parser.js",
       "apps/k8s-controller/src/ports.js",
       "apps/k8s-controller/src/runtime.js",
+      "apps/k8s-controller/src/tls-certificate-fallback.js",
       "apps/k8s-controller/src/index.js",
     ]
       .map(read)
@@ -56,8 +61,13 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(source).to.match(/listNamespacedCustomObject\(\s*\{/);
     expect(source).to.match(/listClusterCustomObject\(\s*\{/);
     expect(source).to.not.match(/\.loadFromDefault\s*\(/);
-    expect(source).to.not.match(/CoreV1Api|readNamespacedSecret|listNamespacedSecret|\bsecrets\b/i);
-    expect(source).to.not.match(/tls\.key|\.spec\.request|\.status\.certificate/i);
+    expect(clientSource).to.match(/CoreV1Api/);
+    expect(clientSource).to.match(/readNamespacedSecret\(\s*\{/);
+    expect(clientSource).to.match(/data\s*\[\s*["']tls\.crt["']\s*\]/);
+    expect(clientSource).to.not.match(/return\s+secret\b/);
+    expect(source).to.not.match(/(?:list|watch|create|update|patch|delete)(?:Namespaced|Cluster)?Secret\b/);
+    expect(source).to.not.match(/data\s*\[\s*["']tls\.key["']\s*\]/);
+    expect(source).to.not.match(/\.spec\.request|\.status\.certificate/i);
     expect(source).to.not.match(/\.reconcile\s*\(/);
     expect(source).to.not.match(/https?\.request\s*\(|\bfetch\s*\(|\baxios\b/);
     expect(source).to.not.match(/certificate_jobs|certificate_evidence|managed_certificates/i);

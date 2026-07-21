@@ -39,8 +39,10 @@ function normalizeListResponse(response) {
 
 function createInClusterCertManagerClient({
   loadClient = () => import("@kubernetes/client-node"),
+  secretFallbackEnabled = false,
 } = {}) {
   let apiClient;
+  let coreApiClient;
   let watchClient;
   let started = false;
   const activeControllers = new Set();
@@ -52,7 +54,8 @@ function createInClusterCertManagerClient({
     if (
       !kubernetes?.KubeConfig ||
       !kubernetes?.CustomObjectsApi ||
-      !kubernetes?.Watch
+      !kubernetes?.Watch ||
+      (secretFallbackEnabled && !kubernetes?.CoreV1Api)
     ) {
       throw new TypeError("Kubernetes client does not expose cert-manager watch APIs");
     }
@@ -62,6 +65,11 @@ function createInClusterCertManagerClient({
     // through the mounted ServiceAccount credentials in its own cluster.
     config.loadFromCluster();
     apiClient = config.makeApiClient(kubernetes.CustomObjectsApi);
+    // CoreV1Api is deliberately constructed only for the explicitly enabled,
+    // narrow public-certificate fallback. It is never exposed to callers.
+    if (secretFallbackEnabled) {
+      coreApiClient = config.makeApiClient(kubernetes.CoreV1Api);
+    }
     watchClient = new kubernetes.Watch(config);
     started = true;
   }
@@ -126,6 +134,39 @@ function createInClusterCertManagerClient({
     };
   }
 
+  async function readTlsCertificate({ namespace, secretName } = {}) {
+    requireStarted();
+    if (!secretFallbackEnabled || !coreApiClient) {
+      const error = new Error("Secret fallback is disabled");
+      error.code = "CERTOPS_SECRET_FALLBACK_DISABLED";
+      throw error;
+    }
+    if (
+      typeof namespace !== "string" ||
+      namespace.trim() === "" ||
+      typeof secretName !== "string" ||
+      secretName.trim() === ""
+    ) {
+      const error = new TypeError("A namespace and Secret name are required");
+      error.code = "CERTOPS_TLS_CRT_MISSING";
+      throw error;
+    }
+
+    const response = await coreApiClient.readNamespacedSecret({
+      namespace,
+      name: secretName,
+    });
+    const secret = response && typeof response === "object" && response.body
+      ? response.body
+      : response;
+    // Kubernetes returns the whole Secret for a `get`; this boundary reads one
+    // allowlisted member and returns only its encoded public-certificate value.
+    const data = secret && typeof secret === "object" ? secret.data : undefined;
+    const encodedCertificate =
+      data && typeof data === "object" ? data["tls.crt"] : undefined;
+    return typeof encodedCertificate === "string" ? encodedCertificate : undefined;
+  }
+
   async function close() {
     const controllers = [...activeControllers];
     activeControllers.clear();
@@ -137,6 +178,7 @@ function createInClusterCertManagerClient({
   return Object.freeze({
     close,
     list,
+    readTlsCertificate,
     start,
     watch,
   });

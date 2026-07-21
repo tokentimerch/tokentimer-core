@@ -3,6 +3,7 @@
 const { loadControllerConfig } = require("./config");
 const { createInClusterCertManagerClient } = require("./cert-manager-client");
 const { createCertManagerObserver } = require("./cert-manager-observer");
+const { createTlsCertificateFallback } = require("./tls-certificate-fallback");
 const { createHealthServer } = require("./health-server");
 const { createControllerLifecycle } = require("./lifecycle");
 const { createControllerLogger } = require("./logger");
@@ -11,6 +12,7 @@ const { createControllerRuntime } = require("./runtime");
 function createControllerApplication({
   createKubernetesClient = createInClusterCertManagerClient,
   createObserver = createCertManagerObserver,
+  createTlsFallback = createTlsCertificateFallback,
   env = process.env,
   fsOptions,
   createLogger = createControllerLogger,
@@ -22,10 +24,17 @@ function createControllerApplication({
 } = {}) {
   const config = loadControllerConfig(env, fsOptions);
   const logger = createLogger();
-  const kubernetesClient = createKubernetesClient();
+  const kubernetesClient = createKubernetesClient({
+    secretFallbackEnabled: config.secretFallbackEnabled,
+  });
+  const tlsFallback = createTlsFallback({
+    enabled: config.secretFallbackEnabled,
+    kubernetesClient,
+  });
   const observer = createObserver({
     client: kubernetesClient,
     clusterId: config.clusterId,
+    enrichObservation: tlsFallback.enrichObservation,
     logger,
     observationHandler,
     watchNamespaces: config.watchNamespaces,

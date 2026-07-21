@@ -1,6 +1,9 @@
 "use strict";
 
-const { scrubLogString } = require("@tokentimer/log-scrub");
+const {
+  containsPrivateKeyMaterial,
+  scrubLogString,
+} = require("@tokentimer/log-scrub");
 
 const OBSERVATION_SCHEMA_VERSION = 1;
 const OBSERVATION_SOURCE = "cert_manager";
@@ -313,6 +316,8 @@ function closeWatch(handle) {
 function createCertManagerObserver({
   client,
   clusterId,
+  containsPrivateKeyMaterial: detectPrivateKeyMaterial = containsPrivateKeyMaterial,
+  enrichObservation = async (observation) => observation,
   logger = { debug() {}, error() {}, info() {}, warn() {} },
   now = () => new Date().toISOString(),
   observationHandler,
@@ -331,6 +336,12 @@ function createCertManagerObserver({
   }
   if (!Array.isArray(watchNamespaces)) {
     throw new TypeError("watchNamespaces must be an array");
+  }
+  if (typeof enrichObservation !== "function") {
+    throw new TypeError("enrichObservation must be a function");
+  }
+  if (typeof detectPrivateKeyMaterial !== "function") {
+    throw new TypeError("containsPrivateKeyMaterial must be a function");
   }
 
   const certificateByIdentity = new Map();
@@ -392,7 +403,7 @@ function createCertManagerObserver({
     state.running = true;
 
     const flush = async () => {
-      while (state.pending) {
+      while (state.pending && acceptingWork && !closed) {
         const next = state.pending;
         state.pending = null;
         const observation = mapCertificateObservation({
@@ -411,8 +422,38 @@ function createCertManagerObserver({
           });
           continue;
         }
+        let enrichedObservation;
         try {
-          await observationHandler(observation);
+          enrichedObservation = await enrichObservation(observation);
+        } catch (error) {
+          safeLog("warn", "cert-manager-observation-enrichment-failed", {
+            certificateName: observation.certificateName,
+            code: errorCode(error),
+            namespace: observation.namespace,
+          });
+          continue;
+        }
+        if (!enrichedObservation || typeof enrichedObservation !== "object") {
+          safeLog("warn", "cert-manager-observation-enrichment-failed", {
+            certificateName: observation.certificateName,
+            code: "CERTOPS_CERTIFICATE_PARSE_FAILED",
+            namespace: observation.namespace,
+          });
+          continue;
+        }
+        // This final scan covers status-only, CertificateRequest-enriched,
+        // and tls.crt-enriched observations, including a faulty injected
+        // adapter that places key material under an otherwise innocent field.
+        if (detectPrivateKeyMaterial(enrichedObservation)) {
+          safeLog("warn", "cert-manager-observation-rejected", {
+            certificateName: observation.certificateName,
+            code: "PRIVATE_KEY_MATERIAL_REJECTED",
+            namespace: observation.namespace,
+          });
+          continue;
+        }
+        try {
+          await observationHandler(enrichedObservation);
         } catch (error) {
           safeLog("warn", "cert-manager-observation-delivery-failed", {
             certificateName: observation.certificateName,
@@ -436,7 +477,10 @@ function createCertManagerObserver({
     Promise.resolve(tracked).finally(() => {
       state.running = false;
       if (state.pending && acceptingWork && !closed) queueObservation(state.pending);
-      else if (!state.pending) workByCertificateIdentity.delete(identity);
+      else {
+        state.pending = null;
+        workByCertificateIdentity.delete(identity);
+      }
     });
   }
 
