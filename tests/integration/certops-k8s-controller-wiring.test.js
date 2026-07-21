@@ -15,6 +15,9 @@ describe("CertOps Kubernetes controller wiring", () => {
     const dockerfile = read("apps/k8s-controller/Dockerfile");
     expect(dockerfile).to.include("FROM node:22.23.0-alpine3.23");
     expect(dockerfile).to.include("pnpm install --prod --frozen-lockfile");
+    expect(dockerfile).to.include("packages/log-scrub ./packages/log-scrub");
+    expect(dockerfile).to.not.include("packages ./packages");
+    expect(dockerfile).to.include("rm -f package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc");
     expect(dockerfile).to.include("USER tokentimer");
     expect(dockerfile).to.include('CMD ["node", "src/index.js"]');
     expect(dockerfile).to.include("apps/api/services/certops/parser.js");
@@ -36,11 +39,16 @@ describe("CertOps Kubernetes controller wiring", () => {
 
     expect(compose).to.include('profiles: ["certops-controller"]');
     expect(compose).to.include("apps/k8s-controller/Dockerfile");
+    expect(compose).to.include("CERTOPS_CLUSTER_WIDE: ${CERTOPS_CLUSTER_WIDE:-false}");
     expect(imageCompose).to.include("tokentimer-core-k8s-controller");
     expect(ci).to.include("Kubernetes Controller Quality Checks");
     expect(ci).to.include("Build Kubernetes controller image");
+    expect(ci).to.include("Scan Kubernetes controller image with Grype");
     expect(publish).to.include("Build and push Kubernetes controller");
+    expect(publish).to.include("platforms: linux/amd64");
     expect(release).to.include("component: k8s-controller");
+    expect(release).to.include("repository: tokentimer-core-k8s-controller\\$");
+    expect(release).to.include('tag: \\"$VER\\"');
   });
 
   it("keeps CoreV1Api limited to the narrow tls.crt fallback without reporting access", () => {

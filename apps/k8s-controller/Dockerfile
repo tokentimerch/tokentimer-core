@@ -15,7 +15,10 @@ RUN addgroup -g 1001 -S tokentimer \
 ENV NODE_ENV=production
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
-COPY --chown=tokentimer:tokentimer packages ./packages
+# Only the controller's one workspace dependency belongs in this runtime
+# image. Copying every workspace package would retain unrelated manifests and
+# make image inventory/scanning describe code the controller cannot execute.
+COPY --chown=tokentimer:tokentimer packages/log-scrub ./packages/log-scrub
 COPY --chown=tokentimer:tokentimer apps/k8s-controller ./apps/k8s-controller
 # The controller reuses the canonical parser, its direct identity helper, and
 # the shared detector without importing the API server or a generic Secret API.
@@ -24,7 +27,8 @@ COPY --chown=tokentimer:tokentimer apps/api/services/certops/parser.js ./apps/ap
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/identitySafety.js ./apps/api/services/certops/identitySafety.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/controllerObservationLimits.js ./apps/api/services/certops/controllerObservationLimits.js
 
-RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller...
+RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller... \
+    && rm -f package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc
 
 WORKDIR /app/apps/k8s-controller
 

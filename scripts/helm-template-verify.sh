@@ -127,6 +127,12 @@ assert_controller_rbac_hardening() {
     blocks="$(component_blocks "${rendered}" "${kind}")"
     [[ -z "${blocks}" ]] && continue
 
+    if printf '%s\n' "${blocks}" | grep -Eq "^[[:space:]]*-[[:space:]]*['\"]?\\*['\"]?[[:space:]]*$"; then
+      fail "${kind} controller RBAC contains a wildcard resource or verb"
+    fi
+
+    assert_contains "${blocks}" $'    resources:\n      - certificaterequests\n    verbs:\n      - get\n      - list\n      - watch' "${kind} CertificateRequest read-only rule"
+
     if [[ "${mode}" == "observe" ]]; then
       assert_not_contains "${blocks}" $'      - create' "${kind} observe controller RBAC"
       assert_not_contains "${blocks}" $'      - patch' "${kind} observe controller RBAC"
@@ -180,7 +186,8 @@ expect_controller_failure() {
   fi
 }
 
-# M3-A7 retains an explicit, narrowly bounded controller capability surface.
+# M3-A8 release validation retains an explicit, narrowly bounded controller
+# capability surface across every supported mode/scope/fallback combination.
 controller_base_args=(
   --namespace certops-system
   --set config.adminEmail=ci@example.com
@@ -289,10 +296,37 @@ controller_provision_roles="$(component_blocks "${controller_provision}" Role)"
 controller_provision_deployment="$(component_blocks "${controller_provision}" Deployment)"
 assert_controller_rbac_hardening "${controller_provision}" false provision
 assert_contains "${controller_provision_deployment}" $'strategy:\n    type: Recreate' "provision no-overlap strategy"
+assert_contains "${controller_provision_deployment}" $'name: CERTOPS_CONTROLLER_MODE\n              value: "provision"' "provision runtime mode"
+
+controller_provision_fallback="$(render_controller provision-fallback \
+  --set certops.controller.mode=provision \
+  --set certops.controller.secretFallbackEnabled=true)"
+assert_controller_rbac_hardening "${controller_provision_fallback}" true provision
+
+controller_provision_cluster_wide="$(render_controller provision-cluster-wide \
+  --set certops.controller.mode=provision \
+  --set certops.controller.clusterWide=true)"
+controller_provision_cluster_role="$(component_blocks "${controller_provision_cluster_wide}" ClusterRole)"
+controller_provision_cluster_deployment="$(component_blocks "${controller_provision_cluster_wide}" Deployment)"
+assert_contains "${controller_provision_cluster_role}" 'kind: ClusterRole' "provision cluster-wide ClusterRole"
+assert_contains "${controller_provision_cluster_deployment}" $'name: CERTOPS_CLUSTER_WIDE\n              value: "true"' "provision cluster-wide runtime policy"
+assert_controller_rbac_hardening "${controller_provision_cluster_wide}" false provision
+if grep -Eq '^kind: Role(Binding)?$' "${controller_provision_cluster_wide}"; then
+  fail "cluster-wide provision controller rendered namespaced RBAC"
+fi
+
+controller_provision_cluster_fallback="$(render_controller provision-cluster-wide-fallback \
+  --set certops.controller.mode=provision \
+  --set certops.controller.clusterWide=true \
+  --set certops.controller.secretFallbackEnabled=true)"
+assert_controller_rbac_hardening "${controller_provision_cluster_fallback}" true provision
+
 expect_controller_failure replica-count-two --set certops.controller.replicaCount=2
 expect_controller_failure cluster-wide-with-namespaces \
   --set certops.controller.clusterWide=true \
   --set certops.controller.watchNamespaces[0]=team-a
+expect_controller_failure invalid-watch-namespace \
+  --set-string certops.controller.watchNamespaces[0]=Not_Valid
 expect_controller_failure network-policy-without-kube-api-cidrs --set networkPolicy.enabled=true
 expect_controller_failure api-url-userinfo --set-string certops.controller.api.url=https://user:password@example.com
 expect_controller_failure api-url-no-host --set-string certops.controller.api.url=https://

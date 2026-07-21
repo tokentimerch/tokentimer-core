@@ -29,12 +29,44 @@ never holds customer key material. See ADR-0003.
 
 - **Control plane** - Core/Cloud/Enterprise backend and dashboard. Observes,
   plans, signs jobs, records evidence. Holds no private keys.
-- **Execution plane** - the TokenTimer **agent** (and Kubernetes controller).
-  Generates keys locally, builds CSRs, runs ACME, deploys, reloads. Holds keys
-  on the host it runs on; TokenTimer never backs them up.
+- **Execution plane** - the TokenTimer **agent** and the customer-side
+  Kubernetes controller. A future agent may perform key-bearing work locally.
+  The M3 controller never handles a key: it asks cert-manager to reconcile a
+  `Certificate`, and cert-manager generates and retains the key in Kubernetes.
 
-The agent is **outbound-only**: it polls the control plane. The control plane
-never opens connections to agents.
+Execution-plane components are **outbound-only**: they call the control plane.
+The control plane never opens connections to an agent or customer Kubernetes
+API, and TokenTimer does not accept uploaded kubeconfigs.
+
+## M3 cert-manager controller boundary
+
+M3 uses two additive controller-specific machine transports, not the M4 agent
+protocol:
+
+- `POST /api/v1/certops/executor/observations` for passive public observation;
+- `POST /api/v1/certops/executor/provisioning-commands/next` for the narrow,
+  cluster-bound cert-manager provisioning command.
+
+The provisioning controller reports its job lifecycle through the existing M2
+executor event/evidence routes. It does not register an agent, claim a general
+job, heartbeat, receive a signed command, or use M4 attempts, leases, nonces,
+or replay windows.
+
+| From | To | Direction and data |
+|---|---|---|
+| Controller | TokenTimer API/control plane | Outbound-only public observations, narrow commands, events, evidence |
+| Controller | Kubernetes API | Outbound list/watch of Certificate/CertificateRequest; optional `tls.crt` Secret get; owned Certificate create/patch |
+| cert-manager | Kubernetes API | In-cluster issuance/renewal and TLS Secret management |
+| TokenTimer control plane | Kubernetes API | None |
+
+The controller is disabled by default and defaults to `observe`. `provision`
+is explicit and additive. Observe RBAC is read-only; provision adds only
+Certificate `create`/`patch`. Neither mode writes Secrets or
+CertificateRequests or deletes Kubernetes resources. Status is preferred over
+the optional `tls.crt` fallback. Because Kubernetes RBAC cannot restrict a
+Secret read to one data key, code-level allowlisting and tests prove that
+`tls.key` is never accessed, while the shared detector scans every outbound
+envelope.
 
 ## Ubiquitous language (CertOps)
 
@@ -102,6 +134,11 @@ effective operational activity remains
 The settings surface is human session-only: internal worker bearer credentials
 cannot read, pause, or resume a workspace. Private-key material remains
 rejected before the session-user and role checks on its body-bearing `PUT`.
+
+For M3, pause blocks new provision intent and command delivery but deliberately
+does not block passive controller observations or the established executor
+event/evidence ingestion. It does not delete queued/running work. The global
+rollout flag remains a separate deployment-wide gate.
 
 Manual-job idempotency stores a SHA-256 fingerprint of normalized original
 creation inputs. Lifecycle transitions never change it, so an exact original

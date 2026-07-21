@@ -138,6 +138,7 @@ jobs:
           sed -i "/repository: tokentimer-core-api\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
           sed -i "/repository: tokentimer-core-dashboard\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
           sed -i "/repository: tokentimer-core-worker\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
+          sed -i "/repository: tokentimer-core-k8s-controller\$/,/pullPolicy:/{s/^      tag: .*/      tag: \"$VER\"/}" values.yaml
 
       - name: Package chart
         run: helm package deploy/helm --destination .helm-pkg

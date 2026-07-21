@@ -426,7 +426,9 @@ services:
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
-  # The controller remains opt-in until its Helm/RBAC deployment exists.
+  # The customer-cluster controller is opt-in. Compose is a packaging/config
+  # validation surface; production Kubernetes installs should use the Helm
+  # ServiceAccount, RBAC, and NetworkPolicy resources.
   certops-controller:
     profiles: ["certops-controller"]
     build:
@@ -442,6 +444,7 @@ services:
       TOKENTIMER_CLUSTER_ID: ${CERTOPS_CONTROLLER_CLUSTER_ID:-}
       TOKENTIMER_API_TOKEN_FILE: /run/secrets/tokentimer-api-token
       CERTOPS_CONTROLLER_MODE: ${CERTOPS_CONTROLLER_MODE:-observe}
+      CERTOPS_CLUSTER_WIDE: ${CERTOPS_CLUSTER_WIDE:-false}
       CERTOPS_WATCH_NAMESPACES: ${CERTOPS_WATCH_NAMESPACES:-}
       CERTOPS_SECRET_FALLBACK_ENABLED: ${CERTOPS_SECRET_FALLBACK_ENABLED:-false}
       CERTOPS_RECONCILE_INTERVAL: ${CERTOPS_RECONCILE_INTERVAL:-}

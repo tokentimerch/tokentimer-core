@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; finalize in M0, detail in M8.
+Accepted (2026-07-21). Implemented and release-validated in M3-A3 through
+M3-A8.
 
 ## Context
 
@@ -39,5 +40,7 @@ path, or it would break the zero-custody invariant.
 - RBAC narrows but cannot prove per-key denial; the load-bearing proof is the
   test suite showing controller code never reads/deserializes/logs/transmits
   `tls.key`, plus detector scanning of all upstream reports.
-- TODO (M8): exact RBAC verbs/resources, controller reconcile model, Helm chart
-  layout, and how status maps to CertOps evidence.
+- The Helm chart now makes fallback conditional, keeps Secret access at
+  `get`-only, and proves the observe/provision RBAC matrix. Deterministic
+  controller and API integration tests cover status mapping, fallback parsing,
+  observation evidence, provisioning evidence, and non-access to `tls.key`.

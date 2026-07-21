@@ -1,7 +1,8 @@
-# CertOps executor API (M2)
+# CertOps machine APIs (M2 executor and M3 controller)
 
-Reference for external systems that report certificate lifecycle events to
-TokenTimer without running the (not-yet-shipped) TokenTimer agent. See
+Reference for external systems that report certificate lifecycle events and
+for the customer-side cert-manager controller. Neither surface is the M4 agent
+protocol. See
 `docs/certops/CONTEXT.md` for domain language and ADR-0006 for where the
 executor jobs/evidence UI lives in the dashboard.
 
@@ -31,11 +32,19 @@ admin role, `/certops/operations` page, "Machine API tokens" panel.
     `certops:events:write`; an events-only token cannot attach evidence,
     and a request that includes evidence with an events-only token is
     rejected).
-  - M2 ships only the two routes below (both `POST`); no machine-token
-    read route exists yet, so `certops:read` and `certops:jobs:read` are
-    accepted and stored but not yet enforced by any route. They are
-    forward-compatible with a machine-token read API planned for a later
-    milestone.
+  - `certops:observations:write` - report normalized public cert-manager
+    observations through the M3 controller route.
+  - `certops:provision:execute` - fetch the next narrow cert-manager
+    provisioning command bound to the token's cluster.
+  - No machine-token read route exists yet, so `certops:read` and
+    `certops:jobs:read` are accepted and stored but not yet enforced by any
+    route. They remain forward-compatible with a later machine-token read API.
+- A token containing either controller scope requires an immutable lowercase
+  RFC 1123 `controllerClusterId` at creation. A cluster binding is rejected on
+  tokens without a controller scope. The authenticated workspace and cluster,
+  never body values alone, establish controller provenance.
+- Scopes do not inherit from or imply one another. In particular, read,
+  event, evidence, and observation scopes do not grant provisioning access.
 - Tokens can have an optional expiry and are revocable at any time from the
   same panel. Revoking breaks any executor using that token immediately.
 - Machine-token auth has no session dependency and is not subject to CSRF
@@ -200,10 +209,9 @@ Redaction and rejection are two different code paths, do not conflate them:
 Every machine token is limited to a default of 120 requests per 60-second
 window (`apps/api/middleware/machine-token-rate-limit.js`). The limiter key is
 `certops-machine:<workspaceId>:<tokenPrefix>[:<machineId>]`, with **no route
-segment**: a single token shares one bucket across all three executor routes
-(`POST /api/v1/certops/executor/events`, `POST
-/api/v1/certops/jobs/:jobId/events`, `POST /api/v1/certops/jobs/:jobId/evidence`),
-not a separate budget per route. Exceeding the limit returns HTTP 429
+segment**: a single token shares one bucket across the executor event/evidence,
+controller observation, and provisioning-command routes, not a separate budget
+per route. Exceeding the limit returns HTTP 429
 `CERTOPS_MACHINE_RATE_LIMITED` with a `Retry-After` header (seconds). The
 shared bucket is a deliberate design decision: a single token's traffic
 budget applies uniformly across the executor route family instead of
@@ -224,6 +232,9 @@ resetting per route.
 | 413 | `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` | Evidence `output` exceeds the 64 KB pre-redaction size cap. |
 | 429 | `CERTOPS_MACHINE_RATE_LIMITED` | Token exceeded its shared rate-limit bucket (see section 4). |
 | 404 | `NOT_FOUND` | CertOps is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
+| 403 | `CERTOPS_CONTROLLER_OBSERVATION_CLUSTER_MISMATCH` | An observation does not match the token's immutable cluster binding. |
+| 403 | `CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH` | A provisioning command does not match the token's immutable cluster binding. |
+| 409 | `CERTOPS_WORKSPACE_PAUSED` | New provision intent or provisioning command delivery is paused; passive observation/event/evidence reporting remains available. |
 
 All error bodies use the flat envelope
 `{ "error": "<human-readable message>", "code": "<ERROR_CODE>" }` (an optional
@@ -301,3 +312,61 @@ Reported events and evidence show up under `/certops/operations` (Executor
 jobs panel + evidence timeline) for workspace managers/admins, with status
 badges, redaction markers, and audit links where available. See
 `apps/dashboard/src/components/certops/{JobStatusBadge,EvidenceTimeline,CertificateTimeline}.jsx`.
+
+## 9. Kubernetes controller routes (M3)
+
+The M3 customer-cluster controller uses dedicated, additive transports. They do
+not register an M4 agent or implement heartbeats, general job claims, attempts,
+leases, signatures, or nonces.
+
+### Report a public observation
+
+```text
+POST /api/v1/certops/executor/observations
+scope: certops:observations:write
+```
+
+The strict version-1 body contains normalized cert-manager public identity,
+status, conditions, and optional public certificate metadata. The API derives
+workspace and cluster provenance from the token binding, synchronizes the
+source-stable managed certificate and Kubernetes Secret location, and creates
+or refreshes fingerprint-keyed public instance history. An exact semantic
+replay returns `200` with `duplicate: true`; first delivery returns `201`. The
+bounded response contains only `managedCertificateId`, `targetId`, nullable
+`certificateInstanceId`, and `duplicate`. No fake job is created.
+
+Observation remains accepted while the workspace is paused. Private material
+is rejected and audited before scope, workspace, and downstream commercial
+gates. Generic secret text is redacted only in the approved free-text fields;
+identity fields are validated rather than transformed.
+
+### Fetch a cert-manager provisioning command
+
+```text
+POST /api/v1/certops/executor/provisioning-commands/next
+scope: certops:provision:execute
+```
+
+The response is either `204` for no work or one strict public command assigned
+to the authenticated workspace/cluster. It describes a server-owned
+`controller_provisioning` `deploy` job and the desired Certificate identity; it
+contains no Kubernetes manifest, Secret data, CSR, private-key settings, or
+arbitrary metadata. Non-terminal ambiguous delivery is intentionally
+redeliverable. Reconciliation and deterministic executor event/evidence IDs
+make at-least-once delivery safe.
+
+Provision mode normally uses all four independent scopes:
+
+```text
+certops:observations:write
+certops:provision:execute
+certops:events:write
+certops:evidence:write
+```
+
+Workspace pause blocks command delivery but does not delete or permanently
+claim existing work. The controller reports `job.started`, then either the
+bounded completed evidence or a safe failure through the M2 routes above.
+Successful completion means the owned cert-manager `Certificate` was created,
+reconciled, or already matched; issuance completion arrives later through the
+observation route.
