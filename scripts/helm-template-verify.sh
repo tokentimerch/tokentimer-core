@@ -175,7 +175,8 @@ render_controller() {
 
 expect_controller_failure() {
   local name="$1"
-  shift
+  local expected="$2"
+  shift 2
   local dest="${OUT}/certops-controller-invalid-${name}.log"
   echo "==> helm template ${RELEASE_NAME} [certops-controller invalid:${name}]" >&2
   if helm template "${RELEASE_NAME}" "${CHART}" \
@@ -183,6 +184,9 @@ expect_controller_failure() {
     "$@" \
     > "${dest}" 2>&1; then
     fail "certops controller render unexpectedly succeeded: ${name}"
+  fi
+  if ! grep -Fq -- "${expected}" "${dest}"; then
+    fail "certops controller failure ${name} did not mention ${expected}"
   fi
 }
 
@@ -193,7 +197,7 @@ controller_base_args=(
   --set config.adminEmail=ci@example.com
   --set certops.controller.enabled=true
   --set certops.controller.api.url=https://api.tokentimer.example
-  --set certops.controller.api.workspaceId=workspace-123
+  --set certops.controller.api.workspaceId=00000000-0000-4000-8000-000000000001
   --set certops.controller.api.clusterId=cluster-123
   --set certops.controller.apiToken.existingSecret=controller-api-token
   --set certops.controller.apiToken.key=token
@@ -285,12 +289,13 @@ assert_contains "${controller_numeric_bindings}" $'    namespace: "123"' "numeri
 assert_contains "${controller_numeric_deployment}" 'secretName: "123"' "numeric Secret name string"
 assert_contains "${controller_numeric_deployment}" '- key: "123"' "numeric Secret key string"
 
-expect_controller_failure missing-api-url --set certops.controller.api.url=
-expect_controller_failure missing-workspace-id --set certops.controller.api.workspaceId=
-expect_controller_failure missing-cluster-id --set certops.controller.api.clusterId=
-expect_controller_failure missing-token-secret --set certops.controller.apiToken.existingSecret=
-expect_controller_failure missing-token-key --set certops.controller.apiToken.key=
-expect_controller_failure invalid-mode --set certops.controller.mode=invalid
+expect_controller_failure missing-api-url 'api.url' --set certops.controller.api.url=
+expect_controller_failure missing-workspace-id 'api.workspaceId' --set certops.controller.api.workspaceId=
+expect_controller_failure invalid-workspace-id 'workspaceId' --set-string certops.controller.api.workspaceId=workspace-123
+expect_controller_failure missing-cluster-id 'api.clusterId' --set certops.controller.api.clusterId=
+expect_controller_failure missing-token-secret 'apiToken.existingSecret' --set certops.controller.apiToken.existingSecret=
+expect_controller_failure missing-token-key 'apiToken.key' --set certops.controller.apiToken.key=
+expect_controller_failure invalid-mode 'mode' --set certops.controller.mode=invalid
 controller_provision="$(render_controller provision-mode --set certops.controller.mode=provision)"
 controller_provision_roles="$(component_blocks "${controller_provision}" Role)"
 controller_provision_deployment="$(component_blocks "${controller_provision}" Deployment)"
@@ -321,19 +326,19 @@ controller_provision_cluster_fallback="$(render_controller provision-cluster-wid
   --set certops.controller.secretFallbackEnabled=true)"
 assert_controller_rbac_hardening "${controller_provision_cluster_fallback}" true provision
 
-expect_controller_failure replica-count-two --set certops.controller.replicaCount=2
-expect_controller_failure cluster-wide-with-namespaces \
+expect_controller_failure replica-count-two 'replicaCount' --set certops.controller.replicaCount=2
+expect_controller_failure cluster-wide-with-namespaces 'watchNamespaces' \
   --set certops.controller.clusterWide=true \
   --set certops.controller.watchNamespaces[0]=team-a
-expect_controller_failure invalid-watch-namespace \
+expect_controller_failure invalid-watch-namespace 'watchNamespaces' \
   --set-string certops.controller.watchNamespaces[0]=Not_Valid
-expect_controller_failure network-policy-without-kube-api-cidrs --set networkPolicy.enabled=true
-expect_controller_failure api-url-userinfo --set-string certops.controller.api.url=https://user:password@example.com
-expect_controller_failure api-url-no-host --set-string certops.controller.api.url=https://
-expect_controller_failure api-url-invalid-host --set-string certops.controller.api.url=http://?invalid
-expect_controller_failure api-url-invalid-port --set-string certops.controller.api.url=https://example.com:999999
+expect_controller_failure network-policy-without-kube-api-cidrs 'kubeApiServerCidrs' --set networkPolicy.enabled=true
+expect_controller_failure api-url-userinfo 'api.url' --set-string certops.controller.api.url=https://user:password@example.com
+expect_controller_failure api-url-no-host 'api.url' --set-string certops.controller.api.url=https://
+expect_controller_failure api-url-invalid-host 'api.url' --set-string certops.controller.api.url=http://?invalid
+expect_controller_failure api-url-invalid-port 'api.url' --set-string certops.controller.api.url=https://example.com:999999
 
-expect_controller_failure raw-token-value --set-string certops.controller.apiToken.value=raw-controller-token
+expect_controller_failure raw-token-value 'apiToken' --set-string certops.controller.apiToken.value=raw-controller-token
 if grep -Fq 'raw-controller-token' "${OUT}"/certops-controller-*.yaml; then
   fail "raw controller token marker rendered into a manifest"
 fi
@@ -354,7 +359,14 @@ assert_not_contains "${controller_policy}" 'port: 465' "controller NetworkPolicy
 assert_not_contains "${controller_policy}" 'port: 587' "controller NetworkPolicy SMTP egress"
 assert_not_contains "${controller_policy}" 'port: 9091' "controller NetworkPolicy metrics egress"
 
-expect_controller_failure network-policy-disabled-api \
+controller_network_custom_kube_port="$(render_controller network-policy-custom-kube-port \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32 \
+  --set networkPolicy.egress.kubeApiServerPort=6443)"
+controller_custom_kube_policy="$(component_blocks "${controller_network_custom_kube_port}" NetworkPolicy)"
+assert_contains "${controller_custom_kube_policy}" 'port: 6443' "custom Kubernetes API port"
+
+expect_controller_failure network-policy-disabled-api 'controllerApiCidrs' \
   --set api.enabled=false \
   --set networkPolicy.enabled=true \
   --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32

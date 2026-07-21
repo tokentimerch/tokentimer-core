@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { createRequire } = require("node:module");
+const { Readable } = require("node:stream");
 const { describe, it, before, after } = require("mocha");
 
 const { loadRootEnv } = require("../../scripts/load-root-env");
@@ -46,6 +47,9 @@ const {
 const {
   createProvisioningRunner,
 } = require("../../apps/k8s-controller/src/provisioning-runner");
+const {
+  extractTlsCertificateFromSecretJson,
+} = require("../../apps/k8s-controller/src/tls-crt-secret-reader");
 
 const apiRequire = createRequire(require.resolve("../../apps/api/package.json"));
 const express = apiRequire("express");
@@ -269,21 +273,6 @@ async function expectRejectedCode(action, code) {
   expect(failure.code).to.equal(code);
 }
 
-function createSecretData(values, accesses) {
-  return new Proxy(values, {
-    get(target, property) {
-      accesses.push(String(property));
-      if (property !== "tls.crt") {
-        throw new Error(`Forbidden Secret data access: ${String(property)}`);
-      }
-      return target[property];
-    },
-    ownKeys() {
-      throw new Error("Secret data must not be enumerated");
-    },
-  });
-}
-
 function createKubernetesBoundary() {
   const certificates = new Map();
   const certificateRequests = new Map();
@@ -377,16 +366,18 @@ function createKubernetesBoundary() {
     },
   };
 
-  const coreApi = {
-    async readNamespacedSecret(options) {
+  const secretReader = {
+    async close() {},
+    async read(options) {
       calls.readSecret.push(options);
-      const value = secrets.get(key(options.namespace, options.name));
+      const value = secrets.get(key(options.namespace, options.secretName));
       if (!value) throw notFound();
-      return { body: value };
+      return extractTlsCertificateFromSecretJson(
+        Readable.from([Buffer.from(JSON.stringify(value))]),
+      );
     },
   };
 
-  class CoreV1Api {}
   class CustomObjectsApi {}
   class Observable {
     constructor(value) {
@@ -395,9 +386,7 @@ function createKubernetesBoundary() {
   }
   class KubeConfig {
     loadFromCluster() {}
-    makeApiClient(type) {
-      return type === CoreV1Api ? coreApi : customObjectsApi;
-    }
+    makeApiClient() { return customObjectsApi; }
   }
   class Watch {
     async watch(resourcePath, options, onEvent, onError) {
@@ -415,8 +404,8 @@ function createKubernetesBoundary() {
     createClient(options = {}) {
       return createInClusterCertManagerClient({
         ...options,
+        createSecretReader: () => secretReader,
         loadClient: async () => ({
-          CoreV1Api,
           CustomObjectsApi,
           KubeConfig,
           Observable,
@@ -521,16 +510,15 @@ describe("CertOps M3-A8 end-to-end composition", function () {
       expect(await statusRuntime.waitForIdle(1_000)).to.equal(true);
       await statusRuntime.close();
 
-      const secretAccesses = [];
       const fallbackBoundary = createKubernetesBoundary();
       fallbackBoundary.setCertificate(certificateResource({ certificateName: "fallback-cert" }));
       fallbackBoundary.setSecret("certops", "fallback-cert-tls", {
-        data: createSecretData({
+        data: {
           "tls.crt": ENCODED_PUBLIC_CERT,
           "tls.key": PRIVATE_SENTINEL,
           password: "never-access-password",
           "tls.crt.backup": PRIVATE_SENTINEL,
-        }, secretAccesses),
+        },
       });
       const fallbackClient = fallbackBoundary.createClient({ secretFallbackEnabled: true });
       const outboundBodies = [];
@@ -572,9 +560,8 @@ describe("CertOps M3-A8 end-to-end composition", function () {
       });
       expect(fallbackRuntime.isReady()).to.equal(true);
       expect(fallbackBoundary.calls.readSecret).to.deep.equal([
-        { name: "fallback-cert-tls", namespace: "certops" },
+        { namespace: "certops", secretName: "fallback-cert-tls" },
       ]);
-      expect(secretAccesses).to.deep.equal(["tls.crt"]);
       expect(outboundBodies).to.have.length(1);
       expect(outboundBodies[0]).to.include("BEGIN CERTIFICATE");
       expect(outboundBodies[0]).to.not.include("never-cross-the-controller-boundary");
@@ -875,13 +862,12 @@ describe("CertOps M3-A8 end-to-end composition", function () {
         "certops.tokentimer.io/last-intent-id": second.body.job.id,
       });
 
-      const access = [];
       boundary.setSecret("certops", "m3-a8-tls-v2", {
-        data: createSecretData({
+        data: {
           "tls.crt": ENCODED_PUBLIC_CERT,
           "tls.key": PRIVATE_SENTINEL,
           credential: "never-access-credential",
-        }, access),
+        },
       });
       boundary.setCertificate({
         ...createdCertificate,
@@ -920,7 +906,6 @@ describe("CertOps M3-A8 end-to-end composition", function () {
         expect(result.rows[0].count).to.equal(1);
       });
       expect(runtime.isReady()).to.equal(true);
-      expect(access).to.deep.equal(["tls.crt"]);
       await runtime.stopAcceptingWork();
       expect(await runtime.waitForIdle(1_000)).to.equal(true);
       await runtime.close();

@@ -164,6 +164,16 @@ const BASELINE_M2_COLUMNS = {
     "status",
     "created_at",
   ],
+  certificate_controller_provision_deliveries: [
+    "job_id",
+    "workspace_id",
+    "controller_cluster_id",
+    "delivered_at",
+    "updated_at",
+    "started_at",
+    "completed_at",
+    "failed_at",
+  ],
 };
 
 const BASELINE_TOKEN_COLUMNS = [
@@ -269,8 +279,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-12).map((migration) => migration.version),
-      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
+      migrations.slice(-13).map((migration) => migration.version),
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -500,7 +510,7 @@ describe("CertOps inventory migration", () => {
       certOpsJobCreationFingerprintMigration,
       "expected certops_job_creation_request_fingerprint migration",
     );
-    assert.equal(certOpsJobCreationFingerprintMigration.version, 19);
+    assert.equal(certOpsJobCreationFingerprintMigration.version, 20);
     assert.match(
       certOpsJobCreationFingerprintMigration.sql,
       /ALTER TABLE certificate_jobs\s+ADD COLUMN IF NOT EXISTS creation_request_hash CHAR\(64\) NULL/,
@@ -512,6 +522,31 @@ describe("CertOps inventory migration", () => {
     assert.match(
       certOpsJobCreationFingerprintMigration.sql,
       /Existing rows remain NULL/,
+    );
+  });
+
+  it("keeps released migration 18 and the M3 migration tail unique and ordered", () => {
+    const expectedVersions = new Map([
+      ["tokens_certops_api_token_link", 18],
+      ["certops_workspace_kill_switch", 19],
+      ["certops_job_creation_request_fingerprint", 20],
+      ["certops_controller_observation_reporting", 21],
+      ["certops_controller_provisioning", 22],
+      ["certops_controller_provisioning_event_timestamps", 23],
+    ]);
+    for (const [name, version] of expectedVersions) {
+      assert.equal(
+        migrations.find((migration) => migration.name === name)?.version,
+        version,
+        `unexpected version for ${name}`,
+      );
+    }
+
+    const versions = migrations.map((migration) => migration.version);
+    assert.equal(new Set(versions).size, versions.length);
+    assert.equal(
+      versions.every((version, index) => index === 0 || version > versions[index - 1]),
+      true,
     );
   });
 
@@ -789,11 +824,9 @@ describe("CertOps inventory migration", () => {
     }
   });
 
-  it("includes the CertOps M2 job/token/evidence tables in the baseline DB contract", () => {
-    // Regression for M2-29: migrations 12-14 ship api_tokens, certificate_jobs,
-    // certificate_job_log, certificate_evidence, and certificate_executor_events,
-    // so the baseline DB shape contract must require them (with the same
-    // no-private-key-custody guard as the M1 tables) for variants to mirror.
+  it("includes the CertOps M2/M3 machine tables in the baseline DB contract", () => {
+    // The baseline must mirror every shipped machine-ingestion and controller
+    // delivery table with the same no-private-key-custody guard.
     const tableSchema = baselineMinimumSchema.properties.tables.properties;
     const requiredTables = baselineMinimumSchema.properties.tables.required;
 

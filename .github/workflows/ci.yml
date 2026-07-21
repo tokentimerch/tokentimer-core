@@ -7,6 +7,8 @@ name: CI
 on:
   push:
     branches: [main, master]
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -333,7 +335,10 @@ jobs:
 
       - name: Install Helm
         run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.20.1 bash
+          curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz
+          echo "0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version
 
       - name: Helm dependency build
@@ -355,9 +360,6 @@ jobs:
 
       - name: Validate production compose + images overlay
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
-
-      - name: Validate optional controller compose profile
-        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml --profile certops-controller config -q
 
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q

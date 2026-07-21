@@ -64,9 +64,9 @@ is explicit and additive. Observe RBAC is read-only; provision adds only
 Certificate `create`/`patch`. Neither mode writes Secrets or
 CertificateRequests or deletes Kubernetes resources. Status is preferred over
 the optional `tls.crt` fallback. Because Kubernetes RBAC cannot restrict a
-Secret read to one data key, code-level allowlisting and tests prove that
-`tls.key` is never accessed, while the shared detector scans every outbound
-envelope.
+Secret read to one data key, a bounded streaming reader captures only the
+public certificate value without object-deserializing other data members, while
+the shared detector scans every outbound envelope.
 
 ## Ubiquitous language (CertOps)
 

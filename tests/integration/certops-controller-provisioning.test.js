@@ -231,8 +231,8 @@ describe("CertOps controller provisioning", function () {
     else process.env.CERTOPS_ENABLED = previousCertOpsEnabled;
   });
 
-  it("upgrades the migration-20 token shape to migration 21 and accepts the provision scope", async () => {
-    const migration = migrations.find((item) => item.version === 21);
+  it("upgrades the migration-21 token shape to migration 22 and accepts the provision scope", async () => {
+    const migration = migrations.find((item) => item.version === 22);
     expect(migration?.name).to.equal("certops_controller_provisioning");
 
     const schema = `m3a7_upgrade_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -300,8 +300,8 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
-  it("upgrades the M3-A7 delivery shape from migration 21 to 22", async () => {
-    const migration = migrations.find((item) => item.version === 22);
+  it("upgrades the M3-A7 delivery shape from migration 22 to 23", async () => {
+    const migration = migrations.find((item) => item.version === 23);
     expect(migration?.name).to.equal("certops_controller_provisioning_event_timestamps");
     const schema = `m3a7_delivery_${crypto.randomUUID().replaceAll("-", "")}`;
     const client = await pool.connect();

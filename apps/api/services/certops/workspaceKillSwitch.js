@@ -138,7 +138,7 @@ async function getWorkspaceCertOpsActivitySnapshot(options = {}) {
   if (!state.certOpsEnabled) {
     const error = workspaceKillSwitchError(
       "CertOps is disabled for this deployment",
-      "CERTOPS_DISABLED",
+      CERTOPS_DISABLED,
     );
     error.state = state;
     throw error;

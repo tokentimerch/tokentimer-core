@@ -8,7 +8,7 @@ Get TokenTimer Core running in under 5 minutes.
 ## Prerequisites
 
 - Docker and Docker Compose
-- Or Node.js >= 22.0.0 + PostgreSQL 14+
+- Or Node.js >= 22.0.0 + PostgreSQL 15+
 - pnpm (recommended package manager for this monorepo)
 
 ## Option 1: Docker Compose (Fastest)

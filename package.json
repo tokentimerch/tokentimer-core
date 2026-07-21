@@ -77,7 +77,7 @@
     "test:coverage:frontend": "pnpm run coverage:collect:frontend && pnpm run coverage:check:frontend",
     "test:coverage": "pnpm run test:coverage:backend && pnpm run test:coverage:frontend && pnpm run coverage:merge",
     "// --- Helm ---": "",
-    "helm:lint": "helm lint deploy/helm -f deploy/helm/ci/ci-values.yaml",
+    "helm:lint": "helm lint deploy/helm --set config.disableAdminBootstrap=true && helm lint deploy/helm -f deploy/helm/ci/ci-values.yaml",
     "helm:template": "helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml",
     "helm:verify": "bash scripts/helm-template-verify.sh"
   },

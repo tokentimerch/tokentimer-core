@@ -28,7 +28,14 @@ async function eventually(assertion, attempts = 50) {
   throw lastError;
 }
 
-function runnerFixture({ nextCommand, reportEvent, reconcile, timers = [] }) {
+function runnerFixture({
+  maxReconcileAttempts,
+  nextCommand,
+  random,
+  reportEvent,
+  reconcile,
+  timers = [],
+}) {
   const commandClient = {
     nextCommand,
     reportEvent,
@@ -47,6 +54,8 @@ function runnerFixture({ nextCommand, reportEvent, reconcile, timers = [] }) {
     commandClient,
     provisioner,
     intervalMs: 1,
+    maxReconcileAttempts,
+    random,
     setTimeoutFn: (callback) => { timers.push(callback); return timers.length; },
     clearTimeoutFn: () => {},
   });
@@ -97,6 +106,82 @@ describe("controller provisioning runner", () => {
     assert.equal(completionStages.includes("failed"), false);
     await completionRunner.stopAcceptingWork();
     await completionRunner.close();
+  });
+
+  it("retries transient Kubernetes failures and completes without a failed event", async () => {
+    const stages = [];
+    const timers = [];
+    let attempts = 0;
+    const runner = runnerFixture({
+      nextCommand: async () => command,
+      random: () => 0,
+      reportEvent: async (_command, stage) => { stages.push(stage); },
+      reconcile: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          // @kubernetes/client-node ApiException exposes HTTP status as code.
+          throw Object.assign(new Error("server unavailable"), { code: 503 });
+        }
+        return { operation: "created" };
+      },
+      timers,
+    });
+
+    await runner.start({ trackWork: (work) => work });
+    await eventually(() => assert.equal(timers.length, 1));
+    await timers.shift()();
+    await eventually(() => assert.deepEqual(stages, ["started", "completed"]));
+    assert.equal(attempts, 2);
+    assert.equal(stages.includes("failed"), false);
+    await runner.stopAcceptingWork();
+    await runner.close();
+  });
+
+  it("leaves exhausted transient failures non-terminal for command redelivery", async () => {
+    const stages = [];
+    const timers = [];
+    let attempts = 0;
+    const runner = runnerFixture({
+      maxReconcileAttempts: 2,
+      nextCommand: async () => command,
+      random: () => 0,
+      reportEvent: async (_command, stage) => { stages.push(stage); },
+      reconcile: async () => {
+        attempts += 1;
+        throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+      },
+      timers,
+    });
+
+    await runner.start({ trackWork: (work) => work });
+    await eventually(() => assert.equal(timers.length, 1));
+    await timers.shift()();
+    await eventually(() => assert.equal(attempts, 2));
+    assert.deepEqual(stages, ["started"]);
+    await runner.stopAcceptingWork();
+    await runner.close();
+  });
+
+  it("stops transient retry waits without emitting a terminal failure", async () => {
+    const stages = [];
+    const timers = [];
+    let attempts = 0;
+    const runner = runnerFixture({
+      nextCommand: async () => command,
+      reportEvent: async (_command, stage) => { stages.push(stage); },
+      reconcile: async () => {
+        attempts += 1;
+        throw Object.assign(new Error("timeout"), { code: "ETIMEDOUT" });
+      },
+      timers,
+    });
+
+    await runner.start({ trackWork: (work) => work });
+    await eventually(() => assert.equal(timers.length, 1));
+    await runner.stopAcceptingWork();
+    await eventually(() => assert.equal(attempts, 1));
+    assert.deepEqual(stages, ["started"]);
+    await runner.close();
   });
 
   it("runs one command at a time and resumes polling only after tracked work settles", async () => {

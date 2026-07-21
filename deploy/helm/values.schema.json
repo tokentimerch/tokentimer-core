@@ -7,7 +7,13 @@
       "properties": {
         "sessionSecret": { "type": "string" },
         "existingSecret": { "type": "string" },
-        "adminEmail": { "type": "string", "format": "email" },
+        "adminEmail": {
+          "type": "string",
+          "anyOf": [
+            { "const": "" },
+            { "format": "email" }
+          ]
+        },
         "adminPassword": { "type": "string" },
         "adminName": { "type": "string" },
         "disableAdminBootstrap": { "type": "boolean" },
@@ -81,7 +87,13 @@
               "type": "object",
               "properties": {
                 "url": { "type": "string" },
-                "workspaceId": { "type": "string" },
+                "workspaceId": {
+                  "type": "string",
+                  "anyOf": [
+                    { "const": "" },
+                    { "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+                  ]
+                },
                 "clusterId": { "type": "string" }
               }
             },
@@ -170,6 +182,7 @@
               }
             },
             "controllerApiPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "kubeApiServerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "kubeApiServerCidrs": {
               "type": "array",
               "items": {

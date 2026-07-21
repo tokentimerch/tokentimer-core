@@ -9,6 +9,7 @@ const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 const DEFAULT_HEALTH_PORT = 8080;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const MACHINE_TOKEN_PATTERN = /^ttx_[a-f0-9]{16}_[a-f0-9]{64}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class ControllerConfigError extends Error {
   constructor(code, field) {
@@ -53,6 +54,16 @@ function parseClusterId(value) {
     );
   }
   return value;
+}
+
+function parseWorkspaceId(value) {
+  if (!UUID_PATTERN.test(value)) {
+    throw new ControllerConfigError(
+      "CONTROLLER_CONFIG_INVALID_WORKSPACE_ID",
+      "TOKENTIMER_WORKSPACE_ID",
+    );
+  }
+  return value.toLowerCase();
 }
 
 function parseBoolean(value, field, defaultValue = false) {
@@ -194,14 +205,29 @@ function loadControllerConfig(env = process.env, options = {}) {
   // discard it. The reporter re-reads this mounted file for each delivery.
   loadApiTokenFromFile(tokenFile, options);
 
+  const clusterWide = parseBoolean(
+    env.CERTOPS_CLUSTER_WIDE,
+    "CERTOPS_CLUSTER_WIDE",
+  );
+  const watchNamespaces = parseNamespaces(env.CERTOPS_WATCH_NAMESPACES);
+  if (clusterWide && watchNamespaces.length > 0) {
+    throw new ControllerConfigError(
+      "CONTROLLER_CONFIG_NAMESPACE_POLICY_CONFLICT",
+      "CERTOPS_WATCH_NAMESPACES",
+    );
+  }
+  if (!clusterWide && watchNamespaces.length === 0) {
+    throw new ControllerConfigError(
+      "CONTROLLER_CONFIG_NAMESPACES_REQUIRED",
+      "CERTOPS_WATCH_NAMESPACES",
+    );
+  }
+
   return Object.freeze({
     apiUrl: parseApiUrl(requiredString(env, "TOKENTIMER_API_URL")),
     apiTokenFile: tokenFile,
     clusterId: parseClusterId(requiredString(env, "TOKENTIMER_CLUSTER_ID")),
-    clusterWide: parseBoolean(
-      env.CERTOPS_CLUSTER_WIDE,
-      "CERTOPS_CLUSTER_WIDE",
-    ),
+    clusterWide,
     healthPort: parsePort(
       env.CERTOPS_HEALTH_PORT,
       "CERTOPS_HEALTH_PORT",
@@ -222,8 +248,8 @@ function loadControllerConfig(env = process.env, options = {}) {
       "CERTOPS_SHUTDOWN_TIMEOUT",
       DEFAULT_SHUTDOWN_TIMEOUT_MS,
     ),
-    watchNamespaces: parseNamespaces(env.CERTOPS_WATCH_NAMESPACES),
-    workspaceId: requiredString(env, "TOKENTIMER_WORKSPACE_ID"),
+    watchNamespaces,
+    workspaceId: parseWorkspaceId(requiredString(env, "TOKENTIMER_WORKSPACE_ID")),
   });
 }
 
@@ -242,4 +268,5 @@ module.exports = {
   parseNamespaces,
   parsePort,
   parseApiUrl,
+  parseWorkspaceId,
 };

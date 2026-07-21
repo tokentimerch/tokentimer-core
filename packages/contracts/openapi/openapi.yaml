@@ -96,7 +96,7 @@ paths:
           content:
             application/json:
               schema:
-                anyOf:
+                oneOf:
                   - type: object
                     required: [loggedIn]
                     properties:

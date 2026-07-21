@@ -20,15 +20,20 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 # make image inventory/scanning describe code the controller cannot execute.
 COPY --chown=tokentimer:tokentimer packages/log-scrub ./packages/log-scrub
 COPY --chown=tokentimer:tokentimer apps/k8s-controller ./apps/k8s-controller
-# The controller reuses the canonical parser, its direct identity helper, and
-# the shared detector without importing the API server or a generic Secret API.
+# The controller reuses the canonical parser and its direct public-identity
+# helpers without importing the API server or a generic Secret API.
 COPY --chown=tokentimer:tokentimer apps/api/utils/secretMaterial.js ./apps/api/utils/secretMaterial.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/parser.js ./apps/api/services/certops/parser.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/identitySafety.js ./apps/api/services/certops/identitySafety.js
 COPY --chown=tokentimer:tokentimer apps/api/services/certops/controllerObservationLimits.js ./apps/api/services/certops/controllerObservationLimits.js
 
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/k8s-controller... \
-    && rm -f package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc
+    && rm -f package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc \
+    && corepack disable \
+    && rm -rf /root/.cache/node/corepack /root/.cache/pnpm /root/.local/share/pnpm \
+      /usr/local/lib/node_modules/corepack /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/corepack /usr/local/bin/npm /usr/local/bin/npx \
+      /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 WORKDIR /app/apps/k8s-controller
 

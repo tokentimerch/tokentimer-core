@@ -18,6 +18,10 @@ const openApiSource = fs.readFileSync(
   path.resolve(__dirname, "../../packages/contracts/openapi/openapi.yaml"),
   "utf8",
 );
+const apiIndexSource = fs.readFileSync(
+  path.resolve(__dirname, "../../apps/api/index.js"),
+  "utf8",
+);
 
 function parseOpenApiPathMethods(source) {
   const paths = new Map();
@@ -95,6 +99,13 @@ function executorRouteBlock(routePath) {
 }
 
 describe("CertOps route hardening", () => {
+  it("allows the provisioning idempotency header through split-host CORS", () => {
+    assert.match(
+      apiIndexSource,
+      /allowedHeaders:\s*\[[\s\S]*?"Idempotency-Key"[\s\S]*?\]/,
+    );
+  });
+
   it("implements only the frozen workspace, M2, and M3-A7 routes", () => {
     const routeMatches = Array.from(
       routesSource.matchAll(/router\.(get|post|put)\(\n\s+"([^"]+)"/g),

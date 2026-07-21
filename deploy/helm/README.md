@@ -188,7 +188,7 @@ certops:
     mode: observe
     api:
       url: "https://api.tokentimer.example"
-      workspaceId: "workspace-123"
+      workspaceId: "00000000-0000-4000-8000-000000000001"
       clusterId: "cluster-123"
     apiToken:
       existingSecret: "tokentimer-controller-api-token"
@@ -215,10 +215,11 @@ counts other than one fail rendering.
 #### Zero-custody and RBAC model
 
 Observation is status-first. The optional fallback performs one Secret `get`
-and intentionally reads only `Secret.data["tls.crt"]`; `tls.key` is never
-accessed, logged, serialized, or reported. Kubernetes RBAC cannot authorize one
-data key inside a Secret, so enabling fallback necessarily grants access to the
-whole Secret object even though the controller code consumes only `tls.crt`.
+and a bounded streaming reader captures only `Secret.data["tls.crt"]`; other
+data values are never object-deserialized, decoded, logged, or reported.
+Kubernetes RBAC cannot authorize one data key inside a Secret, so enabling
+fallback necessarily permits the complete Secret HTTP response even though the
+controller code consumes only `tls.crt`.
 Leave fallback disabled unless public certificate parsing requires it. All
 outbound observation envelopes are scanned for private material and fail
 closed.
@@ -259,7 +260,8 @@ outer gate.
 
 When `networkPolicy.enabled` is also true,
 `networkPolicy.egress.kubeApiServerCidrs` must list the Kubernetes API server
-CIDRs. The controller policy permits DNS, Kubernetes API TCP 443, and either
+CIDRs, and `kubeApiServerPort` must match its destination port (443 by default).
+The controller policy permits DNS, that Kubernetes API destination, and either
 the in-chart API Service or the explicit
 `networkPolicy.egress.controllerApiCidrs`/`controllerApiPort` allow-list. It has
 no ingress rule and grants no database, SMTP, or Pushgateway egress.

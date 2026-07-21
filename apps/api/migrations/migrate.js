@@ -1335,7 +1335,7 @@ const migrations = [
     `,
   },
   {
-    version: 19,
+    version: 20,
     name: "certops_job_creation_request_fingerprint",
     sql: `
       -- A new job stores a SHA-256 fingerprint of its normalized original
@@ -1353,7 +1353,7 @@ const migrations = [
     `,
   },
   {
-    version: 20,
+    version: 21,
     name: "certops_controller_observation_reporting",
     sql: `
       -- M3-A6 binds the narrow controller-observation scope to one immutable
@@ -1467,7 +1467,7 @@ const migrations = [
     `,
   },
   {
-    version: 21,
+    version: 22,
     name: "certops_controller_provisioning",
     sql: `
       -- M3-A7 adds a second narrow controller scope. A cluster binding is
@@ -1512,7 +1512,7 @@ const migrations = [
     `,
   },
   {
-    version: 22,
+    version: 23,
     name: "certops_controller_provisioning_event_timestamps",
     sql: `
       -- First accepted M3 controller-event times make deterministic event

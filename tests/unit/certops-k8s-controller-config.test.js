@@ -25,7 +25,8 @@ function validEnv(overrides = {}) {
     TOKENTIMER_API_TOKEN_FILE: tokenPath,
     TOKENTIMER_API_URL: "https://tokentimer.example.test/api",
     TOKENTIMER_CLUSTER_ID: "prod-west-1",
-    TOKENTIMER_WORKSPACE_ID: "workspace-1",
+    TOKENTIMER_WORKSPACE_ID: "00000000-0000-4000-8000-000000000001",
+    CERTOPS_WATCH_NAMESPACES: "default",
     ...overrides,
   };
 }
@@ -95,6 +96,7 @@ describe("CertOps Kubernetes controller configuration", () => {
     const provision = loadControllerConfig(validEnv({
       CERTOPS_CONTROLLER_MODE: "provision",
       CERTOPS_CLUSTER_WIDE: "true",
+      CERTOPS_WATCH_NAMESPACES: "",
     }));
     assert.equal(provision.mode, "provision");
     assert.equal(provision.clusterWide, true);
@@ -126,6 +128,24 @@ describe("CertOps Kubernetes controller configuration", () => {
           validEnv({ CERTOPS_SECRET_FALLBACK_ENABLED: "yes" }),
         ),
       { code: "CONTROLLER_CONFIG_INVALID_BOOLEAN" },
+    );
+    assert.throws(
+      () => loadControllerConfig(validEnv({ CERTOPS_WATCH_NAMESPACES: "" })),
+      { code: "CONTROLLER_CONFIG_NAMESPACES_REQUIRED" },
+    );
+    assert.throws(
+      () => loadControllerConfig(validEnv({
+        CERTOPS_CLUSTER_WIDE: "true",
+        CERTOPS_WATCH_NAMESPACES: "team-a",
+      })),
+      { code: "CONTROLLER_CONFIG_NAMESPACE_POLICY_CONFLICT" },
+    );
+  });
+
+  it("requires a UUID workspace identity", () => {
+    assert.throws(
+      () => loadControllerConfig(validEnv({ TOKENTIMER_WORKSPACE_ID: "workspace-1" })),
+      { code: "CONTROLLER_CONFIG_INVALID_WORKSPACE_ID" },
     );
   });
 

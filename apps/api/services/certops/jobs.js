@@ -802,7 +802,7 @@ async function createCertificateJob(options) {
         idempotencyKey,
       );
       if (existing) {
-        // Rows created before migration 19 have no immutable request hash.
+        // Rows created before migration 20 have no immutable request hash.
         // Their original lifecycle inputs cannot be reconstructed from mutable
         // state, so replay falls back to the historic immutable-subset check
         // and deliberately leaves the legacy NULL value untouched.

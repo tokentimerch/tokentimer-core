@@ -440,7 +440,10 @@ secret.secretName and configMap.name may use Helm tpl.
   {{- if or (not (or (eq $apiScheme "http") (eq $apiScheme "https"))) (eq $apiHost "") (ne $apiUserInfo "") (and $apiPort (gt (int $apiPort) 65535)) -}}
     {{- fail "certops.controller.api.url must be an absolute http or https URL" -}}
   {{- end -}}
-  {{- $_ := required "certops.controller.api.workspaceId is required when certops.controller.enabled=true" $controller.api.workspaceId -}}
+  {{- $workspaceId := required "certops.controller.api.workspaceId is required when certops.controller.enabled=true" $controller.api.workspaceId | toString -}}
+  {{- if not (regexMatch "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" $workspaceId) -}}
+    {{- fail "certops.controller.api.workspaceId must be a UUID" -}}
+  {{- end -}}
   {{- $clusterId := required "certops.controller.api.clusterId is required when certops.controller.enabled=true" $controller.api.clusterId | toString -}}
   {{- if or (gt (len $clusterId) 63) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $clusterId)) -}}
     {{- fail "certops.controller.api.clusterId must be an RFC1123 label" -}}

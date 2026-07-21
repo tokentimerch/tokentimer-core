@@ -131,12 +131,14 @@ describe("CertOps tls.crt fallback", () => {
         return {};
       }
     }
-    class CoreV1Api {}
     class CustomObjectsApi {}
     class Watch {}
 
     const client = createInClusterCertManagerClient({
-      loadClient: async () => ({ CoreV1Api, CustomObjectsApi, KubeConfig, Watch }),
+      createSecretReader() {
+        throw new Error("Secret reader must remain disabled");
+      },
+      loadClient: async () => ({ CustomObjectsApi, KubeConfig, Watch }),
     });
     await client.start();
 
@@ -147,37 +149,31 @@ describe("CertOps tls.crt fallback", () => {
     );
   });
 
-  it("uses one object-parameter Secret get and reads only data tls.crt", async () => {
+  it("uses only the narrow streaming tls.crt reader when fallback is enabled", async () => {
     const calls = [];
-    const data = new Proxy({ "tls.crt": encodedCertificate }, {
-      get(target, property) {
-        if (property !== "tls.crt") {
-          throw new Error(`Unexpected Secret data access: ${String(property)}`);
-        }
-        return target[property];
-      },
-      ownKeys() {
-        throw new Error("Secret data must not be enumerated");
-      },
-    });
-    const coreApiClient = {
-      async readNamespacedSecret(options) {
-        calls.push(options);
-        return { body: { data } };
-      },
-    };
+    let suppliedConfig;
     class KubeConfig {
       loadFromCluster() {}
       makeApiClient(type) {
-        return type.name === "CoreV1Api" ? coreApiClient : {};
+        calls.push({ apiClient: type.name });
+        return {};
       }
     }
-    class CoreV1Api {}
     class CustomObjectsApi {}
     class Watch {}
 
     const client = createInClusterCertManagerClient({
-      loadClient: async () => ({ CoreV1Api, CustomObjectsApi, KubeConfig, Watch }),
+      createSecretReader({ kubeConfig }) {
+        suppliedConfig = kubeConfig;
+        return {
+          async close() {},
+          async read(options) {
+            calls.push(options);
+            return encodedCertificate;
+          },
+        };
+      },
+      loadClient: async () => ({ CustomObjectsApi, KubeConfig, Watch }),
       secretFallbackEnabled: true,
     });
     await client.start();
@@ -186,27 +182,28 @@ describe("CertOps tls.crt fallback", () => {
       await client.readTlsCertificate({ namespace: "team-a", secretName: "web-tls" }),
       encodedCertificate,
     );
-    assert.deepEqual(calls, [{ name: "web-tls", namespace: "team-a" }]);
+    assert.equal(suppliedConfig instanceof KubeConfig, true);
+    assert.deepEqual(calls, [
+      { apiClient: "CustomObjectsApi" },
+      { namespace: "team-a", secretName: "web-tls" },
+    ]);
   });
 
-  it("never forwards a Secret object or raw tls.crt encoding to the parser or delivery", async () => {
-    const secret = { data: { "tls.crt": encodedCertificate } };
-    const coreApiClient = {
-      async readNamespacedSecret() {
-        return { body: secret };
-      },
-    };
+  it("never forwards raw tls.crt encoding to the parser or delivery", async () => {
     class KubeConfig {
       loadFromCluster() {}
-      makeApiClient(type) {
-        return type.name === "CoreV1Api" ? coreApiClient : {};
-      }
+      makeApiClient() { return {}; }
     }
-    class CoreV1Api {}
     class CustomObjectsApi {}
     class Watch {}
     const client = createInClusterCertManagerClient({
-      loadClient: async () => ({ CoreV1Api, CustomObjectsApi, KubeConfig, Watch }),
+      createSecretReader() {
+        return {
+          async close() {},
+          async read() { return encodedCertificate; },
+        };
+      },
+      loadClient: async () => ({ CustomObjectsApi, KubeConfig, Watch }),
       secretFallbackEnabled: true,
     });
     await client.start();
@@ -229,7 +226,6 @@ describe("CertOps tls.crt fallback", () => {
     delivered.push(enriched);
 
     assert.equal(Buffer.isBuffer(parserInput), true);
-    assert.notEqual(parserInput, secret);
     assert.equal(JSON.stringify(delivered).includes(encodedCertificate), false);
     assert.equal(JSON.stringify(delivered).includes('"data"'), false);
   });

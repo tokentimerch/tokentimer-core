@@ -164,7 +164,7 @@ describe("CertOps inventory migration", function () {
 
   it("adds the workspace-local CertOps pause flag safely with an unpaused default", async () => {
     expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION).to.exist;
-    expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.version).to.equal(18);
+    expect(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.version).to.equal(19);
 
     await TestUtils.execQuery(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.sql);
     await TestUtils.execQuery(CERTOPS_WORKSPACE_KILL_SWITCH_MIGRATION.sql);
@@ -203,7 +203,7 @@ describe("CertOps inventory migration", function () {
 
   it("adds the nullable immutable job creation fingerprint idempotently without backfilling legacy rows", async () => {
     expect(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION).to.exist;
-    expect(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.version).to.equal(19);
+    expect(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.version).to.equal(20);
 
     await TestUtils.execQuery(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql);
     await TestUtils.execQuery(CERTOPS_JOB_CREATION_FINGERPRINT_MIGRATION.sql);

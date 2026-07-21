@@ -253,6 +253,7 @@ const corsOptions = {
     "Authorization",
     "X-Requested-With",
     "X-CSRF-Token",
+    "Idempotency-Key",
   ],
   maxAge: 86400, // 24 hours
 };

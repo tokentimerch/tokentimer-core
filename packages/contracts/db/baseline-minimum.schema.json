@@ -24,7 +24,8 @@
         "certificate_job_log",
         "certificate_evidence",
         "certificate_executor_events",
-        "certificate_controller_observations"
+        "certificate_controller_observations",
+        "certificate_controller_provision_deliveries"
       ],
       "properties": {
         "users": {
@@ -68,6 +69,9 @@
         },
         "certificate_controller_observations": {
           "$ref": "#/definitions/tableCertificateControllerObservations"
+        },
+        "certificate_controller_provision_deliveries": {
+          "$ref": "#/definitions/tableCertificateControllerProvisionDeliveries"
         }
       }
     }
@@ -423,6 +427,30 @@
             { "contains": { "const": "certificate_instance_id" } },
             { "contains": { "const": "status" } },
             { "contains": { "const": "created_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateControllerProvisionDeliveries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 8,
+          "allOf": [
+            { "contains": { "const": "job_id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "controller_cluster_id" } },
+            { "contains": { "const": "delivered_at" } },
+            { "contains": { "const": "updated_at" } },
+            { "contains": { "const": "started_at" } },
+            { "contains": { "const": "completed_at" } },
+            { "contains": { "const": "failed_at" } }
           ]
         }
       }

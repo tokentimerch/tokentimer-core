@@ -13,8 +13,13 @@ function read(relativePath) {
 describe("CertOps Kubernetes controller wiring", () => {
   it("keeps the fourth image non-root, locked, and independently executable", () => {
     const dockerfile = read("apps/k8s-controller/Dockerfile");
+    const logScrubber = read("packages/log-scrub/index.js");
+    const apiDetectorShim = read("apps/api/utils/secretMaterial.js");
     expect(dockerfile).to.include("FROM node:22.23.0-alpine3.23");
     expect(dockerfile).to.include("pnpm install --prod --frozen-lockfile");
+    expect(dockerfile).to.include("corepack disable");
+    expect(dockerfile).to.include("/usr/local/lib/node_modules/corepack");
+    expect(dockerfile).to.include("/usr/local/lib/node_modules/npm");
     expect(dockerfile).to.include("packages/log-scrub ./packages/log-scrub");
     expect(dockerfile).to.not.include("packages ./packages");
     expect(dockerfile).to.include("rm -f package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc");
@@ -28,19 +33,19 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(dockerfile).to.include("path:'/healthz'");
     expect(dockerfile).to.not.include("127.0.0.1:8080/healthz");
     expect(dockerfile).to.not.match(/kubeconfig|tls\.key/i);
+    expect(logScrubber).to.not.match(/apps[\\/]api/);
+    expect(apiDetectorShim).to.include("packages/log-scrub/secret-material");
   });
 
-  it("keeps controller deployment opt-in while wiring Compose and image metadata", () => {
+  it("publishes the in-cluster image without advertising an unsupported Compose runtime", () => {
     const compose = read("deploy/compose/docker-compose.yml");
     const imageCompose = read("deploy/compose/docker-compose.images.yml");
     const ci = read(".github/workflows/ci.yml");
     const publish = read(".github/workflows/publish.yml");
     const release = read(".github/workflows/release.yml");
 
-    expect(compose).to.include('profiles: ["certops-controller"]');
-    expect(compose).to.include("apps/k8s-controller/Dockerfile");
-    expect(compose).to.include("CERTOPS_CLUSTER_WIDE: ${CERTOPS_CLUSTER_WIDE:-false}");
-    expect(imageCompose).to.include("tokentimer-core-k8s-controller");
+    expect(compose).to.not.include("certops-controller:");
+    expect(imageCompose).to.not.include("tokentimer-core-k8s-controller");
     expect(ci).to.include("Kubernetes Controller Quality Checks");
     expect(ci).to.include("Build Kubernetes controller image");
     expect(ci).to.include("Scan Kubernetes controller image with Grype");
@@ -51,7 +56,7 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(release).to.include('tag: \\"$VER\\"');
   });
 
-  it("keeps CoreV1Api limited to the narrow tls.crt fallback without reporting access", () => {
+  it("uses a bounded streaming tls.crt reader instead of deserializing Secret objects", () => {
     const clientSource = read("apps/k8s-controller/src/cert-manager-client.js");
     const source = [
       "apps/k8s-controller/src/cert-manager-client.js",
@@ -60,6 +65,7 @@ describe("CertOps Kubernetes controller wiring", () => {
       "apps/k8s-controller/src/ports.js",
       "apps/k8s-controller/src/runtime.js",
       "apps/k8s-controller/src/tls-certificate-fallback.js",
+      "apps/k8s-controller/src/tls-crt-secret-reader.js",
       "apps/k8s-controller/src/index.js",
     ]
       .map(read)
@@ -70,15 +76,18 @@ describe("CertOps Kubernetes controller wiring", () => {
     expect(source).to.match(/listNamespacedCustomObject\(\s*\{/);
     expect(source).to.match(/listClusterCustomObject\(\s*\{/);
     expect(source).to.not.match(/\.loadFromDefault\s*\(/);
-    expect(clientSource).to.match(/CoreV1Api/);
-    expect(clientSource).to.match(/readNamespacedSecret\(\s*\{/);
-    expect(clientSource).to.match(/data\s*\[\s*["']tls\.crt["']\s*\]/);
+    expect(clientSource).to.not.match(/CoreV1Api/);
+    expect(clientSource).to.not.match(/readNamespacedSecret/);
+    expect(source).to.include("extractTlsCertificateFromSecretJson");
+    expect(source).to.not.match(/response\.(?:json|text)\s*\(/);
+    expect(source).to.not.match(/JSON\.parse\s*\(/);
     expect(clientSource).to.not.match(/return\s+secret\b/);
     expect(source).to.not.match(/(?:list|watch|create|update|patch|delete)(?:Namespaced|Cluster)?Secret\b/);
     expect(source).to.not.match(/data\s*\[\s*["']tls\.key["']\s*\]/);
     expect(source).to.not.match(/\.spec\.request|\.status\.certificate/i);
     expect(source).to.not.match(/\.reconcile\s*\(/);
-    expect(source).to.not.match(/https?\.request\s*\(|\bfetch\s*\(|\baxios\b/);
+    expect(source).to.match(/https\s*:\s*http\)\.request|https\s*:\s*http/);
+    expect(source).to.not.match(/\bfetch\s*\(|\baxios\b/);
     expect(source).to.not.match(/certificate_jobs|certificate_evidence|managed_certificates/i);
   });
 });

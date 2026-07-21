@@ -538,6 +538,8 @@ networkPolicy:
     # Required when both networkPolicy and certops.controller are enabled.
     # Kubernetes NetworkPolicy cannot safely express a kube-apiserver hostname.
     kubeApiServerCidrs: []
+    # Match the destination port exposed by the cluster's Kubernetes API.
+    kubeApiServerPort: 443
 
 # -- Pod Security (shared defaults) --------------------------------------------
 podSecurityContext:

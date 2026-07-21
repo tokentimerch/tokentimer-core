@@ -1,14 +1,14 @@
 "use strict";
 
-// The private-key detector remains the canonical implementation. This package
-// is the shared logging seam used by the API, worker, and controller.
+// The detector and logging scrubber live in the shared package so worker and
+// controller code never depend on the API application's filesystem layout.
 const {
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
   containsPrivateKeyMaterial,
   redactGenericSecrets,
   redactPrivateKeyMaterial,
-} = require("../../apps/api/utils/secretMaterial");
+} = require("./secret-material");
 
 const MAX_SCRUB_DEPTH = 8;
 const REDACT_KEY_PATTERN =
