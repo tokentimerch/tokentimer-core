@@ -22,8 +22,33 @@ const { scanAzure } = require("../services/azureIntegration");
 const { scanAzureAD } = require("../services/azureADIntegration");
 const { scanGCP } = require("../services/gcpIntegration");
 const { formatDateYmd } = require("../services/integrationUtils");
+const {
+  validateFilterRules,
+  applyFilterRules,
+} = require("../services/importFilterRules");
+const {
+  validateCleanupRequest,
+  cleanupObsoleteTokens,
+} = require("../services/importCleanup");
 
 const router = require("express").Router();
+
+// Shared post-scan hook (issue #69): applies user-defined include/exclude
+// filter rules to the scanned items and attaches matched/excluded counts so
+// the UI can show a preview. With no rules, the result passes through as-is.
+function applyScanFilterRulesToResult(filterRules, result) {
+  if (!result || !Array.isArray(result.items)) return result;
+  const { items, matchedCount, excludedCount } = applyFilterRules(
+    filterRules,
+    result.items,
+  );
+  result.items = items;
+  result.filterSummary = { matchedCount, excludedCount };
+  if (result.summary && typeof result.summary === "object") {
+    result.summary.filteredOutByRules = excludedCount;
+  }
+  return result;
+}
 
 // --- Vault integration: scan mounts for inventory/expirations ---
 // Note: requireIntegrationQuota handles workspace validation, role check, and quota enforcement
@@ -47,8 +72,15 @@ router.post(
     });
 
     try {
-      const { address, token, include, mounts, maxItemsPerMount, pathPrefix } =
-        req.body || {};
+      const {
+        address,
+        token,
+        include,
+        mounts,
+        maxItemsPerMount,
+        pathPrefix,
+        filterRules,
+      } = req.body || {};
       // Prevent caching of sensitive responses
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
@@ -56,6 +88,9 @@ router.post(
         return res
           .status(400)
           .json(withQuota({ error: "address and token are required" }));
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       // Basic allowlist for schemes
       try {
         const u = new URL(address);
@@ -100,6 +135,7 @@ router.post(
             ? pathPrefix.trim().replace(/^\/+|\/+$/g, "")
             : "",
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -593,13 +629,17 @@ router.post(
     });
 
     try {
-      const { baseUrl, token, include, maxItems, filters } = req.body || {};
+      const { baseUrl, token, include, maxItems, filters, filterRules } =
+        req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
       if (!baseUrl || !token)
         return res
           .status(400)
           .json(withQuota({ error: "baseUrl and token are required" }));
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       try {
         const u = new URL(baseUrl);
         if (!/^https?:$/.test(u.protocol))
@@ -640,6 +680,7 @@ router.post(
         includeProjectTokens: filters?.includeProjectTokens !== false, // default true
         includeGroupTokens: filters?.includeGroupTokens !== false, // default true
         includeDeployTokens: filters?.includeDeployTokens !== false, // default true
+        includeTriggerTokens: filters?.includeTriggerTokens === true, // default false
         includeSSHKeys: filters?.includeSSHKeys !== false, // default true
         excludeUserPATs: filters?.excludeUserPATs === true, // default false
         includeExpired: filters?.includeExpired === true, // default false
@@ -660,6 +701,7 @@ router.post(
         maxItems: maxItems || 500,
         filters: scanFilters,
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -768,13 +810,17 @@ router.post(
     });
 
     try {
-      const { baseUrl, token, include, maxItems } = req.body || {};
+      const { baseUrl, token, include, maxItems, filterRules } =
+        req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
       if (!baseUrl || !token)
         return res
           .status(400)
           .json(withQuota({ error: "baseUrl and token are required" }));
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       try {
         const u = new URL(baseUrl);
         if (!/^https?:$/.test(u.protocol))
@@ -840,6 +886,7 @@ router.post(
         },
         maxItems: maxItems || 500,
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -1058,6 +1105,7 @@ router.post(
         region,
         include,
         maxItems,
+        filterRules,
       } = req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
@@ -1067,6 +1115,9 @@ router.post(
             error: "accessKeyId and secretAccessKey are required",
           }),
         );
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       if (
         maxItems !== undefined &&
         (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
@@ -1093,6 +1144,7 @@ router.post(
         },
         maxItems: maxItems || 500,
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -1198,13 +1250,17 @@ router.post(
     });
 
     try {
-      const { vaultUrl, token, include, maxItems } = req.body || {};
+      const { vaultUrl, token, include, maxItems, filterRules } =
+        req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
       if (!vaultUrl || !token)
         return res
           .status(400)
           .json(withQuota({ error: "vaultUrl and token are required" }));
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       try {
         const u = new URL(vaultUrl);
         if (!/^https?:$/.test(u.protocol))
@@ -1259,6 +1315,7 @@ router.post(
         },
         maxItems: maxItems || 500,
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -1351,13 +1408,17 @@ router.post(
     });
 
     try {
-      const { projectId, accessToken, include, maxItems } = req.body || {};
+      const { projectId, accessToken, include, maxItems, filterRules } =
+        req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
       if (!projectId || !accessToken)
         return res
           .status(400)
           .json(withQuota({ error: "projectId and accessToken are required" }));
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       if (
         maxItems !== undefined &&
         (!Number.isFinite(maxItems) || maxItems < 1 || maxItems > 2000)
@@ -1377,6 +1438,7 @@ router.post(
         },
         maxItems: maxItems || 500,
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -1477,11 +1539,14 @@ router.post(
     });
 
     try {
-      const { token, include, maxItems } = req.body || {};
+      const { token, include, maxItems, filterRules } = req.body || {};
       res.set("Cache-Control", "no-store");
       res.set("Pragma", "no-cache");
       if (!token)
         return res.status(400).json(withQuota({ error: "token is required" }));
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError)
+        return res.status(400).json(withQuota({ error: filterRulesError }));
       if (typeof token === "string" && token.length > 5000) {
         return res
           .status(400)
@@ -1511,6 +1576,7 @@ router.post(
         },
         maxItems: maxItems || 500,
       });
+      applyScanFilterRulesToResult(filterRules, result);
 
       res.json(withQuota(result));
       try {
@@ -1665,11 +1731,29 @@ router.post(
         return res.status(403).json({ error: "Forbidden" });
       }
       const workspaceId = req.workspace.id;
-      const { items, default_category, default_type, contact_group_id } =
-        req.body || {};
+      const {
+        items,
+        default_category,
+        default_type,
+        contact_group_id,
+        filterRules,
+        cleanup,
+      } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "items array required" });
       }
+      const filterRulesError = validateFilterRules(filterRules);
+      if (filterRulesError) {
+        return res.status(400).json({ error: filterRulesError });
+      }
+      const cleanupError = validateCleanupRequest(cleanup);
+      if (cleanupError) {
+        return res.status(400).json({ error: cleanupError });
+      }
+      // Issue #69: apply include/exclude rules at import time too, so
+      // auto-sync (which posts scan items here) honors the same rules.
+      const { items: itemsToImport, excludedCount: filteredOutCount } =
+        applyFilterRules(filterRules, items);
       const ALLOWED_TYPES = [
         "ssl_cert",
         "tls_cert",
@@ -1692,7 +1776,7 @@ router.post(
       const updated = [];
       const errors = [];
       const NEVER_EXPIRES_DATE = "2099-12-31"; // Default for tokens without expiration
-      for (const it of items) {
+      for (const it of itemsToImport) {
         try {
           // Sanitize and validate name (HTML escape for XSS protection)
           let name = String(it?.name || "").trim();
@@ -2118,6 +2202,29 @@ router.post(
           });
         }
       }
+      // Item 4 (0.10.0): remove previously imported tokens that are no longer
+      // present at the source. Opt-in via the `cleanup` payload; scoped to the
+      // provider prefix and the source kinds included in this scan.
+      let cleanupDeleted = [];
+      if (cleanup && cleanup.enabled === true) {
+        try {
+          const cleanupResult = await cleanupObsoleteTokens({
+            workspaceId,
+            actorUserId: req.user.id,
+            cleanup,
+            reason: cleanup.reason === "auto_sync_cleanup"
+              ? "auto_sync_cleanup"
+              : "import_cleanup",
+          });
+          cleanupDeleted = cleanupResult.deleted;
+        } catch (cleanupErr) {
+          logger.error("Obsolete token cleanup failed", {
+            error: cleanupErr.message,
+            workspaceId,
+          });
+        }
+      }
+
       try {
         await writeAudit({
           actorUserId: req.user.id,
@@ -2131,6 +2238,8 @@ router.post(
             created_count: created.length,
             updated_count: updated.length,
             error_count: errors.length,
+            filtered_out_count: filteredOutCount,
+            deleted_count: cleanupDeleted.length,
             source: "integration",
           },
         });
@@ -2141,6 +2250,9 @@ router.post(
         created_count: created.length,
         updated_count: updated.length,
         error_count: errors.length,
+        filtered_out_count: filteredOutCount,
+        deleted_count: cleanupDeleted.length,
+        deleted: cleanupDeleted,
         created,
         updated,
         errors,

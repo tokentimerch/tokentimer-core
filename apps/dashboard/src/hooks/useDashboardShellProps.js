@@ -189,7 +189,20 @@ export function useDashboardShellProps({
           const whatsappIds = Array.isArray(group.whatsapp_contact_ids)
             ? group.whatsapp_contact_ids
             : [];
-          return emailIds.length > 0 || whatsappIds.length > 0;
+          // Webhook channels (Slack/Teams/Discord/...) are valid alert
+          // destinations too; also honor the legacy single webhook_name field.
+          const webhookNames = Array.isArray(group.webhook_names)
+            ? group.webhook_names.filter(Boolean)
+            : [];
+          const hasLegacyWebhook =
+            typeof group.webhook_name === 'string' &&
+            group.webhook_name.trim().length > 0;
+          return (
+            emailIds.length > 0 ||
+            whatsappIds.length > 0 ||
+            webhookNames.length > 0 ||
+            hasLegacyWebhook
+          );
         });
         const currentRole = String(activeWorkspace?.role || '').toLowerCase();
         const canManageWorkspaceAlerts =

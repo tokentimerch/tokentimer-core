@@ -9,6 +9,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-21
+
+### Added
+
+- **GitLab pipeline trigger token discovery** — the GitLab integration scan can now inventory CI/CD pipeline trigger tokens (`GET /projects/:id/triggers`) behind a new opt-in `includeTriggerTokens` filter (checkbox "Pipeline Trigger Tokens" in the import modal). Trigger tokens never expire, so they are imported as perpetual entries with owner/project metadata.
+- **Import filter rules (#69)** — ordered include/exclude rules (exact or regex match on token name or description) can be defined in the import modal, are applied server-side to every integration scan (Vault, GitLab, GitHub, AWS, Azure, GCP, Azure AD) and to the shared import endpoint, and persist in auto-sync `scan_params` so scheduled syncs honor them. The preview table gets a one-click "exclude this token" action that appends an exact-match exclude rule, and scan responses report matched/excluded counts.
+- **Obsolete-token cleanup on import and auto-sync** — new opt-in "Remove previously imported tokens no longer found at the source" checkbox for GitLab and GitHub imports (persisted as `cleanupObsolete` in auto-sync `scan_params`). Previously imported tokens that fall inside the scanned scope (provider prefix + scanned source kinds) but were not rediscovered are hard-deleted with a `TOKEN_DELETED` audit event (`reason: "import_cleanup"` / `"auto_sync_cleanup"`); linked alert-queue entries and endpoint monitors are removed with them. A scan that returns zero items never triggers deletion.
+
+### Changed
+
+- **GitLab PAT exclusion keeps admin PATs** — the "exclude user PATs" scan filter now retains PATs owned by GitLab administrators in addition to service-account-like users; only regular-user PATs are filtered out. The modal label reads "Exclude regular-user PATs (keep admin and service accounts)".
+
+### Fixed
+
+- **Control Center perpetual asset count** — the "never expires" stat no longer shows the length of the 5-item preview list when the aggregated bucket count is available; the aggregated count now takes precedence.
+- **Bell notification false "alerts will not reach anyone"** — contact groups whose only destination is a webhook (`webhook_names` / `webhook_name`) are now recognized as reachable, so assigning such a group no longer raises the unreachable-alerts warning.
+
 ## [0.9.1] - 2026-07-20
 
 ### Added
@@ -21,6 +38,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`pnpm docker:up` rebuilds stale images automatically** — added `--build` to the compose `up` command so a dashboard/API/worker image left over from a branch switch is rebuilt before the stack starts (cache hit is a no-op when nothing changed); `pnpm dev:help` text updated to match.
 - **Dashboard token list refreshes after machine-token monitoring is added** — creating the linked TokenTimer token now dispatches the same `tt:tokens-updated` event used by the import/endpoint flows, so the new entry (and its plaintext reveal) shows up without a manual page refresh.
 - **`brace-expansion` override bumped to 2.1.2** — closes a high-severity ReDoS advisory (GHSA-3jxr-9vmj-r5cp) pulled in transitively via `swagger-jsdoc` and `react-query`'s dependency tree.
+- **`js-yaml` override bumped to 4.3.0** — closes a high-severity ReDoS advisory (GHSA-52cp-r559-cp3m) reached transitively via `swagger-jsdoc` and directly by the dashboard.
 
 ### Fixed
 

@@ -21,7 +21,7 @@ import {
   Alert,
   AlertIcon,
 } from '@chakra-ui/react';
-import { FiEdit2, FiCheck, FiAlertTriangle } from 'react-icons/fi';
+import { FiEdit2, FiCheck, FiAlertTriangle, FiSlash } from 'react-icons/fi';
 import TruncatedText from './TruncatedText';
 import { formatExpirationDate, isNeverExpires } from '../utils/dateUtils';
 
@@ -41,6 +41,7 @@ export default function IntegrationImportTable({
   categoryOptions = ['cert', 'key_secret', 'license', 'general'], // Available categories
   editableFields: _editableFields = ['name', 'category', 'type'], // Which fields are editable (reserved for callers)
   duplicateIndices = new Set(), // Set of indices that are duplicates
+  onExcludeItem, // Optional: one-click "exclude this token" (adds an exact-match exclude filter rule)
 }) {
   const [editingRow, setEditingRow] = React.useState(null);
   const [editValues, setEditValues] = React.useState({});
@@ -465,13 +466,32 @@ export default function IntegrationImportTable({
                         />
                       </HStack>
                     ) : (
-                      <IconButton
-                        icon={<FiEdit2 />}
-                        size='xs'
-                        variant='ghost'
-                        onClick={() => startEditing(index)}
-                        aria-label='Edit'
-                      />
+                      <HStack spacing={0}>
+                        <IconButton
+                          icon={<FiEdit2 />}
+                          size='xs'
+                          variant='ghost'
+                          onClick={() => startEditing(index)}
+                          aria-label='Edit'
+                        />
+                        {onExcludeItem ? (
+                          <Tooltip
+                            label='Exclude this token (adds an exact-match exclude rule)'
+                            fontSize='xs'
+                            hasArrow
+                            placement='top'
+                          >
+                            <IconButton
+                              icon={<FiSlash />}
+                              size='xs'
+                              variant='ghost'
+                              colorScheme='red'
+                              onClick={() => onExcludeItem(index)}
+                              aria-label='Exclude this token'
+                            />
+                          </Tooltip>
+                        ) : null}
+                      </HStack>
                     )}
                   </Td>
                 </Tr>

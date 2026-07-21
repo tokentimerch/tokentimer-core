@@ -18,6 +18,7 @@ import { gitlabAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
 
 function getGitLabItemDetails(item) {
   const details = [];
@@ -92,6 +93,8 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     contactGroups,
     onSelectionChange,
     autoSyncManageMode = false,
+    initialFilterRules = null,
+    initialCleanupObsolete = null,
   },
   ref
 ) {
@@ -112,6 +115,8 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     React.useState(true);
   const [gitlabIncludeDeployTokens, setGitlabIncludeDeployTokens] =
     React.useState(true);
+  const [gitlabIncludeTriggerTokens, setGitlabIncludeTriggerTokens] =
+    React.useState(false);
   const [gitlabIncludeSSHKeys, setGitlabIncludeSSHKeys] = React.useState(false);
   const [gitlabExcludeUserPATs, setGitlabExcludeUserPATs] =
     React.useState(true);
@@ -123,6 +128,24 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // Source kinds included in the last scan; cleanup only touches these.
+  const [lastScanSources, setLastScanSources] = React.useState([]);
+
+  // Restore persisted rules from auto-sync scan_params
+  React.useEffect(() => {
+    if (Array.isArray(initialFilterRules)) {
+      setFilterRules(initialFilterRules);
+    }
+  }, [initialFilterRules]);
+
+  React.useEffect(() => {
+    if (typeof initialCleanupObsolete === 'boolean') {
+      setCleanupObsolete(initialCleanupObsolete);
+    }
+  }, [initialCleanupObsolete]);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsGitlab.size);
@@ -147,6 +170,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     setIsScanning(true);
     setGitlabItems([]);
     setGitlabSummary([]);
+    setFilterSummary(null);
     try {
       const res = await gitlabAPI.scan({
         workspaceId,
@@ -158,15 +182,28 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
           includeProjectTokens: gitlabIncludeProjectTokens,
           includeGroupTokens: gitlabIncludeGroupTokens,
           includeDeployTokens: gitlabIncludeDeployTokens,
+          includeTriggerTokens: gitlabIncludeTriggerTokens,
           includeSSHKeys: gitlabIncludeSSHKeys,
           excludeUserPATs: gitlabExcludeUserPATs,
           includeExpired: gitlabIncludeExpired,
           includeRevoked: gitlabIncludeRevoked,
         },
+        filterRules: sanitizeFilterRules(filterRules),
       });
       const items = Array.isArray(res?.items) ? res.items : [];
       setGitlabItems(items);
       setGitlabSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setFilterSummary(res?.filterSummary || null);
+      const scannedSources = [];
+      if (gitlabIncludePATs) scannedSources.push('gitlab-pat');
+      if (gitlabIncludeProjectTokens)
+        scannedSources.push('gitlab-project-token');
+      if (gitlabIncludeGroupTokens) scannedSources.push('gitlab-group-token');
+      if (gitlabIncludeDeployTokens) scannedSources.push('gitlab-deploy-token');
+      if (gitlabIncludeTriggerTokens)
+        scannedSources.push('gitlab-trigger-token');
+      if (gitlabIncludeSSHKeys) scannedSources.push('gitlab-ssh-key');
+      setLastScanSources(scannedSources);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('gitlab');
       }
@@ -183,6 +220,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     } catch (e) {
       setGitlabItems([]);
       setGitlabSummary([]);
+      setFilterSummary(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -204,6 +242,39 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     });
   };
 
+  // One-click "exclude this token": appends an exact-match exclude rule and
+  // drops the row from the current preview.
+  const excludeGitlabItem = index => {
+    const item = gitlabItems[index];
+    if (!item || !item.name) return;
+    setFilterRules(prev => [
+      ...prev,
+      {
+        action: 'exclude',
+        matchType: 'exact',
+        field: 'name',
+        value: item.name,
+      },
+    ]);
+    setGitlabItems(prev => prev.filter((_, i) => i !== index));
+    setSelectedRowsGitlab(prev => {
+      const next = new Set();
+      prev.forEach(i => {
+        if (i === index) return;
+        next.add(i > index ? i - 1 : i);
+      });
+      return next;
+    });
+    setFilterSummary(prev =>
+      prev
+        ? {
+            matchedCount: Math.max(0, (prev.matchedCount || 0) - 1),
+            excludedCount: (prev.excludedCount || 0) + 1,
+          }
+        : { matchedCount: gitlabItems.length - 1, excludedCount: 1 }
+    );
+  };
+
   const importGitlabSelected = async () => {
     try {
       const selected = gitlabItems
@@ -222,6 +293,18 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
         workspaceId,
         items: selected,
         defaults: {},
+        cleanup: cleanupObsolete
+          ? {
+              enabled: true,
+              provider: 'gitlab',
+              scannedSources: lastScanSources,
+              // All rediscovered locations (whole scan, not just selection)
+              // so unselected-but-still-present tokens are never deleted.
+              scannedLocations: gitlabItems
+                .map(it => it.location)
+                .filter(Boolean),
+            }
+          : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -245,11 +328,14 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
           includeProjectTokens: gitlabIncludeProjectTokens,
           includeGroupTokens: gitlabIncludeGroupTokens,
           includeDeployTokens: gitlabIncludeDeployTokens,
+          includeTriggerTokens: gitlabIncludeTriggerTokens,
           includeSSHKeys: gitlabIncludeSSHKeys,
           excludeUserPATs: gitlabExcludeUserPATs,
           includeExpired: gitlabIncludeExpired,
           includeRevoked: gitlabIncludeRevoked,
         },
+        filterRules: sanitizeFilterRules(filterRules),
+        cleanupObsolete,
       },
     }),
   }));
@@ -365,6 +451,13 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
                 Deploy Tokens
               </Checkbox>
               <Checkbox
+                isChecked={gitlabIncludeTriggerTokens}
+                onChange={e => setGitlabIncludeTriggerTokens(e.target.checked)}
+                size='sm'
+              >
+                Pipeline Trigger Tokens
+              </Checkbox>
+              <Checkbox
                 isChecked={gitlabIncludeSSHKeys}
                 onChange={e => setGitlabIncludeSSHKeys(e.target.checked)}
                 size='sm'
@@ -386,7 +479,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
                 size='sm'
                 colorScheme='purple'
               >
-                Exclude users Personal Access Tokens
+                Exclude regular-user PATs (keep admin and service accounts)
               </Checkbox>
               <Checkbox
                 isChecked={gitlabIncludeExpired}
@@ -404,10 +497,40 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
               >
                 Include revoked tokens
               </Checkbox>
+              <Checkbox
+                isChecked={cleanupObsolete}
+                onChange={e => setCleanupObsolete(e.target.checked)}
+                size='sm'
+                colorScheme='red'
+              >
+                Remove previously imported tokens no longer found at the source
+              </Checkbox>
+              {cleanupObsolete ? (
+                <Text fontSize='xs' color='red.400' pl={6}>
+                  Deletes TokenTimer entries (scoped to the scanned GitLab token
+                  types) that are missing from this scan. This cannot be undone.
+                </Text>
+              ) : null}
             </VStack>
           </Box>
         </VStack>
       </Box>
+      <FilterRulesEditor
+        rules={filterRules}
+        onChange={setFilterRules}
+        borderColor={borderColor}
+        helpTextColor={helpTextColor}
+      />
+      {!autoSyncManageMode && filterSummary ? (
+        <HStack spacing={2}>
+          <Badge colorScheme='green'>
+            {filterSummary.matchedCount} matched
+          </Badge>
+          <Badge colorScheme='red'>
+            {filterSummary.excludedCount} excluded by rules
+          </Badge>
+        </HStack>
+      ) : null}
       {!autoSyncManageMode && gitlabSummary.length > 0 && (
         <Box
           border='1px solid'
@@ -452,6 +575,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
             getDetailsForItem={getGitLabItemDetails}
             onUpdateItem={updateGitlabItem}
             duplicateIndices={gitlabDuplicates}
+            onExcludeItem={excludeGitlabItem}
           />
           <BulkIntegrationAssignment
             selectedCount={selectedRowsGitlab.size}

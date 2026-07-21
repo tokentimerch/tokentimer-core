@@ -347,6 +347,21 @@ async function listDeployTokens({ baseUrl, token, projectId }) {
   }
 }
 
+async function listPipelineTriggers({ baseUrl, token, projectId }) {
+  try {
+    const data = await gitlabRequest({
+      baseUrl,
+      token,
+      method: "GET",
+      path: `/api/v4/projects/${projectId}/triggers`,
+    });
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    if (e.status === 404 || e.status === 403) return [];
+    throw e;
+  }
+}
+
 async function listSSHKeys({ baseUrl, token, userId = null }) {
   try {
     const path = userId ? `/api/v4/users/${userId}/keys` : "/api/v4/user/keys";
@@ -373,6 +388,7 @@ async function scanGitLab({
     includeProjectTokens: true,
     includeGroupTokens: true,
     includeDeployTokens: true,
+    includeTriggerTokens: false,
     includeSSHKeys: true,
     excludeUserPATs: false,
     includeExpired: false,
@@ -858,10 +874,12 @@ async function scanGitLab({
                 const username = user?.username || null;
                 const isUserAdmin = user?.is_admin || false;
 
-                // Skip user PATs if excludeUserPATs filter is enabled (keep only service account PATs)
+                // Skip user PATs if excludeUserPATs filter is enabled
+                // (keep administrator and service-account PATs)
                 if (
                   filters.excludeUserPATs &&
                   username &&
+                  !isUserAdmin &&
                   !isServiceAccount(username)
                 ) {
                   skippedUserPATs++;
@@ -1085,6 +1103,87 @@ async function scanGitLab({
       }
     }
 
+    // Scan Pipeline Trigger Tokens
+    // Note: Requires Maintainer/Owner role on the project (GitLab returns
+    // 403/404 otherwise, which we silently skip). Trigger tokens never expire.
+    if (include.tokens && filters.includeTriggerTokens) {
+      try {
+        const projects = await listProjects({
+          baseUrl: normalizedUrl,
+          token,
+          maxItems: 1000,
+        });
+        let triggerTokensCount = 0;
+        let projectsScanned = 0;
+        let projectsWithTriggers = 0;
+
+        logger.info("Scanning GitLab pipeline trigger tokens", {
+          totalProjects: projects.length,
+        });
+
+        for (let i = 0; i < projects.length; i += BATCH_SIZE) {
+          if (items.length >= maxItems) break;
+          const batch = projects.slice(i, i + BATCH_SIZE);
+
+          await Promise.all(
+            batch.map(async (project) => {
+              if (items.length >= maxItems) return;
+              projectsScanned++;
+              try {
+                const triggers = await listPipelineTriggers({
+                  baseUrl: normalizedUrl,
+                  token,
+                  projectId: project.id,
+                });
+
+                if (triggers.length > 0) projectsWithTriggers++;
+
+                for (const trigger of triggers) {
+                  if (items.length >= maxItems) break;
+
+                  items.push({
+                    source: "gitlab-trigger-token",
+                    name:
+                      trigger.description ||
+                      `Pipeline Trigger Token (${trigger.id})`,
+                    category: "key_secret",
+                    type: "api_key",
+                    // Pipeline trigger tokens have no expiry in GitLab
+                    expiration: null,
+                    location: `gitlab:projects/${project.id}/triggers/${trigger.id}`,
+                    project_id: project.id,
+                    project_name: project.name || project.path_with_namespace,
+                    created_at: trigger.created_at || null,
+                    last_used_at: trigger.last_used || null,
+                    gitlab_owner: trigger.owner?.username || null,
+                  });
+                  triggerTokensCount++;
+                }
+              } catch (_e) {
+                // Expected: user may see project but can't access its triggers
+                // (401/403/404). This is normal and we silently skip.
+              }
+            }),
+          );
+        }
+        logger.info("GitLab pipeline trigger tokens scan completed", {
+          projectsScanned,
+          projectsWithTriggers,
+          tokensFound: triggerTokensCount,
+        });
+        summary.push({
+          type: "pipeline_trigger_tokens",
+          found: triggerTokensCount,
+        });
+      } catch (e) {
+        logger.warn("Pipeline trigger tokens scan failed", {
+          error: e.message,
+          status: e.status,
+        });
+        summary.push({ type: "pipeline_trigger_tokens", error: e.message });
+      }
+    }
+
     // Scan SSH Keys (user's own keys only)
     if (include.keys && filters.includeSSHKeys) {
       try {
@@ -1236,6 +1335,8 @@ async function scanGitLab({
       .length,
     groupTokens: items.filter((i) => i.source === "gitlab-group-token").length,
     deployTokens: items.filter((i) => i.source === "gitlab-deploy-token")
+      .length,
+    triggerTokens: items.filter((i) => i.source === "gitlab-trigger-token")
       .length,
     sshKeys: items.filter((i) => i.source === "gitlab-ssh-key").length,
   };
