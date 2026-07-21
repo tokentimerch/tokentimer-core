@@ -5,7 +5,6 @@ const { containsPrivateKeyMaterial } = require("@tokentimer/log-scrub");
 const { loadApiTokenFromFile, parseApiUrl } = require("./config");
 const {
   MAX_ATTEMPTS,
-  MAX_RESPONSE_BYTES,
   MAX_TOTAL_DELAY_MS,
   REQUEST_TIMEOUT_MS,
   isTransientError,
@@ -14,6 +13,66 @@ const {
   readBoundedJsonResponse,
   retryDelay,
 } = require("./observation-reporter");
+
+// These values mirror the public M3-A7 provisioning command schema. The
+// response additionally carries up to three persisted ISO-8601 event times,
+// so it cannot share the observation reporter's deliberately smaller 8 KiB
+// response limit.
+const PROVISIONING_COMMAND_SCHEMA_LIMITS = Object.freeze({
+  clusterOrNamespaceLength: 63,
+  dnsNameCount: 100,
+  dnsNameLength: 253,
+  kubernetesNameLength: 253,
+});
+
+function maximumKubernetesName(index = 0) {
+  const suffix = index.toString(36);
+  return [
+    `${"a".repeat(63 - suffix.length)}${suffix}`,
+    "b".repeat(63),
+    "c".repeat(63),
+    "d".repeat(61),
+  ].join(".");
+}
+
+function maximumProvisioningResponseEnvelope() {
+  const limits = PROVISIONING_COMMAND_SCHEMA_LIMITS;
+  const timestamp = "2026-07-21T12:00:00.000Z";
+  return {
+    command: {
+      schemaVersion: 1,
+      workspaceId: "00000000-0000-4000-8000-000000000000",
+      clusterId: "a".repeat(limits.clusterOrNamespaceLength),
+      jobId: "00000000-0000-4000-8000-000000000001",
+      managedCertificateId: "00000000-0000-4000-8000-000000000002",
+      namespace: "a".repeat(limits.clusterOrNamespaceLength),
+      certificateName: maximumKubernetesName(0),
+      secretName: maximumKubernetesName(1),
+      issuerRef: {
+        group: maximumKubernetesName(2),
+        kind: "ClusterIssuer",
+        name: maximumKubernetesName(3),
+      },
+      dnsNames: Array.from(
+        { length: limits.dnsNameCount },
+        (_, index) => maximumKubernetesName(index),
+      ),
+    },
+    eventTimestamps: {
+      started: timestamp,
+      completed: timestamp,
+      failed: timestamp,
+    },
+  };
+}
+
+// This is the exact compact JSON size of the largest public command envelope
+// the API can emit: 100 x 253-byte DNS identities plus all fixed command
+// fields and the three first-seen persisted timestamps.
+const MAX_PROVISIONING_RESPONSE_BYTES = Buffer.byteLength(
+  JSON.stringify(maximumProvisioningResponseEnvelope()),
+  "utf8",
+);
 
 function commandClientError(code) {
   const error = new Error(`Controller provisioning command failed: ${code}`);
@@ -92,7 +151,18 @@ function createControllerProvisioningCommandClient({
   function occurredAtFor(command, stage) {
     const persisted = command.eventTimestamps?.[stage];
     const cached = stageTimestampCache.get(stageTimestampKey(command, stage));
-    const timestamp = persisted || cached || clock().toISOString();
+    if (persisted || cached) return rememberStageTimestamp(command, stage, persisted || cached);
+
+    const current = clock().toISOString();
+    const started = command.eventTimestamps?.started ||
+      stageTimestampCache.get(stageTimestampKey(command, "started"));
+    // A terminal event may be retried after an injected/system clock moves
+    // backwards. Preserve a truthful timeline by using the known start as the
+    // lower bound, while still using the current clock when it is later.
+    const timestamp = ["completed", "failed"].includes(stage) && started &&
+      Date.parse(current) < Date.parse(started)
+      ? started
+      : current;
     return rememberStageTimestamp(command, stage, timestamp);
   }
 
@@ -146,7 +216,7 @@ function createControllerProvisioningCommandClient({
         if (response.status >= 200 && response.status < 300) {
           return await readBoundedJsonResponse(response, {
             errorFactory: commandClientError,
-            maxResponseBytes: MAX_RESPONSE_BYTES,
+            maxResponseBytes: MAX_PROVISIONING_RESPONSE_BYTES,
             invalidResponseCode: "CONTROLLER_PROVISIONING_INVALID_RESPONSE",
           });
         }
@@ -217,7 +287,10 @@ function createControllerProvisioningCommandClient({
 }
 
 module.exports = {
+  MAX_PROVISIONING_RESPONSE_BYTES,
+  PROVISIONING_COMMAND_SCHEMA_LIMITS,
   createControllerProvisioningCommandClient,
+  maximumProvisioningResponseEnvelope,
   stableId,
   validateCommand,
 };

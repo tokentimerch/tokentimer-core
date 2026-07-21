@@ -45,6 +45,7 @@ function createInClusterCertManagerClient({
   let apiClient;
   let coreApiClient;
   let watchClient;
+  let mergePatchRequestOptions;
   let started = false;
   const activeControllers = new Set();
 
@@ -72,6 +73,21 @@ function createInClusterCertManagerClient({
       coreApiClient = config.makeApiClient(kubernetes.CoreV1Api);
     }
     watchClient = new kubernetes.Watch(config);
+    // The generated 1.4.0 client otherwise prefers JSON Patch before Merge
+    // Patch. This narrow per-call middleware runs after request construction
+    // and deliberately selects Merge Patch for the complete object body.
+    mergePatchRequestOptions = {
+      middleware: [{
+        pre(context) {
+          context.setHeaderParam("Content-Type", "application/merge-patch+json");
+          return new kubernetes.Observable(Promise.resolve(context));
+        },
+        post(context) {
+          return new kubernetes.Observable(Promise.resolve(context));
+        },
+      }],
+      middlewareMergeStrategy: "append",
+    };
     started = true;
   }
 
@@ -206,7 +222,7 @@ function createInClusterCertManagerClient({
     return apiClient.patchNamespacedCustomObject({
       ...certificateRequest({ namespace, name, body: certificate }),
       fieldManager: "tokentimer-certops-controller",
-    });
+    }, mergePatchRequestOptions);
   }
 
   async function close() {

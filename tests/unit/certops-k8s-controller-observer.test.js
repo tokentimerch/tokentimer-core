@@ -3,6 +3,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const {
   createInClusterCertManagerClient,
@@ -324,6 +325,66 @@ describe("CertOps cert-manager status observer", () => {
       { allowWatchBookmarks: true, resourceVersion: "rv-namespace" },
     ]);
     assert.deepEqual(calls.filter((call) => call === "abort"), ["abort"]);
+  });
+
+  it("uses the generated Kubernetes client boundary to send Certificate merge patches", async () => {
+    const kubernetes = await import(pathToFileURL(path.resolve(
+      __dirname,
+      "../../apps/k8s-controller/node_modules/@kubernetes/client-node/dist/index.js",
+    )).href);
+    const requests = [];
+    class KubeConfig {
+      loadFromCluster() {}
+
+      makeApiClient(ApiType) {
+        return new ApiType(kubernetes.createConfiguration({
+          authMethods: {},
+          baseServer: new kubernetes.ServerConfiguration("https://kubernetes.example.test", {}),
+          httpApi: {
+            send(context) {
+              requests.push({
+                body: context.getBody(),
+                headers: context.getHeaders(),
+                method: context.getHttpMethod(),
+                url: context.getUrl(),
+              });
+              return new kubernetes.Observable(Promise.resolve({
+                body: { text: async () => "{}" },
+                headers: { "content-type": "application/json" },
+                httpStatusCode: 200,
+              }));
+            },
+          },
+        }));
+      }
+    }
+    class Watch {
+      async watch() { return { abort() {} }; }
+    }
+    const client = createInClusterCertManagerClient({
+      loadClient: async () => ({ ...kubernetes, KubeConfig, Watch }),
+      provisionEnabled: true,
+    });
+    const certificate = {
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: { name: "web-cert", namespace: "team-a" },
+      spec: { dnsNames: ["example.test"], secretName: "web-tls" },
+    };
+
+    await client.start();
+    await client.patchCertificate({ namespace: "team-a", name: "web-cert", certificate });
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, "PATCH");
+    assert.equal(
+      requests[0].url,
+      "https://kubernetes.example.test/apis/cert-manager.io/v1/namespaces/team-a/certificates/web-cert?fieldManager=tokentimer-certops-controller",
+    );
+    assert.equal(requests[0].headers["Content-Type"], "application/merge-patch+json");
+    assert.equal(Array.isArray(JSON.parse(requests[0].body)), false);
+    assert.deepEqual(JSON.parse(requests[0].body), certificate);
+    assert.doesNotMatch(requests[0].url, /secrets|certificaterequests/i);
   });
 
   it("lists then watches both resources cluster-wide, and becomes ready only after each watch starts", async () => {

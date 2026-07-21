@@ -21,6 +21,13 @@ const CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT =
   "CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT";
 const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
 const INVALID_COMMAND_ERROR_CODE = "CERTOPS_CONTROLLER_PROVISIONING_INVALID_COMMAND";
+const PERMANENT_COMMAND_VALIDATION_CODES = new Set([
+  CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
+  CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+  "PRIVATE_KEY_MATERIAL_REJECTED",
+]);
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -352,35 +359,49 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
         throw provisioningError("Provisioning command identity is invalid");
       }
       validateAuthenticatedProvisioningBinding(apiToken, desired);
-      const identity = await client.query(
-        `SELECT mc.id
-           FROM managed_certificates mc
-          WHERE mc.id = $1
-            AND mc.workspace_id = $2
-            AND mc.source = 'cert_manager'
-            AND mc.source_ref = $3
-            AND mc.status NOT IN ('revoked', 'decommissioned')
-            AND EXISTS (
-              SELECT 1
-                FROM certificate_targets ct
-               WHERE ct.workspace_id = mc.workspace_id
-                 AND ct.source = 'cert_manager'
-                 AND ct.source_ref = $4
-                 AND ct.target_type = 'kubernetes-secret'
-            )`,
-        [
-          desired.managedCertificateId,
-          apiToken.workspaceId,
-          sourceRefFor(desired),
-          targetSourceRefFor(desired),
-        ],
-      );
-      if (!identity.rows[0]) {
-        throw provisioningError("Provisioning command inventory identity is invalid");
-      }
-    } catch (_error) {
+    } catch (error) {
+      if (!PERMANENT_COMMAND_VALIDATION_CODES.has(error?.code)) throw error;
       // A malformed or stale server-owned row is never command work. Mark it
       // terminal so it cannot hot-loop while still preserving an auditable job.
+      await client.query(
+        `UPDATE certificate_jobs
+            SET status = 'blocked', error_code = $2,
+                error_message = 'Controller provisioning command rejected',
+                updated_at = NOW()
+          WHERE id = $1`,
+        [row.id, INVALID_COMMAND_ERROR_CODE],
+      );
+      await client.query("COMMIT");
+      return null;
+    }
+
+    // Database failures must propagate through the outer transaction rollback.
+    // Only an authoritative query result that proves this server-owned command
+    // stale or terminal is a permanent, blockable command defect.
+    const identity = await client.query(
+      `SELECT mc.id
+         FROM managed_certificates mc
+        WHERE mc.id = $1
+          AND mc.workspace_id = $2
+          AND mc.source = 'cert_manager'
+          AND mc.source_ref = $3
+          AND mc.status NOT IN ('revoked', 'decommissioned')
+          AND EXISTS (
+            SELECT 1
+              FROM certificate_targets ct
+             WHERE ct.workspace_id = mc.workspace_id
+               AND ct.source = 'cert_manager'
+               AND ct.source_ref = $4
+               AND ct.target_type = 'kubernetes-secret'
+          )`,
+      [
+        desired.managedCertificateId,
+        apiToken.workspaceId,
+        sourceRefFor(desired),
+        targetSourceRefFor(desired),
+      ],
+    );
+    if (!identity.rows[0]) {
       await client.query(
         `UPDATE certificate_jobs
             SET status = 'blocked', error_code = $2,
@@ -431,16 +452,36 @@ async function recordControllerProvisioningEventTimestamp({
   eventType,
   occurredAt,
 } = {}) {
-  const columnByEventType = {
-    "job.started": "started_at",
+  if (!occurredAt) return;
+  const terminalColumnByEventType = {
     "job.completed": "completed_at",
     "job.failed": "failed_at",
   };
-  const column = columnByEventType[eventType];
-  if (!column || !occurredAt) return;
+  if (eventType === "job.started") {
+    await client.query(
+      `UPDATE certificate_controller_provision_deliveries d
+          SET started_at = COALESCE(d.started_at, $3::timestamptz),
+              updated_at = NOW()
+         FROM certificate_jobs j
+        WHERE d.job_id = j.id
+          AND j.id = $1
+          AND j.workspace_id = $2
+          AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'`,
+      [jobId, workspaceId, occurredAt],
+    );
+    return;
+  }
+  const column = terminalColumnByEventType[eventType];
+  if (!column) return;
+  // The API owns the persisted timeline: accept the first terminal timestamp,
+  // but clamp it to the first accepted start if an older/malformed terminal
+  // event reaches the route.
   await client.query(
     `UPDATE certificate_controller_provision_deliveries d
-        SET ${column} = COALESCE(d.${column}, $3::timestamptz),
+        SET ${column} = COALESCE(
+              d.${column},
+              GREATEST($3::timestamptz, COALESCE(d.started_at, $3::timestamptz))
+            ),
             updated_at = NOW()
        FROM certificate_jobs j
       WHERE d.job_id = j.id

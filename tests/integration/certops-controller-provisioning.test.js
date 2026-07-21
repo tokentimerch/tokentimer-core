@@ -18,6 +18,9 @@ const {
 } = require("../../apps/api/services/certops/apiTokens");
 const { createCertOpsExecutorRouter } = require("../../apps/api/routes/certops-executor");
 const certOpsRouter = require("../../apps/api/routes/certops");
+const {
+  takeNextControllerProvisioningCommand,
+} = require("../../apps/api/services/certops/controllerProvisioning");
 
 const apiRequire = createRequire(require.resolve("../../apps/api/package.json"));
 const express = apiRequire("express");
@@ -107,7 +110,7 @@ function observationPayload(workspaceId, overrides = {}) {
   };
 }
 
-function executorEventPayload(workspaceId, jobId) {
+function executorEventPayload(workspaceId, jobId, overrides = {}) {
   return {
     schemaVersion: 1,
     eventId: `event-${crypto.randomUUID()}`,
@@ -117,6 +120,7 @@ function executorEventPayload(workspaceId, jobId) {
     status: "running",
     occurredAt: new Date().toISOString(),
     message: "The controller is still reporting public status",
+    ...overrides,
   };
 }
 
@@ -141,12 +145,13 @@ function createHumanProvisioningApp(ownerId, {
   return app;
 }
 
-function createControllerExecutorApp() {
+function createControllerExecutorApp(options = {}) {
   const app = express();
   app.use(express.json());
   app.use(
     createCertOpsExecutorRouter({
       rateLimitOptions: { windowMs: 60_000, max: 10_000 },
+      ...options,
     }),
   );
   return app;
@@ -543,6 +548,120 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
+  it("blocks delivery when the authoritative inventory identity is missing or terminal", async () => {
+    const fixture = await createWorkspace("controller-provisioning-invalid-inventory");
+    const humanApp = createHumanProvisioningApp(fixture.ownerId);
+    const executorApp = createControllerExecutorApp();
+    try {
+      const token = await createControllerToken(fixture);
+      const missingTarget = await postProvisionIntent(
+        humanApp,
+        fixture.workspaceId,
+        `missing-target-${crypto.randomUUID()}`,
+        provisionRequest(),
+      ).expect(201);
+      await TestUtils.execQuery(
+        "DELETE FROM certificate_targets WHERE id = $1",
+        [missingTarget.body.targetId],
+      );
+      await commandRequest(executorApp, token.plaintextToken).expect(204);
+
+      const terminal = await postProvisionIntent(
+        humanApp,
+        fixture.workspaceId,
+        `terminal-delivery-${crypto.randomUUID()}`,
+        provisionRequest({ certificateName: "terminal-delivery", secretName: "terminal-delivery-tls" }),
+      ).expect(201);
+      await TestUtils.execQuery(
+        "UPDATE managed_certificates SET status = 'revoked' WHERE id = $1",
+        [terminal.body.managedCertificateId],
+      );
+      await commandRequest(executorApp, token.plaintextToken).expect(204);
+
+      const jobs = await TestUtils.execQuery(
+        "SELECT id, status, error_code FROM certificate_jobs WHERE id = ANY($1::uuid[]) ORDER BY id",
+        [[missingTarget.body.job.id, terminal.body.job.id].sort()],
+      );
+      expect(jobs.rows).to.have.length(2);
+      for (const job of jobs.rows) {
+        expect(job).to.include({
+          error_code: "CERTOPS_CONTROLLER_PROVISIONING_INVALID_COMMAND",
+          status: "blocked",
+        });
+      }
+      expect(await provisioningCounts(fixture.workspaceId)).to.deep.include({ deliveries: 0 });
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("rolls back transient identity-query failures without blocking or duplicating delivery", async () => {
+    const fixture = await createWorkspace("controller-provisioning-query-failure");
+    const humanApp = createHumanProvisioningApp(fixture.ownerId);
+    let failIdentityQuery = true;
+    let identityQueryFailures = 0;
+    const faultInjectingPool = {
+      async connect() {
+        const client = await pool.connect();
+        return new Proxy(client, {
+          get(target, property) {
+            if (property === "query") {
+              return async (...args) => {
+                const [query] = args;
+                if (
+                  failIdentityQuery &&
+                  typeof query === "string" &&
+                  query.includes("FROM managed_certificates mc")
+                ) {
+                  identityQueryFailures += 1;
+                  const error = new Error("simulated identity query failure");
+                  error.code = "ECONNRESET";
+                  throw error;
+                }
+                return target.query(...args);
+              };
+            }
+            const value = target[property];
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    };
+    const executorApp = createControllerExecutorApp({
+      takeNextControllerProvisioningCommand: ({ apiToken }) => takeNextControllerProvisioningCommand({
+        apiToken,
+        dbPool: faultInjectingPool,
+      }),
+    });
+    try {
+      const token = await createControllerToken(fixture);
+      const intent = await postProvisionIntent(
+        humanApp,
+        fixture.workspaceId,
+        `query-failure-${crypto.randomUUID()}`,
+        provisionRequest(),
+      ).expect(201);
+
+      const failed = await commandRequest(executorApp, token.plaintextToken).expect(500);
+      expect(failed.body.code).to.equal("CERTOPS_CONTROLLER_PROVISIONING_COMMAND_FAILED");
+      expect(identityQueryFailures).to.equal(1);
+      expect(await provisioningCounts(fixture.workspaceId)).to.deep.include({ deliveries: 0, jobs: 1 });
+      const afterFailure = await TestUtils.execQuery(
+        "SELECT status, error_code FROM certificate_jobs WHERE id = $1",
+        [intent.body.job.id],
+      );
+      expect(afterFailure.rows[0]).to.deep.equal({ status: "pending", error_code: null });
+
+      failIdentityQuery = false;
+      const delivered = await commandRequest(executorApp, token.plaintextToken).expect(200);
+      expect(delivered.body.command.jobId).to.equal(intent.body.job.id);
+      expect(await provisioningCounts(fixture.workspaceId)).to.deep.include({ deliveries: 1, jobs: 1 });
+      expect(identityQueryFailures).to.equal(1);
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
   it("rolls back inventory, job, idempotency, and audit state when the required audit write fails", async () => {
     const fixture = await createWorkspace("controller-provisioning-rollback");
     const app = createHumanProvisioningApp(fixture.ownerId);
@@ -792,7 +911,10 @@ describe("CertOps controller provisioning", function () {
     const humanApp = createHumanProvisioningApp(fixture.ownerId);
     const executorApp = createControllerExecutorApp();
     try {
-      const token = await createControllerToken(fixture);
+      const token = await createControllerToken({
+        ...fixture,
+        scopes: ["certops:provision:execute", "certops:events:write"],
+      });
       const intent = await postProvisionIntent(
         humanApp,
         fixture.workspaceId,
@@ -801,6 +923,17 @@ describe("CertOps controller provisioning", function () {
       ).expect(201);
       const first = await commandRequest(executorApp, token.plaintextToken).expect(200);
       expect(first.body.command.jobId).to.equal(intent.body.job.id);
+      const startedAt = "2026-07-21T12:00:00.000Z";
+      await supertest(executorApp)
+        .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+        .set("Authorization", `Bearer ${token.plaintextToken}`)
+        .send(executorEventPayload(fixture.workspaceId, intent.body.job.id, {
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.started",
+          occurredAt: startedAt,
+          status: "running",
+        }))
+        .expect(202);
 
       await TestUtils.execQuery(
         "UPDATE certificate_controller_provision_deliveries SET delivered_at = NOW() - INTERVAL '31 seconds' WHERE job_id = $1",
@@ -808,6 +941,7 @@ describe("CertOps controller provisioning", function () {
       );
       const replay = await commandRequest(executorApp, token.plaintextToken).expect(200);
       expect(replay.body.command).to.deep.equal(first.body.command);
+      expect(replay.body.eventTimestamps.started).to.equal(startedAt);
 
       await TestUtils.execQuery(
         "UPDATE certificate_jobs SET status = 'succeeded' WHERE id = $1",
@@ -818,6 +952,72 @@ describe("CertOps controller provisioning", function () {
         [intent.body.job.id],
       );
       await commandRequest(executorApp, token.plaintextToken).expect(204);
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("clamps older terminal event timestamps to the first accepted started timestamp", async () => {
+    const fixture = await createWorkspace("controller-provisioning-timestamps");
+    const humanApp = createHumanProvisioningApp(fixture.ownerId);
+    const executorApp = createControllerExecutorApp();
+    try {
+      const token = await createControllerToken({
+        ...fixture,
+        scopes: ["certops:provision:execute", "certops:events:write"],
+      });
+      const startedAt = "2026-07-21T12:00:00.000Z";
+      const olderAt = "2026-07-21T11:00:00.000Z";
+      for (const [certificateName, terminalEventType, terminalStatus] of [
+        ["timestamp-completed", "job.completed", "succeeded"],
+        ["timestamp-failed", "job.failed", "failed"],
+      ]) {
+        const intent = await postProvisionIntent(
+          humanApp,
+          fixture.workspaceId,
+          `timestamps-${certificateName}-${crypto.randomUUID()}`,
+          provisionRequest({
+            certificateName,
+            secretName: `${certificateName}-tls`,
+          }),
+        ).expect(201);
+        await commandRequest(executorApp, token.plaintextToken).expect(200);
+        await supertest(executorApp)
+          .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send(executorEventPayload(fixture.workspaceId, intent.body.job.id, {
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: "job.started",
+            occurredAt: startedAt,
+            status: "running",
+          }))
+          .expect(202);
+        await supertest(executorApp)
+          .post(`/api/v1/certops/jobs/${intent.body.job.id}/events`)
+          .set("Authorization", `Bearer ${token.plaintextToken}`)
+          .send(executorEventPayload(fixture.workspaceId, intent.body.job.id, {
+            eventId: `event-${crypto.randomUUID()}`,
+            eventType: terminalEventType,
+            occurredAt: olderAt,
+            status: terminalStatus,
+          }))
+          .expect(202);
+      }
+      const timestamps = await TestUtils.execQuery(
+        `SELECT j.payload #>> '{desiredCertificate,certificateName}' AS certificate_name,
+                d.started_at, d.completed_at, d.failed_at
+           FROM certificate_jobs j
+           JOIN certificate_controller_provision_deliveries d ON d.job_id = j.id
+          WHERE j.workspace_id = $1 AND j.payload #>> '{desiredCertificate,certificateName}'
+                IN ('timestamp-completed', 'timestamp-failed')
+          ORDER BY certificate_name`,
+        [fixture.workspaceId],
+      );
+      expect(timestamps.rows).to.have.length(2);
+      for (const row of timestamps.rows) {
+        const terminalAt = row.completed_at || row.failed_at;
+        expect(new Date(terminalAt).getTime()).to.equal(new Date(row.started_at).getTime());
+      }
     } finally {
       await cleanupWorkspace(fixture);
     }

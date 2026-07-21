@@ -2,6 +2,8 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   MAX_RESPONSE_BYTES,
@@ -9,8 +11,12 @@ const {
 } = require("../../apps/k8s-controller/src/observation-reporter");
 const {
   createControllerProvisioningCommandClient,
+  MAX_PROVISIONING_RESPONSE_BYTES,
+  maximumProvisioningResponseEnvelope,
+  PROVISIONING_COMMAND_SCHEMA_LIMITS,
   stableId,
 } = require("../../apps/k8s-controller/src/provisioning-command-client");
+const provisioningSchema = require("../../packages/contracts/certops/controller-provisioning.schema.json");
 
 const command = {
   schemaVersion: 1,
@@ -82,6 +88,53 @@ function createClient(fetchImpl, options = {}) {
 }
 
 describe("controller provisioning command response boundary", () => {
+  it("uses a provisioning-specific bound calculated from the published command schema", () => {
+    assert.equal(provisioningSchema.properties.dnsNames.maxItems, PROVISIONING_COMMAND_SCHEMA_LIMITS.dnsNameCount);
+    assert.equal(provisioningSchema.properties.dnsNames.items.maxLength, PROVISIONING_COMMAND_SCHEMA_LIMITS.dnsNameLength);
+    assert.equal(provisioningSchema.definitions.label.maxLength, PROVISIONING_COMMAND_SCHEMA_LIMITS.clusterOrNamespaceLength);
+    assert.equal(provisioningSchema.definitions.name.maxLength, PROVISIONING_COMMAND_SCHEMA_LIMITS.kubernetesNameLength);
+    assert.equal(MAX_PROVISIONING_RESPONSE_BYTES > MAX_RESPONSE_BYTES, true);
+
+    const openapi = fs.readFileSync(path.resolve(
+      __dirname,
+      "../../packages/contracts/openapi/openapi.yaml",
+    ), "utf8");
+    const commandSection = openapi.slice(
+      openapi.indexOf("    CertOpsControllerProvisioningCommand:\n"),
+      openapi.indexOf("    CertOpsProvisioningCommandResponse:\n"),
+    );
+    assert.match(commandSection, /maxItems: 100/);
+    assert.match(commandSection, /maxLength: 253/);
+  });
+
+  it("accepts a maximum-valid command at the exact provisioning response byte limit", async () => {
+    const envelope = maximumProvisioningResponseEnvelope();
+    const exact = JSON.stringify(envelope);
+    assert.equal(envelope.command.dnsNames.length, 100);
+    assert.equal(envelope.command.dnsNames.every((name) => name.length === 253), true);
+    assert.equal(Buffer.byteLength(exact), MAX_PROVISIONING_RESPONSE_BYTES);
+
+    const client = createClient(async () => response(exact));
+    await client.start();
+    const received = await client.nextCommand();
+    assert.deepEqual(received.dnsNames, envelope.command.dnsNames);
+  });
+
+  it("rejects and cancels provisioning responses at one byte over the exact bound", async () => {
+    let cancelled = false;
+    const exact = JSON.stringify(maximumProvisioningResponseEnvelope());
+    const client = createClient(async () => ({
+      status: 200,
+      headers: new Headers(),
+      body: streamFrom([exact, " "], { onCancel: () => { cancelled = true; } }),
+    }));
+    await client.start();
+    await assert.rejects(() => client.nextCommand(), {
+      code: "CONTROLLER_PROVISIONING_INVALID_RESPONSE",
+    });
+    assert.equal(cancelled, true);
+  });
+
   it("reads normal and exactly bounded streamed JSON without response.text", async () => {
     const normal = await readBoundedJsonResponse(response(JSON.stringify({ command })), {
       errorFactory: (code) => Object.assign(new Error(code), { code }),
@@ -150,6 +203,74 @@ describe("controller provisioning command response boundary", () => {
     assert.equal(sent[0].occurredAt, sent[1].occurredAt);
     assert.notEqual(sent[0].eventId, sent[2].eventId);
     assert.equal(sent[0].eventId, stableId(command.jobId, "started"));
+  });
+
+  it("clamps terminal event timestamps to started when the clock moves backward", async () => {
+    const sent = [];
+    const clockValues = [
+      new Date("2026-07-21T12:00:00.000Z"),
+      new Date("2026-07-21T11:59:00.000Z"),
+      new Date("2026-07-21T11:58:00.000Z"),
+    ];
+    const client = createClient(async (_url, options) => {
+      sent.push(JSON.parse(options.body));
+      return response(JSON.stringify({}));
+    }, { clock: () => clockValues.shift() });
+    await client.start();
+    await client.reportEvent(command, "started", { status: "running", eventType: "job.started" });
+    await client.reportEvent(command, "completed", { status: "succeeded", eventType: "job.completed" });
+    await client.reportEvent(command, "failed", { status: "failed", eventType: "job.failed" });
+
+    assert.equal(sent[1].occurredAt, sent[0].occurredAt);
+    assert.equal(sent[2].occurredAt, sent[0].occurredAt);
+    assert.equal(sent[1].eventId, stableId(command.jobId, "completed"));
+    assert.equal(sent[2].eventId, stableId(command.jobId, "failed"));
+  });
+
+  it("uses a later clock value for a normally ordered terminal event", async () => {
+    const sent = [];
+    const clockValues = [
+      new Date("2026-07-21T12:00:00.000Z"),
+      new Date("2026-07-21T12:01:00.000Z"),
+    ];
+    const client = createClient(async (_url, options) => {
+      sent.push(JSON.parse(options.body));
+      return response(JSON.stringify({}));
+    }, { clock: () => clockValues.shift() });
+    await client.start();
+    await client.reportEvent(command, "started", { status: "running", eventType: "job.started" });
+    await client.reportEvent(command, "completed", { status: "succeeded", eventType: "job.completed" });
+    assert.equal(sent[1].occurredAt, "2026-07-21T12:01:00.000Z");
+    assert.equal(Date.parse(sent[1].occurredAt) >= Date.parse(sent[0].occurredAt), true);
+  });
+
+  it("keeps the terminal timestamp across HTTP retries and command redelivery", async () => {
+    const sent = [];
+    let reportAttempts = 0;
+    const client = createClient(async (url, options) => {
+      if (url.endsWith("/provisioning-commands/next")) {
+        return response(JSON.stringify({
+          command,
+          eventTimestamps: { started: "2026-07-21T12:00:00.000Z" },
+        }));
+      }
+      sent.push(JSON.parse(options.body));
+      reportAttempts += 1;
+      if (reportAttempts === 1) {
+        const error = new Error("reset");
+        error.code = "ECONNRESET";
+        throw error;
+      }
+      return response(JSON.stringify({}));
+    }, {
+      clock: () => new Date("2026-07-21T11:59:00.000Z"),
+    });
+    await client.start();
+    const delivery = await client.nextCommand();
+    await client.reportEvent(delivery, "completed", { status: "succeeded", eventType: "job.completed" });
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0].occurredAt, "2026-07-21T12:00:00.000Z");
+    assert.equal(sent[1].occurredAt, sent[0].occurredAt);
   });
 
   it("keeps the timeout active while reading a body and aborts an in-progress read during shutdown", async () => {
