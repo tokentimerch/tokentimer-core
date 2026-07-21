@@ -511,7 +511,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
      )
      ON CONFLICT (workspace_id, fingerprint_sha256)
        WHERE fingerprint_sha256 IS NOT NULL
-         AND source NOT IN ('endpoint_monitor', 'domain_checker')
+         AND source NOT IN ('endpoint_monitor', 'domain_checker', 'cert_manager')
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE

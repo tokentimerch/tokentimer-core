@@ -11,6 +11,16 @@ const MAX_RETRY_AFTER_MS = 30_000;
 const MAX_TOTAL_DELAY_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 8 * 1024;
+const TRANSIENT_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 
 function reporterError(code) {
   const error = new Error(`Controller observation report failed: ${code}`);
@@ -44,8 +54,16 @@ function isTransientStatus(status) {
 }
 
 function isTransientError(error) {
-  return error?.name === "AbortError" ||
-    ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND"].includes(error?.code);
+  const visited = new Set();
+  let current = error;
+  for (let depth = 0; current && depth < 4 && !visited.has(current); depth += 1) {
+    visited.add(current);
+    if (typeof current.code === "string" && TRANSIENT_NETWORK_CODES.has(current.code)) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
 }
 
 function validateResponse(value) {
@@ -75,9 +93,48 @@ function validateResponse(value) {
 }
 
 async function boundedJson(response) {
-  const text = await response.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
-    throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+  let text;
+  const body = response?.body;
+  if (body && typeof body.getReader === "function") {
+    const reader = body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value);
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_RESPONSE_BYTES) {
+          if (typeof reader.cancel === "function") {
+            try {
+              await reader.cancel();
+            } catch (_error) {
+              // The response is already rejected; cancellation is best effort.
+            }
+          }
+          throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+        }
+        chunks.push(chunk);
+      }
+      text = Buffer.concat(chunks, totalBytes).toString("utf8");
+    } catch (error) {
+      if (error?.code === "CONTROLLER_REPORTER_INVALID_RESPONSE") throw error;
+      throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+    } finally {
+      if (typeof reader.releaseLock === "function") reader.releaseLock();
+    }
+  } else {
+    // Test doubles without a Fetch ReadableStream retain the legacy text()
+    // path. Real Fetch responses always use the bounded streaming path above.
+    try {
+      text = await response.text();
+    } catch (_error) {
+      throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+    }
+    if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
+      throw reporterError("CONTROLLER_REPORTER_INVALID_RESPONSE");
+    }
   }
   try {
     return JSON.parse(text);
@@ -103,7 +160,24 @@ function createControllerObservationReporter({
   const endpoint = new URL("/api/v1/certops/executor/observations", normalizedApiUrl).toString();
   let acceptingWork = false;
   let started = false;
-  const abortControllers = new Set();
+  const abortControllers = new Map();
+
+  function stoppingError() {
+    return reporterError("CONTROLLER_REPORTER_STOPPING");
+  }
+
+  function stopInFlightRequests() {
+    for (const [controller, state] of abortControllers) {
+      state.stopping = true;
+      controller.abort();
+    }
+  }
+
+  async function sleepBeforeRetry(delay) {
+    if (!acceptingWork) throw stoppingError();
+    await sleep(delay);
+    if (!acceptingWork) throw stoppingError();
+  }
 
   async function report(observation, { idempotencyKey } = {}) {
     if (!acceptingWork) throw reporterError("CONTROLLER_REPORTER_STOPPING");
@@ -115,10 +189,15 @@ function createControllerObservationReporter({
     let totalDelay = 0;
     let lastError = null;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      if (!acceptingWork) throw reporterError("CONTROLLER_REPORTER_STOPPING");
+      if (!acceptingWork) throw stoppingError();
       const controller = new AbortController();
-      abortControllers.add(controller);
-      const timeout = setTimeoutFn(() => controller.abort(), requestTimeoutMs);
+      const requestState = { stopping: false, timedOut: false };
+      abortControllers.set(controller, requestState);
+      const timeout = setTimeoutFn(() => {
+        requestState.timedOut = true;
+        controller.abort();
+      }, requestTimeoutMs);
+      let delay = null;
       try {
         // Re-read the mounted credential for each delivery so Kubernetes Secret
         // volume rotation takes effect without ever retaining the token.
@@ -134,6 +213,7 @@ function createControllerObservationReporter({
           },
           body,
         });
+        if (!acceptingWork || requestState.stopping) throw stoppingError();
         if (response.status === 200 || response.status === 201) {
           return validateResponse(await boundedJson(response));
         }
@@ -144,21 +224,22 @@ function createControllerObservationReporter({
         const retryAfter = response.status === 429
           ? parseRetryAfter(response.headers.get("retry-after"), now())
           : null;
-        const delay = retryAfter ?? retryDelay(attempt, random);
-        if (attempt === MAX_ATTEMPTS - 1 || totalDelay + delay > MAX_TOTAL_DELAY_MS) break;
-        totalDelay += delay;
-        await sleep(delay);
+        delay = retryAfter ?? retryDelay(attempt, random);
       } catch (error) {
-        if (!isTransientError(error)) throw error;
+        if (!acceptingWork || requestState.stopping) throw stoppingError();
+        // A timeout we initiated is retriable; an arbitrary AbortError is not.
+        if (!requestState.timedOut && !isTransientError(error)) throw error;
         lastError = reporterError("CONTROLLER_REPORTER_TRANSPORT_FAILED");
-        const delay = retryDelay(attempt, random);
-        if (attempt === MAX_ATTEMPTS - 1 || totalDelay + delay > MAX_TOTAL_DELAY_MS) break;
-        totalDelay += delay;
-        await sleep(delay);
+        delay = retryDelay(attempt, random);
       } finally {
         clearTimeoutFn(timeout);
         abortControllers.delete(controller);
       }
+      if (delay === null || attempt === MAX_ATTEMPTS - 1 || totalDelay + delay > MAX_TOTAL_DELAY_MS) {
+        break;
+      }
+      totalDelay += delay;
+      await sleepBeforeRetry(delay);
     }
     throw lastError || reporterError("CONTROLLER_REPORTER_TRANSPORT_FAILED");
   }
@@ -166,7 +247,7 @@ function createControllerObservationReporter({
   return Object.freeze({
     async close() {
       acceptingWork = false;
-      for (const controller of abortControllers) controller.abort();
+      stopInFlightRequests();
     },
     isAlive: () => true,
     isReady: () => started && acceptingWork,
@@ -178,6 +259,7 @@ function createControllerObservationReporter({
     },
     async stopAcceptingWork() {
       acceptingWork = false;
+      stopInFlightRequests();
     },
     report,
   });
@@ -189,6 +271,8 @@ module.exports = {
   MAX_RETRY_AFTER_MS,
   MAX_TOTAL_DELAY_MS,
   REQUEST_TIMEOUT_MS,
+  TRANSIENT_NETWORK_CODES,
+  boundedJson,
   createControllerObservationReporter,
   isTransientError,
   isTransientStatus,

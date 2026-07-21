@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const net = require("net");
 
 const { pool } = require("../../db/database");
 const { writeAudit } = require("../audit");
@@ -73,6 +74,9 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const RFC1123_LABEL_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const RFC1123_SUBDOMAIN_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+const URI_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
+const EMAIL_SAN_PATTERN = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([a-z0-9]([-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)$/;
 const RFC3339_PATTERN =
   /^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$/;
 const MAX_DNS_NAMES = 64;
@@ -114,25 +118,64 @@ function optionalString(value, fieldName, maximumLength = MAX_TEXT) {
   return requiredString(value, fieldName, maximumLength);
 }
 
-function validKubernetesName(value, fieldName, maximumLength = MAX_IDENTITY) {
+function validKubernetesResourceName(value, fieldName, maximumLength = MAX_IDENTITY) {
   const name = requiredString(value, fieldName, maximumLength);
   if (
     name.length > maximumLength ||
-    !name.split(".").every(
-      (label) => label.length > 0 && label.length <= 63 && RFC1123_LABEL_PATTERN.test(label),
-    )
+    !RFC1123_SUBDOMAIN_PATTERN.test(name) ||
+    !name.split(".").every((label) => label.length <= 63)
   ) {
     throw observationError(`${fieldName} is invalid`);
   }
   return name;
 }
 
-function validClusterId(value) {
-  const clusterId = requiredString(value, "clusterId", 63);
-  if (!RFC1123_LABEL_PATTERN.test(clusterId)) {
-    throw observationError("clusterId is invalid");
+function validKubernetesLabel(value, fieldName) {
+  const label = requiredString(value, fieldName, 63);
+  if (!RFC1123_LABEL_PATTERN.test(label)) {
+    throw observationError(`${fieldName} is invalid`);
   }
-  return clusterId;
+  return label;
+}
+
+function validClusterId(value) {
+  return validKubernetesLabel(value, "clusterId");
+}
+
+function isCertificateDnsName(value) {
+  const withoutWildcard = value.startsWith("*.") ? value.slice(2) : value;
+  return (
+    withoutWildcard.length > 0 &&
+    RFC1123_SUBDOMAIN_PATTERN.test(withoutWildcard) &&
+    withoutWildcard.split(".").every((label) => label.length <= 63)
+  );
+}
+
+function validCertificateDnsName(value, fieldName) {
+  const name = requiredString(value, fieldName, MAX_IDENTITY);
+  if (!isCertificateDnsName(name)) {
+    throw observationError(`${fieldName} is invalid`);
+  }
+  return name;
+}
+
+function validPublicSan(value, fieldName) {
+  const san = requiredString(value, fieldName, MAX_IDENTITY);
+  if (isCertificateDnsName(san)) return san;
+  if (net.isIP(san) !== 0) return san;
+  if (EMAIL_SAN_PATTERN.test(san)) return san;
+  if (!URI_SCHEME_PATTERN.test(san) || /[\u0000-\u001f\u007f\s]/.test(san)) {
+    throw observationError(`${fieldName} is invalid`);
+  }
+  try {
+    const parsed = new URL(san);
+    if (!parsed.protocol || parsed.username || parsed.password) {
+      throw observationError(`${fieldName} is invalid`);
+    }
+  } catch (_error) {
+    throw observationError(`${fieldName} is invalid`);
+  }
+  return san;
 }
 
 function validUuid(value, fieldName) {
@@ -187,14 +230,14 @@ function normalizeIssuerRef(value) {
   return {
     group: optionalString(value.group, "issuerRef.group", 253) || "cert-manager.io",
     kind: optionalString(value.kind, "issuerRef.kind", 253) || "Issuer",
-    name: validKubernetesName(value.name, "issuerRef.name"),
+    name: validKubernetesResourceName(value.name, "issuerRef.name"),
   };
 }
 
 function normalizeCertificateRequestRef(value) {
   if (value === undefined || value === null) return null;
   assertKnownFields(value, REQUEST_REF_FIELDS, "certificateRequestRef");
-  const normalized = { name: validKubernetesName(value.name, "certificateRequestRef.name") };
+  const normalized = { name: validKubernetesResourceName(value.name, "certificateRequestRef.name") };
   if (value.uid !== undefined && value.uid !== null && value.uid !== "") {
     normalized.uid = validUuid(value.uid, "certificateRequestRef.uid");
   }
@@ -205,8 +248,16 @@ function normalizeDnsNames(value) {
   if (!Array.isArray(value) || value.length > MAX_DNS_NAMES) {
     throw observationError("dnsNames is invalid");
   }
-  const names = value.map((name) => validKubernetesName(name, "dnsNames item"));
+  const names = value.map((name) => validCertificateDnsName(name, "dnsNames item"));
   return [...new Set(names)].sort();
+}
+
+function normalizePublicSubjectAltNames(value) {
+  if (!Array.isArray(value) || value.length > MAX_DNS_NAMES) {
+    throw observationError("publicCertificate.subjectAltNames is invalid");
+  }
+  const names = value.map((name) => validPublicSan(name, "publicCertificate.subjectAltNames item"));
+  return [...new Set(names)];
 }
 
 function normalizeConditions(value, redaction) {
@@ -257,7 +308,7 @@ function normalizePublicCertificate(value) {
     if (normalizedValue) normalized[fieldName] = normalizedValue;
   }
   if (value.subjectAltNames !== undefined) {
-    normalized.subjectAltNames = normalizeDnsNames(value.subjectAltNames);
+    normalized.subjectAltNames = normalizePublicSubjectAltNames(value.subjectAltNames);
   }
   if (value.publicKeySize !== undefined && value.publicKeySize !== null) {
     if (!Number.isSafeInteger(value.publicKeySize) || value.publicKeySize < 1 || value.publicKeySize > 16384) {
@@ -293,11 +344,11 @@ function normalizeControllerObservation(value) {
     idempotencyKey: validSha256(value.idempotencyKey, "idempotencyKey"),
     workspaceId: validUuid(value.workspaceId, "workspaceId"),
     clusterId: validClusterId(value.clusterId),
-    namespace: validKubernetesName(value.namespace, "namespace", 63),
-    certificateName: validKubernetesName(value.certificateName, "certificateName"),
+    namespace: validKubernetesLabel(value.namespace, "namespace"),
+    certificateName: validKubernetesResourceName(value.certificateName, "certificateName"),
     certificateUid: validUuid(value.certificateUid, "certificateUid"),
     issuerRef: normalizeIssuerRef(value.issuerRef),
-    secretName: value.secretName === null ? null : validKubernetesName(value.secretName, "secretName"),
+    secretName: value.secretName === null ? null : validKubernetesResourceName(value.secretName, "secretName"),
     certificateRequestRef: normalizeCertificateRequestRef(value.certificateRequestRef),
     dnsNames: normalizeDnsNames(value.dnsNames),
     conditions: normalizeConditions(value.conditions, redaction),
@@ -353,11 +404,75 @@ function targetSourceRefFor(observation) {
   return `${observation.clusterId}/${observation.namespace}/${observation.secretName}`;
 }
 
+function subjectDnParts(subject) {
+  if (typeof subject !== "string" || subject.length === 0 || subject.length > MAX_TEXT) {
+    return [];
+  }
+  const parts = [];
+  let value = "";
+  let escaped = false;
+  for (const character of subject) {
+    if (escaped) {
+      value += `\\${character}`;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === "," || character === "\n" || character === "\r") {
+      if (value.trim()) parts.push(value.trim());
+      value = "";
+      continue;
+    }
+    value += character;
+  }
+  if (escaped) return [];
+  if (value.trim()) parts.push(value.trim());
+  return parts;
+}
+
+function commonNameFromSubject(subject) {
+  for (const attribute of subjectDnParts(subject)) {
+    const match = /^CN\s*=\s*(.+)$/i.exec(attribute);
+    if (!match || match[1].includes("\\")) continue;
+    try {
+      return validCertificateDnsName(match[1].trim(), "publicCertificate.subject CN");
+    } catch (_error) {
+      // A malformed or non-DNS DN must not be stored as a common name.
+    }
+  }
+  return null;
+}
+
+function firstValidDnsSan(observation) {
+  for (const candidate of observation.publicCertificate?.subjectAltNames || []) {
+    if (net.isIP(candidate) !== 0) continue;
+    try {
+      return validCertificateDnsName(candidate, "certificate DNS SAN");
+    } catch (_error) {
+      // Public SANs can legitimately be IP, URI, or email identities.
+    }
+  }
+  for (const candidate of observation.dnsNames || []) {
+    try {
+      return validCertificateDnsName(candidate, "certificate DNS SAN");
+    } catch (_error) {
+      // Observation dnsNames are independently validated at the boundary.
+    }
+  }
+  return null;
+}
+
 function certificateFor(observation) {
   const publicCertificate = observation.publicCertificate || {};
   return {
     certificatePem: publicCertificate.certificatePem || null,
-    commonName: publicCertificate.subject || observation.dnsNames[0] || observation.certificateName,
+    commonName:
+      commonNameFromSubject(publicCertificate.subject) ||
+      firstValidDnsSan(observation) ||
+      observation.certificateName,
     fingerprintSha256: publicCertificate.fingerprintSha256 || null,
     issuer: publicCertificate.issuer || null,
     notAfter: observation.notAfter || null,
@@ -432,34 +547,20 @@ async function upsertControllerTarget(client, observation) {
     observationOnly: true,
     secretName: observation.secretName,
   });
-  const existing = await client.query(
-    `SELECT id FROM certificate_targets
-      WHERE workspace_id = $1 AND source = 'cert_manager' AND source_ref = $2
-      FOR UPDATE`,
-    [observation.workspaceId, sourceRef],
-  );
-  if (existing.rows[0]) {
-    const result = await client.query(
-      `UPDATE certificate_targets
-          SET name = $3, target_type = 'kubernetes-secret', status = 'active',
-              deployment_reference = $4, public_metadata = $5::jsonb, updated_at = NOW()
-        WHERE workspace_id = $1 AND id = $2
-        RETURNING *`,
-      [
-        observation.workspaceId,
-        existing.rows[0].id,
-        observation.secretName,
-        `k8s://${observation.clusterId}/${observation.namespace}/secret/${observation.secretName}`,
-        metadata,
-      ],
-    );
-    return result.rows[0];
-  }
   const result = await client.query(
     `INSERT INTO certificate_targets (
        workspace_id, name, target_type, status, source, source_ref,
        deployment_reference, public_metadata
      ) VALUES ($1, $2, 'kubernetes-secret', 'active', 'cert_manager', $3, $4, $5::jsonb)
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source = 'cert_manager' AND source_ref IS NOT NULL
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       target_type = 'kubernetes-secret',
+       status = 'active',
+       deployment_reference = EXCLUDED.deployment_reference,
+       public_metadata = EXCLUDED.public_metadata,
+       updated_at = NOW()
      RETURNING *`,
     [
       observation.workspaceId,
@@ -706,7 +807,13 @@ module.exports = {
   stableStringify,
   validateAuthenticatedObservationBinding,
   _test: {
+    certificateFor,
+    commonNameFromSubject,
     normalizeControllerObservation,
+    validCertificateDnsName,
+    validKubernetesLabel,
+    validKubernetesResourceName,
+    validPublicSan,
     semanticObservation,
     semanticRequestHash,
     stableStringify,

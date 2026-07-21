@@ -10,6 +10,7 @@ const {
   normalizeControllerObservation,
   semanticRequestHash,
   validateAuthenticatedObservationBinding,
+  _test,
 } = require("../../apps/api/services/certops/controllerObservations");
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
@@ -89,6 +90,79 @@ describe("controller observation normalization", () => {
     assert.throws(
       () => validateAuthenticatedObservationBinding({ workspaceId, controllerClusterId: "other" }, normalized),
       { code: CERTOPS_CONTROLLER_OBSERVATION_CLUSTER_MISMATCH },
+    );
+  });
+
+  it("separates Kubernetes labels and resource names from certificate DNS and public SAN identities", () => {
+    const normalized = normalizeControllerObservation(observation({
+      namespace: "certops",
+      certificateName: "certificate.example.com",
+      secretName: "secret.example.com",
+      certificateRequestRef: { name: "request.example.com" },
+      dnsNames: ["*.example.com", "api.example.com"],
+      publicCertificate: {
+        fingerprintSha256: "b".repeat(64),
+        subjectAltNames: [
+          "*.example.com",
+          "192.0.2.1",
+          "2001:db8::1",
+          "spiffe://example.test/ns/certops/sa/controller",
+          "certops@example.com",
+        ],
+      },
+    })).observation;
+    assert.deepEqual(normalized.dnsNames, ["*.example.com", "api.example.com"]);
+    assert.deepEqual(normalized.publicCertificate.subjectAltNames, [
+      "*.example.com",
+      "192.0.2.1",
+      "2001:db8::1",
+      "spiffe://example.test/ns/certops/sa/controller",
+      "certops@example.com",
+    ]);
+    assert.throws(
+      () => normalizeControllerObservation(observation({ dnsNames: ["api.*.example.com"] })),
+      { code: CERTOPS_CONTROLLER_OBSERVATION_INVALID },
+    );
+    assert.throws(
+      () => normalizeControllerObservation(observation({ namespace: "team.prod" })),
+      { code: CERTOPS_CONTROLLER_OBSERVATION_INVALID },
+    );
+  });
+
+  it("derives a safe common name from a DN, DNS SAN, or resource-name fallback", () => {
+    const certificateFor = _test.certificateFor;
+    assert.equal(
+      certificateFor(observation({ publicCertificate: { subject: "CN=example.com, O=TokenTimer" } })).commonName,
+      "example.com",
+    );
+    assert.equal(
+      certificateFor(observation({ publicCertificate: { subject: "CN=api.example.com\nO=TokenTimer" } })).commonName,
+      "api.example.com",
+    );
+    assert.equal(
+      certificateFor(observation({
+        dnsNames: ["fallback.example.com"],
+        publicCertificate: { subject: "CN=bad\\,example.com, O=TokenTimer" },
+      })).commonName,
+      "fallback.example.com",
+    );
+    assert.equal(
+      certificateFor(observation({
+        dnsNames: ["fallback.example.com"],
+        publicCertificate: { subject: "CN=, O=TokenTimer" },
+      })).commonName,
+      "fallback.example.com",
+    );
+    assert.equal(
+      certificateFor(observation({
+        dnsNames: [],
+        publicCertificate: { subjectAltNames: ["192.0.2.1", "api.example.com"] },
+      })).commonName,
+      "api.example.com",
+    );
+    assert.equal(
+      certificateFor(observation({ dnsNames: [], publicCertificate: null })).commonName,
+      "example-com",
     );
   });
 });

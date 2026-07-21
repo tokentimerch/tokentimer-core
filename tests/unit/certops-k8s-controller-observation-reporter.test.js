@@ -7,8 +7,42 @@ const {
   idempotencyKeyFor,
 } = require("../../apps/k8s-controller/src/observation-envelope");
 const {
+  MAX_RESPONSE_BYTES,
+  boundedJson,
   createControllerObservationReporter,
 } = require("../../apps/k8s-controller/src/observation-reporter");
+
+const token = `ttx_${"a".repeat(16)}_${"b".repeat(64)}`;
+
+function reporterOptions(overrides = {}) {
+  return {
+    apiUrl: "https://api.example.test",
+    apiTokenFile: "C:\\token",
+    fsOptions: {
+      fsImpl: {
+        statSync: () => ({ isFile: () => true, mode: 0o600 }),
+        readFileSync: () => token,
+      },
+      platform: "win32",
+    },
+    random: () => 0,
+    sleep: async () => {},
+    ...overrides,
+  };
+}
+
+function successfulResponse(duplicate = false) {
+  return {
+    status: duplicate ? 200 : 201,
+    headers: { get: () => null },
+    text: async () => JSON.stringify({
+      managedCertificateId: "33333333-3333-4333-8333-333333333333",
+      targetId: "44444444-4444-4444-8444-444444444444",
+      certificateInstanceId: null,
+      duplicate,
+    }),
+  };
+}
 
 function observation(overrides = {}) {
   return {
@@ -124,5 +158,121 @@ describe("controller observation reporter", () => {
     assert.match(calls[0].headers.Authorization, /^Bearer ttx_/);
     await reporter.stopAcceptingWork();
     await assert.rejects(() => reporter.report(observation()), { code: "CONTROLLER_REPORTER_STOPPING" });
+  });
+
+  it("retries a wrapped Node fetch transport failure with the same envelope", async () => {
+    const calls = [];
+    const reporter = createControllerObservationReporter(reporterOptions({
+      fetchImpl: async (_url, options) => {
+        calls.push(options);
+        if (calls.length === 1) {
+          const error = new TypeError("fetch failed");
+          error.cause = { code: "ECONNREFUSED" };
+          throw error;
+        }
+        return successfulResponse();
+      },
+    }));
+    await reporter.start();
+    await reporter.report(observation());
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].body, calls[1].body);
+    assert.equal(calls[0].headers["Idempotency-Key"], calls[1].headers["Idempotency-Key"]);
+    assert.match(JSON.parse(calls[0].body).observationId, /^[0-9a-f-]{36}$/i);
+  });
+
+  it("does not retry unknown wrapped failures or permanent HTTP responses", async () => {
+    let unknownAttempts = 0;
+    const unknownReporter = createControllerObservationReporter(reporterOptions({
+      fetchImpl: async () => {
+        unknownAttempts += 1;
+        const error = new TypeError("fetch failed");
+        error.cause = { code: "UNEXPECTED_FAILURE" };
+        throw error;
+      },
+    }));
+    await unknownReporter.start();
+    await assert.rejects(() => unknownReporter.report(observation()), TypeError);
+    assert.equal(unknownAttempts, 1);
+
+    let permanentAttempts = 0;
+    const permanentReporter = createControllerObservationReporter(reporterOptions({
+      fetchImpl: async () => {
+        permanentAttempts += 1;
+        return { status: 422, headers: { get: () => null }, text: async () => "{}" };
+      },
+    }));
+    await permanentReporter.start();
+    await assert.rejects(() => permanentReporter.report(observation()), {
+      code: "CONTROLLER_REPORTER_HTTP_422",
+    });
+    assert.equal(permanentAttempts, 1);
+  });
+
+  it("retries HTTP 408, 429, and 5xx responses", async () => {
+    for (const status of [408, 429, 503]) {
+      let attempts = 0;
+      const reporter = createControllerObservationReporter(reporterOptions({
+        fetchImpl: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            return {
+              status,
+              headers: { get: (name) => name === "retry-after" && status === 429 ? "1" : null },
+              text: async () => "{}",
+            };
+          }
+          return successfulResponse();
+        },
+      }));
+      await reporter.start();
+      await reporter.report(observation({ resourceVersion: String(status) }));
+      assert.equal(attempts, 2);
+    }
+  });
+
+  it("stops an in-flight request without scheduling another retry", async () => {
+    let attempts = 0;
+    let sleepCalls = 0;
+    let requestStarted;
+    const started = new Promise((resolve) => { requestStarted = resolve; });
+    const reporter = createControllerObservationReporter(reporterOptions({
+      sleep: async () => { sleepCalls += 1; },
+      fetchImpl: async (_url, options) => {
+        attempts += 1;
+        requestStarted();
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          }, { once: true });
+        });
+      },
+    }));
+    await reporter.start();
+    const reporting = reporter.report(observation());
+    await started;
+    await reporter.stopAcceptingWork();
+    await assert.rejects(() => reporting, { code: "CONTROLLER_REPORTER_STOPPING" });
+    assert.equal(attempts, 1);
+    assert.equal(sleepCalls, 0);
+  });
+
+  it("bounds streamed response bodies before consuming an unbounded payload", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_RESPONSE_BYTES + 1));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assert.rejects(
+      () => boundedJson({ body: stream }),
+      { code: "CONTROLLER_REPORTER_INVALID_RESPONSE" },
+    );
+    assert.equal(cancelled, true);
   });
 });

@@ -96,7 +96,7 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
+                anyOf:
                   - type: object
                     required: [loggedIn]
                     properties:
@@ -5156,8 +5156,8 @@ components:
         idempotencyKey: { type: string, pattern: "^[a-f0-9]{64}$" }
         workspaceId: { type: string, format: uuid }
         clusterId: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
-        namespace: { type: string, minLength: 1, maxLength: 63 }
-        certificateName: { type: string, minLength: 1, maxLength: 253 }
+        namespace: { type: string, minLength: 1, maxLength: 63, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+        certificateName: { type: string, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
         certificateUid: { type: string, format: uuid }
         certificateGeneration: { type: integer, minimum: 0 }
         resourceVersion: { type: string, maxLength: 256 }
@@ -5168,20 +5168,20 @@ components:
           properties:
             group: { type: string, maxLength: 253 }
             kind: { type: string, maxLength: 253 }
-            name: { type: string, minLength: 1, maxLength: 253 }
-        secretName: { type: string, nullable: true, maxLength: 253 }
+            name: { type: string, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+        secretName: { type: string, nullable: true, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
         certificateRequestRef:
           type: object
           nullable: true
           additionalProperties: false
           required: [name]
           properties:
-            name: { type: string, minLength: 1, maxLength: 253 }
+            name: { type: string, minLength: 1, maxLength: 253, pattern: "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
             uid: { type: string, format: uuid }
         dnsNames:
           type: array
           maxItems: 64
-          items: { type: string, minLength: 1, maxLength: 253 }
+          items: { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
         revision: { type: integer, minimum: 0 }
         conditions:
           type: array
@@ -5211,7 +5211,16 @@ components:
             serialNumber: { type: string, maxLength: 1024 }
             subject: { type: string, maxLength: 1024 }
             issuer: { type: string, maxLength: 1024 }
-            subjectAltNames: { type: array, maxItems: 64, items: { type: string, maxLength: 253 } }
+            subjectAltNames:
+              type: array
+              maxItems: 64
+              items:
+                oneOf:
+                  - { type: string, minLength: 1, maxLength: 253, pattern: "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+                  - { type: string, format: ipv4, maxLength: 253 }
+                  - { type: string, format: ipv6, maxLength: 253 }
+                  - { type: string, format: uri, maxLength: 253, pattern: "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$" }
+                  - { type: string, format: email, maxLength: 253, pattern: "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" }
             publicKeyAlgorithm: { type: string, maxLength: 1024 }
             publicKeySize: { type: integer, minimum: 1, maximum: 16384 }
             signatureAlgorithm: { type: string, maxLength: 1024 }
