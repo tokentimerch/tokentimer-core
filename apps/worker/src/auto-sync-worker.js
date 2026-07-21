@@ -278,6 +278,9 @@ async function runAutoSync() {
             : {};
           let scanUrl;
           let scanBody;
+          const filterRules = Array.isArray(scan_params?.filterRules)
+            ? scan_params.filterRules
+            : undefined;
 
           switch (provider) {
             case "github":
@@ -292,6 +295,7 @@ async function runAutoSync() {
                   secrets: true,
                 },
                 maxItems: scan_params?.maxItems || 500,
+                filterRules,
               };
               break;
             case "gitlab":
@@ -302,6 +306,7 @@ async function runAutoSync() {
                 include: scan_params?.include || { tokens: true, keys: true },
                 maxItems: scan_params?.maxItems || 500,
                 filters: scan_params?.filters || {},
+                filterRules,
               };
               break;
             default:
@@ -321,17 +326,66 @@ async function runAutoSync() {
           //    what a user gets when importing manually from the dashboard.
           let importedCount = 0;
           let importErrorCount = 0;
+          let deletedCount = 0;
           if (itemsCount > 0) {
             const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
+            // Cleanup of obsolete tokens is only attempted when the scan
+            // returned at least one item, so an empty/broken scan can never
+            // mass-delete a workspace.
+            let cleanup;
+            if (scan_params?.cleanupObsolete === true) {
+              const scannedSources = [];
+              if (provider === "gitlab") {
+                const f = scan_params?.filters || {};
+                if (f.includePATs !== false) scannedSources.push("gitlab-pat");
+                if (f.includeProjectTokens !== false)
+                  scannedSources.push("gitlab-project-token");
+                if (f.includeGroupTokens !== false)
+                  scannedSources.push("gitlab-group-token");
+                if (f.includeDeployTokens !== false)
+                  scannedSources.push("gitlab-deploy-token");
+                if (f.includeTriggerTokens === true)
+                  scannedSources.push("gitlab-trigger-token");
+                if (f.includeSSHKeys === true)
+                  scannedSources.push("gitlab-ssh-key");
+              } else if (provider === "github") {
+                const inc = scan_params?.include || {
+                  tokens: true,
+                  sshKeys: true,
+                  deployKeys: true,
+                  secrets: true,
+                };
+                if (inc.sshKeys) scannedSources.push("github-ssh-key");
+                if (inc.deployKeys) scannedSources.push("github-deploy-key");
+                if (inc.secrets) scannedSources.push("github-secret");
+              }
+              if (scannedSources.length > 0) {
+                cleanup = {
+                  enabled: true,
+                  provider,
+                  scannedSources,
+                  scannedLocations: (scanResult.items || [])
+                    .map((it) => it.location)
+                    .filter(Boolean),
+                  reason: "auto_sync_cleanup",
+                };
+              }
+            }
             const importResponse = await axios.post(
               importUrl,
-              { items: scanResult.items },
+              { items: scanResult.items, ...(cleanup ? { cleanup } : {}) },
               { timeout: 60000, headers: authHeaders },
             );
             const importResult = importResponse.data || {};
             importedCount =
               (importResult.created_count || 0) + (importResult.updated_count || 0);
             importErrorCount = importResult.error_count || 0;
+            deletedCount = importResult.deleted_count || 0;
+            if (deletedCount > 0) {
+              logger.info(
+                `Auto-sync cleanup removed ${deletedCount} obsolete token(s) for config ${config.id}`,
+              );
+            }
           }
 
           // A run only counts as a real success if items that were scanned

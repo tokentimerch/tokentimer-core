@@ -1205,6 +1205,7 @@ export const gitlabAPI = {
     include = { tokens: true, keys: true },
     maxItems = 500,
     filters = {},
+    filterRules = undefined,
   }) => {
     if (!workspaceId) {
       throw new Error('workspaceId is required for integration scans');
@@ -1216,6 +1217,9 @@ export const gitlabAPI = {
         include,
         maxItems,
         filters,
+        ...(Array.isArray(filterRules) && filterRules.length > 0
+          ? { filterRules }
+          : {}),
       };
 
       // Use axios.request with explicit config to ensure timeout is applied
@@ -1252,6 +1256,7 @@ export const githubAPI = {
     token,
     include = { tokens: true, sshKeys: true, deployKeys: true, secrets: true },
     maxItems = 500,
+    filterRules = undefined,
   }) => {
     if (!workspaceId) {
       throw new Error('workspaceId is required for integration scans');
@@ -1262,6 +1267,9 @@ export const githubAPI = {
         token,
         include,
         maxItems,
+        ...(Array.isArray(filterRules) && filterRules.length > 0
+          ? { filterRules }
+          : {}),
       };
       // Use axios.request with explicit config to ensure timeout is applied
       const res = await apiClient.request({
@@ -1469,13 +1477,23 @@ export const azureADAPI = {
 
 // Generic integration import API (shared for all integrations)
 export const integrationAPI = {
-  import: async ({ workspaceId, items, defaults = {} }) => {
+  import: async ({
+    workspaceId,
+    items,
+    defaults = {},
+    filterRules,
+    cleanup,
+  }) => {
     try {
       const payload = {
         items,
         default_category: defaults.category,
         default_type: defaults.type,
         contact_group_id: defaults.contact_group_id || null,
+        ...(Array.isArray(filterRules) && filterRules.length > 0
+          ? { filterRules }
+          : {}),
+        ...(cleanup && cleanup.enabled === true ? { cleanup } : {}),
       };
       const res = await apiClient.post(
         API_ENDPOINTS.INTEGRATION_IMPORT(workspaceId),
@@ -1483,17 +1501,22 @@ export const integrationAPI = {
       );
       const createdCount = res?.data?.created_count || 0;
       const updatedCount = res?.data?.updated_count || 0;
+      const deletedCount = res?.data?.deleted_count || 0;
+      const deletedSuffix =
+        deletedCount > 0
+          ? `, removed ${deletedCount} obsolete token${deletedCount !== 1 ? 's' : ''}`
+          : '';
       if (updatedCount > 0 && createdCount > 0) {
         showSuccessMessage(
-          `Imported ${createdCount} new token${createdCount !== 1 ? 's' : ''}, updated ${updatedCount} existing token${updatedCount !== 1 ? 's' : ''}`
+          `Imported ${createdCount} new token${createdCount !== 1 ? 's' : ''}, updated ${updatedCount} existing token${updatedCount !== 1 ? 's' : ''}${deletedSuffix}`
         );
       } else if (updatedCount > 0) {
         showSuccessMessage(
-          `Updated ${updatedCount} existing token${updatedCount !== 1 ? 's' : ''}`
+          `Updated ${updatedCount} existing token${updatedCount !== 1 ? 's' : ''}${deletedSuffix}`
         );
       } else {
         showSuccessMessage(
-          `Imported ${createdCount} token${createdCount !== 1 ? 's' : ''}`
+          `Imported ${createdCount} token${createdCount !== 1 ? 's' : ''}${deletedSuffix}`
         );
       }
       return res.data;

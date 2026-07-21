@@ -928,6 +928,8 @@ export default function ImportTokensModal({
     React.useState(true);
   const [gitlabIncludeDeployTokens, setGitlabIncludeDeployTokens] =
     React.useState(true);
+  const [gitlabIncludeTriggerTokens, setGitlabIncludeTriggerTokens] =
+    React.useState(false);
   const [gitlabIncludeSSHKeys, setGitlabIncludeSSHKeys] = React.useState(false);
   const [gitlabExcludeUserPATs, setGitlabExcludeUserPATs] =
     React.useState(true);
@@ -1015,6 +1017,9 @@ export default function ImportTokensModal({
 
   // Auto-sync state
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
+  const [restoredFilterRules, setRestoredFilterRules] = React.useState(null);
+  const [restoredCleanupObsolete, setRestoredCleanupObsolete] =
+    React.useState(null);
   const [savingAutoSync, setSavingAutoSync] = React.useState(false);
   const [runningAutoSyncNow, setRunningAutoSyncNow] = React.useState(false);
   const autoSyncPollCancelRef = React.useRef(false);
@@ -1066,6 +1071,12 @@ export default function ImportTokensModal({
         // Restore non-secret form fields from scan_params when auto-sync is already configured
         if (existing && existing.scan_params) {
           const sp = existing.scan_params;
+          setRestoredFilterRules(
+            Array.isArray(sp.filterRules) ? sp.filterRules : null
+          );
+          setRestoredCleanupObsolete(
+            typeof sp.cleanupObsolete === 'boolean' ? sp.cleanupObsolete : null
+          );
           switch (source) {
             case 'github':
               if (sp.baseUrl) setGithubBaseUrl(sp.baseUrl);
@@ -1093,6 +1104,10 @@ export default function ImportTokensModal({
                   setGitlabIncludeGroupTokens(sp.filters.includeGroupTokens);
                 if (sp.filters.includeDeployTokens !== undefined)
                   setGitlabIncludeDeployTokens(sp.filters.includeDeployTokens);
+                if (sp.filters.includeTriggerTokens !== undefined)
+                  setGitlabIncludeTriggerTokens(
+                    sp.filters.includeTriggerTokens
+                  );
                 if (sp.filters.includeSSHKeys !== undefined)
                   setGitlabIncludeSSHKeys(sp.filters.includeSSHKeys);
                 if (sp.filters.excludeUserPATs !== undefined)
@@ -1144,6 +1159,11 @@ export default function ImportTokensModal({
           }
         } else if (source === 'aws') {
           setAwsAutoSyncScanParams(null);
+          setRestoredFilterRules(null);
+          setRestoredCleanupObsolete(null);
+        } else {
+          setRestoredFilterRules(null);
+          setRestoredCleanupObsolete(null);
         }
       } catch (_) {
         setAutoSyncConfig(false);
@@ -1213,6 +1233,7 @@ export default function ImportTokensModal({
             includeProjectTokens: gitlabIncludeProjectTokens,
             includeGroupTokens: gitlabIncludeGroupTokens,
             includeDeployTokens: gitlabIncludeDeployTokens,
+            includeTriggerTokens: gitlabIncludeTriggerTokens,
             includeSSHKeys: gitlabIncludeSSHKeys,
             excludeUserPATs: gitlabExcludeUserPATs,
             includeExpired: gitlabIncludeExpired,
@@ -2634,6 +2655,8 @@ export default function ImportTokensModal({
                   extractQuotaFromError={extractQuotaFromError}
                   autoSyncManageMode={autoSyncManageMode}
                   contactGroups={contactGroups}
+                  initialFilterRules={restoredFilterRules}
+                  initialCleanupObsolete={restoredCleanupObsolete}
                 />
               ) : null}
 
@@ -2663,6 +2686,8 @@ export default function ImportTokensModal({
                   formatQuotaError={formatQuotaError}
                   extractQuotaFromError={extractQuotaFromError}
                   contactGroups={contactGroups}
+                  initialFilterRules={restoredFilterRules}
+                  initialCleanupObsolete={restoredCleanupObsolete}
                 />
               ) : null}
 

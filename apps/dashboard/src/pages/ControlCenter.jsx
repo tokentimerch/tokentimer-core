@@ -1039,7 +1039,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     return 'Registered in this workspace';
   }, [activeManagedCerts, certOpsLoading, managedCertCount]);
 
-  const neverExpiresCount = neverExpires.length || buckets.neverExpires || 0;
+  // Prefer the workspace-wide aggregate: neverExpires is a preview list capped
+  // by the backend (LIMIT 12), so its length undercounts large inventories.
+  const neverExpiresCount = buckets.neverExpires ?? neverExpires.length ?? 0;
 
   const usageRatio = alertData.planInfo.alertLimitMonth
     ? Math.min(

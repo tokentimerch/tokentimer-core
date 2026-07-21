@@ -18,6 +18,7 @@ import { githubAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
+import FilterRulesEditor, { sanitizeFilterRules } from '../FilterRulesEditor';
 
 function getGitHubItemDetails(item) {
   const details = [];
@@ -97,6 +98,8 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     contactGroups,
     onSelectionChange,
     autoSyncManageMode = false,
+    initialFilterRules = null,
+    initialCleanupObsolete = null,
   },
   ref
 ) {
@@ -123,6 +126,24 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
   const [showSecret, setShowSecret] = React.useState(false);
   const [bulkSection, setBulkSection] = React.useState('');
   const [bulkContactGroupId, setBulkContactGroupId] = React.useState('');
+  const [filterRules, setFilterRules] = React.useState([]);
+  const [filterSummary, setFilterSummary] = React.useState(null);
+  const [cleanupObsolete, setCleanupObsolete] = React.useState(false);
+  // Source kinds included in the last scan; cleanup only touches these.
+  const [lastScanSources, setLastScanSources] = React.useState([]);
+
+  // Restore persisted rules from auto-sync scan_params
+  React.useEffect(() => {
+    if (Array.isArray(initialFilterRules)) {
+      setFilterRules(initialFilterRules);
+    }
+  }, [initialFilterRules]);
+
+  React.useEffect(() => {
+    if (typeof initialCleanupObsolete === 'boolean') {
+      setCleanupObsolete(initialCleanupObsolete);
+    }
+  }, [initialCleanupObsolete]);
 
   React.useEffect(() => {
     onSelectionChange && onSelectionChange(selectedRowsGithub.size);
@@ -146,6 +167,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     setIsScanning(true);
     setGithubItems([]);
     setGithubSummary([]);
+    setFilterSummary(null);
     try {
       const res = await githubAPI.scan({
         workspaceId,
@@ -158,10 +180,17 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           deployKeys: githubIncludeDeployKeys,
           secrets: githubIncludeSecrets,
         },
+        filterRules: sanitizeFilterRules(filterRules),
       });
       const items = Array.isArray(res?.items) ? res.items : [];
       setGithubItems(items);
       setGithubSummary(Array.isArray(res?.summary) ? res.summary : []);
+      setFilterSummary(res?.filterSummary || null);
+      const scannedSources = [];
+      if (githubIncludeSSHKeys) scannedSources.push('github-ssh-key');
+      if (githubIncludeDeployKeys) scannedSources.push('github-deploy-key');
+      if (githubIncludeSecrets) scannedSources.push('github-secret');
+      setLastScanSources(scannedSources);
       if (items.length > 0) {
         onScanSuccess && onScanSuccess('github');
       }
@@ -178,6 +207,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     } catch (e) {
       setGithubItems([]);
       setGithubSummary([]);
+      setFilterSummary(null);
       if (isQuotaExceededError && isQuotaExceededError(e)) {
         onError && onError(formatQuotaError ? formatQuotaError(e) : e?.message);
       } else {
@@ -199,6 +229,39 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     });
   };
 
+  // One-click "exclude this token": appends an exact-match exclude rule and
+  // drops the row from the current preview.
+  const excludeGithubItem = index => {
+    const item = githubItems[index];
+    if (!item || !item.name) return;
+    setFilterRules(prev => [
+      ...prev,
+      {
+        action: 'exclude',
+        matchType: 'exact',
+        field: 'name',
+        value: item.name,
+      },
+    ]);
+    setGithubItems(prev => prev.filter((_, i) => i !== index));
+    setSelectedRowsGithub(prev => {
+      const next = new Set();
+      prev.forEach(i => {
+        if (i === index) return;
+        next.add(i > index ? i - 1 : i);
+      });
+      return next;
+    });
+    setFilterSummary(prev =>
+      prev
+        ? {
+            matchedCount: Math.max(0, (prev.matchedCount || 0) - 1),
+            excludedCount: (prev.excludedCount || 0) + 1,
+          }
+        : { matchedCount: githubItems.length - 1, excludedCount: 1 }
+    );
+  };
+
   const importGithubSelected = async () => {
     try {
       const selected = githubItems
@@ -217,6 +280,19 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
         workspaceId,
         items: selected,
         defaults: {},
+        cleanup:
+          cleanupObsolete && lastScanSources.length > 0
+            ? {
+                enabled: true,
+                provider: 'github',
+                scannedSources: lastScanSources,
+                // All rediscovered locations (whole scan, not just selection)
+                // so unselected-but-still-present tokens are never deleted.
+                scannedLocations: githubItems
+                  .map(it => it.location)
+                  .filter(Boolean),
+              }
+            : undefined,
       });
       onImportComplete && onImportComplete(selected);
     } catch (e) {
@@ -240,6 +316,8 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           deployKeys: githubIncludeDeployKeys,
           secrets: githubIncludeSecrets,
         },
+        filterRules: sanitizeFilterRules(filterRules),
+        cleanupObsolete,
       },
     }),
   }));
@@ -349,8 +427,38 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
           >
             Repository Secrets
           </Checkbox>
+          <Checkbox
+            isChecked={cleanupObsolete}
+            onChange={e => setCleanupObsolete(e.target.checked)}
+            size='sm'
+            colorScheme='red'
+          >
+            Remove previously imported tokens no longer found at the source
+          </Checkbox>
+          {cleanupObsolete ? (
+            <Text fontSize='xs' color='red.400' pl={6}>
+              Deletes TokenTimer entries (scoped to the scanned GitHub item
+              types) that are missing from this scan. This cannot be undone.
+            </Text>
+          ) : null}
         </VStack>
       </Box>
+      <FilterRulesEditor
+        rules={filterRules}
+        onChange={setFilterRules}
+        borderColor={borderColor}
+        helpTextColor={helpTextColor}
+      />
+      {!autoSyncManageMode && filterSummary ? (
+        <HStack spacing={2}>
+          <Badge colorScheme='green'>
+            {filterSummary.matchedCount} matched
+          </Badge>
+          <Badge colorScheme='red'>
+            {filterSummary.excludedCount} excluded by rules
+          </Badge>
+        </HStack>
+      ) : null}
       {!autoSyncManageMode && githubSummary.length > 0 && (
         <Box
           border='1px solid'
@@ -397,6 +505,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
             getDetailsForItem={getGitHubItemDetails}
             onUpdateItem={updateGithubItem}
             duplicateIndices={githubDuplicates}
+            onExcludeItem={excludeGithubItem}
           />
           <BulkIntegrationAssignment
             selectedCount={selectedRowsGithub.size}
