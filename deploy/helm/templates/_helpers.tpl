@@ -203,6 +203,7 @@ DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 {{- if .Values.config.alertThresholds }}
 ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
 {{- end }}
+CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnabled false)) | quote }}
 {{- if not .Values.config.existingSecret }}
 {{- if not .Values.config.disableAdminBootstrap }}
 ADMIN_EMAIL: {{ .Values.config.adminEmail | required "config.adminEmail is required for initial admin setup (or set config.disableAdminBootstrap=true / config.existingSecret)" | quote }}

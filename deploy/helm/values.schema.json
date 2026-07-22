@@ -15,7 +15,8 @@
         "baseUrl": { "type": "string", "format": "uri" },
         "apiUrl": { "type": "string", "format": "uri" },
         "trustProxyHops": { "type": "integer", "minimum": 0, "maximum": 32 },
-        "alertThresholds": { "type": "string", "pattern": "^[0-9]+(,[0-9]+)*$" }
+        "alertThresholds": { "type": "string", "pattern": "^[0-9]+(,[0-9]+)*$" },
+        "certopsEnabled": { "type": "boolean" }
       }
     },
     "api": {
