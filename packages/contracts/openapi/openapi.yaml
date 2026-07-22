@@ -7160,7 +7160,7 @@ components:
           items:
             type: object
             additionalProperties: true
-            description: Job-payload fields (job-payload.schema.json) plus jobId, workspaceId, action, claimId, leaseExpiresAt, attemptCount, and the Ed25519 dispatch-integrity fields below.
+            description: Job-payload fields (job-payload.schema.json) plus jobId, workspaceId, action, claimId, attemptId, leaseExpiresAt, attemptCount, and the Ed25519 dispatch-integrity fields below.
             required:
               - jobId
               - nonce
@@ -7179,6 +7179,9 @@ components:
               claimId:
                 type: string
                 description: Claim identifier the agent must echo back with the result (ownership re-proof).
+              attemptId:
+                type: string
+                description: Server-assigned attempt id mirroring claimId, so a schema-minimal result report (attemptId only) still re-proves claim ownership.
               leaseExpiresAt:
                 type: string
                 format: date-time

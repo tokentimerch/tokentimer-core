@@ -216,13 +216,18 @@ function validateEnvelopeBody(messageType, body, problems) {
   }
 
   if (messageType === MESSAGE_TYPES.RESULT) {
-    if (!checkExactObject(body, new Set(["jobId", "attemptId", "status", "rejectionReason", "keyRotated", "errorMessage"]), ["jobId", "attemptId", "status"], label, problems)) return;
+    if (!checkExactObject(body, new Set(["jobId", "attemptId", "status", "rejectionReason", "keyRotated", "errorMessage", "claimId", "nonce"]), ["jobId", "attemptId", "status"], label, problems)) return;
     checkString(body.jobId, "result body.jobId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
     checkString(body.attemptId, "result body.attemptId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
     if (!RESULT_STATUS_VALUES.has(body.status)) problems.push("result body.status is invalid");
     if (body.rejectionReason !== undefined && body.rejectionReason !== null && !REJECTION_REASON_VALUES.has(body.rejectionReason)) problems.push("result body.rejectionReason is invalid");
     if (body.keyRotated !== undefined && body.keyRotated !== null && typeof body.keyRotated !== "boolean") problems.push("result body.keyRotated must be boolean or null");
     if (body.errorMessage !== undefined) checkNullableString(body.errorMessage, "result body.errorMessage", problems, { max: 1024 });
+    // claimId/nonce: non-secret opaque references from the signed dispatch
+    // payload, echoed back so the control plane can re-prove claim ownership
+    // and consume the nonce in its replay ledger (ADR-0003).
+    if (body.claimId !== undefined && body.claimId !== null) checkString(body.claimId, "result body.claimId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
+    if (body.nonce !== undefined && body.nonce !== null) checkString(body.nonce, "result body.nonce", problems, { min: 16, max: 128, pattern: AGENT_ID_PATTERN });
     return;
   }
 
@@ -601,8 +606,28 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json?.jobs ?? [];
   }
 
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, clockOffsetMs = null } = {}) {
-    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, body: { jobId, attemptId, status: jobStatus, rejectionReason, keyRotated, errorMessage } }));
+  /**
+   * Reports the terminal outcome of a job attempt.
+   *
+   * claimId is the server-assigned claim id from the signed dispatch payload;
+   * the control plane re-proves claim ownership with it (ADR-0003). nonce is
+   * the single-use dispatch nonce consumed server-side by the replay ledger.
+   * Both are included in the body only when non-null so a bootstrap-mode
+   * report stays schema-minimal (the results route falls back to attemptId
+   * when claimId is absent).
+   */
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null } = {}) {
+    const body = {
+      jobId,
+      attemptId,
+      status: jobStatus,
+      rejectionReason,
+      keyRotated,
+      errorMessage,
+      ...(claimId !== null ? { claimId } : {}),
+      ...(nonce !== null ? { nonce } : {}),
+    };
+    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, body }));
     if (!ok) throw new AgentProtocolError(`reportResult failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }

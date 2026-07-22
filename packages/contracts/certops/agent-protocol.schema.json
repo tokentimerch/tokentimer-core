@@ -238,6 +238,20 @@
         "errorMessage": {
           "type": ["string", "null"],
           "maxLength": 1024
+        },
+        "claimId": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Server-assigned claim id from the signed dispatch payload; a non-secret opaque reference the control plane uses to re-prove claim ownership at result ingestion (ADR-0003, 7.4). attemptId doubles as the claimId when omitted."
+        },
+        "nonce": {
+          "type": ["string", "null"],
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Single-use dispatch nonce from the signed job payload, consumed by the server-side replay ledger at result ingestion (ADR-0003, 7.4). Non-secret opaque reference."
         }
       }
     },

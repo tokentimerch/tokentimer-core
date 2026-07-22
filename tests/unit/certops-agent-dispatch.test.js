@@ -285,6 +285,11 @@ describe("agentDispatch.claimJobs", () => {
     const job = result.jobs[0];
     assert.equal(job.jobId, "42");
     assert.equal(job.claimId, "claim-uuid-1");
+    assert.equal(
+      job.attemptId,
+      "claim-uuid-1",
+      "dispatch payload must carry a server-assigned attemptId mirroring claimId",
+    );
     assert.equal(job.action, "renew");
     assert.equal(job.domain, "example.com");
     assert.equal(job.nonce, "n-1");

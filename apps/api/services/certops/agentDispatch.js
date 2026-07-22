@@ -369,12 +369,16 @@ async function claimJobs({
           ? job.payload
           : safeParseJson(job.payload);
 
+      // attemptId mirrors claim_id so a schema-minimal result report
+      // (jobId/attemptId/status only) still re-proves claim ownership:
+      // the results route falls back to attemptId when claimId is absent.
       const basePayload = {
         ...payload,
         jobId: String(job.id),
         workspaceId: agent.workspaceId,
         action: job.operation,
         claimId: job.claim_id,
+        attemptId: job.claim_id,
         leaseExpiresAt: dateToIso(job.lease_expires_at),
         attemptCount: job.attempt_count,
       };

@@ -226,7 +226,7 @@ function resolveJobCertPath(job) {
  * @param {(msg: string) => void} params.log
  * @returns {Promise<{ status: "rejected", rejectionReason: string }>}
  */
-async function reportJobRejection({ client, jobId, attemptId, verdict, log }) {
+async function reportJobRejection({ client, jobId, attemptId, claimId = null, nonce = null, verdict, log }) {
   log(
     `tokentimer-agent: job ${jobId} rejected: ${verdict.rejectionReason}`,
   );
@@ -240,6 +240,8 @@ async function reportJobRejection({ client, jobId, attemptId, verdict, log }) {
   await client.reportResult({
     jobId,
     attemptId,
+    claimId,
+    nonce,
     status: "rejected",
     rejectionReason: verdict.rejectionReason,
   });
@@ -307,12 +309,15 @@ async function handleClaimedJob({
       emitLog(log, "claimed job missing a reportable jobId; skipping");
       return { status: "skipped", rejectionReason: "job_integrity_failed" };
     }
-    // Signed dispatch assigns attemptId server-side; fall back to a local id
-    // so result reporting stays schema-valid and idempotency-debuggable.
+    // Signed dispatch assigns attemptId server-side (mirroring claimId);
+    // prefer it, then claimId itself, then a local fallback so result
+    // reporting stays schema-valid and idempotency-debuggable.
     const signedAttemptId =
       typeof job.attemptId === "string" && job.attemptId.length > 0
         ? job.attemptId
-        : localAttemptId(reportableJobId);
+        : typeof job.claimId === "string" && job.claimId.length > 0
+          ? job.claimId
+          : localAttemptId(reportableJobId);
     return handleSignedJob({
       job,
       jobId: reportableJobId,
@@ -417,6 +422,15 @@ async function handleSignedJob({
 }) {
   const { pinnedSigningKey, replayCache, clockEstimator, execution } =
     executionContext;
+  // Server-assigned claim id and single-use dispatch nonce: forwarded on
+  // every result so the control plane can re-prove claim ownership and
+  // consume the nonce in its replay ledger (ADR-0003).
+  const claimId =
+    typeof job?.claimId === "string" && job.claimId.length > 0
+      ? job.claimId
+      : null;
+  const nonce =
+    typeof job?.nonce === "string" && job.nonce.length > 0 ? job.nonce : null;
 
   // No pinned key => integrity of ANY job cannot be established. Blocked,
   // not rejected: this is an agent-side precondition failure, not a verdict
@@ -425,6 +439,8 @@ async function handleSignedJob({
     await client.reportResult({
       jobId,
       attemptId,
+      claimId,
+      nonce,
       status: "blocked",
       errorMessage:
         "execution is enabled but no control-plane signing key is pinned " +
@@ -443,7 +459,7 @@ async function handleSignedJob({
     pinnedSigningKeyId: pinnedSigningKey.signingKeyId,
   });
   if (!signatureVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, verdict: signatureVerdict, log });
+    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: signatureVerdict, log });
   }
 
   // 2. Replay check (no consume yet).
@@ -453,7 +469,7 @@ async function handleSignedJob({
     expiresAt: job.expiresAt,
   });
   if (!replayVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, verdict: replayVerdict, log });
+    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: replayVerdict, log });
   }
 
   // 3. Clock window with drift compensation.
@@ -464,13 +480,13 @@ async function handleSignedJob({
     toleranceMs: execution.clockDriftToleranceMs,
   });
   if (!windowVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, verdict: windowVerdict, log });
+    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: windowVerdict, log });
   }
 
   // 4. Agent-local policy (default deny; ADR-0002 local policy wins).
   const policyVerdict = policyEngine.evaluateJob(buildSignedJobPolicyDescriptor(job));
   if (!policyVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, verdict: policyVerdict, log });
+    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: policyVerdict, log });
   }
 
   // 5. Consume the nonce before executing (see function doc comment).
@@ -480,7 +496,7 @@ async function handleSignedJob({
     expiresAt: job.expiresAt,
   });
   if (!consumeVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, verdict: consumeVerdict, log });
+    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: consumeVerdict, log });
   }
 
   // 6. Execute. executeJob owns per-step evidence and returns the terminal
@@ -498,6 +514,8 @@ async function handleSignedJob({
     await client.reportResult({
       jobId,
       attemptId,
+      claimId,
+      nonce,
       status: outcome.status,
       rejectionReason: outcome.rejectionReason ?? null,
       keyRotated: outcome.keyRotated ?? null,
@@ -510,6 +528,8 @@ async function handleSignedJob({
     await client.reportResult({
       jobId,
       attemptId,
+      claimId,
+      nonce,
       status: "failed",
       errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
       clockOffsetMs: clockEstimator.getOffsetMs(),

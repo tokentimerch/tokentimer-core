@@ -450,6 +450,7 @@ describe("CertOps M4/M5 agent surface E2E", () => {
       "workspaceId",
       "action",
       "claimId",
+      "attemptId",
       "leaseExpiresAt",
       "attemptCount",
       "nonce",
@@ -461,6 +462,10 @@ describe("CertOps M4/M5 agent surface E2E", () => {
       assert.ok(job[field] !== undefined && job[field] !== null, field);
     }
     assert.equal(job.action, "renew");
+    // The dispatched payload carries a server-assigned attemptId mirroring
+    // the claim id, so a real agent can report results without ever
+    // hand-crafting a claimId.
+    assert.equal(job.attemptId, job.claimId);
     state.signedJob = job;
 
     // Agent-side verification with the real signing module.
@@ -476,12 +481,13 @@ describe("CertOps M4/M5 agent surface E2E", () => {
     });
     assert.deepEqual(window, { allowed: true });
 
+    // Real-agent shape: no explicit claimId; the server falls back to
+    // attemptId (which mirrors the claim id) for ownership re-proof.
     const resultBody = {
       jobId: job.jobId,
-      attemptId: String(job.claimId),
+      attemptId: job.attemptId,
       status: "succeeded",
       keyRotated: false,
-      claimId: job.claimId,
       nonce: job.nonce,
     };
     const result = await postAgent(

@@ -167,6 +167,32 @@ describe("handleClaimedJob", () => {
     assert.match(result.errorMessage, /execution is not enabled/);
   });
 
+  it("rejects a bootstrap-mode job carrying signed-dispatch fields with job_integrity_failed", async () => {
+    const client = createRecordingClient();
+    const policyEngine = engineWith({}, { declaredTargetSelectors: ["example.com"] });
+
+    // claimId/nonce are signed-dispatch fields; bootstrap mode (no
+    // executionContext) must strictly reject them instead of echoing them.
+    const outcome = await handleClaimedJob({
+      job: {
+        jobId: "job-m4",
+        claimId: "claim-m4-1",
+        nonce: "nonce-m4-0123456789abcdef",
+        target: { type: "domain", reference: "example.com" },
+      },
+      policyEngine,
+      client,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "rejected");
+    assert.equal(result.rejectionReason, "job_integrity_failed");
+    assert.match(result.attemptId, /^local-job-m4-/);
+  });
+
   it("skips jobs without a jobId without reporting anything", async () => {
     const client = createRecordingClient();
     const policyEngine = engineWith();
@@ -603,6 +629,98 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       client.calls.reportEvidence[0].evidenceItems[0].eventType,
       "validation.passed",
     );
+  });
+
+  it("passes job.claimId/job.nonce and a claim-derived attemptId through on a success report", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob({ claimId: "claim-m5-1" });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.claimId, "claim-m5-1");
+    assert.equal(result.nonce, job.nonce);
+    assert.equal(result.attemptId, "claim-m5-1");
+  });
+
+  it("prefers a server-assigned attemptId over claimId, and falls back to a local id", async () => {
+    // attemptId preference chain: job.attemptId > job.claimId > local id.
+    const cases = [
+      {
+        overrides: { jobId: "job-a", attemptId: "attempt-cp-1", claimId: "claim-1" },
+        expected: (id) => id === "attempt-cp-1",
+      },
+      {
+        overrides: { jobId: "job-c" },
+        expected: (id) => /^local-job-c-/.test(id),
+      },
+    ];
+
+    for (const { overrides, expected } of cases) {
+      const client = createRecordingClient();
+      await handleClaimedJob({
+        job: makeSignedJob(overrides),
+        policyEngine: permissiveEngine(),
+        client,
+        executionContext: makeExecutionContext(),
+        log: silentLog,
+      });
+      assert.equal(client.calls.reportResult.length, 1, overrides.jobId);
+      assert.ok(expected(client.calls.reportResult[0].attemptId), overrides.jobId);
+    }
+  });
+
+  it("passes job.claimId/job.nonce through on a failure report", async () => {
+    const client = createRecordingClient();
+    // renew without commandRef fails inside executeJob (dryRun off).
+    const job = makeSignedJob({
+      action: "renew",
+      claimId: "claim-m5-fail",
+      certPath: path.join(workDir, "deployed", "cert.pem"),
+    });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext({ dryRun: false }),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "failed");
+    assert.equal(result.claimId, "claim-m5-fail");
+    assert.equal(result.nonce, job.nonce);
+  });
+
+  it("passes job.claimId/job.nonce through on a rejection report", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob({ claimId: "claim-m5-rej" });
+    job.action = "renew"; // mutate after signing -> job_integrity_failed
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "rejected");
+    assert.equal(result.rejectionReason, "job_integrity_failed");
+    assert.equal(result.claimId, "claim-m5-rej");
+    assert.equal(result.nonce, job.nonce);
   });
 
   it("dry-run renew succeeds with a plan and performs zero filesystem side effects", async () => {

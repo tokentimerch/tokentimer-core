@@ -252,6 +252,62 @@ test("reportResult: sends correct envelope shape (messageType + resultBody field
   assert.equal(calls[0].parsedBody.body.rejectionReason, null);
 });
 
+test("reportResult: forwards claimId and nonce in the body when provided", async () => {
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => "ttagent_agent-1_secret",
+  });
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "claim-uuid-1",
+    status: "succeeded",
+    claimId: "claim-uuid-1",
+    nonce: "nonce-0123456789abcdef",
+  });
+
+  assert.equal(calls.length, 1);
+  const body = calls[0].parsedBody.body;
+  assert.equal(body.claimId, "claim-uuid-1");
+  assert.equal(body.nonce, "nonce-0123456789abcdef");
+});
+
+test("reportResult: omits claimId and nonce entirely when null or absent (schema-minimal M4 report)", async () => {
+  const calls = stubFetch([
+    { status: 202, json: { accepted: true } },
+    { status: 202, json: { accepted: true } },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => "ttagent_agent-1_secret",
+  });
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "blocked",
+  });
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "blocked",
+    claimId: null,
+    nonce: null,
+  });
+
+  for (const call of calls) {
+    assert.equal("claimId" in call.parsedBody.body, false);
+    assert.equal("nonce" in call.parsedBody.body, false);
+  }
+});
+
 test("reportEvidence: sends correct envelope shape (messageType + evidenceBody fields)", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 
