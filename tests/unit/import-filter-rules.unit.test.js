@@ -38,7 +38,7 @@ describe("importFilterRules.validateFilterRules", () => {
 
   it("rejects an invalid field", () => {
     const err = validateFilterRules([
-      { action: "include", matchType: "exact", field: "location", value: "x" },
+      { action: "include", matchType: "exact", field: "owner", value: "x" },
     ]);
     assert.match(err, /field/);
   });
@@ -66,6 +66,12 @@ describe("importFilterRules.validateFilterRules", () => {
         value: "^iac-provisioned:.*",
       },
       { action: "exclude", matchType: "exact", field: "name", value: "temp" },
+      {
+        action: "exclude",
+        matchType: "regex",
+        field: "location",
+        value: "^gitlab:projects/42/",
+      },
     ]);
     assert.strictEqual(err, null);
   });
@@ -249,6 +255,72 @@ describe("importFilterRules.evaluateFilterRules", () => {
     );
     assert.strictEqual(
       evaluateFilterRules(rules, { name: "real description" }),
+      true,
+    );
+  });
+
+  it("matches on the location field with regex and exact rules", () => {
+    const regexRules = [
+      {
+        action: "exclude",
+        matchType: "regex",
+        field: "location",
+        value: "^gitlab:projects/42/",
+      },
+    ];
+    assert.strictEqual(
+      evaluateFilterRules(regexRules, {
+        name: "ci-token",
+        location: "gitlab:projects/42/access_tokens/7",
+      }),
+      false,
+    );
+    assert.strictEqual(
+      evaluateFilterRules(regexRules, {
+        name: "ci-token",
+        location: "gitlab:projects/99/access_tokens/7",
+      }),
+      true,
+    );
+
+    const exactRules = [
+      {
+        action: "include",
+        matchType: "exact",
+        field: "location",
+        value: "vault:secret/data/ci",
+      },
+    ];
+    assert.strictEqual(
+      evaluateFilterRules(exactRules, {
+        name: "x",
+        location: "vault:secret/data/ci",
+      }),
+      true,
+    );
+    assert.strictEqual(
+      evaluateFilterRules(exactRules, {
+        name: "x",
+        location: "vault:secret/data/other",
+      }),
+      false,
+    );
+  });
+
+  it("treats a missing location as an empty string with no name fallback", () => {
+    const rules = [
+      {
+        action: "include",
+        matchType: "regex",
+        field: "location",
+        value: "ci-token",
+      },
+    ];
+    // Unlike description, location must not fall back to the item name:
+    // a rule targeting provider paths should never accidentally match names.
+    assert.strictEqual(evaluateFilterRules(rules, { name: "ci-token" }), false);
+    assert.strictEqual(
+      evaluateFilterRules(rules, { name: "x", location: "gitlab:ci-token" }),
       true,
     );
   });

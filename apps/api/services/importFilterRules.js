@@ -4,7 +4,7 @@
  * Ordered list of rules applied uniformly to provider scan results and to
  * the shared import pipeline. Each rule:
  *   { action: "include"|"exclude", matchType: "regex"|"exact",
- *     field: "name"|"description", value: string }
+ *     field: "name"|"description"|"location", value: string }
  *
  * `value` for matchType "regex" uses JavaScript (ECMAScript) regex syntax,
  * evaluated case-sensitively unless wrapped as a full JS regex literal
@@ -35,7 +35,7 @@ const MAX_REGEX_GROUPS = 10;
 
 const VALID_ACTIONS = new Set(["include", "exclude"]);
 const VALID_MATCH_TYPES = new Set(["regex", "exact"]);
-const VALID_FIELDS = new Set(["name", "description"]);
+const VALID_FIELDS = new Set(["name", "description", "location"]);
 
 /**
  * Accepts a regex value either as a bare pattern (`^foo`) or as a full
@@ -200,7 +200,7 @@ function validateFilterRules(rules) {
       return `${label}.matchType must be "regex" or "exact"`;
     }
     if (!VALID_FIELDS.has(rule.field)) {
-      return `${label}.field must be "name" or "description"`;
+      return `${label}.field must be "name", "description" or "location"`;
     }
     if (typeof rule.value !== "string" || rule.value.length === 0) {
       return `${label}.value must be a non-empty string`;
@@ -228,6 +228,14 @@ function getItemField(item, field) {
   if (!item || typeof item !== "object") return "";
   if (field === "name") {
     return typeof item.name === "string" ? item.name : "";
+  }
+  // Location is the provider-side path built by every integration scan
+  // (e.g. `gitlab:projects/42/access_tokens/7`, `vault:secret/data/ci`,
+  // `aws:secretsmanager:eu-west-1:arn`). Unlike description there is no
+  // sensible fallback: an item without a location simply matches nothing,
+  // so rules stay predictable across providers.
+  if (field === "location") {
+    return typeof item.location === "string" ? item.location : "";
   }
   // Description-like field: scan items and import payloads may carry the
   // provider description under `description` or `notes`. GitLab personal

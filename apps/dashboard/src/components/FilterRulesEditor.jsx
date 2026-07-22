@@ -166,7 +166,7 @@ export function sanitizeFilterRules(rules) {
 /**
  * Ordered include/exclude rule editor (issue #69).
  * Rules: { action: 'include'|'exclude', matchType: 'regex'|'exact',
- *          field: 'name'|'description', value: string }
+ *          field: 'name'|'description'|'location', value: string }
  * Exclude rules win; if any include rule exists, items must match one.
  */
 export default function FilterRulesEditor({
@@ -236,6 +236,9 @@ export default function FilterRulesEditor({
         {
           ' The description field falls back to the item name when the source has no separate description.'
         }
+        {
+          ' The location field matches the provider-side path shown in the preview table, e.g. gitlab:projects/42/access_tokens/7.'
+        }
       </Text>
       {rules.length > 0 && (
         <VStack align='stretch' spacing={2}>
@@ -261,6 +264,7 @@ export default function FilterRulesEditor({
                   >
                     <option value='name'>Name</option>
                     <option value='description'>Description</option>
+                    <option value='location'>Location</option>
                   </Select>
                   <Select
                     size='xs'
