@@ -634,7 +634,10 @@ describe("CertOps machine-token CSRF exemption", () => {
       "/v1/certops/executor/provisioning-commands//authorize-mutation",
       "/v1/certops/executor/provisioning-commands/1/authorize-mutation/extra",
       "/v1/workspaces/111/certops/certificates",
-      "/v1/certops/agent/register",
+      // M4: /v1/certops/agent/register is now exempt; keep only its
+      // malformed neighbors here.
+      "/v1/certops/agent/register/extra",
+      "/v1/certops/agent//register",
     ]) {
       assert.equal(isCertOpsMachineTokenCsrfExemptPath(requestPath), false);
     }

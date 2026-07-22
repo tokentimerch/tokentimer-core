@@ -14,12 +14,17 @@ const CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH =
   "/api/v1/certops/executor/provisioning-commands/:jobId/authorize-mutation";
 const CERTOPS_JOB_EVENTS_PATH = "/api/v1/certops/jobs/:jobId/events";
 const CERTOPS_JOB_EVIDENCE_PATH = "/api/v1/certops/jobs/:jobId/evidence";
+const CERTOPS_AGENT_REGISTER_PATH = "/api/v1/certops/agent/register";
+const CERTOPS_AGENT_HEARTBEAT_PATH = "/api/v1/certops/agent/heartbeat";
+const CERTOPS_AGENT_JOBS_CLAIM_PATH = "/api/v1/certops/agent/jobs/claim";
+const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
 const CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES = Object.freeze({
   aggregateExecutorEvents: "aggregate-executor-events",
   controllerObservations: "controller-observations",
   controllerProvisioningCommands: "controller-provisioning-commands",
   perJobEvents: "per-job-events",
   perJobEvidence: "per-job-evidence",
+  agentProtocol: "agent-protocol",
 });
 // The largest contract-valid event can contain 16 evidence items, each with
 // bounded metadata and artifact references. Four MiB permits that envelope
@@ -83,6 +88,21 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
       new RegExp(`^${prefix}/jobs/[^/]+/evidence/?$`).test(normalizedPath)
     ) {
       return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.perJobEvidence;
+    }
+    // M4 agent-protocol routes: exact paths only (optional single trailing
+    // slash, case-insensitive via normalization above), same guarantees as
+    // the executor family.
+    if (
+      normalizedPath === `${prefix}/agent/register` ||
+      normalizedPath === `${prefix}/agent/register/` ||
+      normalizedPath === `${prefix}/agent/heartbeat` ||
+      normalizedPath === `${prefix}/agent/heartbeat/` ||
+      normalizedPath === `${prefix}/agent/jobs/claim` ||
+      normalizedPath === `${prefix}/agent/jobs/claim/` ||
+      normalizedPath === `${prefix}/agent/jobs/results` ||
+      normalizedPath === `${prefix}/agent/jobs/results/`
+    ) {
+      return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.agentProtocol;
     }
   }
   return null;
@@ -175,6 +195,10 @@ function createCertOpsMachineWritePreParserBoundary(options = {}) {
 
 module.exports = {
   CERTOPS_EXECUTOR_EVENTS_PATH,
+  CERTOPS_AGENT_HEARTBEAT_PATH,
+  CERTOPS_AGENT_JOBS_CLAIM_PATH,
+  CERTOPS_AGENT_JOBS_RESULTS_PATH,
+  CERTOPS_AGENT_REGISTER_PATH,
   CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
   CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH,
   CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,

@@ -277,7 +277,10 @@ describe("CertOps executor body parser", () => {
       "/api/v1/certops/jobs/1/evidence//",
       "/api/v1/certops/executor/provisioning-commands//authorize-mutation",
       "/api/v1/certops/executor/provisioning-commands/1/authorize-mutation/extra",
-      "/api/v1/certops/agent/register",
+      // M4: /agent/register is now a machine-write family path; only its
+      // malformed neighbors must stay unrecognized.
+      "/api/v1/certops/agent/register/extra",
+      "/api/v1/certops/agent//register",
     ]) {
       assert.equal(certOpsMachineWriteRouteFamily(path), null);
     }
