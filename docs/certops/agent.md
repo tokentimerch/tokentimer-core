@@ -376,32 +376,42 @@ Layers, from outermost in:
 - **Policy**: `checkNoKeyExport` rejects any key-export intent
   unconditionally; there is no config knob that permits it.
 
-## 7. Documented deviations and forward-compatible fields
+## 7. Contract status and forward-compatible fields
 
-The base job payload (`packages/contracts/certops/job-payload.schema.json`)
-does not yet define the signed-execution fields, so the agent applies these
-documented deviations until the executable job-type contract lands:
+Earlier bootstrap builds documented a set of deviations against the base job
+payload; the executable job-type contract has since landed
+(`packages/contracts/certops/job-payload.schema.json` blesses `commandRef`,
+`caEndpoint`, `acmeKind`, `keyRotation`, `certPath`, `reloadService`,
+`verifyHost`/`verifyPort`, `certificatePem`, `dnsZone`/`dnsProvider`) and the
+control plane now dispatches signed jobs, so most deviations are resolved.
+Current behavior:
 
 - Unsigned jobs are rejected with `job_integrity_failed` whenever execution
-  is enabled; a plain unsigned payload without `signature`/`nonce`/`signingKeyId`/
-  `issuedAt`/`expiresAt` fails signed-field validation.
+  is enabled; a payload without `signature`/`nonce`/`signingKeyId`/
+  `issuedAt`/`expiresAt` fails signed-field validation. Signed dispatch is
+  what the control plane's claim route produces.
 - No domains list in the schema: the CSR CN and the ACME `-d` domain come
   from `job.target.reference`.
 - `certPath` resolution: an explicit `job.certPath` wins; otherwise
   `target.reference` is used as the deploy destination when it is an
   absolute path (POSIX or Windows form); neither present means the job fails
   with a clear message.
-- `deploy` without `certificatePem` is `blocked` (the base payload has no such
-  field; awaiting the deploy job contract).
+- `deploy` without `certificatePem` is `blocked`. The contract defines
+  `certificatePem` as public leaf-plus-chain material attached by the
+  control plane at signed dispatch time, never stored in the job payload
+  column.
 - `revoke` is always `blocked` (out of scope for this agent build).
-- No `attemptId` in the base payload: the agent derives a local
-  `local-<jobId>-<timestamp>` id so result reporting stays schema-valid.
-- Forward-compatible fields honored when present but not yet in the base
-  schema: `keyRotation` (forces key regeneration), `verifyHost`/`verifyPort`
-  (enables the live TLS probe), `reloadService` + `reloadCommandRefs`
-  (enables the reload step), `acmeKind` (`certbot` or `acme.sh`), and
-  `commandRef`/`caEndpoint`/`dnsZone`/`dnsProvider` on the policy
-  descriptor.
+- `attemptId` is assigned by the control plane at claim time (it mirrors the
+  claim id and is covered by the job signature); the agent falls back to
+  `job.claimId`, then a local `local-<jobId>-<timestamp>` id, only when the
+  dispatch omits it. Result reports carry `claimId` and the dispatch `nonce`
+  back so the control plane can re-prove claim ownership and consume the
+  single-use nonce (ADR-0003).
+- Execution fields honored when present: `keyRotation` (forces key
+  regeneration), `verifyHost`/`verifyPort` (enables the live TLS probe),
+  `reloadService` + `reloadCommandRefs` (enables the reload step), `acmeKind`
+  (`certbot` or `acme.sh`), and `commandRef`/`caEndpoint`/`dnsZone`/
+  `dnsProvider` on the policy descriptor.
 - Ed25519 CSR generation is not supported: `generateCsr` throws a clear
   error for ed25519 keys (use `ec-p256` or `rsa-*` when a CSR is needed).
 
