@@ -9,6 +9,7 @@ const {
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
+  CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
@@ -1225,6 +1226,153 @@ describe("CertOps jobs service", () => {
           metadata: {},
         }),
       (error) => error?.code === CERTOPS_JOB_NOT_FOUND,
+    );
+  });
+
+  it("accepts a fully loaded M5 renew payload", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "automation",
+      payload: {
+        target: "example.com",
+        commandRef: "acme-renew-default",
+        caEndpoint: "https://acme-v02.api.letsencrypt.org/directory",
+        acmeKind: "certbot",
+        keyRotation: true,
+        certPath: "/etc/ssl/live/example.com/cert.pem",
+        reloadService: "nginx",
+        verifyHost: "example.com",
+        verifyPort: 443,
+        dnsZone: "example.com",
+        dnsProvider: "cloudflare",
+      },
+    });
+
+    assert.equal(job.operation, "renew");
+    assert.equal(job.payload.commandRef, "acme-renew-default");
+    assert.equal(job.payload.verifyPort, 443);
+    assertNoCustodyKeys(job);
+  });
+
+  it("exposes the M4 execution columns with safe defaults", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "automation",
+      payload: { target: "example.com" },
+    });
+
+    assert.equal(job.claimedByAgentId, null);
+    assert.equal(job.claimId, null);
+    assert.equal(job.leaseExpiresAt, null);
+    assert.equal(job.attemptCount, 0);
+    assert.equal(job.maxAttempts, 3);
+    assert.equal(job.nextAttemptAt, null);
+    assert.equal(job.scheduledFor, null);
+  });
+
+  it("rejects malformed M5 execution field values", async () => {
+    const client = createMemoryClient();
+    const badPayloads = [
+      { commandRef: "not valid because of spaces" },
+      { caEndpoint: "ftp://example.com/dir" },
+      { caEndpoint: "not-a-url" },
+      { acmeKind: "lego" },
+      { keyRotation: "yes" },
+      { certPath: "" },
+      { reloadService: "bad service name" },
+      { verifyHost: "" },
+      { verifyPort: 0 },
+      { verifyPort: 70000 },
+      { verifyPort: 443.5 },
+      { dnsZone: "" },
+      { dnsProvider: "spaces are bad" },
+    ];
+
+    for (const fields of badPayloads) {
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation: "renew",
+            source: "automation",
+            payload: { target: "example.com", ...fields },
+          }),
+        (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+        `expected rejection for ${JSON.stringify(fields)}`,
+      );
+    }
+  });
+
+  it("rejects execution fields on operations that never execute them", async () => {
+    const client = createMemoryClient();
+
+    // noop and revoke never carry execution intent.
+    for (const operation of ["noop", "revoke"]) {
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation,
+            source: "api",
+            payload: { caEndpoint: "https://acme.example.com/directory" },
+          }),
+        (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+      );
+    }
+
+    // deploy carries deploy fields but not renewal-only fields.
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "deploy",
+          source: "api",
+          payload: { acmeKind: "certbot" },
+        }),
+      (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+
+    const deployJob = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      source: "api",
+      payload: {
+        certPath: "/etc/ssl/live/example.com/cert.pem",
+        reloadService: "nginx",
+        verifyHost: "example.com",
+        verifyPort: 443,
+      },
+    });
+    assert.equal(deployJob.operation, "deploy");
+  });
+
+  it("keeps rejecting pem-named payload fields for stored M5 payloads", async () => {
+    const client = createMemoryClient();
+    // certificatePem is dispatch-time-only: the persistence boundary must
+    // reject it even though the wire schema allows it on dispatched jobs.
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "deploy",
+          source: "api",
+          payload: {
+            certificatePem:
+              "-----BEGIN CERTIFICATE-----\nRkFLRQ==\n-----END CERTIFICATE-----",
+          },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
     );
   });
 });

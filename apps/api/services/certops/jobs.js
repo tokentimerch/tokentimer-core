@@ -22,6 +22,8 @@ const CERTOPS_JOB_LOG_EVENT_TYPE_INVALID =
   "CERTOPS_JOB_LOG_EVENT_TYPE_INVALID";
 const CERTOPS_JOB_METADATA_INVALID = "CERTOPS_JOB_METADATA_INVALID";
 const CERTOPS_JOB_WORKSPACE_REQUIRED = "CERTOPS_JOB_WORKSPACE_REQUIRED";
+const CERTOPS_JOB_EXECUTION_FIELD_INVALID =
+  "CERTOPS_JOB_EXECUTION_FIELD_INVALID";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 const JOB_STATUSES = Object.freeze([
@@ -154,6 +156,13 @@ const SAFE_JOB_SELECT_FIELDS = `
   result_metadata,
   error_code,
   error_message,
+  claimed_by_agent_id,
+  claim_id,
+  lease_expires_at,
+  attempt_count,
+  max_attempts,
+  next_attempt_at,
+  scheduled_for,
   created_at,
   updated_at,
   queued_at,
@@ -416,6 +425,140 @@ function normalizeEnum(value, allowedSet, code, fieldName, fallback = null) {
   return trimmed;
 }
 
+// --- M5 execution-field validation (job-payload.schema.json bounds) ---
+//
+// The stored certificate_jobs payload may carry the M5 execution fields the
+// agent consumes for renew/deploy/reload (blessed PR #88 deviations). This
+// validator mirrors the schema constraints so a malformed field is rejected
+// at creation instead of at dispatch. certificatePem is deliberately NOT in
+// this list: the persistence boundary (fieldNameLooksForbidden's "pem" ban)
+// rejects it, because certificate PEM is attached only at signed dispatch
+// time and never stored in the payload column.
+
+const ACME_KINDS = Object.freeze(["certbot", "acme.sh"]);
+const ACME_KIND_SET = new Set(ACME_KINDS);
+const COMMAND_REF_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const RELOAD_SERVICE_PATTERN = /^[A-Za-z0-9_.:@-]{1,128}$/;
+const DNS_PROVIDER_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+function executionFieldError(fieldName) {
+  return serviceError(
+    `CertOps job payload field ${fieldName} is invalid`,
+    CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  );
+}
+
+const M5_EXECUTION_FIELD_VALIDATORS = Object.freeze({
+  commandRef(value) {
+    if (typeof value !== "string" || !COMMAND_REF_PATTERN.test(value)) {
+      throw executionFieldError("commandRef");
+    }
+  },
+  caEndpoint(value) {
+    if (typeof value !== "string" || value.length > 512) {
+      throw executionFieldError("caEndpoint");
+    }
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch (_error) {
+      throw executionFieldError("caEndpoint");
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw executionFieldError("caEndpoint");
+    }
+  },
+  acmeKind(value) {
+    if (typeof value !== "string" || !ACME_KIND_SET.has(value)) {
+      throw executionFieldError("acmeKind");
+    }
+  },
+  keyRotation(value) {
+    if (typeof value !== "boolean") {
+      throw executionFieldError("keyRotation");
+    }
+  },
+  certPath(value) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 512) {
+      throw executionFieldError("certPath");
+    }
+  },
+  reloadService(value) {
+    if (typeof value !== "string" || !RELOAD_SERVICE_PATTERN.test(value)) {
+      throw executionFieldError("reloadService");
+    }
+  },
+  verifyHost(value) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 255) {
+      throw executionFieldError("verifyHost");
+    }
+  },
+  verifyPort(value) {
+    if (!Number.isInteger(value) || value < 1 || value > 65535) {
+      throw executionFieldError("verifyPort");
+    }
+  },
+  dnsZone(value) {
+    if (typeof value !== "string" || value.length < 1 || value.length > 255) {
+      throw executionFieldError("dnsZone");
+    }
+  },
+  dnsProvider(value) {
+    if (typeof value !== "string" || !DNS_PROVIDER_PATTERN.test(value)) {
+      throw executionFieldError("dnsProvider");
+    }
+  },
+});
+
+const M5_EXECUTION_FIELD_NAMES = Object.freeze(
+  Object.keys(M5_EXECUTION_FIELD_VALIDATORS),
+);
+
+// Which execution fields make sense on which operation. Execution fields on
+// operations that never execute them (noop/revoke) indicate a caller bug and
+// are rejected rather than silently dispatched to the agent.
+const M5_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
+  renew: new Set([
+    "commandRef",
+    "caEndpoint",
+    "acmeKind",
+    "keyRotation",
+    "certPath",
+    "reloadService",
+    "verifyHost",
+    "verifyPort",
+    "dnsZone",
+    "dnsProvider",
+  ]),
+  deploy: new Set([
+    "certPath",
+    "reloadService",
+    "verifyHost",
+    "verifyPort",
+  ]),
+  reload: new Set(["reloadService", "verifyHost", "verifyPort"]),
+  revoke: new Set(),
+  noop: new Set(),
+});
+
+function validateExecutionFields(payload, operation) {
+  const allowedForOperation =
+    M5_EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
+  for (const fieldName of M5_EXECUTION_FIELD_NAMES) {
+    if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
+    const value = payload[fieldName];
+    if (value === null || value === undefined) continue;
+    if (!allowedForOperation.has(fieldName)) {
+      throw serviceError(
+        `CertOps job payload field ${fieldName} is not valid for the ` +
+          `${operation} operation`,
+        CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+      );
+    }
+    M5_EXECUTION_FIELD_VALIDATORS[fieldName](value);
+  }
+}
+
 function normalizeOptionalEnum(value, allowedSet, code, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   return normalizeEnum(value, allowedSet, code, fieldName);
@@ -548,6 +691,13 @@ function jobFromRow(row) {
     resultMetadata: parseJsonb(row.result_metadata),
     errorCode: row.error_code,
     errorMessage: row.error_message,
+    claimedByAgentId: row.claimed_by_agent_id ?? null,
+    claimId: row.claim_id ?? null,
+    leaseExpiresAt: dateToIso(row.lease_expires_at),
+    attemptCount: row.attempt_count ?? 0,
+    maxAttempts: row.max_attempts ?? 3,
+    nextAttemptAt: dateToIso(row.next_attempt_at),
+    scheduledFor: dateToIso(row.scheduled_for),
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     queuedAt: dateToIso(row.queued_at),
@@ -705,6 +855,7 @@ async function createCertificateJob(options) {
     "idempotencyKey",
   );
   const payload = normalizePublicObject(options.payload, "payload");
+  validateExecutionFields(payload, operation);
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -1145,6 +1296,7 @@ module.exports = {
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   CERTOPS_JOB_WORKSPACE_REQUIRED,
+  CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   JOB_LOG_EVENT_TYPES,
   JOB_OPERATIONS,
   JOB_SOURCES,
@@ -1177,5 +1329,7 @@ module.exports = {
     fieldNameLooksForbidden,
     normalizePublicObject,
     parseJsonb,
+    validateExecutionFields,
+    M5_EXECUTION_FIELDS_BY_OPERATION,
   },
 };
