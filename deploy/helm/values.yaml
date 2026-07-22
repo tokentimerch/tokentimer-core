@@ -385,6 +385,11 @@ config:
   # Fallback when workspace has no custom thresholds (workspace DB > env > code).
   alertThresholds: "30,14,7,1,0"
 
+  # CertOps (certificate operations broker). Enabled by default; set to
+  # false to disable the /certops API surface and worker monitor bridge.
+  # Precedence: this value > System Settings DB > code default (disabled).
+  certopsEnabled: true
+
 # -- SMTP (optional) ----------------------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
 # Precedence: System Settings DB (admin UI) > env vars here > code defaults.

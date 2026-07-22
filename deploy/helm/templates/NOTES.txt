@@ -17,6 +17,16 @@ Get the application URLs by running:
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ $fullname }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }} &
   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ $fullname }}-dashboard 8080:{{ .Values.dashboard.service.port }} &
 
+{{- if eq (.Values.config.nodeEnv | default "production") "production" }}
+
+NOTE: The API runs with NODE_ENV=production (default), which enforces CSRF
+protection and Secure session cookies. Accessing the app over plain HTTP
+localhost port-forwards (above) will fail with 403 CSRF errors on login and
+other mutating requests. For local testing, set config.nodeEnv=development,
+or inject SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true via api.envFrom
+(ConfigMap/Secret); for real access use ingress with TLS (see chart README).
+{{- end }}
+
 {{- end }}
 
 {{- if .Values.postgresql.cloudnative.enabled }}

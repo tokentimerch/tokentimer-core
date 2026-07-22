@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Helm CSRF port-forward warning** — `deploy/helm/templates/NOTES.txt` now warns (when `config.nodeEnv` resolves to `production`, the default) that CSRF protection and Secure session cookies will reject plain-HTTP `kubectl port-forward` logins, and documents the `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` / `config.nodeEnv=development` workarounds for local testing. The chart README's existing TLS warning section was extended with the same guidance.
+
+### Changed
+
+- **CertOps enabled by default in Helm and Compose** — new `config.certopsEnabled` Helm value (default `true`, explicit `false` correctly honored via a ternary that distinguishes "unset" from "false") wires `CERTOPS_ENABLED` into the shared ConfigMap consumed by the API and worker pods. Compose (`docker-compose.yml`, `docker-compose.dev.yml`) now defaults `CERTOPS_ENABLED` to `true` for the `api` and `worker-endpoint-check` services instead of leaving it unset (previously the app-level default was `false` when unset). `docs/CONFIGURATION.md` documents the app-level default alongside the Helm/Compose deployment defaults.
+
 ## [0.10.0] - 2026-07-21
 
 ### Added

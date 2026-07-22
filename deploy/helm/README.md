@@ -86,7 +86,7 @@ Open http://localhost:8080 and log in with your admin credentials.
 > `helm dependency update ./deploy/helm` first, then use `./deploy/helm`
 > instead of the OCI URL.
 
-> **TLS Warning:** With `NODE_ENV=production`, the API sets the `Secure` flag on session cookies. Browsers will not persist or send secure cookies over plain HTTP. For anything beyond local port-forwarding, place HTTPS in front of the API and dashboard (via Ingress with TLS or a reverse proxy).
+> **TLS Warning:** With `NODE_ENV=production`, the API sets the `Secure` flag on session cookies and enforces CSRF protection. Browsers will not persist or send secure cookies over plain HTTP, and mutating requests (including login) over `http://localhost` port-forwards will fail with 403 CSRF errors. For local testing, set `config.nodeEnv=development`, or inject `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` on the API via `api.envFrom`. For anything beyond local port-forwarding, place HTTPS in front of the API and dashboard (via Ingress with TLS or a reverse proxy).
 
 ## Configuration Precedence
 
