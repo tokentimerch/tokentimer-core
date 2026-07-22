@@ -781,21 +781,24 @@ describe("CertOps M3-A8 end-to-end composition", function () {
         secretFallbackEnabled: true,
       });
       await kubernetesClient.start();
-      const provisioner = createCertificateProvisioner({
-        client: kubernetesClient,
-        clusterId: "cluster-a",
-        watchNamespaces: ["certops"],
-        workspaceId: fixture.workspaceId,
-      });
-      const createRunner = () => createProvisioningRunner({
-        commandClient: createControllerProvisioningCommandClient({
+      const createRunner = () => {
+        const commandClient = createControllerProvisioningCommandClient({
           apiTokenFile: tokenFile.file,
           apiUrl: server.apiUrl,
           sleep: async () => {},
-        }),
-        intervalMs: 30_000,
-        provisioner,
-      });
+        });
+        return createProvisioningRunner({
+          commandClient,
+          intervalMs: 30_000,
+          provisioner: createCertificateProvisioner({
+            authorizeMutation: commandClient.authorizeMutation,
+            client: kubernetesClient,
+            clusterId: "cluster-a",
+            watchNamespaces: ["certops"],
+            workspaceId: fixture.workspaceId,
+          }),
+        });
+      };
       const firstRunner = createRunner();
       await firstRunner.start({ trackWork: (work) => work });
       await eventually(async () => {

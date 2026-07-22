@@ -620,10 +620,10 @@ describe("CertOps workspace kill-switch API", function () {
       .send({
         schemaVersion: 1,
         eventId: `event-${crypto.randomUUID()}`,
-        eventType: "job.progress",
-        status: "running",
+        eventType: "job.completed",
+        status: "succeeded",
         occurredAt: new Date().toISOString(),
-        message: "Work already in flight",
+        message: "Work already in flight completed safely",
       });
     expect(eventResponse.status).to.equal(202);
 

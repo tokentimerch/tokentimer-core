@@ -88,16 +88,20 @@ function createControllerApplication({
     watchNamespaces: config.watchNamespaces,
     workspaceId: config.workspaceId,
   });
-  const provisioningRunner = config.mode === "provision"
+  const provisioningClient = config.mode === "provision"
+    ? createProvisioningClient({
+      apiTokenFile: config.apiTokenFile,
+      apiUrl: config.apiUrl,
+      fsOptions,
+    })
+    : null;
+  const provisioningRunner = provisioningClient
     ? createProvisioningRunnerPort({
-      commandClient: createProvisioningClient({
-        apiTokenFile: config.apiTokenFile,
-        apiUrl: config.apiUrl,
-        fsOptions,
-      }),
+      commandClient: provisioningClient,
       intervalMs: config.reconcileIntervalMs,
       logger,
       provisioner: createProvisioner({
+        authorizeMutation: provisioningClient.authorizeMutation,
         client: kubernetesClient,
         clusterId: config.clusterId,
         clusterWide: config.clusterWide,

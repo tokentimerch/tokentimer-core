@@ -16,7 +16,10 @@ const { runMigrations } = requireMigrateModule();
 const { createApiToken } = require("../../apps/api/services/certops/apiTokens");
 const { createControllerProvisionIntent } = require("../../apps/api/services/certops/controllerProvisioning");
 const { createCertOpsExecutorRouter } = require("../../apps/api/routes/certops-executor");
-const { createCertificateProvisioner } = require("../../apps/k8s-controller/src/certificate-provisioner");
+const {
+  certificateFor,
+  createCertificateProvisioner,
+} = require("../../apps/k8s-controller/src/certificate-provisioner");
 const { createControllerProvisioningCommandClient } = require("../../apps/k8s-controller/src/provisioning-command-client");
 const { createProvisioningRunner } = require("../../apps/k8s-controller/src/provisioning-runner");
 
@@ -186,13 +189,15 @@ describe("M3-A7 controller provisioning execution path", function () {
       tokenDirectory = tokenFile.directory;
       const first = await createIntent(fixture);
       const kubernetes = createKubernetesClient();
+      const firstCommandClient = createCommandClient(server.apiUrl, tokenFile.file);
       const provisioner = createCertificateProvisioner({
+        authorizeMutation: firstCommandClient.authorizeMutation,
         client: kubernetes.client,
         clusterId: "cluster-a",
         watchNamespaces: ["certops"],
         workspaceId: fixture.workspaceId,
       });
-      const runner = createProvisioningRunner({ commandClient: createCommandClient(server.apiUrl, tokenFile.file), provisioner, intervalMs: 30_000 });
+      const runner = createProvisioningRunner({ commandClient: firstCommandClient, provisioner, intervalMs: 30_000 });
       await runner.start({ trackWork: (work) => work });
       await eventually(async () => expect(await jobStatus(first.job.id)).to.equal("succeeded"));
       await runner.stopAcceptingWork();
@@ -212,7 +217,15 @@ describe("M3-A7 controller provisioning execution path", function () {
       expect(kubernetes.calls).to.deep.equal(["getCertificate", "createCertificate"]);
 
       const second = await createIntent(fixture, provisionRequest({ secretName: "execution-tls-v2", dnsNames: ["v2.execution.example.test"] }));
-      const secondRunner = createProvisioningRunner({ commandClient: createCommandClient(server.apiUrl, tokenFile.file), provisioner, intervalMs: 30_000 });
+      const secondCommandClient = createCommandClient(server.apiUrl, tokenFile.file);
+      const secondProvisioner = createCertificateProvisioner({
+        authorizeMutation: secondCommandClient.authorizeMutation,
+        client: kubernetes.client,
+        clusterId: "cluster-a",
+        watchNamespaces: ["certops"],
+        workspaceId: fixture.workspaceId,
+      });
+      const secondRunner = createProvisioningRunner({ commandClient: secondCommandClient, provisioner: secondProvisioner, intervalMs: 30_000 });
       await secondRunner.start({ trackWork: (work) => work });
       await eventually(async () => expect(await jobStatus(second.job.id)).to.equal("succeeded"));
       await secondRunner.stopAcceptingWork();
@@ -223,6 +236,88 @@ describe("M3-A7 controller provisioning execution path", function () {
       if (tokenDirectory) fs.rmSync(tokenDirectory, { recursive: true, force: true });
       await server.close();
       await cleanupWorkspace(fixture);
+    }
+  });
+
+  it("pauses after delivery and performs no create or patch while failure reporting remains available", async () => {
+    for (const operation of ["create", "patch"]) {
+      const fixture = await createWorkspace(`controller-execution-paused-${operation}`);
+      const server = await startServer();
+      let tokenDirectory;
+      try {
+        const token = await createApiToken({
+          workspaceId: fixture.workspaceId,
+          name: `Paused ${operation} controller`,
+          scopes: ["certops:provision:execute", "certops:events:write"],
+          controllerClusterId: "cluster-a",
+          createdBy: fixture.ownerId,
+        });
+        const tokenFile = createTokenFile(token.plaintextToken);
+        tokenDirectory = tokenFile.directory;
+        const request = provisionRequest({
+          certificateName: `paused-${operation}`,
+          secretName: `paused-${operation}-tls`,
+        });
+        const intent = await createIntent(fixture, request);
+        const deliveredCommand = {
+          ...request,
+          jobId: intent.job.id,
+          managedCertificateId: intent.managedCertificateId,
+          workspaceId: fixture.workspaceId,
+        };
+        const existing = certificateFor({
+          ...deliveredCommand,
+          dnsNames: ["previous.example.test"],
+        });
+        const kubernetesCalls = [];
+        const missing = Object.assign(new Error("missing"), { statusCode: 404 });
+        const kubernetesClient = {
+          async getCertificate() {
+            kubernetesCalls.push("getCertificate");
+            await TestUtils.execQuery(
+              "UPDATE workspaces SET certops_paused = TRUE WHERE id = $1",
+              [fixture.workspaceId],
+            );
+            if (operation === "create") throw missing;
+            return { body: existing };
+          },
+          async createCertificate() { kubernetesCalls.push("createCertificate"); },
+          async patchCertificate() { kubernetesCalls.push("patchCertificate"); },
+        };
+        const commandClient = createCommandClient(server.apiUrl, tokenFile.file);
+        const provisioner = createCertificateProvisioner({
+          authorizeMutation: commandClient.authorizeMutation,
+          client: kubernetesClient,
+          clusterId: "cluster-a",
+          watchNamespaces: ["certops"],
+          workspaceId: fixture.workspaceId,
+        });
+        const runner = createProvisioningRunner({
+          commandClient,
+          intervalMs: 30_000,
+          provisioner,
+        });
+
+        await runner.start({ trackWork: (work) => work });
+        await eventually(async () => expect(await jobStatus(intent.job.id)).to.equal("failed"));
+        await runner.stopAcceptingWork();
+        await runner.close();
+
+        expect(kubernetesCalls).to.deep.equal(["getCertificate"]);
+        const reporting = await TestUtils.execQuery(
+          `SELECT
+             (SELECT COUNT(*)::int FROM certificate_executor_events
+               WHERE workspace_id = $1 AND job_id = $2) AS events,
+             (SELECT COUNT(*)::int FROM certificate_evidence
+               WHERE workspace_id = $1 AND job_id = $2) AS evidence`,
+          [fixture.workspaceId, intent.job.id],
+        );
+        expect(reporting.rows[0]).to.deep.equal({ events: 2, evidence: 0 });
+      } finally {
+        if (tokenDirectory) fs.rmSync(tokenDirectory, { recursive: true, force: true });
+        await server.close();
+        await cleanupWorkspace(fixture);
+      }
     }
   });
 
@@ -245,13 +340,15 @@ describe("M3-A7 controller provisioning execution path", function () {
 
       const failingIntent = await createIntent(fixture, provisionRequest({ certificateName: "kube-fail", secretName: "kube-fail-tls" }));
       const failedClient = createKubernetesClient({ fail: Object.assign(new Error("kube unavailable"), { code: "KUBE_UNAVAILABLE" }) });
+      const failedCommandClient = createCommandClient(server.apiUrl, tokenFile.file);
       const failedProvisioner = createCertificateProvisioner({
+        authorizeMutation: failedCommandClient.authorizeMutation,
         client: failedClient.client,
         clusterId: "cluster-a",
         watchNamespaces: ["certops"],
         workspaceId: fixture.workspaceId,
       });
-      const failedRunner = createProvisioningRunner({ commandClient: createCommandClient(server.apiUrl, tokenFile.file), provisioner: failedProvisioner, intervalMs: 30_000 });
+      const failedRunner = createProvisioningRunner({ commandClient: failedCommandClient, provisioner: failedProvisioner, intervalMs: 30_000 });
       await failedRunner.start({ trackWork: (work) => work });
       await eventually(async () => expect(await jobStatus(failingIntent.job.id)).to.equal("failed"));
       await failedRunner.stopAcceptingWork();
@@ -260,9 +357,11 @@ describe("M3-A7 controller provisioning execution path", function () {
       const intent = await createIntent(fixture, provisionRequest({ certificateName: "completion-retry", secretName: "completion-retry-tls" }));
       const kubernetes = createKubernetesClient();
       const timers = [];
+      const retryCommandClient = createCommandClient(server.apiUrl, tokenFile.file);
       const retryRunner = createProvisioningRunner({
-        commandClient: createCommandClient(server.apiUrl, tokenFile.file),
+        commandClient: retryCommandClient,
         provisioner: createCertificateProvisioner({
+          authorizeMutation: retryCommandClient.authorizeMutation,
           client: kubernetes.client,
           clusterId: "cluster-a",
           watchNamespaces: ["certops"],

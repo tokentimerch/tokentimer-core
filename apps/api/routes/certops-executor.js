@@ -29,7 +29,9 @@ const {
   CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
   CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED,
   CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  authorizeControllerProvisioningMutation,
   canonicalizeControllerProvisioningTerminalOccurredAt,
   recordControllerProvisioningEventTimestamp,
   takeNextControllerProvisioningCommand,
@@ -1916,6 +1918,12 @@ function controllerProvisioningCommandErrorResponse(res, error) {
       code: error.code,
     });
   }
+  if (error?.code === CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED) {
+    return res.status(409).json({
+      error: "Controller provisioning mutation is not authorized",
+      code: error.code,
+    });
+  }
   return null;
 }
 
@@ -1936,6 +1944,35 @@ async function controllerProvisioningCommandsHandler(req, res, options = {}) {
     return res.status(500).json({
       error: "Failed to load controller provisioning command",
       code: "CERTOPS_CONTROLLER_PROVISIONING_COMMAND_FAILED",
+    });
+  }
+}
+
+async function controllerProvisioningMutationAuthorizationHandler(
+  req,
+  res,
+  options = {},
+) {
+  try {
+    const authorize =
+      options.authorizeControllerProvisioningMutation ||
+      authorizeControllerProvisioningMutation;
+    await authorize({
+      apiToken: req.apiToken,
+      jobId: req.params.jobId,
+    });
+    return res.status(204).end();
+  } catch (error) {
+    const response = controllerProvisioningCommandErrorResponse(res, error);
+    if (response) return response;
+    logger.error("CertOps controller provisioning mutation authorization failed", {
+      code: error?.code || null,
+      workspaceId: req.apiToken?.workspaceId || null,
+      routeFamily: "controller-provisioning-commands",
+    });
+    return res.status(500).json({
+      error: "Failed to authorize controller provisioning mutation",
+      code: "CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_FAILED",
     });
   }
 }
@@ -2097,6 +2134,19 @@ function createCertOpsExecutorRouter(options = {}) {
   );
 
   certOpsExecutorRouter.post(
+    "/api/v1/certops/executor/provisioning-commands/:jobId/authorize-mutation",
+    preAuthRateLimitFallback,
+    controllerProvisioningAuthMiddleware,
+    rateLimitMiddleware,
+    rejectControllerProvisioningPrivateMaterial,
+    certOpsEnabledMiddleware,
+    controllerProvisioningGateMiddleware,
+    requireControllerProvisioningScope,
+    (req, res) =>
+      controllerProvisioningMutationAuthorizationHandler(req, res, options),
+  );
+
+  certOpsExecutorRouter.post(
     "/api/v1/certops/executor/events",
     preAuthRateLimitFallback,
     certOpsEnabledMiddleware,
@@ -2178,6 +2228,7 @@ module.exports._test = {
   controllerObservationsHandler,
   controllerObservationErrorResponse,
   controllerProvisioningCommandsHandler,
+  controllerProvisioningMutationAuthorizationHandler,
   controllerProvisioningCommandErrorResponse,
   rejectControllerObservationPrivateMaterial,
   rejectControllerProvisioningPrivateMaterial,

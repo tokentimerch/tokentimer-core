@@ -81,6 +81,7 @@ function hasDesiredState(existing, command) {
 }
 
 function createCertificateProvisioner({
+  authorizeMutation,
   client,
   clusterId,
   clusterWide = false,
@@ -88,6 +89,9 @@ function createCertificateProvisioner({
   workspaceId,
 } = {}) {
   if (!client) throw new TypeError("A cert-manager client is required");
+  if (typeof authorizeMutation !== "function") {
+    throw new TypeError("A provisioning mutation authorizer is required");
+  }
   if (typeof workspaceId !== "string" || workspaceId === "") {
     throw new TypeError("A controller workspace ID is required");
   }
@@ -107,6 +111,10 @@ function createCertificateProvisioner({
       throw provisionerError("CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT");
     }
     if (hasDesiredState(existing, command)) return { operation: "unchanged", resource: existing };
+    // This remote check is deliberately adjacent to the Kubernetes side
+    // effect. It transactionally rechecks the deployment rollout and current
+    // workspace pause state after command delivery and on every runner retry.
+    await authorizeMutation(command);
     const patched = responseBody(await client.patchCertificate({
       namespace: command.namespace,
       name: command.certificateName,
@@ -134,6 +142,7 @@ function createCertificateProvisioner({
     } catch (error) {
       if (!isNotFound(error)) throw error;
       try {
+        await authorizeMutation(command);
         const created = responseBody(await client.createCertificate({
           namespace: command.namespace,
           name: command.certificateName,

@@ -184,6 +184,13 @@ function commandRequest(app, token) {
     .send({});
 }
 
+function mutationAuthorizationRequest(app, token, jobId) {
+  return supertest(app)
+    .post(`/api/v1/certops/executor/provisioning-commands/${jobId}/authorize-mutation`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({});
+}
+
 async function provisioningCounts(workspaceId) {
   const result = await TestUtils.execQuery(
     `SELECT
@@ -790,6 +797,11 @@ describe("CertOps controller provisioning", function () {
         scopes: ["certops:events:write"],
         createdBy: fixture.ownerId,
       });
+      const delivered = await commandRequest(
+        executorApp,
+        provisionToken.plaintextToken,
+      ).expect(200);
+      expect(delivered.body.command.jobId).to.equal(initial.body.job.id);
       await TestUtils.execQuery(
         "UPDATE workspaces SET certops_paused = TRUE WHERE id = $1",
         [fixture.workspaceId],
@@ -802,6 +814,12 @@ describe("CertOps controller provisioning", function () {
         provisionRequest({ certificateName: "blocked-cert", secretName: "blocked-cert-tls" }),
       ).expect(409);
       await commandRequest(executorApp, provisionToken.plaintextToken).expect(409);
+      const blockedMutation = await mutationAuthorizationRequest(
+        executorApp,
+        provisionToken.plaintextToken,
+        initial.body.job.id,
+      ).expect(409);
+      expect(blockedMutation.body.code).to.equal("CERTOPS_WORKSPACE_PAUSED");
 
       const observation = observationPayload(fixture.workspaceId);
       await supertest(executorApp)
@@ -860,6 +878,36 @@ describe("CertOps controller provisioning", function () {
       const commandB = await commandRequest(executorApp, clusterB.plaintextToken).expect(200);
       expect(commandA.body.command.clusterId).to.equal("cluster-a");
       expect(commandB.body.command.clusterId).to.equal("cluster-b");
+      await mutationAuthorizationRequest(
+        executorApp,
+        observationOnly.plaintextToken,
+        commandA.body.command.jobId,
+      ).expect(403);
+      await mutationAuthorizationRequest(
+        executorApp,
+        genericExecutor.plaintextToken,
+        commandA.body.command.jobId,
+      ).expect(403);
+      await mutationAuthorizationRequest(
+        executorApp,
+        otherWorkspace.plaintextToken,
+        commandA.body.command.jobId,
+      ).expect(409);
+      await mutationAuthorizationRequest(
+        executorApp,
+        clusterB.plaintextToken,
+        commandA.body.command.jobId,
+      ).expect(409);
+      await mutationAuthorizationRequest(
+        executorApp,
+        clusterA.plaintextToken,
+        commandA.body.command.jobId,
+      ).expect(204);
+      await mutationAuthorizationRequest(
+        executorApp,
+        clusterB.plaintextToken,
+        commandB.body.command.jobId,
+      ).expect(204);
     } finally {
       await cleanupWorkspace(first);
       await cleanupWorkspace(second);

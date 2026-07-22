@@ -1,8 +1,8 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.12.0",
-  "status": "runtime-stable",
-  "description": "Frozen CertOps route namespaces and stable routes. Core workspace, machine-token executor, controller observation, cert-manager provisioning intent, job read, job manual-create, evidence, token-management, and workspace kill-switch routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn. Provisioning adds only a narrow cert-manager provisioning intent and cluster-bound controller command surface; it does not implement the agent protocol.",
+  "version": "0.13.0",
+  "status": "controller-runtime-stable",
+  "description": "Frozen CertOps route namespaces and stable routes covering the certificate inventory, the executor API, and the cert-manager controller. The controller adds only narrow cert-manager observation, provisioning intent, cluster-bound command, and just-in-time mutation-authorization surfaces; it does not implement the future agent protocol.",
   "namespacePolicy": {
     "workspaceScoped": {
       "prefix": "/api/v1/workspaces/{id}/certops",
@@ -19,10 +19,10 @@
       "notes": [
         "Machine surface for M2 executor writes plus narrow M3 controller observation and provisioning transport. Scoped API-token bearer auth only; machine routes never use cookies.",
         "Allowed scopes are certops:read, certops:events:write, certops:jobs:read, certops:evidence:write, certops:observations:write, and certops:provision:execute. certops:read implies certops:jobs:read only, never a write scope; neither controller scope is implied by another scope and either requires an immutable controllerClusterId binding. Empty required-scope configuration is invalid.",
-        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events, controller observations, provisioning commands, and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
+        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events, controller observations, provisioning command fetch and mutation authorization, and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
         "POST /api/v1/certops/executor/events is the aggregate M2 ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped M2 machine routes.",
-        "The three M2 executor routes retain the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior. POST /api/v1/certops/executor/observations is passive controller-specific M3 transport. POST /api/v1/certops/executor/provisioning-commands/next is a cluster-bound provision-command transport that redelivers only server-owned controller_provisioning jobs safely without M4 claims, agents, heartbeats, signatures, nonces, or polling protocol. It rejects private material before scope or extension gates and is denied while a workspace is paused."
+        "The three M2 executor routes retain the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior. POST /api/v1/certops/executor/observations is passive controller-specific M3 transport. POST /api/v1/certops/executor/provisioning-commands/next is a cluster-bound provision-command transport that redelivers only server-owned controller_provisioning jobs safely. POST /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation is a narrow M3 just-in-time rollout/workspace/job recheck immediately before each Certificate create or patch and every mutation retry. Neither provisioning route introduces M4 claims, agents, heartbeats, signatures, nonces, leases, or polling protocol. Both reject private material before scope or extension gates and deny mutation work while a workspace is paused."
       ]
     },
     "agent": {
@@ -41,6 +41,7 @@
     "/api/v1/certops/executor/events": "certOpsTokenAuth",
     "/api/v1/certops/executor/observations": "certOpsTokenAuth",
     "/api/v1/certops/executor/provisioning-commands/next": "certOpsTokenAuth",
+    "/api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation": "certOpsTokenAuth",
     "/api/v1/workspaces/{id}/certops/provision-intents": "cookieAuth",
     "/api/v1/certops/jobs/{jobId}/events": "certOpsTokenAuth",
     "/api/v1/certops/jobs/{jobId}/evidence": "certOpsTokenAuth",
@@ -72,6 +73,7 @@
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
       { "path": "/api/v1/certops/executor/observations", "method": "POST" },
       { "path": "/api/v1/certops/executor/provisioning-commands/next", "method": "POST" },
+      { "path": "/api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation", "method": "POST" },
       { "path": "/api/v1/certops/jobs/{jobId}/events", "method": "POST" },
       { "path": "/api/v1/certops/jobs/{jobId}/evidence", "method": "POST" },
       { "path": "/api/v1/certops/agent/register", "method": "POST" },

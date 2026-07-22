@@ -4243,6 +4243,35 @@ paths:
         "409": { description: Workspace CertOps is paused }
         "422": { description: Request rejected because it contained private key material }
         "429": { description: CertOps machine-token rate limit exceeded }
+  /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation:
+    post:
+      tags: [CertOps Controller]
+      summary: Reauthorize one controller provisioning mutation
+      operationId: authorizeCertOpsControllerProvisioningMutation
+      description: >-
+        Narrow M3 controller authorization check called immediately before each
+        Kubernetes Certificate create or patch. Requires
+        `certops:provision:execute`, immutable controller cluster binding, an
+        active server-owned provisioning job, the deployment-wide CertOps
+        rollout gate, and an unpaused workspace. Retries recheck the same
+        authoritative state. This is not an M4 claim, lease, heartbeat, or
+        agent-protocol operation.
+      security:
+        - certOpsTokenAuth: []
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Mutation remains authorized immediately before execution }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Workspace paused or command no longer mutation-authorized }
+        "422": { description: Request rejected because it contained private key material }
+        "429": { description: CertOps machine-token rate limit exceeded }
   /api/v1/certops/executor/events:
     post:
       tags: [CertOps Agent]

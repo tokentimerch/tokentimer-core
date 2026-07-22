@@ -93,13 +93,64 @@ function certificateResource() {
   };
 }
 
-function createObserverClient() {
+function statusSufficientCertificateResource() {
+  return {
+    metadata: {
+      generation: 3,
+      name: "web",
+      namespace: "team-a",
+      resourceVersion: "7",
+      uid: "certificate-uid",
+    },
+    spec: {
+      dnsNames: ["web.example.test"],
+      issuerRef: {
+        group: "cert-manager.io",
+        kind: "ClusterIssuer",
+        name: "public-issuer",
+      },
+      secretName: "web-tls",
+    },
+    status: {
+      conditions: [{ status: "True", type: "Ready" }],
+      notAfter: "2026-10-21T10:00:00.000Z",
+      notBefore: "2026-07-21T10:00:00.000Z",
+      revision: 2,
+    },
+  };
+}
+
+function statusSufficientCertificateRequestResource() {
+  return {
+    metadata: {
+      annotations: {
+        "cert-manager.io/certificate-name": "web",
+        "cert-manager.io/certificate-revision": "2",
+      },
+      name: "web-2",
+      namespace: "team-a",
+      ownerReferences: [{
+        kind: "Certificate",
+        name: "web",
+        uid: "certificate-uid",
+      }],
+      resourceVersion: "8",
+      uid: "certificate-request-uid",
+    },
+    status: { conditions: [{ status: "True", type: "Ready" }] },
+  };
+}
+
+function createObserverClient({
+  certificate = certificateResource(),
+  certificateRequests = [],
+} = {}) {
   const watchCalls = [];
   return {
     async close() {},
     async list({ resource }) {
       return {
-        items: resource === "Certificate" ? [certificateResource()] : [],
+        items: resource === "Certificate" ? [certificate] : certificateRequests,
         resourceVersion: `${resource}-rv`,
       };
     },
@@ -250,7 +301,49 @@ describe("CertOps tls.crt fallback", () => {
     assert.deepEqual(calls, []);
   });
 
-  it("reads exactly the referenced Secret for an eligible Ready observation and allowlists public fields", async () => {
+  it("delivers realistic Ready Certificate and CertificateRequest status without reading a Secret", async () => {
+    const delivered = [];
+    let secretReads = 0;
+    const fallback = createTlsCertificateFallback({
+      enabled: true,
+      kubernetesClient: {
+        async readTlsCertificate() {
+          secretReads += 1;
+          return encodedCertificate;
+        },
+      },
+    });
+    const observer = createCertManagerObserver({
+      client: createObserverClient({
+        certificate: statusSufficientCertificateResource(),
+        certificateRequests: [statusSufficientCertificateRequestResource()],
+      }),
+      clusterId: "cluster-a",
+      enrichObservation: fallback.enrichObservation,
+      isRecoverableEnrichmentError: fallback.isRecoverableError,
+      observationHandler: async (observation) => delivered.push(observation),
+      workspaceId: "workspace-a",
+    });
+
+    await observer.start({ trackWork: (work) => work });
+    await tick();
+    await tick();
+
+    assert.equal(secretReads, 0);
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].ready, true);
+    assert.equal(delivered[0].revision, 2);
+    assert.equal(delivered[0].notBefore, "2026-07-21T10:00:00.000Z");
+    assert.equal(delivered[0].notAfter, "2026-10-21T10:00:00.000Z");
+    assert.deepEqual(delivered[0].certificateRequestRef, {
+      name: "web-2",
+      uid: "certificate-request-uid",
+    });
+    assert.equal(Object.hasOwn(delivered[0], "publicCertificate"), false);
+    await observer.close();
+  });
+
+  it("reads exactly the referenced Secret for an actually status-insufficient Ready observation", async () => {
     const calls = [];
     const fallback = createTlsCertificateFallback({
       enabled: true,

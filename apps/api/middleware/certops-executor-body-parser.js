@@ -10,6 +10,8 @@ const CERTOPS_CONTROLLER_OBSERVATIONS_PATH =
   "/api/v1/certops/executor/observations";
 const CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH =
   "/api/v1/certops/executor/provisioning-commands/next";
+const CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH =
+  "/api/v1/certops/executor/provisioning-commands/:jobId/authorize-mutation";
 const CERTOPS_JOB_EVENTS_PATH = "/api/v1/certops/jobs/:jobId/events";
 const CERTOPS_JOB_EVIDENCE_PATH = "/api/v1/certops/jobs/:jobId/evidence";
 const CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES = Object.freeze({
@@ -62,6 +64,13 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
     if (
       normalizedPath === `${prefix}/executor/provisioning-commands/next` ||
       normalizedPath === `${prefix}/executor/provisioning-commands/next/`
+    ) {
+      return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.controllerProvisioningCommands;
+    }
+    if (
+      new RegExp(
+        `^${prefix}/executor/provisioning-commands/[^/]+/authorize-mutation/?$`,
+      ).test(normalizedPath)
     ) {
       return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.controllerProvisioningCommands;
     }
@@ -167,6 +176,7 @@ function createCertOpsMachineWritePreParserBoundary(options = {}) {
 module.exports = {
   CERTOPS_EXECUTOR_EVENTS_PATH,
   CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH,
   CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
   CERTOPS_JOB_EVENTS_PATH,
   CERTOPS_JOB_EVIDENCE_PATH,

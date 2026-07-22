@@ -383,6 +383,19 @@ function createControllerProvisioningCommandClient({
     throw lastError || commandClientError("CONTROLLER_PROVISIONING_TRANSPORT_FAILED");
   }
   return Object.freeze({
+    async authorizeMutation(command) {
+      if (containsPrivateKeyMaterial(command)) {
+        throw commandClientError("PRIVATE_KEY_MATERIAL_REJECTED");
+      }
+      const jobId = uuid(command?.jobId);
+      return request(
+        new URL(
+          `/api/v1/certops/executor/provisioning-commands/${encodeURIComponent(jobId)}/authorize-mutation`,
+          root,
+        ).toString(),
+        {},
+      );
+    },
     async close() {
       acceptingWork = false;
       for (const [controller, state] of abortControllers) {

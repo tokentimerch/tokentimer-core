@@ -15,6 +15,8 @@ const {
 const {
   CERTOPS_EXECUTOR_EVENTS_PATH,
   CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
   CERTOPS_JOB_EVENTS_PATH,
   CERTOPS_JOB_EVIDENCE_PATH,
   CERTOPS_EXECUTOR_EVENT_BODY_LIMIT_BYTES,
@@ -30,6 +32,8 @@ const JOB_ID = "11111111-1111-4111-8111-111111111111";
 const MACHINE_WRITE_ROUTES = [
   CERTOPS_EXECUTOR_EVENTS_PATH,
   CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
+  CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH.replace(":jobId", JOB_ID),
   `/api/v1/certops/jobs/${JOB_ID}/events`,
   `/api/v1/certops/jobs/${JOB_ID}/evidence`,
 ];
@@ -45,6 +49,8 @@ function buildApp({ onAuth = () => {} } = {}) {
   for (const route of [
     CERTOPS_EXECUTOR_EVENTS_PATH,
     CERTOPS_CONTROLLER_OBSERVATIONS_PATH,
+    CERTOPS_CONTROLLER_PROVISIONING_COMMANDS_PATH,
+    CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_PATH,
     CERTOPS_JOB_EVENTS_PATH,
     CERTOPS_JOB_EVIDENCE_PATH,
   ]) {
@@ -228,6 +234,7 @@ describe("CertOps executor body parser", () => {
       ...MACHINE_WRITE_ROUTES,
       "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Events/",
       "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Evidence/",
+      "/API/v1/CertOps/Executor/Provisioning-Commands/11111111-1111-4111-8111-111111111111/Authorize-Mutation/",
     ]) {
       let parserCalls = 0;
       let authCalls = 0;
@@ -268,6 +275,8 @@ describe("CertOps executor body parser", () => {
       "/api/v1/certops/jobs//events",
       "/api/v1/certops/jobs/1/events/extra",
       "/api/v1/certops/jobs/1/evidence//",
+      "/api/v1/certops/executor/provisioning-commands//authorize-mutation",
+      "/api/v1/certops/executor/provisioning-commands/1/authorize-mutation/extra",
       "/api/v1/certops/agent/register",
     ]) {
       assert.equal(certOpsMachineWriteRouteFamily(path), null);

@@ -414,6 +414,10 @@ describe("CertOps route hardening", () => {
     assertOpenApiRoute("/api/v1/certops/executor/events", "POST");
     assertOpenApiRoute("/api/v1/certops/executor/observations", "POST");
     assertOpenApiRoute("/api/v1/certops/executor/provisioning-commands/next", "POST");
+    assertOpenApiRoute(
+      "/api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation",
+      "POST",
+    );
     assertOpenApiRoute("/api/v1/workspaces/{id}/certops/provision-intents", "POST");
     assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/events", "POST");
     assertOpenApiRoute("/api/v1/certops/jobs/{jobId}/evidence", "POST");
@@ -425,6 +429,9 @@ describe("CertOps route hardening", () => {
     );
     const provisioningBlock = executorRouteBlock(
       "/api/v1/certops/executor/provisioning-commands/next",
+    );
+    const provisioningAuthorizationBlock = executorRouteBlock(
+      "/api/v1/certops/executor/provisioning-commands/:jobId/authorize-mutation",
     );
     const aggregateBlock = executorRouteBlock(
       "/api/v1/certops/executor/events",
@@ -454,6 +461,28 @@ describe("CertOps route hardening", () => {
     assert.match(provisioningBlock, /controllerProvisioningAuthMiddleware/);
     assert.match(provisioningBlock, /rejectControllerProvisioningPrivateMaterial/);
     assert.match(provisioningBlock, /requireControllerProvisioningScope/);
+    assert.match(provisioningAuthorizationBlock, /controllerProvisioningAuthMiddleware/);
+    assert.match(provisioningAuthorizationBlock, /rejectControllerProvisioningPrivateMaterial/);
+    assert.match(provisioningAuthorizationBlock, /certOpsEnabledMiddleware/);
+    assert.match(provisioningAuthorizationBlock, /controllerProvisioningGateMiddleware/);
+    assert.match(provisioningAuthorizationBlock, /requireControllerProvisioningScope/);
+    assert.match(
+      provisioningAuthorizationBlock,
+      /controllerProvisioningMutationAuthorizationHandler/,
+    );
+    for (const [before, after] of [
+      ["controllerProvisioningAuthMiddleware", "rejectControllerProvisioningPrivateMaterial"],
+      ["rejectControllerProvisioningPrivateMaterial", "certOpsEnabledMiddleware"],
+      ["certOpsEnabledMiddleware", "controllerProvisioningGateMiddleware"],
+      ["controllerProvisioningGateMiddleware", "requireControllerProvisioningScope"],
+      ["requireControllerProvisioningScope", "controllerProvisioningMutationAuthorizationHandler"],
+    ]) {
+      assert.ok(
+        provisioningAuthorizationBlock.indexOf(before) <
+          provisioningAuthorizationBlock.indexOf(after),
+        `${before} must precede ${after}`,
+      );
+    }
     assert.match(executorRoutesSource, /CONTROLLER_OBSERVATION_SCOPE = OBSERVATION_WRITE_SCOPE/);
 
     assert.equal(routesSource.includes("/api/v1/certops/jobs/:jobId"), false);

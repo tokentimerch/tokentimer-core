@@ -106,6 +106,38 @@ function createClient(fetchImpl, options = {}) {
 }
 
 describe("controller provisioning command response boundary", () => {
+  it("uses the narrow job-scoped authorization route immediately before mutations", async () => {
+    const requests = [];
+    const client = createClient(async (url, options) => {
+      requests.push({ url, options });
+      return response("", 204);
+    });
+    await client.start();
+
+    await client.authorizeMutation(command);
+
+    assert.equal(
+      requests[0].url,
+      `https://api.example.test/api/v1/certops/executor/provisioning-commands/${command.jobId}/authorize-mutation`,
+    );
+    assert.equal(requests[0].options.method, "POST");
+    assert.deepEqual(JSON.parse(requests[0].options.body), {});
+  });
+
+  it("does not retry a paused mutation authorization", async () => {
+    let calls = 0;
+    const client = createClient(async () => {
+      calls += 1;
+      return response(JSON.stringify({ code: "CERTOPS_WORKSPACE_PAUSED" }), 409);
+    });
+    await client.start();
+
+    await assert.rejects(() => client.authorizeMutation(command), {
+      code: "CONTROLLER_PROVISIONING_HTTP_409",
+    });
+    assert.equal(calls, 1);
+  });
+
   it("uses a provisioning-specific bound calculated from the published command schema", () => {
     assert.equal(provisioningSchema.properties.dnsNames.maxItems, PROVISIONING_COMMAND_SCHEMA_LIMITS.dnsNameCount);
     assert.equal(provisioningSchema.properties.dnsNames.items.maxLength, PROVISIONING_COMMAND_SCHEMA_LIMITS.dnsNameLength);

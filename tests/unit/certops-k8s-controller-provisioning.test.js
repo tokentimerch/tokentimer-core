@@ -59,6 +59,7 @@ describe("cert-manager Certificate provisioner", () => {
       async patchCertificate(value) { calls.push(["patch", value]); return { body: value.certificate }; },
     };
     const provisioner = createCertificateProvisioner({
+      authorizeMutation: async () => {},
       client,
       clusterId: "cluster-a",
       watchNamespaces: ["team-a"],
@@ -90,6 +91,7 @@ describe("cert-manager Certificate provisioner", () => {
       async patchCertificate(value) { calls.push(["patch", value]); },
     };
     const provisioner = createCertificateProvisioner({
+      authorizeMutation: async () => {},
       client,
       clusterId: "cluster-a",
       watchNamespaces: ["team-a"],
@@ -103,6 +105,46 @@ describe("cert-manager Certificate provisioner", () => {
     for (const [mismatched, code] of cases) {
       await assert.rejects(() => provisioner.reconcile(mismatched), { code });
       assert.deepEqual(calls, []);
+    }
+  });
+
+  it("reauthorizes immediately before create and patch and performs no mutation after pause", async () => {
+    const paused = Object.assign(new Error("paused"), {
+      code: "CERTOPS_WORKSPACE_PAUSED",
+    });
+    for (const operation of ["create", "patch"]) {
+      const calls = [];
+      const desiredCommand = operation === "patch"
+        ? { ...command, dnsNames: ["changed.example.test"] }
+        : command;
+      const client = {
+        async getCertificate() {
+          calls.push("getCertificate");
+          if (operation === "create") {
+            throw Object.assign(new Error("missing"), { statusCode: 404 });
+          }
+          return { body: certificateFor(command) };
+        },
+        async createCertificate() { calls.push("createCertificate"); },
+        async patchCertificate() { calls.push("patchCertificate"); },
+      };
+      let authorizationChecks = 0;
+      const provisioner = createCertificateProvisioner({
+        authorizeMutation: async () => {
+          authorizationChecks += 1;
+          throw paused;
+        },
+        client,
+        clusterId: "cluster-a",
+        watchNamespaces: ["team-a"],
+        workspaceId: command.workspaceId,
+      });
+
+      await assert.rejects(() => provisioner.reconcile(desiredCommand), {
+        code: "CERTOPS_WORKSPACE_PAUSED",
+      });
+      assert.equal(authorizationChecks, 1, operation);
+      assert.deepEqual(calls, ["getCertificate"], operation);
     }
   });
 
@@ -122,6 +164,7 @@ describe("cert-manager Certificate provisioner", () => {
       patchCertificate: async (value) => { calls.push(value); return { body: value.certificate }; },
     };
     const provisioner = createCertificateProvisioner({
+      authorizeMutation: async () => {},
       client,
       clusterId: "cluster-a",
       watchNamespaces: ["team-a"],
@@ -153,6 +196,7 @@ describe("cert-manager Certificate provisioner", () => {
       async patchCertificate(value) { calls.push(value); return { body: value.certificate }; },
     };
     const provisioner = createCertificateProvisioner({
+      authorizeMutation: async () => {},
       client,
       clusterId: "cluster-a",
       watchNamespaces: ["team-a"],

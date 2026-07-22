@@ -17,6 +17,8 @@ const CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED =
   "CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED";
 const CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY =
   "CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY";
+const CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED =
+  "CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED";
 const CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT =
   "CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT";
 const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
@@ -321,6 +323,121 @@ function validateAuthenticatedProvisioningBinding(apiToken, desired) {
   }
 }
 
+/**
+ * Reauthorize one already delivered M3 provisioning command immediately before
+ * a Kubernetes create/patch. The workspace row lock and rollout resolution are
+ * intentionally repeated here so a pause or global disable after delivery
+ * cannot be bypassed by controller retries.
+ */
+async function authorizeControllerProvisioningMutation({
+  apiToken,
+  jobId,
+  dbPool = pool,
+} = {}) {
+  if (!apiToken?.workspaceId || !apiToken?.controllerClusterId) {
+    throw provisioningError(
+      "Provisioning token binding is unavailable",
+      CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+    );
+  }
+  const normalizedJobId = uuid(jobId, "jobId");
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    await lockWorkspaceForCertOpsSideEffect({
+      client,
+      workspaceId: apiToken.workspaceId,
+    });
+    const selected = await client.query(
+      `SELECT j.id, j.payload, j.subject_type, j.subject_id
+         FROM certificate_jobs j
+         JOIN certificate_controller_provision_deliveries d
+           ON d.job_id = j.id
+          AND d.workspace_id = j.workspace_id
+        WHERE j.id = $1
+          AND j.workspace_id = $2
+          AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
+          AND j.operation = 'deploy'
+          AND j.status NOT IN ('rejected', 'succeeded', 'failed', 'blocked', 'cancelled')
+          AND j.payload->>'kind' = 'cert_manager_provision'
+          AND j.payload #>> '{desiredCertificate,clusterId}' = $3
+          AND d.controller_cluster_id = $3
+        FOR UPDATE OF j`,
+      [normalizedJobId, apiToken.workspaceId, apiToken.controllerClusterId],
+    );
+    const row = selected.rows[0];
+    if (!row) {
+      throw provisioningError(
+        "Provisioning mutation is not authorized",
+        CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED,
+      );
+    }
+
+    let desired;
+    try {
+      desired = normalizeDesiredCertificate(row.payload?.desiredCertificate);
+      if (
+        row.subject_type !== "managed_certificate" ||
+        row.subject_id !== desired.managedCertificateId ||
+        row.id !== desired.jobId ||
+        row.id !== normalizedJobId
+      ) {
+        throw provisioningError("Provisioning command identity is invalid");
+      }
+      validateAuthenticatedProvisioningBinding(apiToken, desired);
+    } catch (error) {
+      if (new Set([
+        CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+        CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
+        CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+      ]).has(error?.code)) {
+        throw error;
+      }
+      throw provisioningError(
+        "Provisioning mutation is not authorized",
+        CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED,
+      );
+    }
+
+    const identity = await client.query(
+      `SELECT mc.id
+         FROM managed_certificates mc
+        WHERE mc.id = $1
+          AND mc.workspace_id = $2
+          AND mc.source = 'cert_manager'
+          AND mc.source_ref = $3
+          AND mc.status NOT IN ('revoked', 'decommissioned')
+          AND EXISTS (
+            SELECT 1
+              FROM certificate_targets ct
+             WHERE ct.workspace_id = mc.workspace_id
+               AND ct.source = 'cert_manager'
+               AND ct.source_ref = $4
+               AND ct.target_type = 'kubernetes-secret'
+          )`,
+      [
+        desired.managedCertificateId,
+        apiToken.workspaceId,
+        sourceRefFor(desired),
+        targetSourceRefFor(desired),
+      ],
+    );
+    if (!identity.rows[0]) {
+      throw provisioningError(
+        "Provisioning mutation is not authorized",
+        CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED,
+      );
+    }
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) { /* preserve failure */ }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool } = {}) {
   if (!apiToken?.workspaceId || !apiToken?.controllerClusterId) {
     throw provisioningError("Provisioning token binding is unavailable", CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED);
@@ -536,12 +653,14 @@ module.exports = {
   CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
   CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED,
   CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
   CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
   CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT,
   CONTROLLER_PROVISIONING_JOB_SOURCE,
   DELIVERY_RETRY_INTERVAL_SECONDS,
   canonicalizeControllerProvisioningTerminalOccurredAt,
+  authorizeControllerProvisioningMutation,
   createControllerProvisionIntent,
   normalizeDesiredCertificate,
   normalizeHumanProvisionRequest,

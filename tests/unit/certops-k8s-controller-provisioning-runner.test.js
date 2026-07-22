@@ -4,6 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { createProvisioningRunner } = require("../../apps/k8s-controller/src/provisioning-runner");
+const { createCertificateProvisioner } = require("../../apps/k8s-controller/src/certificate-provisioner");
 
 const command = Object.freeze({
   schemaVersion: 1,
@@ -133,6 +134,55 @@ describe("controller provisioning runner", () => {
     await eventually(() => assert.deepEqual(stages, ["started", "completed"]));
     assert.equal(attempts, 2);
     assert.equal(stages.includes("failed"), false);
+    await runner.stopAcceptingWork();
+    await runner.close();
+  });
+
+  it("reauthorizes before a transient retry and reports failure without another mutation when paused", async () => {
+    const stages = [];
+    const timers = [];
+    const mutationCalls = [];
+    let paused = false;
+    let authorizationChecks = 0;
+    const provisioner = createCertificateProvisioner({
+      authorizeMutation: async () => {
+        authorizationChecks += 1;
+        if (paused) {
+          throw Object.assign(new Error("paused"), {
+            code: "CERTOPS_WORKSPACE_PAUSED",
+          });
+        }
+      },
+      client: {
+        async getCertificate() {
+          throw Object.assign(new Error("missing"), { statusCode: 404 });
+        },
+        async createCertificate() {
+          mutationCalls.push("createCertificate");
+          throw Object.assign(new Error("server unavailable"), { code: 503 });
+        },
+      },
+      clusterId: command.clusterId,
+      watchNamespaces: [command.namespace],
+      workspaceId: command.workspaceId,
+    });
+    const runner = runnerFixture({
+      nextCommand: async () => command,
+      random: () => 0,
+      reportEvent: async (_command, stage) => { stages.push(stage); },
+      reconcile: provisioner.reconcile,
+      timers,
+    });
+
+    await runner.start({ trackWork: (work) => work });
+    await eventually(() => assert.equal(timers.length, 1));
+    assert.equal(authorizationChecks, 1);
+    assert.deepEqual(mutationCalls, ["createCertificate"]);
+    paused = true;
+    await timers.shift()();
+    await eventually(() => assert.deepEqual(stages, ["started", "failed"]));
+    assert.equal(authorizationChecks, 2);
+    assert.deepEqual(mutationCalls, ["createCertificate"]);
     await runner.stopAcceptingWork();
     await runner.close();
   });

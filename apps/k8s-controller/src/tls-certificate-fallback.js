@@ -59,6 +59,33 @@ function hasUsablePublicFingerprint(observation) {
     /^[a-f0-9]{64}$/i.test(observation.publicCertificate.fingerprintSha256);
 }
 
+function hasSufficientPublicLifecycleStatus(observation) {
+  const issuerRef = observation?.issuerRef;
+  const certificateRequestRef = observation?.certificateRequestRef;
+  const notBefore = Date.parse(observation?.notBefore);
+  const notAfter = Date.parse(observation?.notAfter);
+  const readyCondition = Array.isArray(observation?.conditions)
+    ? observation.conditions.find(
+      (condition) => condition?.type === "Ready" && condition?.status === "True",
+    )
+    : null;
+  return Boolean(
+    observation?.ready === true &&
+    readyCondition &&
+    issuerRef &&
+    typeof issuerRef.group === "string" && issuerRef.group !== "" &&
+    typeof issuerRef.kind === "string" && issuerRef.kind !== "" &&
+    typeof issuerRef.name === "string" && issuerRef.name !== "" &&
+    Number.isSafeInteger(observation.revision) && observation.revision >= 1 &&
+    Number.isFinite(notBefore) &&
+    Number.isFinite(notAfter) &&
+    notBefore <= notAfter &&
+    certificateRequestRef &&
+    typeof certificateRequestRef.name === "string" &&
+    certificateRequestRef.name !== "",
+  );
+}
+
 function requiredSecretName(observation) {
   return typeof observation?.secretName === "string" &&
     observation.secretName.trim() !== ""
@@ -122,7 +149,12 @@ function createTlsCertificateFallback({
   }
 
   async function enrichObservation(observation) {
-    if (!enabled || !observation?.ready || hasUsablePublicFingerprint(observation)) {
+    if (
+      !enabled ||
+      !observation?.ready ||
+      hasUsablePublicFingerprint(observation) ||
+      hasSufficientPublicLifecycleStatus(observation)
+    ) {
       return observation;
     }
 
@@ -181,5 +213,6 @@ module.exports = {
   createTlsCertificateFallback,
   decodeTlsCertificateData,
   hasUsablePublicFingerprint,
+  hasSufficientPublicLifecycleStatus,
   isRecoverableError,
 };
