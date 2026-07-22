@@ -279,8 +279,8 @@ describe("CertOps inventory migration", () => {
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
-      migrations.slice(-13).map((migration) => migration.version),
-      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+      migrations.slice(-14).map((migration) => migration.version),
+      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -525,6 +525,128 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("defines the agent protocol migration with hashed credentials only", () => {
+    const agentProtocolMigration = migrations.find(
+      (migration) => migration.name === "certops_agent_protocol_schema",
+    );
+    assert.ok(
+      agentProtocolMigration,
+      "expected certops_agent_protocol_schema migration",
+    );
+    assert.equal(agentProtocolMigration.version, 24);
+
+    for (const tableName of [
+      "certops_agents",
+      "certops_agent_bootstrap_tokens",
+      "certops_signing_keys",
+      "certops_consumed_nonces",
+    ]) {
+      assert.match(
+        agentProtocolMigration.sql,
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\(`),
+        `missing ${tableName}`,
+      );
+    }
+    assert.doesNotMatch(
+      agentProtocolMigration.sql,
+      /CREATE TABLE (?!IF NOT EXISTS)/,
+    );
+    assert.doesNotMatch(
+      agentProtocolMigration.sql,
+      /CREATE (?:UNIQUE )?INDEX (?!IF NOT EXISTS)/,
+    );
+
+    // Workspace scoping for workspace-owned tables.
+    for (const tableName of [
+      "certops_agents",
+      "certops_agent_bootstrap_tokens",
+    ]) {
+      assert.match(
+        getTableBlock(tableName, agentProtocolMigration),
+        /workspace_id UUID NOT NULL REFERENCES workspaces\(id\) ON DELETE CASCADE/,
+        `${tableName} must have a non-null workspace FK`,
+      );
+    }
+
+    // Credentials and bootstrap tokens are stored hashed, never raw.
+    assert.match(
+      agentProtocolMigration.sql,
+      /credential_prefix ~ '\^ttagent_\[a-f0-9\]\{16\}\$'/,
+    );
+    assert.match(
+      agentProtocolMigration.sql,
+      /credential_hash ~ '\^\[a-f0-9\]\{64\}\$'/,
+    );
+    assert.match(
+      agentProtocolMigration.sql,
+      /token_prefix ~ '\^ttboot_\[a-f0-9\]\{16\}\$'/,
+    );
+    assert.doesNotMatch(
+      agentProtocolMigration.sql,
+      /raw_credential|raw_token|credential_plain|token_plain/i,
+    );
+
+    // The only key stored is the control-plane-owned Ed25519 JOB-SIGNING
+    // key, encrypted at rest; no certificate private-key custody columns.
+    assert.match(agentProtocolMigration.sql, /private_key_encrypted TEXT NOT NULL/);
+    assert.match(agentProtocolMigration.sql, /encryption_version SMALLINT NOT NULL/);
+    assert.match(
+      agentProtocolMigration.sql,
+      /public_key_pem LIKE '-----BEGIN PUBLIC KEY-----%'/,
+    );
+    assert.doesNotMatch(
+      agentProtocolMigration.sql,
+      /private_key_pem|key_material|pkcs12|pfx|jks|keystore/i,
+    );
+    assert.match(
+      agentProtocolMigration.sql,
+      /uq_certops_signing_keys_single_active/,
+    );
+
+    // Replay ledger keyed by nonce + job with expiry sweep support.
+    assert.match(
+      agentProtocolMigration.sql,
+      /PRIMARY KEY \(nonce, job_id\)/,
+    );
+    assert.match(
+      agentProtocolMigration.sql,
+      /idx_certops_consumed_nonces_expires/,
+    );
+
+    // Claim/lease execution columns on certificate_jobs.
+    for (const column of [
+      "claimed_by_agent_id",
+      "claim_id",
+      "lease_expires_at",
+      "attempt_count",
+      "max_attempts",
+      "next_attempt_at",
+      "scheduled_for",
+      "approved_by_user_id",
+      "approved_at",
+      "approved_payload_hash",
+    ]) {
+      assert.match(
+        agentProtocolMigration.sql,
+        new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`),
+        `certificate_jobs must gain ${column}`,
+      );
+    }
+    assert.match(
+      agentProtocolMigration.sql,
+      /idx_certificate_jobs_claimable/,
+    );
+    assert.match(
+      agentProtocolMigration.sql,
+      /idx_certificate_jobs_lease_expiry/,
+    );
+    // Retired-agent freeze needs a status vocabulary with retired.
+    assert.match(
+      agentProtocolMigration.sql,
+      /status IN \('active', 'offline', 'retired'\)/,
+    );
+  });
+
   it("keeps released migration 18 and the controller migration tail unique and ordered", () => {
     const expectedVersions = new Map([
       ["tokens_certops_api_token_link", 18],
@@ -533,6 +655,7 @@ describe("CertOps inventory migration", () => {
       ["certops_controller_observation_reporting", 21],
       ["certops_controller_provisioning", 22],
       ["certops_controller_provisioning_event_timestamps", 23],
+      ["certops_agent_protocol_schema", 24],
     ]);
     for (const [name, version] of expectedVersions) {
       assert.equal(

@@ -1535,6 +1535,215 @@ const migrations = [
         ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ NULL;
     `,
   },
+  {
+    version: 24,
+    name: "certops_agent_protocol_schema",
+    sql: `
+      -- M4 agent control plane (plan 7.2-7.7, ADR-0002/0003). Zero private-key
+      -- custody for certificates is preserved: agents keep certificate keys
+      -- locally and only hashed credentials are stored here. The one deliberate
+      -- exception below is the control-plane-owned Ed25519 JOB-SIGNING key
+      -- (never a certificate key), stored encrypted at rest following the
+      -- system_settings *_encrypted envelope pattern.
+
+      -- 7.2 agent identity lifecycle. credential_hash is sha256 hex of the
+      -- ttagent_ per-agent credential; the raw credential is returned once at
+      -- registration and never persisted.
+      CREATE TABLE IF NOT EXISTS certops_agents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL
+          CHECK (agent_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        name TEXT NULL
+          CHECK (name IS NULL OR char_length(btrim(name)) BETWEEN 1 AND 128),
+        hostname TEXT NULL
+          CHECK (hostname IS NULL OR char_length(hostname) <= 255),
+        platform TEXT NULL
+          CHECK (platform IS NULL OR platform IN ('linux', 'darwin', 'win32')),
+        node_version TEXT NULL
+          CHECK (node_version IS NULL OR char_length(node_version) <= 32),
+        agent_version TEXT NOT NULL
+          CHECK (char_length(btrim(agent_version)) BETWEEN 1 AND 32),
+        protocol_version TEXT NOT NULL
+          CHECK (protocol_version ~ '^[0-9]+\\.[0-9]+\\.[0-9]+$'),
+        credential_prefix TEXT NOT NULL
+          CHECK (credential_prefix ~ '^ttagent_[a-f0-9]{16}$'),
+        credential_hash TEXT NOT NULL
+          CHECK (credential_hash ~ '^[a-f0-9]{64}$'),
+        declared_target_selectors JSONB NOT NULL DEFAULT '[]'::jsonb,
+        declared_command_profile_names JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'offline', 'retired')),
+        last_seen_at TIMESTAMPTZ NULL,
+        clock_offset_ms BIGINT NULL,
+        ntp_synced BOOLEAN NULL,
+        uptime_seconds BIGINT NULL
+          CHECK (uptime_seconds IS NULL OR uptime_seconds >= 0),
+        pinned_signing_key_id TEXT NULL
+          CHECK (pinned_signing_key_id IS NULL OR pinned_signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        last_sequence BIGINT NOT NULL DEFAULT 0
+          CHECK (last_sequence >= 0),
+        bootstrap_token_id UUID NULL,
+        retired_at TIMESTAMPTZ NULL,
+        retired_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        retire_reason TEXT NULL
+          CHECK (retire_reason IS NULL OR char_length(retire_reason) <= 1024),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_agents_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT certops_agents_retired_consistency_check CHECK (
+          (status = 'retired' AND retired_at IS NOT NULL) OR
+          (status <> 'retired' AND retired_at IS NULL)
+        )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_agent_id
+        ON certops_agents(agent_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_credential_prefix
+        ON certops_agents(credential_prefix);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_credential_hash
+        ON certops_agents(credential_hash);
+      CREATE INDEX IF NOT EXISTS idx_certops_agents_workspace_status
+        ON certops_agents(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certops_agents_status_last_seen
+        ON certops_agents(status, last_seen_at)
+        WHERE status = 'active';
+
+      -- 7.2 single-use hashed expiring bootstrap tokens. The raw ttboot_
+      -- token is shown once at creation and never persisted.
+      CREATE TABLE IF NOT EXISTS certops_agent_bootstrap_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name TEXT NOT NULL
+          CHECK (char_length(btrim(name)) BETWEEN 1 AND 128),
+        token_prefix TEXT NOT NULL
+          CHECK (token_prefix ~ '^ttboot_[a-f0-9]{16}$'),
+        token_hash TEXT NOT NULL
+          CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'used', 'revoked', 'expired')),
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ NULL,
+        used_by_agent_id UUID NULL REFERENCES certops_agents(id) ON DELETE SET NULL,
+        revoked_at TIMESTAMPTZ NULL,
+        revoked_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_agent_bootstrap_tokens_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT certops_agent_bootstrap_tokens_used_consistency_check CHECK (
+          (status = 'used' AND used_at IS NOT NULL) OR
+          (status <> 'used' AND used_at IS NULL)
+        )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agent_bootstrap_tokens_prefix
+        ON certops_agent_bootstrap_tokens(token_prefix);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agent_bootstrap_tokens_hash
+        ON certops_agent_bootstrap_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_bootstrap_tokens_workspace_status
+        ON certops_agent_bootstrap_tokens(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_bootstrap_tokens_status_expires
+        ON certops_agent_bootstrap_tokens(status, expires_at)
+        WHERE status = 'active';
+
+      ALTER TABLE certops_agents
+        DROP CONSTRAINT IF EXISTS fk_certops_agents_bootstrap_token;
+      ALTER TABLE certops_agents
+        ADD CONSTRAINT fk_certops_agents_bootstrap_token
+        FOREIGN KEY (bootstrap_token_id)
+        REFERENCES certops_agent_bootstrap_tokens(id)
+        ON DELETE SET NULL;
+
+      -- ADR-0003 Ed25519 JOB-SIGNING keys (control-plane owned; NOT certificate
+      -- keys, so the zero-custody invariant for certificates is untouched).
+      -- private_key_encrypted is a versioned AES-256-GCM envelope; the service
+      -- fails closed when the wrap key is unset while dispatch is enabled.
+      CREATE TABLE IF NOT EXISTS certops_signing_keys (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        signing_key_id TEXT NOT NULL
+          CHECK (signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        public_key_pem TEXT NOT NULL
+          CHECK (public_key_pem LIKE '-----BEGIN PUBLIC KEY-----%'),
+        private_key_encrypted TEXT NOT NULL,
+        encryption_version SMALLINT NOT NULL DEFAULT 1
+          CHECK (encryption_version >= 1),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'retiring', 'retired')),
+        retired_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_signing_keys_signing_key_id
+        ON certops_signing_keys(signing_key_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_signing_keys_single_active
+        ON certops_signing_keys(status)
+        WHERE status = 'active';
+
+      -- ADR-0003 server-side replay ledger: nonces issued at dispatch are
+      -- recorded here; a nonce is single-use per job and swept after expiry.
+      CREATE TABLE IF NOT EXISTS certops_consumed_nonces (
+        nonce TEXT NOT NULL
+          CHECK (nonce ~ '^[A-Za-z0-9_-]{16,128}$'),
+        job_id UUID NOT NULL,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        issued_to_agent_id UUID NULL REFERENCES certops_agents(id) ON DELETE SET NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (nonce, job_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certops_consumed_nonces_expires
+        ON certops_consumed_nonces(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_certops_consumed_nonces_workspace_job
+        ON certops_consumed_nonces(workspace_id, job_id);
+
+      -- 7.3 claim/lease execution columns on certificate_jobs (additive).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS claimed_by_agent_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS claim_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0
+          CHECK (attempt_count >= 0);
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3
+          CHECK (max_attempts BETWEEN 1 AND 10);
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_payload_hash CHAR(64) NULL
+          CHECK (approved_payload_hash IS NULL OR approved_payload_hash ~ '^[a-f0-9]{64}$');
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS fk_certificate_jobs_claimed_by_agent;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT fk_certificate_jobs_claimed_by_agent
+        FOREIGN KEY (claimed_by_agent_id)
+        REFERENCES certops_agents(id)
+        ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimable
+        ON certificate_jobs(workspace_id, status, next_attempt_at, scheduled_for)
+        WHERE status = 'pending';
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_lease_expiry
+        ON certificate_jobs(lease_expires_at)
+        WHERE status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimed_by_agent
+        ON certificate_jobs(claimed_by_agent_id)
+        WHERE claimed_by_agent_id IS NOT NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {
