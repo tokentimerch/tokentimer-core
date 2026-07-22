@@ -11,6 +11,19 @@ function read(relativePath) {
 }
 
 describe("CertOps Kubernetes controller wiring", () => {
+  it("keeps the controller package and default image tag aligned with Chart.appVersion", () => {
+    const controllerPackage = JSON.parse(read("apps/k8s-controller/package.json"));
+    const chart = read("deploy/helm/Chart.yaml");
+    const values = read("deploy/helm/values.yaml");
+    const appVersion = chart.match(/^appVersion:\s*"([^"]+)"$/m)?.[1];
+    const controllerTag = values.match(
+      /^certops:\r?\n  controller:[\s\S]*?^    image:\r?\n[\s\S]*?^      tag:\s*"([^"]+)"/m,
+    )?.[1];
+
+    expect(controllerPackage.version).to.equal(appVersion);
+    expect(controllerTag).to.equal(appVersion);
+  });
+
   it("keeps the fourth image non-root, locked, and independently executable", () => {
     const dockerfile = read("apps/k8s-controller/Dockerfile");
     const logScrubber = read("packages/log-scrub/index.js");

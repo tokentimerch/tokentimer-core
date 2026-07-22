@@ -12,6 +12,7 @@ const MAX_DECODED_TLS_CRT_BYTES = 64 * 1024;
 const MAX_ENCODED_TLS_CRT_BYTES = 128 * 1024;
 
 const SAFE_FALLBACK_CODES = new Set([
+  "CERTOPS_TLS_CRT_READ_FAILED",
   "CERTOPS_TLS_CRT_INVALID_BASE64",
   "CERTOPS_TLS_CRT_MISSING",
   "CERTOPS_TLS_CRT_TOO_LARGE",
@@ -100,6 +101,10 @@ function fallbackErrorCode(error) {
     : "CERTOPS_CERTIFICATE_PARSE_FAILED";
 }
 
+function isRecoverableError(error) {
+  return SAFE_FALLBACK_CODES.has(error?.code);
+}
+
 function createTlsCertificateFallback({
   containsPrivateKeyMaterial: detectPrivateKeyMaterial = containsPrivateKeyMaterial,
   enabled = false,
@@ -165,6 +170,7 @@ function createTlsCertificateFallback({
   return Object.freeze({
     enrichObservation,
     isEnabled: () => enabled,
+    isRecoverableError,
   });
 }
 
@@ -175,4 +181,5 @@ module.exports = {
   createTlsCertificateFallback,
   decodeTlsCertificateData,
   hasUsablePublicFingerprint,
+  isRecoverableError,
 };

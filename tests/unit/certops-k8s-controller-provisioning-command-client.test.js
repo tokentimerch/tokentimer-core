@@ -15,6 +15,7 @@ const {
   maximumProvisioningResponseEnvelope,
   PROVISIONING_COMMAND_SCHEMA_LIMITS,
   stableId,
+  validateCommand,
 } = require("../../apps/k8s-controller/src/provisioning-command-client");
 const provisioningSchema = require("../../packages/contracts/certops/controller-provisioning.schema.json");
 
@@ -30,6 +31,23 @@ const command = {
   issuerRef: { group: "cert-manager.io", kind: "ClusterIssuer", name: "issuer-a" },
   dnsNames: ["example.test"],
 };
+
+function validEnvelope() {
+  return {
+    command: {
+      ...command,
+      issuerRef: { ...command.issuerRef },
+      dnsNames: [...command.dnsNames],
+    },
+    eventTimestamps: {
+      started: "2026-07-21T12:00:00.000Z",
+    },
+  };
+}
+
+function assertInvalidResponse(value, code = "CONTROLLER_PROVISIONING_INVALID_RESPONSE") {
+  assert.throws(() => validateCommand(value), { code });
+}
 
 function streamFrom(chunks, { error = null, onCancel } = {}) {
   return {
@@ -118,6 +136,10 @@ describe("controller provisioning command response boundary", () => {
     await client.start();
     const received = await client.nextCommand();
     assert.deepEqual(received.dnsNames, envelope.command.dnsNames);
+    assert.equal(Object.isFrozen(received), true);
+    assert.equal(Object.isFrozen(received.dnsNames), true);
+    assert.equal(Object.isFrozen(received.issuerRef), true);
+    assert.equal(Object.isFrozen(received.eventTimestamps), true);
   });
 
   it("rejects and cancels provisioning responses at one byte over the exact bound", async () => {
@@ -297,5 +319,124 @@ describe("controller provisioning command response boundary", () => {
     await assert.rejects(() => pending, {
       code: "CONTROLLER_PROVISIONING_STOPPING",
     });
+  });
+});
+
+describe("controller provisioning command contract validation", () => {
+  it("requires plain response, command, issuer, and timestamp objects with no unknown fields", () => {
+    const cases = [
+      [],
+      new Date(),
+      { command: validEnvelope().command, unexpected: true },
+      { command: [], eventTimestamps: {} },
+      { command: { ...validEnvelope().command, unexpected: true } },
+      { command: { ...validEnvelope().command, issuerRef: [] } },
+      { command: validEnvelope().command, eventTimestamps: [] },
+      { command: validEnvelope().command, eventTimestamps: { queued: "2026-07-21T12:00:00Z" } },
+    ];
+    for (const value of cases) assertInvalidResponse(value);
+  });
+
+  it("rejects malformed UUID identities", () => {
+    for (const field of ["workspaceId", "jobId", "managedCertificateId"]) {
+      const envelope = validEnvelope();
+      envelope.command[field] = "not-a-uuid";
+      assertInvalidResponse(envelope);
+    }
+  });
+
+  it("rejects unknown issuer fields and any issuer kind outside the frozen pair", () => {
+    const unknown = validEnvelope();
+    unknown.command.issuerRef.extra = "unsupported";
+    assertInvalidResponse(unknown);
+
+    for (const kind of ["issuer", "CertificateIssuer", "", 1]) {
+      const envelope = validEnvelope();
+      envelope.command.issuerRef.kind = kind;
+      assertInvalidResponse(envelope);
+    }
+  });
+
+  it("rejects invalid cluster, namespace, Certificate, Secret, and issuer names", () => {
+    const cases = [
+      ["clusterId", "Cluster-A"],
+      ["namespace", "team_a"],
+      ["certificateName", "-web-cert"],
+      ["secretName", `${"a".repeat(64)}.example`],
+    ];
+    for (const [field, value] of cases) {
+      const envelope = validEnvelope();
+      envelope.command[field] = value;
+      assertInvalidResponse(envelope);
+    }
+    for (const [field, value] of [
+      ["group", "cert_manager.io"],
+      ["name", `${"a".repeat(64)}.example`],
+    ]) {
+      const envelope = validEnvelope();
+      envelope.command.issuerRef[field] = value;
+      assertInvalidResponse(envelope);
+    }
+  });
+
+  it("rejects empty, oversized, duplicate, uppercase, and malformed wildcard DNS identities", () => {
+    const invalidDnsNames = [
+      [],
+      Array.from({ length: 101 }, (_, index) => `name-${index}.example.test`),
+      ["example.test", "example.test"],
+      ["Example.test"],
+      ["**.example.test"],
+      ["www.*.example.test"],
+      [`${"a".repeat(64)}.example.test`],
+    ];
+    for (const dnsNames of invalidDnsNames) {
+      const envelope = validEnvelope();
+      envelope.command.dnsNames = dnsNames;
+      assertInvalidResponse(envelope);
+    }
+  });
+
+  it("validates bounded RFC 3339 event timestamps rather than Date.parse-compatible strings", () => {
+    const invalidTimestamps = [
+      "2026-07-21 12:00:00Z",
+      "2026-7-21T12:00:00Z",
+      "2026-02-29T12:00:00Z",
+      "1999-12-31T23:59:59Z",
+      "2026-07-21T12:00:00+14:01",
+      `2026-07-21T12:00:00.${"1".repeat(65)}Z`,
+    ];
+    for (const timestamp of invalidTimestamps) {
+      const envelope = validEnvelope();
+      envelope.eventTimestamps.started = timestamp;
+      assertInvalidResponse(envelope);
+    }
+
+    const valid = validEnvelope();
+    valid.eventTimestamps.completed = "2026-07-21T13:30:00+01:30";
+    assert.equal(
+      validateCommand(valid).eventTimestamps.completed,
+      "2026-07-21T12:00:00.000Z",
+    );
+  });
+
+  it("rejects private material anywhere in the complete response before execution", () => {
+    const envelope = validEnvelope();
+    envelope.eventTimestamps.started =
+      "-----BEGIN PRIVATE KEY-----\nnever-execute\n-----END PRIVATE KEY-----";
+    assertInvalidResponse(envelope, "PRIVATE_KEY_MATERIAL_REJECTED");
+  });
+
+  it("accepts and freezes a fully valid command with lowercase wildcard DNS identities", () => {
+    const envelope = validEnvelope();
+    envelope.command.workspaceId = envelope.command.workspaceId.toUpperCase();
+    envelope.command.dnsNames = ["*.example.test", "example.test"];
+    const validated = validateCommand(envelope);
+
+    assert.equal(validated.command.workspaceId, command.workspaceId);
+    assert.deepEqual(validated.command.dnsNames, ["*.example.test", "example.test"]);
+    assert.equal(Object.isFrozen(validated), true);
+    assert.equal(Object.isFrozen(validated.command), true);
+    assert.equal(Object.isFrozen(validated.command.issuerRef), true);
+    assert.equal(Object.isFrozen(validated.command.dnsNames), true);
   });
 });

@@ -186,7 +186,12 @@ describe("M3-A7 controller provisioning execution path", function () {
       tokenDirectory = tokenFile.directory;
       const first = await createIntent(fixture);
       const kubernetes = createKubernetesClient();
-      const provisioner = createCertificateProvisioner({ client: kubernetes.client, clusterId: "cluster-a", watchNamespaces: ["certops"] });
+      const provisioner = createCertificateProvisioner({
+        client: kubernetes.client,
+        clusterId: "cluster-a",
+        watchNamespaces: ["certops"],
+        workspaceId: fixture.workspaceId,
+      });
       const runner = createProvisioningRunner({ commandClient: createCommandClient(server.apiUrl, tokenFile.file), provisioner, intervalMs: 30_000 });
       await runner.start({ trackWork: (work) => work });
       await eventually(async () => expect(await jobStatus(first.job.id)).to.equal("succeeded"));
@@ -240,7 +245,12 @@ describe("M3-A7 controller provisioning execution path", function () {
 
       const failingIntent = await createIntent(fixture, provisionRequest({ certificateName: "kube-fail", secretName: "kube-fail-tls" }));
       const failedClient = createKubernetesClient({ fail: Object.assign(new Error("kube unavailable"), { code: "KUBE_UNAVAILABLE" }) });
-      const failedProvisioner = createCertificateProvisioner({ client: failedClient.client, clusterId: "cluster-a", watchNamespaces: ["certops"] });
+      const failedProvisioner = createCertificateProvisioner({
+        client: failedClient.client,
+        clusterId: "cluster-a",
+        watchNamespaces: ["certops"],
+        workspaceId: fixture.workspaceId,
+      });
       const failedRunner = createProvisioningRunner({ commandClient: createCommandClient(server.apiUrl, tokenFile.file), provisioner: failedProvisioner, intervalMs: 30_000 });
       await failedRunner.start({ trackWork: (work) => work });
       await eventually(async () => expect(await jobStatus(failingIntent.job.id)).to.equal("failed"));
@@ -252,7 +262,12 @@ describe("M3-A7 controller provisioning execution path", function () {
       const timers = [];
       const retryRunner = createProvisioningRunner({
         commandClient: createCommandClient(server.apiUrl, tokenFile.file),
-        provisioner: createCertificateProvisioner({ client: kubernetes.client, clusterId: "cluster-a", watchNamespaces: ["certops"] }),
+        provisioner: createCertificateProvisioner({
+          client: kubernetes.client,
+          clusterId: "cluster-a",
+          watchNamespaces: ["certops"],
+          workspaceId: fixture.workspaceId,
+        }),
         intervalMs: 1,
         setTimeoutFn: (callback) => { timers.push(callback); return timers.length; },
         clearTimeoutFn: () => {},

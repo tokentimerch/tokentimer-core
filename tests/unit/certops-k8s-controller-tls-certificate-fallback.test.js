@@ -363,14 +363,17 @@ describe("CertOps tls.crt fallback", () => {
     assert.doesNotMatch(JSON.stringify(logs), /never-log|BEGIN PRIVATE KEY/);
   });
 
-  it("keeps watches alive after fallback failure and logs only a safe error code", async () => {
+  it("keeps watches alive and delivers clean status after a Secret read failure", async () => {
     const client = createObserverClient();
+    const delivered = [];
     const logs = [];
     const rawFailure = "raw-tls-certificate-data";
+    let reads = 0;
     const fallback = createTlsCertificateFallback({
       enabled: true,
       kubernetesClient: {
         async readTlsCertificate() {
+          reads += 1;
           throw new Error(rawFailure);
         },
       },
@@ -379,8 +382,9 @@ describe("CertOps tls.crt fallback", () => {
       client,
       clusterId: "cluster-a",
       enrichObservation: fallback.enrichObservation,
+      isRecoverableEnrichmentError: fallback.isRecoverableError,
       logger: { debug() {}, error() {}, info() {}, warn(message, metadata) { logs.push({ message, metadata }); } },
-      observationHandler: async () => assert.fail("must not deliver a partial observation"),
+      observationHandler: async (observation) => delivered.push(observation),
       workspaceId: "workspace-a",
     });
     await observer.start({ trackWork: (work) => work });
@@ -389,8 +393,128 @@ describe("CertOps tls.crt fallback", () => {
 
     assert.equal(observer.isReady(), true);
     assert.equal(client.watchCalls.length, 2);
+    assert.equal(reads, 1);
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].ready, true);
+    assert.equal(Object.hasOwn(delivered[0], "publicCertificate"), false);
     assert.match(JSON.stringify(logs), /CERTOPS_TLS_CRT_READ_FAILED/);
     assert.doesNotMatch(JSON.stringify(logs), new RegExp(rawFailure));
+
+    // Replaying the already processed resourceVersion must not trigger a hot
+    // fallback loop or duplicate the status-only observation.
+    client.watchCalls.find((call) => call.resource === "Certificate").onEvent(
+      "MODIFIED",
+      certificateResource(),
+    );
+    await tick();
+    assert.equal(reads, 1);
+    assert.equal(delivered.length, 1);
+    await observer.close();
+  });
+
+  it("preserves safe status for missing, timeout, malformed, and oversized optional fallback input", async () => {
+    const cases = [
+      {
+        code: "CERTOPS_TLS_CRT_MISSING",
+        read: async () => undefined,
+      },
+      {
+        code: "CERTOPS_TLS_CRT_READ_FAILED",
+        read: async () => {
+          throw Object.assign(new Error("socket timeout with raw response"), {
+            code: "ETIMEDOUT",
+          });
+        },
+      },
+      {
+        code: "CERTOPS_CERTIFICATE_PARSE_FAILED",
+        read: async () => Buffer.from("not a certificate").toString("base64"),
+      },
+      {
+        code: "CERTOPS_TLS_CRT_TOO_LARGE",
+        read: async () => "A".repeat(MAX_ENCODED_TLS_CRT_BYTES + 1),
+      },
+    ];
+
+    for (const scenario of cases) {
+      const client = createObserverClient();
+      const delivered = [];
+      const logs = [];
+      let reads = 0;
+      const fallback = createTlsCertificateFallback({
+        enabled: true,
+        kubernetesClient: {
+          async readTlsCertificate() {
+            reads += 1;
+            return scenario.read();
+          },
+        },
+      });
+      const observer = createCertManagerObserver({
+        client,
+        clusterId: "cluster-a",
+        enrichObservation: fallback.enrichObservation,
+        isRecoverableEnrichmentError: fallback.isRecoverableError,
+        logger: {
+          debug() {},
+          error() {},
+          info() {},
+          warn(message, metadata) { logs.push({ message, metadata }); },
+        },
+        observationHandler: async (observation) => delivered.push(observation),
+        workspaceId: "workspace-a",
+      });
+      await observer.start({ trackWork: (work) => work });
+      await tick();
+      await tick();
+
+      assert.equal(reads, 1, scenario.code);
+      assert.equal(delivered.length, 1, scenario.code);
+      assert.equal(Object.hasOwn(delivered[0], "publicCertificate"), false, scenario.code);
+      assert.match(JSON.stringify(logs), new RegExp(scenario.code));
+      assert.doesNotMatch(JSON.stringify(logs), /raw response|not a certificate/);
+      await observer.close();
+    }
+  });
+
+  it("discards private-key-bearing tls.crt bytes while delivering only independently clean status", async () => {
+    const client = createObserverClient();
+    const delivered = [];
+    const logs = [];
+    const privateMaterial =
+      "-----BEGIN PRIVATE KEY-----\nnever-forward\n-----END PRIVATE KEY-----";
+    const fallback = createTlsCertificateFallback({
+      enabled: true,
+      kubernetesClient: {
+        async readTlsCertificate() {
+          return Buffer.from(privateMaterial).toString("base64");
+        },
+      },
+    });
+    const observer = createCertManagerObserver({
+      client,
+      clusterId: "cluster-a",
+      enrichObservation: fallback.enrichObservation,
+      isRecoverableEnrichmentError: fallback.isRecoverableError,
+      logger: {
+        debug() {},
+        error() {},
+        info() {},
+        warn(message, metadata) { logs.push({ message, metadata }); },
+      },
+      observationHandler: async (observation) => delivered.push(observation),
+      workspaceId: "workspace-a",
+    });
+    await observer.start({ trackWork: (work) => work });
+    await tick();
+    await tick();
+
+    assert.equal(delivered.length, 1);
+    assert.equal(Object.hasOwn(delivered[0], "publicCertificate"), false);
+    assert.doesNotMatch(JSON.stringify(delivered), /PRIVATE KEY|never-forward/);
+    assert.match(JSON.stringify(logs), /PRIVATE_KEY_MATERIAL_REJECTED/);
+    assert.doesNotMatch(JSON.stringify(logs), /PRIVATE KEY|never-forward/);
+    await observer.close();
   });
 
   it("prevents new Secret reads during shutdown and waits for tracked fallback work", async () => {

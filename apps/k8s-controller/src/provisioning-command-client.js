@@ -24,6 +24,23 @@ const PROVISIONING_COMMAND_SCHEMA_LIMITS = Object.freeze({
   dnsNameLength: 253,
   kubernetesNameLength: 253,
 });
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RFC1123_LABEL_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const RFC1123_SUBDOMAIN_PATTERN =
+  /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+const DNS_NAME_PATTERN =
+  /^(\*\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$/;
+const RFC3339_TIMESTAMP_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))$/;
+const MAX_EVENT_TIMESTAMP_LENGTH = 64;
+const RESPONSE_FIELDS = new Set(["command", "eventTimestamps"]);
+const COMMAND_FIELDS = new Set([
+  "schemaVersion", "workspaceId", "clusterId", "jobId", "managedCertificateId",
+  "namespace", "certificateName", "secretName", "issuerRef", "dnsNames",
+]);
+const ISSUER_FIELDS = new Set(["group", "kind", "name"]);
+const EVENT_TIMESTAMP_FIELDS = new Set(["started", "completed", "failed"]);
 
 function maximumKubernetesName(index = 0) {
   const suffix = index.toString(36);
@@ -84,32 +101,157 @@ function stableId(jobId, stage) {
   return crypto.createHash("sha256").update(`${jobId}:${stage}`, "utf8").digest("hex").slice(0, 48);
 }
 
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function invalidResponse() {
+  throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
+}
+
+function assertKnownFields(value, allowed) {
+  if (!isPlainObject(value) || Object.keys(value).some((field) => !allowed.has(field))) {
+    invalidResponse();
+  }
+}
+
+function uuid(value) {
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) invalidResponse();
+  return value.toLowerCase();
+}
+
+function kubernetesLabel(value) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > PROVISIONING_COMMAND_SCHEMA_LIMITS.clusterOrNamespaceLength ||
+    !RFC1123_LABEL_PATTERN.test(value)
+  ) {
+    invalidResponse();
+  }
+  return value;
+}
+
+function kubernetesName(value) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > PROVISIONING_COMMAND_SCHEMA_LIMITS.kubernetesNameLength ||
+    !RFC1123_SUBDOMAIN_PATTERN.test(value) ||
+    !value.split(".").every((label) => label.length <= 63)
+  ) {
+    invalidResponse();
+  }
+  return value;
+}
+
+function dnsNames(value) {
+  if (
+    !Array.isArray(value) ||
+    value.length < 1 ||
+    value.length > PROVISIONING_COMMAND_SCHEMA_LIMITS.dnsNameCount
+  ) {
+    invalidResponse();
+  }
+  const normalized = [];
+  const identities = new Set();
+  for (const item of value) {
+    if (
+      typeof item !== "string" ||
+      item.length < 1 ||
+      item.length > PROVISIONING_COMMAND_SCHEMA_LIMITS.dnsNameLength ||
+      !DNS_NAME_PATTERN.test(item)
+    ) {
+      invalidResponse();
+    }
+    const identity = item.toLowerCase();
+    if (identities.has(identity)) invalidResponse();
+    identities.add(identity);
+    normalized.push(item);
+  }
+  return Object.freeze(normalized);
+}
+
+function issuerRef(value) {
+  assertKnownFields(value, ISSUER_FIELDS);
+  if (value.kind !== "Issuer" && value.kind !== "ClusterIssuer") invalidResponse();
+  return Object.freeze({
+    group: kubernetesName(value.group),
+    kind: value.kind,
+    name: kubernetesName(value.name),
+  });
+}
+
+function rfc3339Timestamp(value) {
+  if (typeof value !== "string" || value.length > MAX_EVENT_TIMESTAMP_LENGTH) {
+    invalidResponse();
+  }
+  const match = RFC3339_TIMESTAMP_PATTERN.exec(value);
+  const timestamp = new Date(value);
+  const offsetHours = Number(match?.[10]);
+  const offsetMinutes = Number(match?.[11]);
+  if (
+    !match ||
+    Number.isNaN(timestamp.getTime()) ||
+    Number(match[1]) < 2000 ||
+    Number(match[1]) > 2100 ||
+    Number(match[2]) < 1 ||
+    Number(match[2]) > 12 ||
+    Number(match[3]) < 1 ||
+    Number(match[3]) > new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).getUTCDate() ||
+    Number(match[4]) > 23 ||
+    Number(match[5]) > 59 ||
+    Number(match[6]) > 59 ||
+    (match[8] !== "Z" &&
+      (offsetHours > 14 ||
+        offsetMinutes > 59 ||
+        (offsetHours === 14 && offsetMinutes !== 0)))
+  ) {
+    invalidResponse();
+  }
+  return timestamp.toISOString();
+}
+
 function validateCommand(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).some((key) => key !== "command" && key !== "eventTimestamps") ||
-      !value.command || typeof value.command !== "object") {
-    throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
-  }
-  const command = value.command;
-  const allowed = new Set([
-    "schemaVersion", "workspaceId", "clusterId", "jobId", "managedCertificateId",
-    "namespace", "certificateName", "secretName", "issuerRef", "dnsNames",
-  ]);
-  if (Object.keys(command).some((key) => !allowed.has(key)) || command.schemaVersion !== 1 ||
-      !Array.isArray(command.dnsNames) || !command.issuerRef || typeof command.issuerRef !== "object") {
-    throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
-  }
-  if (containsPrivateKeyMaterial(command)) {
+  if (containsPrivateKeyMaterial(value)) {
     throw commandClientError("PRIVATE_KEY_MATERIAL_REJECTED");
   }
+  assertKnownFields(value, RESPONSE_FIELDS);
+  assertKnownFields(value.command, COMMAND_FIELDS);
+  const command = value.command;
+  if (command.schemaVersion !== 1) invalidResponse();
+
+  const normalizedCommand = Object.freeze({
+    schemaVersion: 1,
+    workspaceId: uuid(command.workspaceId),
+    clusterId: kubernetesLabel(command.clusterId),
+    jobId: uuid(command.jobId),
+    managedCertificateId: uuid(command.managedCertificateId),
+    namespace: kubernetesLabel(command.namespace),
+    certificateName: kubernetesName(command.certificateName),
+    secretName: kubernetesName(command.secretName),
+    issuerRef: issuerRef(command.issuerRef),
+    dnsNames: dnsNames(command.dnsNames),
+  });
+
   const eventTimestamps = value.eventTimestamps === undefined ? {} : value.eventTimestamps;
-  if (!eventTimestamps || typeof eventTimestamps !== "object" || Array.isArray(eventTimestamps) ||
-      Object.keys(eventTimestamps).some((stage) => !["started", "completed", "failed"].includes(stage)) ||
-      Object.values(eventTimestamps).some((timestamp) =>
-        typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp)))) {
-    throw commandClientError("CONTROLLER_PROVISIONING_INVALID_RESPONSE");
+  assertKnownFields(eventTimestamps, EVENT_TIMESTAMP_FIELDS);
+  const normalizedEventTimestamps = Object.freeze(Object.fromEntries(
+    Object.entries(eventTimestamps).map(([stage, timestamp]) => [
+      stage,
+      rfc3339Timestamp(timestamp),
+    ]),
+  ));
+  const normalized = Object.freeze({
+    command: normalizedCommand,
+    eventTimestamps: normalizedEventTimestamps,
+  });
+  if (containsPrivateKeyMaterial(normalized)) {
+    throw commandClientError("PRIVATE_KEY_MATERIAL_REJECTED");
   }
-  return { command, eventTimestamps };
+  return normalized;
 }
 
 function createControllerProvisioningCommandClient({
@@ -259,7 +401,10 @@ function createControllerProvisioningCommandClient({
       for (const [stage, timestamp] of Object.entries(delivery.eventTimestamps)) {
         rememberStageTimestamp(delivery.command, stage, timestamp);
       }
-      return { ...delivery.command, eventTimestamps: delivery.eventTimestamps };
+      return Object.freeze({
+        ...delivery.command,
+        eventTimestamps: delivery.eventTimestamps,
+      });
     },
     async reportEvent(command, stage, { status, eventType, message, evidence } = {}) {
       const event = {

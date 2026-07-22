@@ -318,6 +318,7 @@ function createCertManagerObserver({
   clusterId,
   containsPrivateKeyMaterial: detectPrivateKeyMaterial = containsPrivateKeyMaterial,
   enrichObservation = async (observation) => observation,
+  isRecoverableEnrichmentError = () => false,
   logger = { debug() {}, error() {}, info() {}, warn() {} },
   now = () => new Date().toISOString(),
   observationHandler,
@@ -339,6 +340,9 @@ function createCertManagerObserver({
   }
   if (typeof enrichObservation !== "function") {
     throw new TypeError("enrichObservation must be a function");
+  }
+  if (typeof isRecoverableEnrichmentError !== "function") {
+    throw new TypeError("isRecoverableEnrichmentError must be a function");
   }
   if (typeof detectPrivateKeyMaterial !== "function") {
     throw new TypeError("containsPrivateKeyMaterial must be a function");
@@ -431,7 +435,11 @@ function createCertManagerObserver({
             code: errorCode(error),
             namespace: observation.namespace,
           });
-          continue;
+          if (!isRecoverableEnrichmentError(error)) continue;
+          // tls.crt is optional enrichment. A bounded read/parse rejection
+          // discards that input while preserving the independently mapped
+          // status observation, which still passes the final key scan below.
+          enrichedObservation = observation;
         }
         if (!enrichedObservation || typeof enrichedObservation !== "object") {
           safeLog("warn", "cert-manager-observation-enrichment-failed", {

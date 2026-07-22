@@ -785,6 +785,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
         client: kubernetesClient,
         clusterId: "cluster-a",
         watchNamespaces: ["certops"],
+        workspaceId: fixture.workspaceId,
       });
       const createRunner = () => createProvisioningRunner({
         commandClient: createControllerProvisioningCommandClient({

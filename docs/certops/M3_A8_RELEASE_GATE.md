@@ -3,13 +3,16 @@
 Validation date: 2026-07-22
 
 This record covers the Core M3-A observe-and-provision implementation rebased
-onto `c246d6f6c76af32a4c1c65e64a09dfc253456bff` and safely force-pushed at
-`1c574e6f2181ae05fe6c947e3a604d323d636176`. GitHub reports PR #75 as
-mergeable. Exact-head GitHub Actions run `29875931446` executed and exposed a
-Linux-only failure in a Windows-specific observation-reporter test fixture;
-production token-file validation behaved correctly. This follow-up makes the
-fixture platform-neutral and requires another pushed exact-head CI result. This
-record is validation evidence, not a release announcement.
+onto `c246d6f6c76af32a4c1c65e64a09dfc253456bff`. The pushed head immediately
+before the final review patch is
+`0a46d5c83646b931ea8bef615138831e26b61d54`, and GitHub reports PR #75 as
+mergeable. PR CI run `29903381092` passed. Manual full CI run `29904349164`
+also passed, including runtime API contract and full integration tests, backend
+and frontend coverage, Helm and Compose validation, and build plus Grype scans
+for the API, dashboard, worker, and Kubernetes controller images. The final
+review patch remains uncommitted by design, so a pushed exact-head CI result for
+that patch is still required. This record is validation evidence, not a release
+announcement.
 
 ## Architecture source and resolved decision
 
@@ -24,6 +27,21 @@ matches the approved M3-A0, M3-A6, and M3-A7 contracts: registration,
 heartbeat, claims, attempts, leases, signing, nonces, scheduling, and the rest
 of the agent protocol remain deferred to M4. The prior documentation conflict
 is resolved and is no longer a release gate.
+
+## Final review findings resolved
+
+- The provisioner is now bound to the controller's immutable configured
+  workspace as well as its cluster and namespace policy. A mismatched command
+  is rejected before any Kubernetes client call.
+- The customer-side controller now independently validates the complete,
+  strictly allowlisted provisioning response, including UUIDs, Kubernetes
+  identities, issuer fields, DNS identities, bounded RFC 3339 event timestamps,
+  and private-material exclusion.
+- Optional `tls.crt` read or parse failures no longer suppress an independently
+  clean status observation. Only a sanitized stable failure code is logged,
+  and the final outbound private-material scan remains mandatory.
+- The controller package version and default Helm controller image tag now
+  match the repository/chart release line at `0.10.0`.
 
 ## Deterministic composition evidence
 
@@ -58,9 +76,9 @@ ownership-conflict, reporting-failure, readiness, and bounded-shutdown cases.
 | --- | --- |
 | `pnpm install --frozen-lockfile` | Passed with pnpm 11.13.0. |
 | `pnpm migrate` | Passed against a fresh disposable database; migrations 1 through 23 are present and current. |
-| Controller lint/build/test | Passed; 89 tests passed. |
-| API and worker lint/build | Passed; API lint had zero errors and one pre-existing warning in `sanitize.js`. |
-| `pnpm run test:unit` | Passed; 593 tests passed. |
+| Controller lint/build/test | Passed; 99 tests passed across 13 suites. |
+| Repository lint/build | Passed; lint had zero errors and 31 pre-existing warnings. |
+| `pnpm run test:unit` | Passed; 603 tests passed across 71 suites. |
 | `pnpm run test:contracts` | Passed static conformance; 25 passed and 1 live-API test was skipped because no API was listening on `localhost:4000`. |
 | Contract manifest, integrity, OpenAPI coverage, secret-logging checks | Passed. |
 | M3-A8 composition | Passed, 4/4. |
@@ -68,41 +86,27 @@ ownership-conflict, reporting-failure, readiness, and bounded-shutdown cases.
 | M3-A7 controller execution | Passed, 2/2. |
 | M3-A6 controller observations | Passed, 7/7. |
 | M2 executor events/evidence | Passed, 36/36. |
-| Controller wiring | Passed, 3/3. |
-| Migration integration | Passed, 13/13 after updating the stale pre-rebase version assertions. |
-| Private-key detector/rejection/redaction/parser focus | Passed, 128/128. |
+| Controller wiring | Passed, 4/4, including controller package/Helm tag alignment. |
+| Migration integration | Passed, 13/13. |
+| Private-key detector/rejection/redaction/parser focus | Passed, 64/64. |
 | Lockfile override check | Passed, 20 required resolutions pinned. |
-| Helm lint and verification | Passed; defaults use the documented no-bootstrap value and CI values exercise bootstrap configuration. |
-| Exact-head GitHub Actions run `29875931446` | Executed against `1c574e6f2181ae05fe6c947e3a604d323d636176`; controller, backend, and backend-coverage jobs initially failed because an observation-reporter test supplied `C:\\token` while running on Linux. Production absolute-path and file-security checks were correct; the fixture is now platform-neutral. A new pushed CI result remains required. |
+| Helm lint and verification | Passed; the checksum-verified Helm v3.20.1 fallback and full controller render/RBAC/NetworkPolicy matrix passed. |
+| Compose configuration | Both production and production-images configurations passed. |
+| PR CI run `29903381092` | Passed against pushed head `0a46d5c83646b931ea8bef615138831e26b61d54`. |
+| Manual full CI run `29904349164` | Passed runtime API contracts, full integration and coverage, Helm and Compose checks, and build plus Grype scans for all four images. |
 
-The follow-up controller suite passed 89/89. Both the host unit suite and the
-coverage workflow's pinned Node 22 unit phase passed 593/593. The Node 22 phase
-also exposed that `X509Certificate.signatureAlgorithm` is unavailable in the
-shipped runtime while it is present in the local Node 24 runtime; the field is
-optional in the published observation contract, and its allowlist test now
-handles both supported runtime shapes without changing production parsing.
+The local backend coverage command was attempted after the focused suites. Its
+WSL/Docker collector remained silent without completing and was stopped within
+a bounded run; no coverage threshold or harness change was made. Manual full CI
+run `29904349164` is the authoritative completed coverage and integration
+result and passed both. The final review patch still requires CI after it is
+committed and pushed.
 
-The backend coverage workflow then reached the established integration suite:
-835 tests passed, 7 were pending, and the unrelated auth-session invalidation
-case failed because the 2FA login helper received 401 instead of 200. Coverage
-reporting and threshold calculation therefore did not execute. No auth or test
-harness change was made. The controller-specific CI failures are resolved
-locally; the next pushed exact-head run remains authoritative.
-
-The Helm fallback now downloads v3.20.1 to a temporary archive, verifies
-SHA-256 `0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3`,
-then extracts it. Its version, URL, and checksum match CI and release. Both
-installed-Helm lint scenarios passed. A local rerun of the unchanged Bash
-render matrix was blocked before script execution by the Windows sandbox's
-`CreateFileMapping` denial; the matrix's prior passing evidence remains above.
-
-The established full integration command, `pnpm test:integration`, was also
-attempted. It emitted no suite output and completed no test before it was
-stopped after approximately three minutes. One idle Mocha child process
-remained and was terminated by its exact process ID; no repository Node process
-remained afterward. The focused
-database-backed M2/M3 suites listed above all passed independently. No unrelated
-integration harness changes were made.
+The Helm fallback downloads v3.20.1 to a temporary archive, verifies SHA-256
+`0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3`, then
+extracts it. Its version, URL, and checksum match CI and release. Both installed
+Helm lint scenarios and the checksum-verified Bash render matrix passed
+locally.
 
 ## Helm, Compose, and Kubernetes boundary
 
@@ -131,22 +135,21 @@ performing certificate issuance.
 
 ## Controller image
 
-The controller image built successfully from `apps/k8s-controller/Dockerfile`
-after rebase hardening as `tokentimer-core-k8s-controller:pr75-rebase`, image
-ID `sha256:8fcf15cc4377e6441e5fd0ce611796b821f160f458040ed24661302e6d2329db`.
-It runs as UID 1001, includes only the controller and its required shared
-runtime files, and excludes root build manifests, plans, tests, `.env` files,
-kubeconfig, token mounts, and unrelated workspace packages. Its packaged
+Manual full CI run `29904349164` built the API, dashboard, worker, and
+Kubernetes controller images and passed the Grype gate for all four. The
+controller package and default Helm image tag are aligned at `0.10.0`. The
+controller image runs as UID 1001, includes only the controller and its required
+shared runtime files, and excludes root build manifests, plans, tests, `.env`
+files, kubeconfig, token mounts, and unrelated workspace packages. Its packaged
 runtime-file smoke check passed.
 
 The repository-pinned Grype 0.112.0 archive was checksum-verified against
 `acb14a030010fe9bdb9594b4ae108d9d14ef2f926d936aa0916dc62c89c058ea`.
-The release-gate scan of the same pinned base and installed dependency set with
-`--fail-on high --only-fixed` returned `No vulnerabilities found`. Workspace
-overrides pin `ws` 8.21.0 and `js-yaml` 4.3.0. The runtime layer no longer
-retains unrelated workspace manifests or the unused Corepack, pnpm, and npm
-toolchains; this also removes npm's bundled packages from the shipped
-vulnerability inventory.
+The manual CI scan used the repository's `--fail-on high --only-fixed` policy
+and passed. Workspace overrides pin `ws` 8.21.0 and `js-yaml` 4.3.0. The runtime
+layer does not retain unrelated workspace manifests or the unused Corepack,
+pnpm, and npm toolchains; this also removes npm's bundled packages from the
+shipped vulnerability inventory.
 
 The CI build/scan and publish workflows include the controller at
 `linux/amd64`. The release workflow now also applies the release version to the
@@ -191,9 +194,11 @@ introduced.
 ## Rebase and branch status
 
 - Branch: `feature/certops-m3-a-cert-manager-controller`
-- Pushed rebased head: `1c574e6f2181ae05fe6c947e3a604d323d636176`
-- Base/current `origin/main`: `c246d6f6c76af32a4c1c65e64a09dfc253456bff`
-- Exact-head GitHub Actions run: `29875931446`
+- Pushed head before the final review patch: `0a46d5c83646b931ea8bef615138831e26b61d54`
+- Local HEAD after the uncommitted final review patch: `0a46d5c83646b931ea8bef615138831e26b61d54`
+- Rebase base: `c246d6f6c76af32a4c1c65e64a09dfc253456bff`
+- Passing PR CI run: `29903381092`
+- Passing manual full CI run: `29904349164`
 - GitHub mergeability: mergeable
 - Pre-rebase prompt baseline: `60193a27636c6d297ec6850b6434e72ce69c36e0`
 - Actual pre-rebase head: `c602b05208859573997b26c1658ca184e65027af`
@@ -240,19 +245,19 @@ development database; no production repair migration was added.
 
 ## Remaining release actions
 
-1. Push the focused portability/checksum follow-up and obtain successful GitHub
-   CI against that new exact head.
+1. Commit and push the final review patch, then obtain successful GitHub CI
+   against that new exact head.
 2. Run the manual real-Kubernetes/cert-manager smoke validation when a pinned
    disposable cluster is available.
-3. Run a non-PR workflow that executes the controller Docker build and Grype
-   gate where required; those jobs are skipped for pull-request events.
-4. Only after publication, record the immutable controller image and manifest
+3. Only after publication, record the immutable controller image and manifest
    digest in release metadata.
-5. Complete Cloud adoption of the M3 routes, scopes, immutable cluster binding,
+4. Complete Cloud adoption of the M3 routes, scopes, immutable cluster binding,
    and Helm/image wiring without changing the Core public contracts.
-6. Upgrade the Enterprise Core/contracts/chart/image baseline before enabling
+5. Upgrade the Enterprise Core/contracts/chart/image baseline before enabling
    M3 there.
-7. Resolve the unrelated full integration harness stall separately.
+6. Complete any separate release-process requirements before declaring M3-A
+   released.
 
-Until the new exact-head CI, manual smoke, non-PR image scan, and published image
-gates are complete, this document does not claim that M3-A is released.
+Until the new exact-head CI, manual smoke, published image, adoption, and
+release-process gates are complete, this document does not claim that M3-A is
+released.

@@ -80,10 +80,22 @@ function hasDesiredState(existing, command) {
     spec.issuerRef?.name === desired.spec.issuerRef.name;
 }
 
-function createCertificateProvisioner({ client, clusterId, clusterWide = false, watchNamespaces = [] } = {}) {
+function createCertificateProvisioner({
+  client,
+  clusterId,
+  clusterWide = false,
+  watchNamespaces = [],
+  workspaceId,
+} = {}) {
   if (!client) throw new TypeError("A cert-manager client is required");
+  if (typeof workspaceId !== "string" || workspaceId === "") {
+    throw new TypeError("A controller workspace ID is required");
+  }
 
   function assertLocalPolicy(command) {
+    if (command.workspaceId !== workspaceId) {
+      throw provisionerError("CERTOPS_PROVISIONING_WORKSPACE_MISMATCH");
+    }
     if (command.clusterId !== clusterId) throw provisionerError("CERTOPS_PROVISIONING_CLUSTER_MISMATCH");
     if (!clusterWide && !watchNamespaces.includes(command.namespace)) {
       throw provisionerError("CERTOPS_PROVISIONING_NAMESPACE_FORBIDDEN");

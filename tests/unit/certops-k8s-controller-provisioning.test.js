@@ -58,7 +58,12 @@ describe("cert-manager Certificate provisioner", () => {
       async createCertificate(value) { calls.push(["create", value]); return { body: { metadata: { uid: "public-uid" } } }; },
       async patchCertificate(value) { calls.push(["patch", value]); return { body: value.certificate }; },
     };
-    const provisioner = createCertificateProvisioner({ client, clusterId: "cluster-a", watchNamespaces: ["team-a"] });
+    const provisioner = createCertificateProvisioner({
+      client,
+      clusterId: "cluster-a",
+      watchNamespaces: ["team-a"],
+      workspaceId: command.workspaceId,
+    });
     const created = await provisioner.reconcile(command);
     assert.equal(created.operation, "created");
     assert.equal(calls.length, 1);
@@ -77,12 +82,28 @@ describe("cert-manager Certificate provisioner", () => {
     assert.equal(calls.length, 1);
   });
 
-  it("rejects a local namespace policy mismatch before any Kubernetes call", async () => {
-    const client = { getCertificate: async () => { throw new Error("must not call"); } };
-    const provisioner = createCertificateProvisioner({ client, clusterId: "cluster-a", watchNamespaces: ["team-b"] });
-    await assert.rejects(() => provisioner.reconcile(command), {
-      code: "CERTOPS_PROVISIONING_NAMESPACE_FORBIDDEN",
+  it("rejects workspace, cluster, and namespace mismatches before any Kubernetes call", async () => {
+    const calls = [];
+    const client = {
+      async getCertificate(value) { calls.push(["get", value]); },
+      async createCertificate(value) { calls.push(["create", value]); },
+      async patchCertificate(value) { calls.push(["patch", value]); },
+    };
+    const provisioner = createCertificateProvisioner({
+      client,
+      clusterId: "cluster-a",
+      watchNamespaces: ["team-a"],
+      workspaceId: command.workspaceId,
     });
+    const cases = [
+      [{ ...command, workspaceId: "00000000-0000-4000-8000-000000000099" }, "CERTOPS_PROVISIONING_WORKSPACE_MISMATCH"],
+      [{ ...command, clusterId: "cluster-b" }, "CERTOPS_PROVISIONING_CLUSTER_MISMATCH"],
+      [{ ...command, namespace: "team-b" }, "CERTOPS_PROVISIONING_NAMESPACE_FORBIDDEN"],
+    ];
+    for (const [mismatched, code] of cases) {
+      await assert.rejects(() => provisioner.reconcile(mismatched), { code });
+      assert.deepEqual(calls, []);
+    }
   });
 
   it("uses stable ownership across later jobs while rejecting changed ownership", async () => {
@@ -100,7 +121,12 @@ describe("cert-manager Certificate provisioner", () => {
       getCertificate: async () => ({ body: existing }),
       patchCertificate: async (value) => { calls.push(value); return { body: value.certificate }; },
     };
-    const provisioner = createCertificateProvisioner({ client, clusterId: "cluster-a", watchNamespaces: ["team-a"] });
+    const provisioner = createCertificateProvisioner({
+      client,
+      clusterId: "cluster-a",
+      watchNamespaces: ["team-a"],
+      workspaceId: command.workspaceId,
+    });
     const result = await provisioner.reconcile(later);
     assert.equal(result.operation, "reconciled");
     assert.equal(calls[0].certificate.metadata.labels["certops.tokentimer.io/last-intent-id"], later.jobId);
@@ -126,7 +152,12 @@ describe("cert-manager Certificate provisioner", () => {
       async createCertificate() { throw conflict; },
       async patchCertificate(value) { calls.push(value); return { body: value.certificate }; },
     };
-    const provisioner = createCertificateProvisioner({ client, clusterId: "cluster-a", watchNamespaces: ["team-a"] });
+    const provisioner = createCertificateProvisioner({
+      client,
+      clusterId: "cluster-a",
+      watchNamespaces: ["team-a"],
+      workspaceId: command.workspaceId,
+    });
     assert.equal((await provisioner.reconcile(command)).operation, "unchanged");
 
     reads = 0;

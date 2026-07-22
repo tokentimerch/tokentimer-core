@@ -275,7 +275,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.9.0"
+      tag: "0.10.0"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 

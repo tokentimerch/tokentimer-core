@@ -80,6 +80,7 @@ function createControllerApplication({
     client: kubernetesClient,
     clusterId: config.clusterId,
     enrichObservation: tlsFallback.enrichObservation,
+    isRecoverableEnrichmentError: tlsFallback.isRecoverableError,
     logger,
     observationHandler:
       observationHandler ||
@@ -101,6 +102,7 @@ function createControllerApplication({
         clusterId: config.clusterId,
         clusterWide: config.clusterWide,
         watchNamespaces: config.watchNamespaces,
+        workspaceId: config.workspaceId,
       }),
     })
     : null;
