@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/job-payload.schema.json",
   "title": "CertOps Job Payload",
-  "description": "Public, unsigned planning/reporting skeleton for future certificate lifecycle jobs. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. The action field is the current lifecycle action vocabulary, not the future signed agent dispatch protocol. Agent execution, job signing, attemptId, agentId/selector, nonce replay cache, signingKeyId, signature, signed dispatch, and related replay enforcement are agent protocol additions and are not required for validation today. Customer private key material and key-bearing bundles are outside this contract.",
+  "description": "Public certificate lifecycle job payload. The unsigned planning/reporting skeleton came first; the execution fields the agent consumes for renew/deploy/reload (commandRef, caEndpoint, acmeKind, keyRotation, certPath, reloadService, verifyHost/verifyPort, certificatePem, dnsZone/dnsProvider) are now blessed as part of the executable job contract. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. certificatePem is public leaf-plus-chain certificate material only, is attached by the control plane at signed dispatch time (never stored in the certificate_jobs payload column, whose persistence boundary rejects pem-named fields), and must never contain private key material. Customer private key material and key-bearing bundles are outside this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -119,6 +119,74 @@
       "type": ["string", "null"],
       "maxLength": 512,
       "description": "Opaque non-secret reference to external execution-plane key custody."
+    },
+    "commandRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Reference into the agent-local command allowlist naming the ACME command profile. Never a raw command line; the agent resolves it against its own policy and rejects unknown refs."
+    },
+    "caEndpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "format": "uri",
+      "description": "ACME directory endpoint the renewal runs against. The agent-local policy engine may further restrict allowed endpoints."
+    },
+    "acmeKind": {
+      "type": "string",
+      "enum": ["certbot", "acme.sh"],
+      "description": "ACME client adapter the agent should use. Defaults to certbot when absent."
+    },
+    "keyRotation": {
+      "type": "boolean",
+      "description": "When true the agent generates a fresh private key for the renewal instead of reusing the existing one. The key never leaves the agent."
+    },
+    "certPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Absolute filesystem destination for the deployed certificate. When absent, an absolute-path target.reference is used instead. The agent-local path policy re-checks it."
+    },
+    "reloadService": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:@-]+$",
+      "description": "Service to validate-then-reload after deploy, resolved through the agent-local reload command allowlist. Absent means the reload step is skipped."
+    },
+    "verifyHost": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Optional live endpoint host to probe after deploy to confirm the served certificate matches the deployed fingerprint."
+    },
+    "verifyPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Optional port for the verifyHost probe (defaults to 443 agent-side)."
+    },
+    "certificatePem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 262144,
+      "pattern": "^-----BEGIN CERTIFICATE-----",
+      "description": "Public leaf (optionally followed by chain) certificate PEM for deploy jobs. Attached by the control plane at signed dispatch time, never persisted in the stored job payload. Must never contain private key material; both sides content-scan and reject."
+    },
+    "dnsZone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Forward-compatible: DNS zone for DNS-01 challenges, checked against the agent-local zone allowlist. Credentials always stay agent-side."
+    },
+    "dnsProvider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Forward-compatible: DNS provider identifier for DNS-01 challenges. Names an agent-local provider config; never carries credentials."
     },
     "metadata": {
       "type": "array",

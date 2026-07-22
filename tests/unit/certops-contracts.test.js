@@ -678,11 +678,89 @@ describe("CertOps contract skeletons", () => {
       );
     }
 
-    assert.match(jobPayloadSchema.description, /public, unsigned/i);
-    assert.match(jobPayloadSchema.description, /signed agent dispatch/i);
-    assert.match(jobPayloadSchema.description, /job signing/i);
+    // The unsigned skeleton evolved: the execution fields the agent consumes
+    // are now blessed as part of the executable job contract. The description
+    // must record both the public-only guarantee and the signed dispatch path.
+    assert.match(jobPayloadSchema.description, /unsigned planning\/reporting skeleton/i);
+    assert.match(jobPayloadSchema.description, /executable job contract/i);
+    assert.match(jobPayloadSchema.description, /signed dispatch/i);
     assert.equal(validate(validJobPayload()), true);
     assert.equal(validate({ ...validJobPayload(), privateKey: "nope" }), false);
+  });
+
+  it("keeps the M5 execution fields optional, bounded, and custody-safe", () => {
+    const ajv = createAjv();
+    const validate = ajv.getSchema(jobPayloadSchema.$id);
+
+    const m5Fields = [
+      "commandRef",
+      "caEndpoint",
+      "acmeKind",
+      "keyRotation",
+      "certPath",
+      "reloadService",
+      "verifyHost",
+      "verifyPort",
+      "certificatePem",
+      "dnsZone",
+      "dnsProvider",
+    ];
+    for (const field of m5Fields) {
+      assert.ok(
+        jobPayloadSchema.properties[field],
+        `${field} must be defined in the job payload schema`,
+      );
+      assert.equal(
+        jobPayloadSchema.required.includes(field),
+        false,
+        `${field} must stay optional (noop/revoke jobs never carry it)`,
+      );
+    }
+
+    // certificatePem accepts only PEM certificate blocks, never key blocks.
+    assert.equal(
+      validate({
+        ...validJobPayload(),
+        certificatePem:
+          "-----BEGIN CERTIFICATE-----\nRkFLRQ==\n-----END CERTIFICATE-----\n",
+      }),
+      true,
+    );
+    assert.equal(
+      validate({
+        ...validJobPayload(),
+        certificatePem:
+          "-----BEGIN RSA PRIVATE KEY-----\nRkFLRQ==\n-----END RSA PRIVATE KEY-----\n",
+      }),
+      false,
+      "certificatePem must reject private key PEM blocks at the schema layer",
+    );
+
+    // A fully loaded M5 renew payload validates.
+    assert.equal(
+      validate({
+        ...validJobPayload(),
+        commandRef: "acme-renew-default",
+        caEndpoint: "https://acme-v02.api.letsencrypt.org/directory",
+        acmeKind: "certbot",
+        keyRotation: true,
+        certPath: "/etc/ssl/live/example.com/cert.pem",
+        reloadService: "nginx",
+        verifyHost: "example.com",
+        verifyPort: 443,
+      }),
+      true,
+    );
+
+    // Unknown ACME adapters and out-of-range ports are rejected.
+    assert.equal(
+      validate({ ...validJobPayload(), acmeKind: "lego" }),
+      false,
+    );
+    assert.equal(
+      validate({ ...validJobPayload(), verifyPort: 0 }),
+      false,
+    );
   });
 
   it("documents the executor event 202 response shape returned by runtime", () => {

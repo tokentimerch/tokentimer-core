@@ -55,6 +55,7 @@
     "check:openapi:coverage": "node scripts/check-openapi-runtime-coverage.js",
     "check:lockfile-overrides": "node scripts/check-lockfile-overrides.js",
     "check:secret-logging": "node scripts/check-secret-logging.js",
+    "check:certops-keygen-ban": "node scripts/check-certops-keygen-ban.js",
     "// --- Integration test Docker stack (deploy/compose/docker-compose.test.yml) ---": "",
     "test:up": "docker compose -f deploy/compose/docker-compose.test.yml up --build -d",
     "test:down": "docker compose -f deploy/compose/docker-compose.test.yml down --volumes --remove-orphans",

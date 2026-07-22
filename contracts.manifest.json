@@ -206,6 +206,12 @@
           "status": "existing"
         },
         {
+          "id": "certops-canonical-json-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/canonical-json.cjs",
+          "status": "existing"
+        },
+        {
           "id": "certops-route-compat-contract",
           "kind": "spec",
           "path": "packages/contracts/api/certops-route-compat.contract.json",

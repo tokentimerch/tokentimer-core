@@ -27,6 +27,14 @@
 
 const crypto = require("node:crypto");
 
+// Shared canonical-JSON implementation (single source of truth for the
+// signed byte contract; the control plane requires the same file). See
+// packages/contracts/certops/canonical-json.cjs for the full algorithm doc.
+const {
+  isPlainObject,
+  canonicalizeJobPayload,
+} = require("../../../contracts/certops/canonical-json.cjs");
+
 /**
  * Rejection reasons owned by the signature/time-window runtime,
  * mirroring the subset of agent-protocol.schema.json's
@@ -58,16 +66,6 @@ const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 const SIGNING_KEY_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const NONCE_PATTERN = /^[A-Za-z0-9_.:-]{16,128}$/;
 
-function isPlainObject(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype ||
-      Object.getPrototypeOf(value) === null)
-  );
-}
-
 /**
  * @param {string} rejectionReason
  * @param {string} detail
@@ -78,102 +76,17 @@ function reject(rejectionReason, detail) {
 }
 
 /**
- * Recursive canonical JSON serializer shared by canonicalizeJobPayload.
- * Kept separate so the top-level signature exclusion (which applies ONLY at
- * depth 0 per ADR-0003) does not leak into nested levels.
- *
- * @param {*} value
- * @param {string} pathLabel JSON-path-ish label for error messages
- * @returns {string}
- */
-function serializeCanonical(value, pathLabel) {
-  if (value === undefined) {
-    throw new Error(
-      `signing: canonicalizeJobPayload found an undefined value at ${pathLabel}; ` +
-        "undefined is not representable in JSON and would silently diverge " +
-        "between implementations, so it is rejected",
-    );
-  }
-  if (value === null) return "null";
-  const valueType = typeof value;
-  if (valueType === "boolean") return value ? "true" : "false";
-  if (valueType === "number") {
-    if (!Number.isFinite(value)) {
-      throw new Error(
-        `signing: canonicalizeJobPayload found a non-finite number at ${pathLabel}`,
-      );
-    }
-    return JSON.stringify(value);
-  }
-  if (valueType === "string") return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    const items = value.map((item, index) =>
-      serializeCanonical(item, `${pathLabel}[${index}]`),
-    );
-    return `[${items.join(",")}]`;
-  }
-  if (isPlainObject(value)) {
-    const keys = Object.keys(value).sort();
-    const entries = keys.map((key) => {
-      const serialized = serializeCanonical(value[key], `${pathLabel}.${key}`);
-      return `${JSON.stringify(key)}:${serialized}`;
-    });
-    return `{${entries.join(",")}}`;
-  }
-  throw new Error(
-    `signing: canonicalizeJobPayload cannot serialize value of type ` +
-      `${valueType} at ${pathLabel} (only plain objects, arrays, strings, ` +
-      "finite numbers, booleans, and null are allowed)",
-  );
-}
-
-/**
  * Deterministic canonical JSON serialization of a job payload, EXCLUDING the
  * top-level "signature" property. This is the exact byte sequence the
- * control plane signs and the agent verifies (ADR-0003: "the signature must
- * cover a canonical serialization excluding the signature field").
+ * control plane signs and the agent verifies (ADR-0003).
  *
- * CANONICALIZATION ALGORITHM (the control plane MUST implement this
- * identically, byte for byte):
- *
- *   1. Input must be a plain object (prototype Object.prototype or null).
- *      Anything else (array, class instance, Map, primitive, null) throws.
- *   2. The TOP-LEVEL property named "signature" is omitted. Properties named
- *      "signature" at any deeper nesting level are KEPT and serialized
- *      normally; per ADR-0003 only the envelope's own signature field is
- *      excluded from the signed bytes.
- *   3. Object keys are sorted lexicographically by UTF-16 code unit
- *      (JavaScript's default Array.prototype.sort() on strings), recursively
- *      at every nesting level.
- *   4. Arrays keep their original element order.
- *   5. No whitespace anywhere: `{"a":1,"b":[2,3]}` style.
- *   6. Strings and keys are encoded with JSON.stringify's standard JSON
- *      string escaping. Numbers use JSON.stringify's shortest round-trip
- *      form; non-finite numbers (NaN, Infinity) throw.
- *   7. `undefined` anywhere in the tree throws (it is not representable in
- *      JSON and dropping it silently would let two implementations sign
- *      different bytes for the "same" object).
- *   8. The resulting string is UTF-8 encoded to produce the bytes to
- *      sign/verify (Node string -> Buffer.from(str, "utf8")).
- *
- * @param {object} job the job payload (may include the signature field,
- *   which is excluded from the output)
- * @returns {string} canonical JSON string (UTF-8 encode it for signing)
- * @throws {Error} on non-plain-object input or unserializable values
+ * The implementation lives in the SHARED contracts module
+ * packages/contracts/certops/canonical-json.cjs (required above), which both
+ * the control-plane signer and this verifier load, so the canonical byte
+ * contract cannot drift between the two sides. See that file for the full
+ * algorithm documentation. Re-exported here so the agent's public API is
+ * unchanged.
  */
-function canonicalizeJobPayload(job) {
-  if (!isPlainObject(job)) {
-    throw new Error(
-      "signing: canonicalizeJobPayload requires a plain object job payload",
-    );
-  }
-  const withoutSignature = {};
-  for (const key of Object.keys(job)) {
-    if (key === "signature") continue;
-    withoutSignature[key] = job[key];
-  }
-  return serializeCanonical(withoutSignature, "$");
-}
 
 /**
  * Structural checks on the signed-dispatch fields of an untrusted job.
