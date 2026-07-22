@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const { describe, it } = require("node:test");
 const {
   createObservationEnvelope,
@@ -13,17 +14,17 @@ const {
 } = require("../../apps/k8s-controller/src/observation-reporter");
 
 const token = `ttx_${"a".repeat(16)}_${"b".repeat(64)}`;
+const TEST_TOKEN_FILE = path.resolve("token");
 
 function reporterOptions(overrides = {}) {
   return {
     apiUrl: "https://api.example.test",
-    apiTokenFile: "C:\\token",
+    apiTokenFile: TEST_TOKEN_FILE,
     fsOptions: {
       fsImpl: {
         statSync: () => ({ isFile: () => true, mode: 0o600 }),
         readFileSync: () => token,
       },
-      platform: "win32",
     },
     random: () => 0,
     sleep: async () => {},
@@ -90,13 +91,12 @@ describe("controller observation reporter", () => {
     const authorizations = [];
     const reporter = createControllerObservationReporter({
       apiUrl: "https://api.example.test",
-      apiTokenFile: "C:\\token",
+      apiTokenFile: TEST_TOKEN_FILE,
       fsOptions: {
         fsImpl: {
           statSync: () => ({ isFile: () => true, mode: 0o600 }),
           readFileSync: () => currentToken,
         },
-        platform: "win32",
       },
       fetchImpl: async (_url, options) => {
         authorizations.push(options.headers.Authorization);
@@ -128,8 +128,8 @@ describe("controller observation reporter", () => {
     const token = `ttx_${"a".repeat(16)}_${"b".repeat(64)}`;
     const reporter = createControllerObservationReporter({
       apiUrl: "https://api.example.test",
-      apiTokenFile: "C:\\token",
-      fsOptions: { fsImpl: { statSync: () => ({ isFile: () => true, mode: 0o600 }), readFileSync: () => token }, platform: "win32" },
+      apiTokenFile: TEST_TOKEN_FILE,
+      fsOptions: { fsImpl: { statSync: () => ({ isFile: () => true, mode: 0o600 }), readFileSync: () => token } },
       random: () => 0,
       sleep: async () => {},
       fetchImpl: async (_url, options) => {

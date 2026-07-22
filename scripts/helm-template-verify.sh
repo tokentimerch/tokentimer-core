@@ -5,12 +5,17 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHART="${REPO_ROOT}/deploy/helm"
 OUT="${REPO_ROOT}/.build/helm-template-verify"
 RELEASE_NAME="${HELM_RELEASE_NAME:-tokentimer}"
+HELM_VERSION="v3.20.1"
+HELM_SHA256="0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3"
 
 if ! command -v helm >/dev/null 2>&1; then
   HELM_DIR="$(mktemp -d)"
+  HELM_ARCHIVE="${HELM_DIR}/helm-${HELM_VERSION}-linux-amd64.tar.gz"
   trap 'rm -rf "${HELM_DIR}"' EXIT
-  curl -fsSL https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz \
-    | tar -xz -C "${HELM_DIR}"
+  curl -fsSLo "${HELM_ARCHIVE}" \
+    "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+  echo "${HELM_SHA256}  ${HELM_ARCHIVE}" | sha256sum -c -
+  tar -xzf "${HELM_ARCHIVE}" -C "${HELM_DIR}" linux-amd64/helm
   export PATH="${HELM_DIR}/linux-amd64:${PATH}"
 fi
 

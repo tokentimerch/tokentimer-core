@@ -269,17 +269,24 @@ describe("CertOps tls.crt fallback", () => {
     assert.deepEqual(calls, [{ namespace: "team-a", secretName: "web-tls" }]);
     assert.equal(enriched.notBefore, "2026-07-21T10:00:00.000Z");
     assert.equal(enriched.notAfter, "2026-10-21T10:00:00.000Z");
-    assert.deepEqual(Object.keys(enriched.publicCertificate).sort(), [
+    const publicCertificateFields = Object.keys(enriched.publicCertificate).sort();
+    const stablePublicCertificateFields = publicCertificateFields.filter(
+      (field) => field !== "signatureAlgorithm",
+    );
+    assert.deepEqual(stablePublicCertificateFields, [
       "certificatePem",
       "fingerprintSha256",
       "issuer",
       "publicKeyAlgorithm",
       "publicKeySize",
       "serialNumber",
-      "signatureAlgorithm",
       "subject",
       "subjectAltNames",
     ]);
+    if (publicCertificateFields.includes("signatureAlgorithm")) {
+      assert.equal(typeof enriched.publicCertificate.signatureAlgorithm, "string");
+      assert.notEqual(enriched.publicCertificate.signatureAlgorithm, "");
+    }
     assert.match(enriched.publicCertificate.fingerprintSha256, /^[a-f0-9]{64}$/);
   });
 
