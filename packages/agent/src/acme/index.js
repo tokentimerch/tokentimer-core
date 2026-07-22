@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * ACME exec adapters (CertOps M5).
+ * ACME exec adapters.
  *
- * CertOps plan 7.3 / 7.5: renewal happens agent-side by shelling out to an
+ * Renewal happens agent-side by shelling out to an
  * operator-installed ACME tool (certbot or acme.sh) rather than embedding an
  * ACME client library. This is a deliberate decision to avoid adding new
  * dependencies for now; the exec-adapter surface below is intentionally
@@ -34,8 +34,8 @@
  *     and CSR on the host; this module only points the ACME tool at the CSR
  *     file. certbot's `--csr` mode (and acme.sh's `--signcsr`) sign an
  *     externally supplied CSR and therefore never need the private key.
- *   - DNS credentials never appear in argv either: per plan 7.5 (DNS-01
- *     credential locality), they live in the ACME tool's own configuration
+ *   - DNS credentials never appear in argv either: per the DNS-01
+ *     credential-locality invariant, they live in the ACME tool's own configuration
  *     files on the host (e.g. certbot's --dns-*-credentials ini, acme.sh's
  *     account.conf), referenced at most by path through the allowlisted
  *     command profile. argvUsed in the result is therefore safe to include

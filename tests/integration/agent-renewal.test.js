@@ -1,6 +1,6 @@
 "use strict";
 
-// M5 signed renew job, end to end: the REAL dispatch wiring
+// Signed renew job, end to end: the REAL dispatch wiring
 // (packages/agent/src/index.js handleClaimedJob -> executeJob) driven
 // against the fake control plane (fake-agent.js in signed-dispatch mode).
 // No DB. The ACME child process is the ONLY stubbed execution dependency
@@ -159,7 +159,7 @@ function makeHarnessBackedClient(agent) {
   };
 }
 
-describe("agent renewal execution (M5 signed dispatch, end to end)", function () {
+describe("agent renewal execution (signed dispatch, end to end)", function () {
   this.timeout(30000);
 
   after(() => {

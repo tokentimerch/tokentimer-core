@@ -483,7 +483,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     );
   }
 
-  it("rejects an unsigned (M2) job with job_integrity_failed while execution is enabled", async () => {
+  it("rejects an unsigned job with job_integrity_failed while execution is enabled", async () => {
     const client = createRecordingClient();
     const job = makeSignedJob();
     delete job.signature;

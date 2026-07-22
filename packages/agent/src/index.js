@@ -9,7 +9,7 @@
  * stores them. Every module here must stay safe to run against an untrusted
  * or compromised control plane (agent-local policy wins, ADR-0002).
  *
- * M4 bootstrap scope (current): this file wires the landed modules together
+ * Bootstrap scope (current): this file wires the landed modules together
  * into a runnable outbound-only process:
  *   - config: config.json + secure credential storage (src/config)
  *   - policy: agent-local allowlist engine, default-deny (src/policy)
@@ -19,7 +19,7 @@
  *   - discovery: observe-only filesystem certificate inventory, reported as
  *     certificate.observed evidence (src/discovery)
  *
- * M5 signed-job dispatch (current, opt-in via config.execution.enabled):
+ * signed-job dispatch (current, opt-in via config.execution.enabled):
  * jobs claimed from the control plane run through the full trust chain
  * before any execution: Ed25519 signature verification against the pinned
  * signing key (src/signing) -> replay-cache check (src/replay) -> clock
@@ -28,15 +28,15 @@
  * src/acme, src/deploy, src/reload, src/verify.
  *
  * When execution is NOT enabled (config.execution absent or enabled:false),
- * the M4 bootstrap behavior is preserved exactly: every policy-allowed job
+ * the observe-only bootstrap behavior is preserved exactly: every policy-allowed job
  * is reported back as "blocked" with an explanatory error message, and
  * every policy-rejected job is reported as "rejected" with evidence. This
  * keeps the full outbound loop (register -> heartbeat -> claim ->
  * result/evidence) exercisable end to end without ever running an
  * unverified job.
  *
- * Known M2-payload deviations (job-payload.schema.json lacks M5 execution
- * fields; documented for Dev A's Phase 4/5 backend contract):
+ * Known base-payload deviations (job-payload.schema.json lacks signed-job execution
+ * fields; documented for the control-plane backend contract):
  *   - No domains list => the CSR CN and ACME -d domain come from
  *     job.target.reference.
  *   - No keyRotation flag => renew reuses an existing key at
@@ -47,10 +47,10 @@
  *     target.reference is used as the deploy destination when it is an
  *     absolute path. Neither present/absolute => renew deploys nowhere it
  *     can name, so the job fails with a clear message.
- *   - "deploy" jobs need certificatePem from the control plane; the M2
+ *   - "deploy" jobs need certificatePem from the control plane; the base
  *     payload has no such field, so deploy without it reports "blocked"
- *     (awaiting Dev A's M5 job-type contract).
- *   - "revoke" execution is out of M5 Dev B scope => always "blocked".
+ *     (awaiting the deploy job-type contract).
+ *   - "revoke" execution is out of scope for this agent build => always "blocked".
  */
 
 const fs = require("node:fs");
@@ -198,7 +198,7 @@ function boundErrorMessage(message) {
 }
 
 /**
- * Resolves the deploy destination for a job. M2-payload deviation
+ * Resolves the deploy destination for a job. base-payload deviation
  * (documented in the module docblock): the payload has no certPath field,
  * so an explicit job.certPath wins, then target.reference when it is an
  * absolute path, else null (the caller fails the job with a clear message).
@@ -263,12 +263,12 @@ async function reportStepEvidence(client, jobId, items) {
 /**
  * Handles a single claimed job.
  *
- * Without an execution context (M4 bootstrap mode, executionContext null or
+ * Without an execution context (observe-only bootstrap mode, executionContext null or
  * enabled:false): evaluate agent-local policy, then report either a policy
  * rejection (with evidence) or a "blocked" result explaining that execution
- * is not enabled. This branch is byte-for-byte the M4 behavior.
+ * is not enabled. This branch is byte-for-byte the observe-only bootstrap behavior.
  *
- * With an enabled execution context (M5): run the full trust chain in
+ * With an enabled execution context: run the full trust chain in
  * order -- signature verify -> replay check -> clock window check -> policy
  * evaluateJob -> replay consume -> executeJob. Any { allowed: false }
  * verdict reports policy.checked evidence + a "rejected" result with that
@@ -287,7 +287,7 @@ async function reportStepEvidence(client, jobId, items) {
  * @param {object} params.policyEngine from createPolicyEngine
  * @param {object} params.client from createProtocolClient
  * @param {object|null} [params.executionContext] from
- *   buildExecutionContext; null preserves M4 bootstrap behavior
+ *   buildExecutionContext; null preserves observe-only bootstrap behavior
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
@@ -395,7 +395,7 @@ async function handleClaimedJob({
 }
 
 /**
- * M5 trust chain for a claimed job when execution is enabled. Order per
+ * Trust chain for a claimed job when execution is enabled. Order per
  * ADR-0003 (and tests/integration/agent-protocol.test.js
  * runVerificationChain): signature verify -> replay check -> clock window
  * check -> policy -> replay consume -> execute. The replay nonce is
@@ -434,7 +434,7 @@ async function handleSignedJob({
     return { status: "blocked", rejectionReason: null };
   }
 
-  // 1. Signature (covers the M2-payload fallback: a job without signed
+  // 1. Signature (covers the base-payload fallback: a job without signed
   // fields fails field validation inside verifyJobSignature and is
   // rejected with job_integrity_failed).
   const signatureVerdict = verifyJobSignature({
@@ -565,24 +565,24 @@ async function executeJob({
   }
 
   if (action === "revoke") {
-    // M5 Dev B scope does not include revocation execution.
+    // Revocation execution is out of scope for this agent build.
     return {
       status: "blocked",
       errorMessage:
         "revoke jobs are not executable by this agent version (revocation " +
-        "execution is out of M5 scope)",
+        "execution is not supported yet)",
     };
   }
 
   if (action === "deploy" && typeof job.certificatePem !== "string") {
-    // M2-payload deviation: deploy needs certificate bytes from the control
-    // plane and the M2 payload has no such field (awaiting Dev A's M5
+    // Base-payload deviation: deploy needs certificate bytes from the control
+    // plane and the base payload has no such field (awaiting the deploy
     // job-type contract).
     return {
       status: "blocked",
       errorMessage:
-        "deploy job carries no certificatePem field; the M2 job payload " +
-        "does not define one yet (awaiting the M5 deploy job contract), so " +
+        "deploy job carries no certificatePem field; the job payload " +
+        "does not define one yet (awaiting the deploy job contract), so " +
         "there is nothing to deploy",
     };
   }
@@ -654,7 +654,7 @@ async function executeDryRunPlan({ jobId, action, client, observedAt }) {
 
 /**
  * Full renew chain: keys -> csr -> acme -> deploy -> reload (optional) ->
- * verify. Semantics documented in the module docblock (M2-payload
+ * verify. Semantics documented in the module docblock (base-payload
  * deviations: CN from target.reference, key reuse unless job.keyRotation
  * is truthy, certPath from job.certPath else absolute target.reference).
  *
@@ -706,7 +706,7 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
   const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
 
   // Step 1: keys. Reuse-if-exists unless job.keyRotation is truthy
-  // (forward-compatible field, absent from the M2 schema).
+  // (forward-compatible field, absent from the base schema).
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
   const forceRotation = job.keyRotation === true;
@@ -1191,9 +1191,9 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
 }
 
 /**
- * Builds the M5 execution context from a loaded config. Returns null when
+ * Builds the execution context from a loaded config. Returns null when
  * execution is not configured or not enabled, which callers treat as "run
- * in M4 bootstrap mode".
+ * in observe-only bootstrap mode".
  *
  * Startup fail-loud: a corrupted replay store throws here (surfacing as a
  * startup failure) instead of being silently recreated -- see the replay
@@ -1245,7 +1245,7 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
  * Runs the agent process: load config, register if needed, then run the
  * heartbeat and claim loops until SIGINT/SIGTERM or until the control plane
  * retires this agent (heartbeat HTTP 410 -> clean exit, no respawn loop,
- * ADR-0002 / plan 7.7 item 11).
+ * ADR-0002).
  *
  * @param {string[]} _argv CLI arguments (none supported yet; configuration
  *   is via config.json and TOKENTIMER_AGENT_* env vars)
@@ -1340,7 +1340,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and
-        // key-rotation lag. In M4 bootstrap mode these stay null.
+        // key-rotation lag. in observe-only bootstrap mode these stay null.
         ...(executionContext
           ? {
               clockOffsetMs: executionContext.clockEstimator.getOffsetMs(),
@@ -1369,7 +1369,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     },
   });
 
-  // Observe-only discovery loop (M4: filesystem certificate inventory).
+  // Observe-only discovery loop (filesystem certificate inventory).
   // Only started when config.json opts in with a discovery.directories list;
   // scans run immediately on start, then on the configured interval.
   const loops = [heartbeatLoop, claimLoop];

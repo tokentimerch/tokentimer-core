@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Clock-offset estimation from HTTP Date response headers (CertOps Phase 4
+ * Clock-offset estimation from HTTP Date response headers (signed-dispatch
  * runtime, ADR-0003 clock-drift awareness).
  *
  * Every control-plane HTTP response carries a Date header stamped with the

@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Persisted consumed-nonce replay cache (CertOps Phase 4 runtime, ADR-0003).
+ * Persisted consumed-nonce replay cache (signed-dispatch runtime, ADR-0003).
  *
  * ADR-0003: "Agents keep a bounded replay cache keyed by nonce + jobId and
  * reject jobs outside [issuedAt, expiresAt]". This module owns the

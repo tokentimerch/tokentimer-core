@@ -1,4 +1,4 @@
-# TokenTimer Agent (M4 bootstrap + M5 runtime)
+# TokenTimer Agent (bootstrap + execution runtime)
 
 Reference for operators installing and running the TokenTimer Agent, the
 outbound-only execution-plane process under `packages/agent`. See
@@ -21,14 +21,14 @@ and never accepts inbound connections. No listening port, no firewall holes.
 
 Two milestone scopes ship in this package:
 
-- **M4 bootstrap**: config and credential storage, agent-local policy engine
+- **Observe-only bootstrap**: config and credential storage, agent-local policy engine
   (default deny), the register/heartbeat/claim/result/evidence protocol
   client, schema-safe evidence construction, and observe-only filesystem
-  certificate discovery. In M4 mode the agent never executes jobs: every
+  certificate discovery. In observe-only mode the agent never executes jobs: every
   policy-allowed job is reported back as `blocked` with an explanatory
   message, and every policy-rejected job is reported as `rejected` with
   evidence.
-- **M5 signed-job dispatch** (opt-in via `execution.enabled`): claimed jobs
+- **signed-job dispatch** (opt-in via `execution.enabled`): claimed jobs
   run through the full trust chain (Ed25519 signature verification against a
   pinned key, replay cache, clock window check, agent-local policy) before
   any execution. Execution modules cover key generation and CSR building
@@ -36,7 +36,7 @@ Two milestone scopes ship in this package:
   certificate deployment (`src/deploy`), validate-then-reload service helpers
   (`src/reload`), and post-deploy fingerprint verification (`src/verify`).
 
-When `execution` is absent from config or `enabled` is `false`, the M4
+When `execution` is absent from config or `enabled` is `false`, the observe-only
 bootstrap behavior is preserved exactly.
 
 ## 2. Install and run
@@ -105,7 +105,7 @@ Top level:
 | `declaredCommandProfileNames` | string[] | `[]` | Reported at registration. |
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
 | `discovery` | object or null | null | Null disables discovery entirely. |
-| `execution` | object or null | null | Null is treated as `{ enabled: false }` (M4 mode). |
+| `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 
 `policy` block (deep validation in `src/policy/loadPolicyConfig`, fail-loud):
 
@@ -124,7 +124,7 @@ Top level:
 | `directories` | string[] | required | Directories to scan for certificates. |
 | `intervalMs` | positive int | 3600000 | Hourly by default. |
 
-`execution` block (M5):
+`execution` block (signed-job execution):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -168,7 +168,7 @@ Flow:
   `ntpSynced`, `uptimeSeconds`, `pinnedSigningKeyId`, and (on the envelope)
   `clockOffsetMs`. With execution enabled, `clockOffsetMs` is the clock
   estimator's current median and `pinnedSigningKeyId` is the pinned key id;
-  in M4 mode both stay null. An HTTP 410 response means the control plane
+  in observe-only mode both stay null. An HTTP 410 response means the control plane
   retired this agent: it exits cleanly, no respawn loop.
 - **claim**: every `pollIntervalMs`, requests up to `maxJobs` (the main loop
   uses 1) and processes each returned job.
@@ -207,7 +207,7 @@ verifies every job against it (`verifyJobSignature`):
 
 1. Structural checks on `signature` (base64, 64-1024 chars), `signingKeyId`,
    `nonce` (16-128 chars, `[A-Za-z0-9_.:-]`), `issuedAt`, `expiresAt`. A job
-   missing any of these (e.g. a plain M2 payload) is rejected with
+   missing any of these (e.g. a plain unsigned payload) is rejected with
    `job_integrity_failed`: unsigned jobs never execute.
 2. `job.signingKeyId` must equal the pinned key id. A mismatch (rotation lag
    or forgery) rejects with `job_integrity_failed`.
@@ -275,7 +275,7 @@ Policy path checks are lexical only; the deploy module re-checks the
 realpath-resolved destination immediately before write so a symlink cannot
 escape the allowlisted roots.
 
-## 5. Renewal execution chain (M5)
+## 5. Renewal execution chain
 
 `handleSignedJob` in `src/index.js` runs the fixed order:
 
@@ -287,7 +287,7 @@ Any `{ allowed: false }` verdict reports `policy.checked` evidence plus a
 `rejected` result with that `rejectionReason` and stops the chain.
 
 Supported actions: `renew`, `deploy`, `reload`, `noop`. `revoke` is always
-`blocked` (out of M5 Dev B scope). `deploy` without a `certificatePem` field
+`blocked` (out of scope for this agent build). `deploy` without a `certificatePem` field
 is `blocked` (see section 7).
 
 For `renew` (`executeRenewJob`):
@@ -378,12 +378,12 @@ Layers, from outermost in:
 
 ## 7. Documented deviations and forward-compatible fields
 
-The M2 job payload (`packages/contracts/certops/job-payload.schema.json`)
-does not yet define the M5 execution fields, so the agent applies these
-documented deviations until the M5 job-type contract lands:
+The base job payload (`packages/contracts/certops/job-payload.schema.json`)
+does not yet define the signed-execution fields, so the agent applies these
+documented deviations until the executable job-type contract lands:
 
 - Unsigned jobs are rejected with `job_integrity_failed` whenever execution
-  is enabled; a plain M2 payload without `signature`/`nonce`/`signingKeyId`/
+  is enabled; a plain unsigned payload without `signature`/`nonce`/`signingKeyId`/
   `issuedAt`/`expiresAt` fails signed-field validation.
 - No domains list in the schema: the CSR CN and the ACME `-d` domain come
   from `job.target.reference`.
@@ -391,12 +391,12 @@ documented deviations until the M5 job-type contract lands:
   `target.reference` is used as the deploy destination when it is an
   absolute path (POSIX or Windows form); neither present means the job fails
   with a clear message.
-- `deploy` without `certificatePem` is `blocked` (the M2 payload has no such
-  field; awaiting the M5 deploy contract).
-- `revoke` is always `blocked` (out of M5 Dev B scope).
-- No `attemptId` in the M2 payload: the agent derives a local
+- `deploy` without `certificatePem` is `blocked` (the base payload has no such
+  field; awaiting the deploy job contract).
+- `revoke` is always `blocked` (out of scope for this agent build).
+- No `attemptId` in the base payload: the agent derives a local
   `local-<jobId>-<timestamp>` id so result reporting stays schema-valid.
-- Forward-compatible fields honored when present but not yet in the M2
+- Forward-compatible fields honored when present but not yet in the base
   schema: `keyRotation` (forces key regeneration), `verifyHost`/`verifyPort`
   (enables the live TLS probe), `reloadService` + `reloadCommandRefs`
   (enables the reload step), `acmeKind` (`certbot` or `acme.sh`), and
@@ -431,8 +431,8 @@ Common terminal states and what to look for:
   not carry `signingKeyId`/`signingPublicKeyPem`). Re-register the agent
   against a control plane that dispatches signing key info. The heartbeat's
   `pinnedSigningKeyId` will be null until then.
-- **Job `blocked`, "M4 bootstrap" message**: `execution.enabled` is not
-  true. This is the expected M4 behavior, not an error.
+- **Job `blocked`, "does not execute jobs yet" message**: `execution.enabled` is not
+  true. This is the expected observe-only behavior, not an error.
 - **`rejected` with `job_integrity_failed`**: missing/malformed signed
   fields, a signing key id mismatch (rotation lag or forgery), a signature
   that does not verify against the canonical payload, or a malformed

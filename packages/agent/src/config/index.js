@@ -52,7 +52,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_POLL_INTERVAL_MS = 15000;
 // Discovery is an inventory scan, not a control loop; hourly by default.
 const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
-// Execution (M5 signed-job dispatch) defaults: disabled and dry-run by
+// Execution (signed-job dispatch) defaults: disabled and dry-run by
 // default so an upgraded agent never starts executing jobs without an
 // explicit operator opt-in (ADR-0003).
 const DEFAULT_CLOCK_DRIFT_TOLERANCE_MS = 30000;
@@ -346,7 +346,7 @@ function parseBooleanEnv(value, fallback, envName) {
 }
 
 /**
- * Validates the optional "execution" config block (M5 signed-job dispatch).
+ * Validates the optional "execution" config block (signed-job dispatch).
  * Fail-loud like validatePolicyObject/validateDiscoveryObject: a malformed
  * block aborts startup instead of being silently normalized.
  *

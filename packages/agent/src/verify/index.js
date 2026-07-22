@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Post-deploy certificate verification (CertOps M5).
+ * Post-deploy certificate verification.
  *
  * After the deploy module writes a renewed certificate and the target
  * service reloads, dispatch must confirm the endpoint is actually serving

@@ -1,6 +1,6 @@
 "use strict";
 
-// Phase 4 agent runtime trust layer, end-to-end against the fake control
+// agent runtime trust layer, end-to-end against the fake control
 // plane (tests/integration/fake-agent.js in signed-dispatch mode). No DB.
 //
 // Exercises the agent-side verification chain DIRECTLY
@@ -122,7 +122,7 @@ function runVerificationChain({ job, publicKeyPem, pinnedSigningKeyId, replayCac
   });
 }
 
-describe("agent protocol trust layer (signed dispatch, Phase 4)", function () {
+describe("agent protocol trust layer (signed dispatch)", function () {
   this.timeout(30000);
 
   after(() => {

@@ -237,7 +237,7 @@ function dispatchResultOrEvidence(state, resultHandler, evidenceHandler) {
 // handler can be overridden per-test, e.g. a test wants heartbeat to return
 // 410 to exercise agent retirement handling once that lands server-side.
 //
-// Signed job dispatch (Phase 4, ADR-0003) is OPT-IN via
+// Signed job dispatch (ADR-0003) is OPT-IN via
 // `signedJobDispatch: true` so all existing unsigned-mode tests keep
 // working unchanged. When enabled, the app:
 //   - generates an Ed25519 keypair (packages/agent signing module) at build
@@ -303,7 +303,7 @@ function buildFakeAgentControlPlaneApp({
   app.state = state;
 
   if (signedJobDispatch) {
-    // Base job payload per job-payload.schema.json plus the M4 signed
+    // Base job payload per job-payload.schema.json plus the signed
     // dispatch fields (nonce/issuedAt/expiresAt/signingKeyId/signature).
     const buildJobPayload = (overrides = {}) => {
       const nowMs = Date.now();

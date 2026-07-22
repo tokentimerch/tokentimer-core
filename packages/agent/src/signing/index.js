@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Job signature verification and canonicalization (CertOps Phase 4 runtime,
+ * Job signature verification and canonicalization (signed-dispatch runtime,
  * ADR-0003).
  *
  * Jobs dispatched by the control plane are signed with an Ed25519 platform
@@ -28,7 +28,7 @@
 const crypto = require("node:crypto");
 
 /**
- * Rejection reasons owned by the Phase 4 signature/time-window runtime,
+ * Rejection reasons owned by the signature/time-window runtime,
  * mirroring the subset of agent-protocol.schema.json's
  * resultBody.rejectionReason enum not owned by the policy module.
  * (job_replay_rejected is owned by the sibling replay module.)

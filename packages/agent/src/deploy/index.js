@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Atomic certificate deployment (CertOps M5).
+ * Atomic certificate deployment.
  *
  * Deploys PUBLIC certificate PEM material to a target filesystem path with:
  *   - target-config re-validation before EVERY deploy (validateTargetConfig)
@@ -22,7 +22,7 @@
  *     metadata (public, non-secret values only)
  *
  * Zero private-key custody (D5, ADR-0001): this module deploys public
- * certificates ONLY. M5 Dev B scope deploys public certs; cert and key
+ * certificates ONLY. This scope deploys public certs; cert and key
  * deploys are separate targets. As defense in depth, deployCertificate
  * THROWS if the payload contains a PEM private-key marker, regardless of
  * what the caller claims the payload is.
@@ -382,7 +382,7 @@ function backupPathFor(destinationPath, backupDir, now) {
  * rollback. See the module docblock for the full step list.
  *
  * REFUSES (throws) if `certificatePem` contains a PEM private-key marker:
- * this module deploys public certificates only (M5 Dev B scope; cert and
+ * this module deploys public certificates only (cert and
  * key deploys are separate targets), and a key showing up here means an
  * upstream bug or an attack, either of which must fail loudly (D5 zero
  * key custody, defense in depth).

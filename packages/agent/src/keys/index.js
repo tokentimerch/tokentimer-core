@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Agent-local key generation and CSR building (CertOps M5).
+ * Agent-local key generation and CSR building.
  *
  * Zero private-key custody (TOKENTIMER_CERTOPS_PLAN section 9.3, ADR-0001):
  * private keys are generated locally on the agent host, written 0600 inside
@@ -12,7 +12,7 @@
  * before it is handed back to the caller (mirroring
  * evidence/assertEvidencePayloadSafe).
  *
- * Memory hygiene note (plan 7.7): JavaScript cannot guarantee zeroization.
+ * Memory hygiene note: JavaScript cannot guarantee zeroization.
  * Strings are immutable and copied freely by the engine, and node:crypto
  * KeyObject internal memory is owned by OpenSSL and not reachable from JS.
  * What this module *can* do, it does: private key PEM is exported into a

@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Validate-then-reload service helpers (CertOps M5).
+ * Validate-then-reload service helpers.
  *
  * After a certificate deploy, the consuming service (nginx, apache/httpd,
  * haproxy) must reload its configuration. The safe sequence is always
