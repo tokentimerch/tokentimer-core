@@ -36,6 +36,9 @@ const { sweepExpiredNonces } = require(
 const { runRenewalSchedulerSweep } = require(
   "../../api/services/certops/renewalScheduler.js",
 );
+const { queueCertRenewalFailedAlert } = require(
+  "../../api/services/certops/renewalFailureAlerts.js",
+);
 
 export const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 export const DEFAULT_LEASE_REAPER_BATCH_SIZE = 100;
@@ -106,13 +109,15 @@ export async function reapExpiredLeases({
   client,
   batchSize = DEFAULT_LEASE_REAPER_BATCH_SIZE,
   log = logger,
+  queueRenewalFailedAlert = queueCertRenewalFailedAlert,
 } = {}) {
   const summary = { scanned: 0, requeued: 0, failed: 0 };
 
   await client.query("BEGIN");
   try {
     const expired = await client.query(
-      `SELECT id, workspace_id, status, attempt_count, max_attempts
+      `SELECT id, workspace_id, status, attempt_count, max_attempts,
+              operation, subject_type, subject_id
          FROM certificate_jobs
         WHERE status IN ('claimed', 'running')
           AND lease_expires_at IS NOT NULL
@@ -187,6 +192,40 @@ export async function reapExpiredLeases({
           },
         });
         summary.failed += 1;
+
+        // M5: a terminal agent_offline failure of a renew job queues a
+        // cert_renewal_failed alert. Best-effort inside a savepoint so an
+        // alert failure never aborts the reaper transaction.
+        if (row.operation === "renew") {
+          try {
+            await client.query("SAVEPOINT certops_renewal_alert");
+            const alertOutcome = await queueRenewalFailedAlert({
+              client,
+              job: row,
+              workspaceId: row.workspace_id,
+              errorCode: "agent_offline",
+            });
+            await client.query("RELEASE SAVEPOINT certops_renewal_alert");
+            if (!alertOutcome?.queued) {
+              log.warn?.("certops-renewal-failed-alert-skipped", {
+                jobId: String(row.id),
+                reason: alertOutcome?.reason || "unknown",
+              });
+            }
+          } catch (alertErr) {
+            try {
+              await client.query(
+                "ROLLBACK TO SAVEPOINT certops_renewal_alert",
+              );
+            } catch (_rollbackErr) {
+              // Savepoint may not exist if SAVEPOINT itself failed.
+            }
+            log.warn?.("certops-renewal-failed-alert-error", {
+              jobId: String(row.id),
+              error: alertErr?.message,
+            });
+          }
+        }
       }
     }
 

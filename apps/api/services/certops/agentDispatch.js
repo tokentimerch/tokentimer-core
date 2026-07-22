@@ -30,6 +30,8 @@ const {
   computeJobPayloadApprovalHash,
   invalidateApprovalForClaim,
 } = require("./jobApprovals");
+const { queueCertRenewalFailedAlert } = require("./renewalFailureAlerts");
+const { logger } = require("../../utils/logger");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
@@ -415,6 +417,9 @@ async function ingestResult({
   deps = {},
 } = {}) {
   const consume = deps.consumeNonce || consumeNonce;
+  const queueRenewalFailedAlert =
+    deps.queueCertRenewalFailedAlert || queueCertRenewalFailedAlert;
+  const log = deps.logger || logger;
 
   const jobStatus = RESULT_STATUS_TO_JOB_STATUS[body.status];
   if (!jobStatus) {
@@ -426,7 +431,8 @@ async function ingestResult({
 
   return await withTransaction(dbPool, async (client) => {
     const locked = await client.query(
-      `SELECT id, status, claimed_by_agent_id, claim_id
+      `SELECT id, status, claimed_by_agent_id, claim_id, operation,
+              subject_type, subject_id
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -499,6 +505,49 @@ async function ingestResult({
     );
 
     const row = updated.rows[0];
+
+    // M5: terminal renew failures queue a cert_renewal_failed alert inside
+    // the same transaction. Alert failures must never fail result
+    // ingestion, so this is best-effort (endpoint-check-worker pattern).
+    if (isFailure && jobStatus === "failed" && job.operation === "renew") {
+      // Savepoint so a failed alert insert cannot abort the surrounding
+      // ingestion transaction.
+      try {
+        await client.query("SAVEPOINT certops_renewal_alert");
+        const alertOutcome = await queueRenewalFailedAlert({
+          client,
+          job: {
+            id: job.id,
+            workspace_id: agent.workspaceId,
+            operation: job.operation,
+            subject_type: job.subject_type,
+            subject_id: job.subject_id,
+          },
+          workspaceId: agent.workspaceId,
+          errorCode,
+        });
+        await client.query("RELEASE SAVEPOINT certops_renewal_alert");
+        if (!alertOutcome?.queued && log?.warn) {
+          log.warn("certops-renewal-failed-alert-skipped", {
+            jobId: String(job.id),
+            reason: alertOutcome?.reason || "unknown",
+          });
+        }
+      } catch (alertErr) {
+        try {
+          await client.query("ROLLBACK TO SAVEPOINT certops_renewal_alert");
+        } catch (_rollbackErr) {
+          // Savepoint may not exist if the SAVEPOINT statement itself failed.
+        }
+        if (log?.warn) {
+          log.warn("certops-renewal-failed-alert-error", {
+            jobId: String(job.id),
+            error: alertErr.message,
+          });
+        }
+      }
+    }
+
     return {
       ok: true,
       jobId: String(row.id),
