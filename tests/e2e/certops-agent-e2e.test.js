@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * E2E integration suite for the CertOps M4/M5 agent surface.
+ * E2E integration suite for the CertOps agent surface.
  *
  * Boots the real Express API (apps/api/index.js) as a child process (the
  * module listens at import time and exports nothing, so in-process import is
@@ -385,7 +385,7 @@ async function cleanupSeededRows() {
 
 // --- Suite ---
 
-describe("CertOps M4/M5 agent surface E2E", () => {
+describe("CertOps agent surface E2E", () => {
   before(async () => {
     dbAvailable = await probeDatabase();
     if (!dbAvailable) {

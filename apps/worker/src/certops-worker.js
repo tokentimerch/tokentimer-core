@@ -1,7 +1,7 @@
 /**
- * CertOps maintenance worker (M4/M5).
+ * CertOps maintenance worker.
  *
- * One scheduled run executes three isolated sweeps plus the M5 renewal
+ * One scheduled run executes three isolated sweeps plus the renewal
  * scheduler; a failure in one sweep never prevents the others:
  *   1. Lease reaper: requeue or fail certificate_jobs whose agent lease
  *      expired (claimed/running + lease_expires_at < now()).
@@ -97,7 +97,7 @@ async function insertJobLog(
  * double-process a row.
  *
  * Requeue policy: only 'claimed' jobs with retry budget return to 'pending'.
- * This claimed -> pending requeue is the M4 lease-expiry transition (the
+ * This claimed -> pending requeue is the lease-expiry transition (the
  * agent never started work, so replay is safe); it is intentionally not in
  * jobs.js JOB_STATUS_TRANSITIONS, which models executor-driven transitions
  * only, and the reaper is its single writer. A 'running' job is never
@@ -193,7 +193,7 @@ export async function reapExpiredLeases({
         });
         summary.failed += 1;
 
-        // M5: a terminal agent_offline failure of a renew job queues a
+        // A terminal agent_offline failure of a renew job queues a
         // cert_renewal_failed alert. Best-effort inside a savepoint so an
         // alert failure never aborts the reaper transaction.
         if (row.operation === "renew") {

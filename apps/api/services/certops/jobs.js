@@ -137,7 +137,7 @@ const JOB_LOG_EVENT_TYPES = Object.freeze([
   "job.cancelled",
   "job.status_updated",
   "evidence.attached",
-  // M5 approval gate lifecycle (kept in sync with the migration-25 CHECK
+  // Approval gate lifecycle (kept in sync with the migration-25 CHECK
   // constraint on certificate_job_log.event_type).
   "approval.granted",
   "approval.rejected",
@@ -433,9 +433,9 @@ function normalizeEnum(value, allowedSet, code, fieldName, fallback = null) {
   return trimmed;
 }
 
-// --- M5 execution-field validation (job-payload.schema.json bounds) ---
+// --- Execution-field validation (job-payload.schema.json bounds) ---
 //
-// The stored certificate_jobs payload may carry the M5 execution fields the
+// The stored certificate_jobs payload may carry the execution fields the
 // agent consumes for renew/deploy/reload (blessed PR #88 deviations). This
 // validator mirrors the schema constraints so a malformed field is rejected
 // at creation instead of at dispatch. certificatePem is deliberately NOT in
@@ -456,7 +456,7 @@ function executionFieldError(fieldName) {
   );
 }
 
-const M5_EXECUTION_FIELD_VALIDATORS = Object.freeze({
+const EXECUTION_FIELD_VALIDATORS = Object.freeze({
   commandRef(value) {
     if (typeof value !== "string" || !COMMAND_REF_PATTERN.test(value)) {
       throw executionFieldError("commandRef");
@@ -518,14 +518,14 @@ const M5_EXECUTION_FIELD_VALIDATORS = Object.freeze({
   },
 });
 
-const M5_EXECUTION_FIELD_NAMES = Object.freeze(
-  Object.keys(M5_EXECUTION_FIELD_VALIDATORS),
+const EXECUTION_FIELD_NAMES = Object.freeze(
+  Object.keys(EXECUTION_FIELD_VALIDATORS),
 );
 
 // Which execution fields make sense on which operation. Execution fields on
 // operations that never execute them (noop/revoke) indicate a caller bug and
 // are rejected rather than silently dispatched to the agent.
-const M5_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
+const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   renew: new Set([
     "commandRef",
     "caEndpoint",
@@ -551,8 +551,8 @@ const M5_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
 
 function validateExecutionFields(payload, operation) {
   const allowedForOperation =
-    M5_EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
-  for (const fieldName of M5_EXECUTION_FIELD_NAMES) {
+    EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
+  for (const fieldName of EXECUTION_FIELD_NAMES) {
     if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
     const value = payload[fieldName];
     if (value === null || value === undefined) continue;
@@ -563,7 +563,7 @@ function validateExecutionFields(payload, operation) {
         CERTOPS_JOB_EXECUTION_FIELD_INVALID,
       );
     }
-    M5_EXECUTION_FIELD_VALIDATORS[fieldName](value);
+    EXECUTION_FIELD_VALIDATORS[fieldName](value);
   }
 }
 
@@ -838,7 +838,7 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
-  // Per-job approval gate (M5): a job that requires human approval starts at
+  // Per-job approval gate: a job that requires human approval starts at
   // pending_approval and only reaches the claimable 'pending' status through
   // services/certops/jobApprovals.approveJob. The flag only chooses the
   // default initial status; an explicit conflicting status is rejected so a
@@ -1358,6 +1358,6 @@ module.exports = {
     normalizePublicObject,
     parseJsonb,
     validateExecutionFields,
-    M5_EXECUTION_FIELDS_BY_OPERATION,
+    EXECUTION_FIELDS_BY_OPERATION,
   },
 };

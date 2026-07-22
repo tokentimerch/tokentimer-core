@@ -277,7 +277,7 @@ test("reportResult: forwards claimId and nonce in the body when provided", async
   assert.equal(body.nonce, "nonce-0123456789abcdef");
 });
 
-test("reportResult: omits claimId and nonce entirely when null or absent (schema-minimal M4 report)", async () => {
+test("reportResult: omits claimId and nonce entirely when null or absent (schema-minimal observe-only report)", async () => {
   const calls = stubFetch([
     { status: 202, json: { accepted: true } },
     { status: 202, json: { accepted: true } },

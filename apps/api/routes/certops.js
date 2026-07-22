@@ -443,7 +443,7 @@ function jobCreateOptionsFromRequest(req) {
     subjectId: req.body?.subjectId,
     payload: req.body?.payload,
     idempotencyKey: req.body?.idempotencyKey,
-    // M5 per-job approval gate: an explicitly requested boolean true makes
+    // Per-job approval gate: an explicitly requested boolean true makes
     // the job start at pending_approval; anything else defaults to false.
     requiresApproval: req.body?.requiresApproval === true,
     // Manual jobs are always created through this session-authenticated
@@ -1397,7 +1397,7 @@ router.post(
   createControllerProvisionIntentHandler(),
 );
 
-// M5 approval gates. Approval/rejection is an attributable human decision:
+// Approval gates. Approval/rejection is an attributable human decision:
 // internal worker credentials are rejected (requireCertOpsSessionUser) and
 // the decision needs the same manager role as manual job creation. The
 // workspace pause gate is intentionally absent: deciding an approval while

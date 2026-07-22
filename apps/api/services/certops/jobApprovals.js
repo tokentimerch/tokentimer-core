@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * M5 CertOps human approval gates (plan control-plane orchestration).
+ * CertOps human approval gates (control-plane orchestration).
  *
  * A certificate job created with requiresApproval starts at
  * pending_approval and is invisible to the agent claim path (which only

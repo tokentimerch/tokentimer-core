@@ -688,7 +688,7 @@ describe("CertOps contract skeletons", () => {
     assert.equal(validate({ ...validJobPayload(), privateKey: "nope" }), false);
   });
 
-  it("keeps the M5 execution fields optional, bounded, and custody-safe", () => {
+  it("keeps the execution fields optional, bounded, and custody-safe", () => {
     const ajv = createAjv();
     const validate = ajv.getSchema(jobPayloadSchema.$id);
 
@@ -736,7 +736,7 @@ describe("CertOps contract skeletons", () => {
       "certificatePem must reject private key PEM blocks at the schema layer",
     );
 
-    // A fully loaded M5 renew payload validates.
+    // A fully loaded renew payload validates.
     assert.equal(
       validate({
         ...validJobPayload(),

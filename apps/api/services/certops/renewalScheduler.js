@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * CertOps renewal scheduler (M5, plan 8.x).
+ * CertOps renewal scheduler.
  *
  * Scans managed_certificates approaching expiry and creates automation-source
  * renew jobs. Every job creation runs inside a transaction gated by

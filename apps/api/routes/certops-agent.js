@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * M4 CertOps agent machine routes (plan 7.2-7.7, ADR-0002/0003):
+ * CertOps agent machine routes (ADR-0002/0003):
  *   POST /api/v1/certops/agent/register     (bootstrap-token auth)
  *   POST /api/v1/certops/agent/heartbeat    (credential auth)
  *   POST /api/v1/certops/agent/jobs/claim   (credential auth)
@@ -540,7 +540,7 @@ async function resultsHandler(req, res, options = {}) {
       const envelope = validateEnvelope(req.body, "evidence");
       const body = validateEvidenceBody(envelope);
       if (!body.jobId) {
-        // The M2 evidence store is job-scoped; agent-level evidence without
+        // The evidence store is job-scoped; agent-level evidence without
         // a jobId has no persistence target yet.
         throw messageError("jobId is required for agent evidence messages");
       }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// CertOps zero-custody CI guard (plan M12 item, pulled forward to M4/M5).
+// CertOps zero-custody CI guard.
 //
 // The control plane must never generate, derive, or import private key
 // material for CERTIFICATES: agents generate keys locally and only public

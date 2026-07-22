@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Control-plane Ed25519 job-signing service (CertOps M4/M5, ADR-0003).
+ * Control-plane Ed25519 job-signing service (ADR-0003).
  *
  * Server-side counterpart of the agent verifier
  * (packages/agent/src/signing/index.js). Both sides require the SAME

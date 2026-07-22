@@ -3,7 +3,7 @@
 /**
  * Agent-local key generation and CSR building.
  *
- * Zero private-key custody (TOKENTIMER_CERTOPS_PLAN section 9.3, ADR-0001):
+ * Zero private-key custody (ADR-0001):
  * private keys are generated locally on the agent host, written 0600 inside
  * 0700 directories, and NEVER returned from any exported function. Return
  * values contain only file paths, fingerprints, and public material (public

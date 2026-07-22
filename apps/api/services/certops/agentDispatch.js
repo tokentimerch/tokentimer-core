@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * M4 agent control-plane dispatch service: registration, heartbeat, claim
+ * Agent control-plane dispatch service: registration, heartbeat, claim
  * and result ingestion transaction logic for the four
- * /api/v1/certops/agent/* machine routes (plan 7.2-7.7, ADR-0002/0003).
+ * /api/v1/certops/agent/* machine routes (ADR-0002/0003).
  *
  * All SQL lives here so apps/api/routes/certops-agent.js stays a thin
  * middleware-composition layer. Every transactional entry point accepts an
@@ -324,7 +324,7 @@ async function claimJobs({
 
     const jobs = [];
     for (const row of selected.rows) {
-      // M5 approval-gate re-verification: an approval is bound to a SHA256
+      // Approval-gate re-verification: an approval is bound to a SHA256
       // hash of the canonical payload at approval time. If the payload was
       // edited afterwards, the approval is void: flip the job back to
       // pending_approval instead of dispatching it. Jobs with no stored
@@ -510,7 +510,7 @@ async function ingestResult({
 
     const row = updated.rows[0];
 
-    // M5: terminal renew failures queue a cert_renewal_failed alert inside
+    // Terminal renew failures queue a cert_renewal_failed alert inside
     // the same transaction. Alert failures must never fail result
     // ingestion, so this is best-effort (endpoint-check-worker pattern).
     if (isFailure && jobStatus === "failed" && job.operation === "renew") {

@@ -1539,7 +1539,7 @@ const migrations = [
     version: 24,
     name: "certops_agent_protocol_schema",
     sql: `
-      -- M4 agent control plane (plan 7.2-7.7, ADR-0002/0003). Zero private-key
+      -- Agent control plane (ADR-0002/0003). Zero private-key
       -- custody for certificates is preserved: agents keep certificate keys
       -- locally and only hashed credentials are stored here. The one deliberate
       -- exception below is the control-plane-owned Ed25519 JOB-SIGNING key
@@ -1748,7 +1748,7 @@ const migrations = [
     version: 25,
     name: "certops_job_approvals",
     sql: `
-      -- M5 approval gates (plan control-plane orchestration). A job created
+      -- Approval gates (control-plane orchestration). A job created
       -- with requiresApproval starts at pending_approval and may only reach
       -- 'pending' (claimable) through a human approval. The approval is bound
       -- to a SHA256 hash of the canonical job payload (the same

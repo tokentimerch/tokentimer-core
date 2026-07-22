@@ -89,7 +89,7 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
     ) {
       return CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES.perJobEvidence;
     }
-    // M4 agent-protocol routes: exact paths only (optional single trailing
+    // Agent-protocol routes: exact paths only (optional single trailing
     // slash, case-insensitive via normalization above), same guarantees as
     // the executor family.
     if (

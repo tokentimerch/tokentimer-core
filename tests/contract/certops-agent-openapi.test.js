@@ -1,11 +1,11 @@
 /**
- * Contract Tests - CertOps M4 agent routes vs OpenAPI / route-compat / agent-protocol
+ * Contract Tests - CertOps agent routes vs OpenAPI / route-compat / agent-protocol
  *
  * Static assertions (no runtime API needed):
  *  1. The four /api/v1/certops/agent routes are documented in the static
  *     OpenAPI spec with the auth split frozen in
  *     packages/contracts/api/certops-route-compat.contract.json.
- *  2. The route-compat contract carries the M4 version/status and keeps all
+ *  2. The route-compat contract carries the agent-runtime version/status and keeps all
  *     four agent routes in routeAuth and stableRoutes.
  *  3. The OpenAPI request-body envelope mirrors
  *     packages/contracts/certops/agent-protocol.schema.json (required
@@ -219,10 +219,10 @@ describe("CertOps agent routes OpenAPI contract", () => {
   });
 });
 
-describe("CertOps route-compat contract (M4)", () => {
-  it("carries the M4 version and status", () => {
+describe("CertOps route-compat contract (agent runtime)", () => {
+  it("carries the agent-runtime version and status", () => {
     assert.strictEqual(routeCompat.version, "0.14.0");
-    assert.strictEqual(routeCompat.status, "m4-agent-runtime-stable");
+    assert.strictEqual(routeCompat.status, "agent-runtime-stable");
   });
 
   it("keeps the four agent routes frozen in routeAuth with the auth split", () => {

@@ -3783,6 +3783,124 @@ paths:
                 code: CERTOPS_JOB_NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/approve:
+    post:
+      tags: [CertOps]
+      summary: Approve a pending CertOps job
+      operationId: approveCertOpsJob
+      description: >-
+        Grants the human approval a gated job needs before an agent can claim
+        it. Session-only manager surface (internal worker credentials are
+        rejected) with a non-requester rule: the user who requested the job
+        cannot approve it. The approval is bound to a canonical SHA256 hash of
+        the job payload at decision time; if the payload changes afterwards
+        the claim path voids the approval and returns the job to
+        pending_approval. Available while the workspace kill switch is paused.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1024
+                  description: Optional attributable justification stored in the decision ledger.
+      responses:
+        "200":
+          description: Job approved; status moves to approved and the payload hash is recorded
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Caller lacks the manager role, is the job requester, or uses non-session credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job is not awaiting approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/jobs/{jobId}/reject:
+    post:
+      tags: [CertOps]
+      summary: Reject a pending CertOps job
+      operationId: rejectCertOpsJob
+      description: >-
+        Rejects a pending_approval job so it never becomes claimable.
+        Session-only manager surface like approve, but without the
+        non-requester rule: any authorized member, including the requester,
+        may withdraw or reject. The decision is recorded in the attributable
+        approval ledger. Available while the workspace kill switch is paused.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 1024
+                  description: Optional attributable justification stored in the decision ledger.
+      responses:
+        "200":
+          description: Job rejected; status moves to rejected
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Caller lacks the manager role or uses non-session credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job is not awaiting approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}/log:
     get:
       tags: [CertOps]

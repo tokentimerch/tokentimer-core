@@ -1229,7 +1229,7 @@ describe("CertOps jobs service", () => {
     );
   });
 
-  it("accepts a fully loaded M5 renew payload", async () => {
+  it("accepts a fully loaded executable renew payload", async () => {
     const client = createMemoryClient();
     const job = await createCertificateJob({
       client,
@@ -1257,7 +1257,7 @@ describe("CertOps jobs service", () => {
     assertNoCustodyKeys(job);
   });
 
-  it("exposes the M4 execution columns with safe defaults", async () => {
+  it("exposes the execution columns with safe defaults", async () => {
     const client = createMemoryClient();
     const job = await createCertificateJob({
       client,
@@ -1276,7 +1276,7 @@ describe("CertOps jobs service", () => {
     assert.equal(job.scheduledFor, null);
   });
 
-  it("rejects malformed M5 execution field values", async () => {
+  it("rejects malformed execution field values", async () => {
     const client = createMemoryClient();
     const badPayloads = [
       { commandRef: "not valid because of spaces" },
@@ -1356,7 +1356,7 @@ describe("CertOps jobs service", () => {
     assert.equal(deployJob.operation, "deploy");
   });
 
-  it("keeps rejecting pem-named payload fields for stored M5 payloads", async () => {
+  it("keeps rejecting pem-named payload fields for stored executable payloads", async () => {
     const client = createMemoryClient();
     // certificatePem is dispatch-time-only: the persistence boundary must
     // reject it even though the wire schema allows it on dispatched jobs.

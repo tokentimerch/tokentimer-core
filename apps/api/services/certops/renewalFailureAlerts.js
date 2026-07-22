@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * M5 cert_renewal_failed alert emission (plan v1.7 deferral).
+ * cert_renewal_failed alert emission.
  *
  * When a renew job reaches a terminal 'failed' status, queue exactly one
  * cert_renewal_failed alert through the existing alert pipeline. CertOps
