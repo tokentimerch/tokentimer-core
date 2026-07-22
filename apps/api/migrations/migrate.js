@@ -1744,6 +1744,59 @@ const migrations = [
         WHERE claimed_by_agent_id IS NOT NULL;
     `,
   },
+  {
+    version: 25,
+    name: "certops_job_approvals",
+    sql: `
+      -- M5 approval gates (plan control-plane orchestration). A job created
+      -- with requiresApproval starts at pending_approval and may only reach
+      -- 'pending' (claimable) through a human approval. The approval is bound
+      -- to a SHA256 hash of the canonical job payload (the same
+      -- packages/contracts/certops/canonical-json.cjs serialization the job
+      -- signer uses), so any later payload edit voids it and the claim path
+      -- flips the job back to pending_approval. No key material is involved:
+      -- only hashes, user ids, decisions, and bounded public reasons.
+
+      -- Dedicated append-only decision ledger for auditability. The current
+      -- binding also lives on certificate_jobs (approved_by_user_id,
+      -- approved_at, approved_payload_hash from migration 24); this table
+      -- keeps the full decision history including invalidations.
+      CREATE TABLE IF NOT EXISTS certops_job_approvals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NOT NULL,
+        decision TEXT NOT NULL
+          CHECK (decision IN ('approved', 'rejected', 'invalidated')),
+        approved_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        payload_hash CHAR(64) NULL
+          CHECK (payload_hash IS NULL OR payload_hash ~ '^[a-f0-9]{64}$'),
+        reason TEXT NULL
+          CHECK (reason IS NULL OR char_length(reason) <= 1024),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certops_job_approvals_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certops_job_approvals_workspace_job_created
+        ON certops_job_approvals(workspace_id, job_id, created_at DESC);
+
+      -- Approval lifecycle events join the bounded job-log event vocabulary
+      -- (kept in sync with JOB_LOG_EVENT_TYPES in services/certops/jobs.js).
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_event_type_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_event_type_check CHECK (
+          event_type IN (
+            'job.created', 'job.accepted', 'job.started', 'job.progress',
+            'job.completed', 'job.failed', 'job.rejected', 'job.cancelled',
+            'job.status_updated', 'evidence.attached',
+            'approval.granted', 'approval.rejected', 'approval.invalidated'
+          )
+        );
+    `,
+  },
 ];
 
 async function runMigrations() {

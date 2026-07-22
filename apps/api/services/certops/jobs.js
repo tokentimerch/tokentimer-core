@@ -137,6 +137,11 @@ const JOB_LOG_EVENT_TYPES = Object.freeze([
   "job.cancelled",
   "job.status_updated",
   "evidence.attached",
+  // M5 approval gate lifecycle (kept in sync with the migration-25 CHECK
+  // constraint on certificate_job_log.event_type).
+  "approval.granted",
+  "approval.rejected",
+  "approval.invalidated",
 ]);
 const JOB_LOG_EVENT_TYPE_SET = new Set(JOB_LOG_EVENT_TYPES);
 
@@ -163,6 +168,9 @@ const SAFE_JOB_SELECT_FIELDS = `
   max_attempts,
   next_attempt_at,
   scheduled_for,
+  approved_by_user_id,
+  approved_at,
+  approved_payload_hash,
   created_at,
   updated_at,
   queued_at,
@@ -698,6 +706,9 @@ function jobFromRow(row) {
     maxAttempts: row.max_attempts ?? 3,
     nextAttemptAt: dateToIso(row.next_attempt_at),
     scheduledFor: dateToIso(row.scheduled_for),
+    approvedByUserId: row.approved_by_user_id ?? null,
+    approvedAt: dateToIso(row.approved_at),
+    approvedPayloadHash: row.approved_payload_hash ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     queuedAt: dateToIso(row.queued_at),
@@ -827,12 +838,29 @@ async function createCertificateJob(options) {
     CERTOPS_JOB_OPERATION_INVALID,
     "operation",
   );
+  // Per-job approval gate (M5): a job that requires human approval starts at
+  // pending_approval and only reaches the claimable 'pending' status through
+  // services/certops/jobApprovals.approveJob. The flag only chooses the
+  // default initial status; an explicit conflicting status is rejected so a
+  // caller cannot both request a gate and bypass it.
+  const requiresApproval = options.requiresApproval === true;
+  if (
+    requiresApproval &&
+    options.status !== undefined &&
+    options.status !== null &&
+    options.status !== "pending_approval"
+  ) {
+    throw serviceError(
+      "A CertOps job that requires approval must start at pending_approval",
+      CERTOPS_JOB_STATUS_INVALID,
+    );
+  }
   const status = normalizeEnum(
     options.status,
     JOB_STATUS_SET,
     CERTOPS_JOB_STATUS_INVALID,
     "status",
-    "pending",
+    requiresApproval ? "pending_approval" : "pending",
   );
   const source = normalizeEnum(
     options.source,

@@ -88,6 +88,14 @@ const {
   CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
   createControllerProvisionIntent,
 } = require("../services/certops/controllerProvisioning");
+const {
+  CERTOPS_APPROVAL_APPROVER_REQUIRED,
+  CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+  CERTOPS_APPROVAL_REASON_INVALID,
+  CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
+  approveJob,
+  rejectJob,
+} = require("../services/certops/jobApprovals");
 const { writeAudit } = require("../services/audit");
 const { logger } = require("../utils/logger");
 const Token = require("../db/models/Token");
@@ -299,6 +307,30 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN) {
+    return res.status(403).json({
+      error: "The user who requested a CertOps job cannot approve it",
+      code: CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
+    });
+  }
+
+  if (err?.code === CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL) {
+    return res.status(409).json({
+      error: "Certificate job is not awaiting approval",
+      code: CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_APPROVAL_APPROVER_REQUIRED ||
+    err?.code === CERTOPS_APPROVAL_REASON_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps approval request is invalid",
+      code: err.code,
+    });
+  }
+
   const certOpsJobBadRequestCodes = new Set([
     CERTOPS_JOB_INVALID,
     CERTOPS_JOB_OPERATION_INVALID,
@@ -411,6 +443,9 @@ function jobCreateOptionsFromRequest(req) {
     subjectId: req.body?.subjectId,
     payload: req.body?.payload,
     idempotencyKey: req.body?.idempotencyKey,
+    // M5 per-job approval gate: an explicitly requested boolean true makes
+    // the job start at pending_approval; anything else defaults to false.
+    requiresApproval: req.body?.requiresApproval === true,
     // Manual jobs are always created through this session-authenticated
     // route: source is always "api" (the same value the certificate-import
     // route uses for session-initiated writes), never taken from the
@@ -444,6 +479,61 @@ function createManualCertificateJobHandler({
       });
       return res.status(500).json({
         error: "Failed to create CertOps job",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  };
+}
+
+function jobApprovalDecisionHandler(decision, {
+  approver = approveJob,
+  rejecter = rejectJob,
+} = {}) {
+  const decide = decision === "approve" ? approver : rejecter;
+  return async function jobApprovalDecisionHandler(req, res) {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+
+    try {
+      const result = await decide({
+        workspaceId: req.workspace.id,
+        jobId,
+        approverUserId: req.user?.id || null,
+        reason: req.body?.reason,
+      });
+
+      await writeAudit({
+        actorUserId: req.user.id,
+        subjectUserId: req.user.id,
+        action:
+          decision === "approve"
+            ? "CERTOPS_JOB_APPROVAL_GRANTED"
+            : "CERTOPS_JOB_APPROVAL_REJECTED",
+        targetType: "certificate_job",
+        targetId: jobId,
+        workspaceId: req.workspace.id,
+        metadata: {
+          jobId,
+          status: result.status,
+          ...(result.payloadHash ? { payloadHash: result.payloadHash } : {}),
+        },
+      });
+
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps job approval decision failed", {
+        error: err.message,
+        code: err.code || null,
+        decision,
+        workspaceId: req.workspace?.id,
+        jobId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to record CertOps approval decision",
         code: "INTERNAL_ERROR",
       });
     }
@@ -1305,6 +1395,33 @@ router.post(
   requireCertOpsWriteRole,
   requireWorkspaceCertOpsActive,
   createControllerProvisionIntentHandler(),
+);
+
+// M5 approval gates. Approval/rejection is an attributable human decision:
+// internal worker credentials are rejected (requireCertOpsSessionUser) and
+// the decision needs the same manager role as manual job creation. The
+// workspace pause gate is intentionally absent: deciding an approval while
+// paused is safe because the agent claim path is itself blocked by the
+// kill switch, and a rejection is exactly the kind of action an operator
+// may need during an incident.
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/approve",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  jobApprovalDecisionHandler("approve"),
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/reject",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  jobApprovalDecisionHandler("reject"),
 );
 
 router.get(

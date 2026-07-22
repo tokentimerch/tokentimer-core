@@ -26,6 +26,10 @@ const {
 const {
   lockWorkspaceForCertOpsSideEffect,
 } = require("./workspaceKillSwitch");
+const {
+  computeJobPayloadApprovalHash,
+  invalidateApprovalForClaim,
+} = require("./jobApprovals");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
@@ -282,6 +286,8 @@ async function claimJobs({
   const lockWorkspace =
     deps.lockWorkspaceForCertOpsSideEffect || lockWorkspaceForCertOpsSideEffect;
   const signJob = deps.signJobForDispatch || signJobForDispatch;
+  const invalidateApproval =
+    deps.invalidateApprovalForClaim || invalidateApprovalForClaim;
 
   const maxJobs =
     Number.isInteger(body.maxJobs) && body.maxJobs >= 1 && body.maxJobs <= 16
@@ -300,7 +306,8 @@ async function claimJobs({
     if (supportedActions.length === 0) return { jobs: [] };
 
     const selected = await client.query(
-      `SELECT id, workspace_id, operation, subject_type, subject_id, payload
+      `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
+              approved_payload_hash
          FROM certificate_jobs
         WHERE workspace_id = $1
           AND status = 'pending'
@@ -315,6 +322,29 @@ async function claimJobs({
 
     const jobs = [];
     for (const row of selected.rows) {
+      // M5 approval-gate re-verification: an approval is bound to a SHA256
+      // hash of the canonical payload at approval time. If the payload was
+      // edited afterwards, the approval is void: flip the job back to
+      // pending_approval instead of dispatching it. Jobs with no stored
+      // approval hash never required approval and pass through untouched.
+      if (row.approved_payload_hash) {
+        const rowPayload =
+          row.payload && typeof row.payload === "object"
+            ? row.payload
+            : safeParseJson(row.payload);
+        const currentHash = computeJobPayloadApprovalHash(rowPayload);
+        if (currentHash !== row.approved_payload_hash) {
+          await invalidateApproval({
+            client,
+            workspaceId: agent.workspaceId,
+            jobId: row.id,
+            staleHash: row.approved_payload_hash,
+            currentHash,
+          });
+          continue;
+        }
+      }
+
       const claimed = await client.query(
         `UPDATE certificate_jobs
             SET status = 'claimed',

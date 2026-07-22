@@ -130,6 +130,8 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
       "POST /api/v1/workspaces/:id/certops/jobs",
+      "POST /api/v1/workspaces/:id/certops/jobs/:jobId/approve",
+      "POST /api/v1/workspaces/:id/certops/jobs/:jobId/reject",
       "POST /api/v1/workspaces/:id/certops/provision-intents",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
