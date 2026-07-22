@@ -10,6 +10,7 @@ const {
   jitteredDelay,
   withRetry,
   startPollLoop,
+  createCaAwareFetch,
   createProtocolClient,
   parseServerUrl,
   validateEnvelopeShape,
@@ -813,4 +814,85 @@ test("onServerDate: a throwing callback never fails the protocol request", async
 
   const result = await client.heartbeat({ agentVersion: "0.1.0" });
   assert.deepEqual(result, {});
+});
+test("createProtocolClient: fetchImpl override is used instead of global fetch", async () => {
+  // Poison global fetch so any accidental use fails the test loudly.
+  global.fetch = async () => {
+    throw new Error("global fetch must not be called when fetchImpl is provided");
+  };
+
+  const fetchImplCalls = [];
+  const fetchImpl = async (url, init) => {
+    fetchImplCalls.push({ url, init });
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ ok: true }),
+    };
+  };
+
+  const client = createProtocolClient({
+    serverUrl: "https://cp.example.com",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => "ttagent_agent-1_secret",
+    fetchImpl,
+  });
+
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal(fetchImplCalls.length, 1);
+  assert.equal(
+    fetchImplCalls[0].url,
+    `https://cp.example.com${ROUTES.HEARTBEAT}`,
+  );
+  assert.equal(
+    fetchImplCalls[0].init.headers.authorization,
+    "Bearer ttagent_agent-1_secret",
+  );
+});
+
+test("createCaAwareFetch: requires a non-empty caBundlePem", () => {
+  assert.throws(
+    () => createCaAwareFetch({ caBundlePem: "" }),
+    (err) =>
+      err instanceof AgentProtocolError &&
+      err.code === AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
+  );
+  assert.throws(() => createCaAwareFetch({}), AgentProtocolError);
+});
+
+test("createCaAwareFetch: passes plain http URLs through to the base fetch", async () => {
+  const baseCalls = [];
+  const caFetch = createCaAwareFetch({
+    caBundlePem: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n",
+    baseFetch: async (url, init) => {
+      baseCalls.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({}),
+      };
+    },
+  });
+
+  const response = await caFetch("http://plain.example.com/api", { method: "POST" });
+  assert.equal(baseCalls.length, 1);
+  assert.equal(baseCalls[0].url, "http://plain.example.com/api");
+  assert.equal(response.status, 200);
+});
+
+test("createCaAwareFetch: https request against an untrusted-by-bundle endpoint fails with a TLS error", async () => {
+  // A syntactically valid but wrong CA bundle must cause verification
+  // failure (never a silent fallback to the default trust store). Any
+  // network/TLS error is acceptable here; the point is that the request
+  // does NOT succeed against a host the bundle does not anchor.
+  const caFetch = createCaAwareFetch({
+    caBundlePem:
+      "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUfake\n-----END CERTIFICATE-----\n",
+  });
+  await assert.rejects(
+    caFetch("https://127.0.0.1:1/never-listens", { method: "POST", body: "{}" }),
+  );
 });

@@ -106,6 +106,7 @@ Top level:
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
 | `discovery` | object or null | null | Null disables discovery entirely. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
+| `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
 
 `policy` block (deep validation in `src/policy/loadPolicyConfig`, fail-loud):
 

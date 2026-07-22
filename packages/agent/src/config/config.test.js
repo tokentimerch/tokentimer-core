@@ -743,6 +743,72 @@ describe("credential file round trip", () => {
   });
 });
 
+describe("caBundlePath (loadAgentConfig)", () => {
+  it("loadAgentConfig returns null caBundlePath when not configured", () => {
+    const dir = makeTempConfigDir();
+    withEnv(
+      {
+        TOKENTIMER_AGENT_SERVER_URL: "https://cp.example.com",
+        TOKENTIMER_AGENT_CA_BUNDLE: undefined,
+      },
+      () => {
+        const config = loadAgentConfig({ configDir: dir });
+        assert.equal(config.caBundlePath, null);
+      },
+    );
+  });
+
+  it("loadAgentConfig reads caBundlePath from config.json", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://cp.example.com",
+        caBundlePath: "/etc/tokentimer-agent/private-ca.pem",
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_CA_BUNDLE: undefined }, () => {
+      const config = loadAgentConfig({ configDir: dir });
+      assert.equal(config.caBundlePath, "/etc/tokentimer-agent/private-ca.pem");
+    });
+  });
+
+  it("TOKENTIMER_AGENT_CA_BUNDLE env var overrides config.json", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://cp.example.com",
+        caBundlePath: "/from/file.pem",
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_CA_BUNDLE: "/from/env.pem" }, () => {
+      const config = loadAgentConfig({ configDir: dir });
+      assert.equal(config.caBundlePath, "/from/env.pem");
+    });
+  });
+
+  it("loadAgentConfig fails loudly on a non-string caBundlePath", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com", caBundlePath: 42 }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_CA_BUNDLE: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /caBundlePath must be a non-empty path/,
+      );
+    });
+  });
+});
+
 describe("redactCredentialForLogging", () => {
   it("always returns the fixed placeholder", () => {
     assert.equal(redactCredentialForLogging("ttagent_a_b"), "[AGENT_CREDENTIAL_REDACTED]");
