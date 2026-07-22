@@ -112,6 +112,8 @@ describe("CertOps route hardening", () => {
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
 
     assert.deepEqual(routeMatches.sort(), [
+      "GET /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+      "GET /api/v1/workspaces/:id/certops/agents",
       "GET /api/v1/workspaces/:id/certops/certificates",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId",
       "GET /api/v1/workspaces/:id/certops/certificates/:certId/instances",
@@ -121,6 +123,9 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
       "GET /api/v1/workspaces/:id/certops/tokens",
       "GET /api/v1/workspaces/:id/certops/settings",
+      "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+      "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
+      "POST /api/v1/workspaces/:id/certops/agents/:agentId/retire",
       "POST /api/v1/workspaces/:id/certops/certificates",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",

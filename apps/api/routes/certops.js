@@ -40,6 +40,24 @@ const {
   revokeApiTokenWithResult,
 } = require("../services/certops/apiTokens");
 const {
+  CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID,
+  CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
+  CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID,
+  createBootstrapToken,
+  getBootstrapTokenById,
+  listBootstrapTokens,
+  revokeBootstrapToken,
+} = require("../services/certops/agentCredentials");
+const {
+  CERTOPS_AGENT_INVALID,
+  CERTOPS_AGENT_RETIRE_REASON_INVALID,
+  countActivelyLeasedJobs,
+  getAgentById,
+  listAgents,
+  normalizeRequiredRetireReason,
+  retireAgent,
+} = require("../services/certops/agentRegistry");
+const {
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
@@ -75,6 +93,10 @@ const { logger } = require("../utils/logger");
 const Token = require("../db/models/Token");
 
 const CERTOPS_API_TOKEN_NOT_FOUND = "CERTOPS_API_TOKEN_NOT_FOUND";
+const CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND =
+  "CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND";
+const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
+const CERTOPS_AGENT_RETIRE_BLOCKED = "CERTOPS_AGENT_RETIRE_BLOCKED";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -235,6 +257,34 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID ||
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_NAME_INVALID ||
+    err?.code === CERTOPS_AGENT_BOOTSTRAP_TOKEN_EXPIRY_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps agent bootstrap token request is invalid",
+      code: err.code,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_AGENT_INVALID ||
+    err?.code === CERTOPS_AGENT_RETIRE_REASON_INVALID
+  ) {
+    return res.status(400).json({
+      error: "CertOps agent request is invalid",
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_AGENT_NOT_FOUND) {
+    return res.status(404).json({
+      error: "CertOps agent not found",
+      code: CERTOPS_AGENT_NOT_FOUND,
+    });
+  }
+
   if (err?.code === CERTOPS_JOB_NOT_FOUND) {
     return res.status(404).json({
       error: "Certificate job not found",
@@ -314,6 +364,30 @@ function tokenIdFromParams(req, res) {
     return null;
   }
   return tokenId;
+}
+
+function bootstrapTokenIdFromParams(req, res) {
+  const tokenId = String(req.params.tokenId || "");
+  if (!UUID_PATTERN.test(tokenId)) {
+    res.status(400).json({
+      error: "CertOps agent bootstrap token identifier is invalid",
+      code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_INVALID,
+    });
+    return null;
+  }
+  return tokenId;
+}
+
+function agentIdFromParams(req, res) {
+  const agentId = String(req.params.agentId || "");
+  if (!UUID_PATTERN.test(agentId)) {
+    res.status(400).json({
+      error: "CertOps agent identifier is invalid",
+      code: CERTOPS_AGENT_INVALID,
+    });
+    return null;
+  }
+  return agentId;
 }
 
 function jobListOptionsFromRequest(req) {
@@ -577,6 +651,62 @@ async function recordApiTokenAudit({
   });
 }
 
+function bootstrapTokenAuditMetadata(token, { includeRevocation = false } = {}) {
+  const metadata = {
+    bootstrap_token_id: token.id,
+    token_prefix: token.tokenPrefix,
+    name: token.name,
+    status: token.status,
+  };
+
+  if (includeRevocation) {
+    metadata.revoked_at = token.revokedAt;
+  } else {
+    metadata.expires_at = token.expiresAt;
+  }
+
+  return metadata;
+}
+
+async function recordBootstrapTokenAudit({
+  client,
+  req,
+  action,
+  token,
+  includeRevocation,
+}) {
+  const actorUserId = req.user.id;
+  await writeAudit({
+    client,
+    actorUserId,
+    subjectUserId: actorUserId,
+    action,
+    targetType: "certops_agent_bootstrap_token",
+    targetId: null,
+    workspaceId: req.workspace.id,
+    metadata: bootstrapTokenAuditMetadata(token, { includeRevocation }),
+  });
+}
+
+async function recordAgentRetiredAudit({ client, req, agent, force, reason, leasedJobs }) {
+  const actorUserId = req.user.id;
+  await writeAudit({
+    client,
+    actorUserId,
+    subjectUserId: actorUserId,
+    action: "CERTOPS_AGENT_RETIRED",
+    targetType: "certops_agent",
+    targetId: null,
+    workspaceId: req.workspace.id,
+    metadata: {
+      agentId: agent.agentId,
+      force,
+      reason,
+      leasedJobs,
+    },
+  });
+}
+
 async function recordInventoryAudit(req, source, certificates, client = null) {
   const actorUserId = req.user?.id || null;
   await writeAudit({
@@ -774,6 +904,282 @@ router.post(
       });
       return res.status(500).json({
         error: "Failed to revoke CertOps API token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  // Bootstrap-token metadata enumeration is manager-only, same as
+  // create/revoke: viewers must not see agent onboarding token names,
+  // prefixes, or expiry windows.
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const tokens = await listBootstrapTokens({
+        workspaceId: req.workspace.id,
+      });
+      return res.json({ items: tokens });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent bootstrap token list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps agent bootstrap tokens",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    try {
+      const created = await withCertOpsTokenTransaction(async (client) => {
+        // createBootstrapToken enforces required future expiry and the
+        // max-TTL window, so this route relies on service-layer validation.
+        const tokenResult = await createBootstrapToken({
+          client,
+          workspaceId: req.workspace.id,
+          name: req.body?.name,
+          expiresAt: req.body?.expiresAt,
+          createdBy: req.user.id,
+        });
+        await recordBootstrapTokenAudit({
+          client,
+          req,
+          action: "CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED",
+          token: tokenResult.token,
+          includeRevocation: false,
+        });
+        return tokenResult;
+      });
+
+      // The raw ttboot_ token is returned exactly once; only the hash is
+      // persisted, so it can never be shown again.
+      return res.status(201).json({
+        token: created.token,
+        plaintextToken: created.plaintextToken,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent bootstrap token create failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create CertOps agent bootstrap token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    const tokenId = bootstrapTokenIdFromParams(req, res);
+    if (!tokenId) return null;
+
+    try {
+      const revoked = await withCertOpsTokenTransaction(async (client) => {
+        const before = await getBootstrapTokenById({
+          client,
+          workspaceId: req.workspace.id,
+          tokenId,
+        });
+        const token = await revokeBootstrapToken({
+          client,
+          workspaceId: req.workspace.id,
+          tokenId,
+          revokedBy: req.user.id,
+        });
+        const revokedNow =
+          Boolean(token) &&
+          token.status === "revoked" &&
+          before?.status !== "revoked";
+        if (token && revokedNow) {
+          await recordBootstrapTokenAudit({
+            client,
+            req,
+            action: "CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED",
+            token,
+            includeRevocation: true,
+          });
+        }
+        return token;
+      });
+
+      if (!revoked) {
+        return res.status(404).json({
+          error: "CertOps agent bootstrap token not found",
+          code: CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND,
+        });
+      }
+
+      return res.json({ token: revoked });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent bootstrap token revoke failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        tokenId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to revoke CertOps agent bootstrap token",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/agents",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  // Agent fleet metadata (hostnames, versions, liveness) is manager-only,
+  // matching the authorization posture of the token routes.
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      const agents = await listAgents({ workspaceId: req.workspace.id });
+      return res.json({ items: agents });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list CertOps agents",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/agents/:agentId/retire",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsTokenManager,
+  async (req, res) => {
+    const agentId = agentIdFromParams(req, res);
+    if (!agentId) return null;
+
+    const force = req.body?.force === true;
+
+    try {
+      // Force requires an attributable justification before any DB work.
+      const reason = force
+        ? normalizeRequiredRetireReason(req.body?.reason)
+        : null;
+
+      const outcome = await withCertOpsTransaction(async (client) => {
+        const existing = await getAgentById({
+          client,
+          workspaceId: req.workspace.id,
+          agentId,
+        });
+        if (!existing) return { notFound: true };
+
+        // Idempotent: an already-retired agent returns its current state
+        // without a duplicate audit event.
+        if (existing.status === "retired") {
+          return { agent: existing, retiredNow: false };
+        }
+
+        const leasedJobs = await countActivelyLeasedJobs({
+          client,
+          agentId,
+        });
+        if (leasedJobs > 0 && !force) {
+          return { blocked: true, leasedJobs };
+        }
+
+        // The leased jobs themselves are untouched; the lease reaper
+        // worker handles their expiry.
+        const result = await retireAgent({
+          client,
+          workspaceId: req.workspace.id,
+          agentId,
+          retiredBy: req.user.id,
+          reason,
+        });
+        if (result.agent && result.retiredNow) {
+          await recordAgentRetiredAudit({
+            client,
+            req,
+            agent: result.agent,
+            force,
+            reason,
+            leasedJobs,
+          });
+        }
+        return result;
+      });
+
+      if (outcome.blocked) {
+        return res.status(409).json({
+          error: "CertOps agent has actively leased jobs",
+          code: CERTOPS_AGENT_RETIRE_BLOCKED,
+          dependencies: { leasedJobs: outcome.leasedJobs },
+        });
+      }
+
+      if (outcome.notFound || !outcome.agent) {
+        return res.status(404).json({
+          error: "CertOps agent not found",
+          code: CERTOPS_AGENT_NOT_FOUND,
+        });
+      }
+
+      return res.json({ agent: outcome.agent });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps agent retire failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        agentId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to retire CertOps agent",
         code: "INTERNAL_ERROR",
       });
     }
