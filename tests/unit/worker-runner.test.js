@@ -58,6 +58,7 @@ describe("worker runner helpers", () => {
       "auto-sync": "*/1 * * * *",
       "endpoint-check": "*/1 * * * *",
       "weekly-digest": "0 9 * * 1",
+      certops: "*/1 * * * *",
     });
 
     assert.deepStrictEqual(
@@ -153,6 +154,39 @@ describe("worker runner helpers", () => {
     assert.throws(
       () => runner.resolveWorkerNames("not-a-worker"),
       /Unknown worker "not-a-worker"/,
+    );
+  });
+
+  it("registers the certops maintenance worker with its own env config", async () => {
+    const runner = await import(runnerUrl);
+    const certops = runner.workerDefinitions.certops;
+
+    assert.strictEqual(certops.name, "certops");
+    assert.strictEqual(certops.label, "certops-maintenance");
+    assert.strictEqual(certops.cronEnv, "WORKER_CERTOPS_CRON");
+    assert.strictEqual(certops.intervalEnv, "WORKER_CERTOPS_INTERVAL_MS");
+    assert.strictEqual(certops.runOnStartEnv, "WORKER_CERTOPS_RUN_ON_START");
+    assert.strictEqual(certops.defaultIntervalMs, 60000);
+
+    const cronConfig = runner.getWorkerConfig(certops, {});
+    assert.strictEqual(cronConfig.mode, "cron");
+    assert.strictEqual(cronConfig.cronExpression, "*/1 * * * *");
+    assert.strictEqual(cronConfig.runOnStart, false);
+
+    const intervalConfig = runner.getWorkerConfig(certops, {
+      WORKER_CERTOPS_CRON: "interval",
+      WORKER_CERTOPS_INTERVAL_MS: "45000",
+      WORKER_CERTOPS_RUN_ON_START: "true",
+    });
+    assert.strictEqual(intervalConfig.mode, "interval");
+    assert.strictEqual(intervalConfig.intervalMs, 45000);
+    assert.strictEqual(intervalConfig.runOnStart, true);
+
+    assert.strictEqual(
+      runner.getWorkerConfig(certops, { WORKER_RUN_ON_START: "true" })
+        .runOnStart,
+      false,
+      "certops must not inherit the global run-on-start flag",
     );
   });
 
@@ -441,6 +475,7 @@ describe("worker runner helpers", () => {
       "auto-sync-worker",
       "endpoint-check-worker",
       "weekly-digest",
+      "certops-worker",
     ];
 
     for (const moduleName of workerModules) {
