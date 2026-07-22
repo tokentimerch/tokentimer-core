@@ -42,6 +42,7 @@
     "test:integration:all": "node scripts/run-integration-suite.js all",
     "test:quick": "pnpm exec mocha tests/integration/endpoint-monitor.test.js tests/integration/endpoint-health-alerts.test.js --timeout 30000 --exit",
     "test:contracts": "node --test tests/contract/**/*.test.js",
+    "test:e2e:agent": "node --test tests/e2e/certops-agent-e2e.test.js",
     "test:baseline": "node scripts/run-baseline.js",
     "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",
     "test:ci:all": "NODE_ENV=test pnpm exec mocha tests/integration/**/*.test.js --timeout 60000 --exit --reporter mocha-junit-reporter --reporter-options mochaFile=./test-results/results.xml",
