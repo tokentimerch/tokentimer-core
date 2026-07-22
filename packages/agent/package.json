@@ -2,7 +2,7 @@
   "name": "@tokentimer/agent",
   "version": "0.1.0",
   "private": true,
-  "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps (M4/M5)",
+  "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps",
   "license": "BUSL-1.1",
   "packageManager": "pnpm@11.13.0",
   "type": "commonjs",

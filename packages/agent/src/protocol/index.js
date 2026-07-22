@@ -1,13 +1,13 @@
 "use strict";
 
 /**
- * CertOps agent protocol client (M4 bootstrap scope).
+ * CertOps agent protocol client (agent bootstrap scope).
  *
  * Implements the outbound-only HTTP client for register/heartbeat/claim/
  * result/evidence per packages/contracts/certops/agent-protocol.schema.json
  * and docs/adr/0002-certops-agent-protocol.md (outbound-only model) and
  * docs/adr/0003-certops-job-signing-and-replay-protection.md (replay
- * protection; signature verification itself is Phase 4 runtime work and is
+ * protection; signature verification itself is signed-dispatch runtime work and is
  * intentionally out of scope here).
  *
  * This module is self-contained: it does not import sibling src/ modules
@@ -164,7 +164,7 @@ function buildEnvelope({
 /**
  * Returns baseMs adjusted by +/- a random jitter fraction, floored at 0.
  * Used to avoid fleet thundering herd on heartbeat/poll cadences and on
- * retry backoff (CertOps plan 7.7 lesson 3).
+ * retry backoff.
  *
  * @param {number} baseMs
  * @param {number} [jitterRatio=0.2] fraction of baseMs to jitter by, e.g.
@@ -226,7 +226,7 @@ function sleep(ms) {
  * jittered interval until `signal` aborts. Errors thrown by onTick are
  * caught and logged, never propagated, so a single failed tick (e.g. one
  * dropped heartbeat) does not kill the loop -- matching the outbound-only,
- * resilient-poller intent (CertOps plan 7.7).
+ * resilient-poller intent.
  *
  * Generic on purpose: heartbeat and claim polling both need this shape, so
  * this helper does not know or care which endpoint onTick calls.
@@ -361,8 +361,8 @@ async function resolveCredential(getCredential) {
 
 /**
  * Factory for the outbound-only protocol client. See module doc comment
- * for the overall design; this is M4 bootstrap scope: real job execution
- * and Ed25519 signature verification are Phase 4 runtime work (see
+ * for the overall design; this is agent bootstrap scope: real job execution
+ * and Ed25519 signature verification are signed-dispatch runtime work (see
  * docs/adr/0003-certops-job-signing-and-replay-protection.md) and are only
  * stubbed/passed through here.
  *
@@ -373,7 +373,7 @@ async function resolveCredential(getCredential) {
  *   not-yet-registered agent this is the client-generated candidate id
  *   echoed back by the control plane on register (schema note)
  * @param {string} params.protocolVersion semver string this agent build
- *   speaks (7.6 version negotiation)
+ *   speaks (version negotiation)
  * @param {() => (string|null|Promise<string|null>)} [params.getCredential]
  *   returns the current per-agent credential (raw `ttagent_<id>_<secret>`
  *   string) or null if not yet registered. Required for heartbeat/claim/
@@ -491,15 +491,15 @@ function createProtocolClient({
    * @param {boolean|null} [params.ntpSynced]
    * @param {number|null} [params.uptimeSeconds]
    * @param {string|null} [params.pinnedSigningKeyId] job-signing public
-   *   key id currently pinned locally (7.4); signature verification
-   *   itself is Phase 4 runtime work, this module only reports the id.
+   *   key id currently pinned locally; signature verification
+   *   itself is signed-dispatch runtime work, this module only reports the id.
    * @param {number|null} [params.clockOffsetMs] agent-reported offset vs
    *   control-plane time. The schema expects this on heartbeat and result
-   *   envelopes for clock-drift detection; measuring the offset is Phase 4
+   *   envelopes for clock-drift detection; measuring the offset is signed-dispatch
    *   runtime work, so callers pass it through here when they have it.
    * @returns {Promise<{ retired: true } | object>} `{ retired: true }` on
    *   HTTP 410 (caller should exit cleanly, no respawn loop, per ADR-0002
-   *   and plan 7.7 item 11); otherwise the parsed response body.
+   *   ); otherwise the parsed response body.
    */
   async function heartbeat({
     agentVersion,
@@ -543,7 +543,7 @@ function createProtocolClient({
    * @param {string[]} [params.supportedActions]
    * @returns {Promise<Array<object>>} jobs array from the response's
    *   `jobs` field (pass-through; server-side shape TBD, see job-payload
-   *   schema which lands with the Phase 4 control-plane agent backend)
+   *   schema which lands with the control-plane agent backend)
    */
   async function claim({ maxJobs = 1, supportedActions = [] } = {}) {
     const token = await resolveCredential(getCredential);
@@ -572,7 +572,7 @@ function createProtocolClient({
 
   /**
    * Reports the terminal outcome of a job attempt. Job execution itself
-   * (running the signed job, verifying its Ed25519 signature) is Phase 4
+   * (running the signed job, verifying its Ed25519 signature) is signed-dispatch
    * runtime work; this is only the outbound reporting leg.
    *
    * @param {object} params
@@ -648,7 +648,7 @@ function createProtocolClient({
     // route per the frozen route namespace (packages/contracts/api/
     // certops-route-compat.contract.json only lists one results route for
     // agents); the messageType field on the envelope disambiguates
-    // server-side. Revisit if Phase 4 control-plane work splits this.
+    // server-side. Revisit if control-plane work splits this.
     const { status: httpStatus, ok, json } = await postJson(routeUrl(ROUTES.RESULTS), {
       token,
       envelope,

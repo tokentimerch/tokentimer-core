@@ -1,10 +1,10 @@
 "use strict";
 
-// Contract tests for the M4 agent protocol surface (Phase 3 Dev B lane):
+// Contract tests for the agent protocol surface:
 // packages/contracts/certops/agent-protocol.schema.json plus its parity with
 // the packages/agent modules (protocol client routes, policy rejection
 // reasons, evidence event types / metadata name pattern), the route-compat
-// contract, the OpenAPI document, and the M2 schemas it is derived from.
+// contract, the OpenAPI document, and the executor schemas it is derived from.
 // Follows the conventions of certops-m2-contracts.test.js.
 
 const { describe, it } = require("node:test");
@@ -201,7 +201,7 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-describe("CertOps M4 agent protocol contracts", () => {
+describe("CertOps agent protocol contracts", () => {
   it("is listed in contracts.manifest.json", () => {
     const paths = new Set(
       contractsManifest.namespaces.flatMap((namespace) =>
@@ -374,7 +374,7 @@ describe("CertOps M4 agent protocol contracts", () => {
         `policy rejection reason ${reason} missing from schema enum`,
       );
     }
-    // The Phase 4 runtime-owned reasons must also stay reserved in the enum.
+    // The runtime-owned reasons must also stay reserved in the enum.
     for (const runtimeReason of [
       "job_integrity_failed",
       "job_replay_rejected",

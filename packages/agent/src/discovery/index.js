@@ -1,16 +1,16 @@
 "use strict";
 
 /**
- * Filesystem certificate discovery (CertOps M4 bootstrap).
+ * Filesystem certificate discovery (agent bootstrap).
  *
- * M4 milestone scope (CertOps plan): "filesystem certificate discovery
+ * Bootstrap scope: "filesystem certificate discovery
  * (detect key presence without reading content)". This module's job is
  * inventory/observation only -- it walks a directory tree looking for
  * public certificate files and reports what it finds, plus whether a
  * private key *appears* to be co-located with a given certificate.
  *
  * Zero private-key custody (D5, ADR-0001) is a hard invariant for the whole
- * platform. Even though later milestones (M5: src/keys, src/deploy, etc.)
+ * platform. Even though the execution runtime (src/keys, src/deploy, etc.)
  * make this agent load-bearing for actual key handling, THIS module never
  * reads private key bytes into memory and never returns key content in any
  * result shape. Detection of "this looks like a key file" is deliberately

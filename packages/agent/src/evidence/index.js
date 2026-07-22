@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * CertOps agent evidence builder (M4 bootstrap).
+ * CertOps agent evidence builder (agent bootstrap).
  *
  * Builds schema-valid `evidenceBody` / `evidenceItems` payloads (see
  * packages/contracts/certops/agent-protocol.schema.json, definitions
@@ -15,7 +15,7 @@
  * (b) defensively redacted for generic secret patterns even when the caller
  * did not intend to pass one. `assertEvidencePayloadSafe` is a last-resort
  * deep scan callers MUST run immediately before any evidence POST, per the
- * CertOps plan v1.19 packaging decision that an in-core agent package reuses
+ * packaging decision that an in-core agent package reuses
  * the shared detector directly rather than duplicating detection logic or
  * pinning a cross-repo digest.
  *
@@ -307,7 +307,7 @@ function buildEvidenceBody({ jobId = null, evidenceItems } = {}) {
  * sibling policy module) that produces a single `policy.checked` evidence
  * item. This is the glue that turns every policy rejection into an evidence
  * record automatically, so operators see policy conflicts, not silent
- * failures (CertOps plan v1.19, section 7.5).
+ * failures (operators see policy conflicts, not silent failures).
  *
  * @param {object} input
  * @param {string} input.rejectionReason

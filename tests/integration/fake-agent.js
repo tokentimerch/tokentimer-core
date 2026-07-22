@@ -1,14 +1,14 @@
 "use strict";
 
-// Reusable fake-agent simulator for CertOps M4 integration tests.
+// Reusable fake-agent simulator for CertOps agent integration tests.
 //
-// Approach taken (documented per the M4 harness spec): this file builds a
+// Approach taken: this file builds a
 // SELF-CONTAINED mock Express control-plane app
 // (`buildFakeAgentControlPlaneApp`), not a dependency-injected wrapper around
 // a real router. Reasoning:
 //
-//   - There is no server-side route implementation yet for the M4 agent
-//     protocol (no apps/api/routes/certops-agent.js). That is Phase 4 Dev A
+//   - There is no server-side route implementation yet for the agent
+//     protocol (no apps/api/routes/certops-agent.js). That is server-side backend
 //     work and has not started. A `buildFakeAgentApp(router)` helper mirroring
 //     fake-executor.js's `buildExecutorApp` would have nothing real to accept
 //     as `router` today, and would just push the "what does a route even look
@@ -17,7 +17,7 @@
 //     packages/contracts/certops/agent-protocol.schema.json and the intent in
 //     ADR-0002 (outbound-only, agent-local policy wins) and ADR-0003 (signed
 //     jobs, replay protection fields). Building schema-correct requests
-//     against a minimal in-memory mock app lets Phase 4 Dev A (and everyone
+//     against a minimal in-memory mock app lets the server-side backend work (and everyone
 //     else) start writing protocol-shape tests immediately, without a live
 //     Postgres-backed integration DB.
 //   - Every default handler on the mock app is overridable per-test
@@ -71,7 +71,7 @@ const DEFAULT_SCHEMA_VERSION = 1;
 
 // Pure helper: builds one schema-shaped envelope object for a given
 // messageType, without sending anything over HTTP. Useful for tests that
-// want to construct malformed envelopes directly (e.g. Phase 4 replay/
+// want to construct malformed envelopes directly (e.g. replay/
 // rejection tests) rather than going through createFakeAgent's HTTP methods.
 function envelopeFor(messageType, body, overrides = {}) {
   const envelope = {
@@ -403,7 +403,7 @@ function createFakeAgent({
     },
 
     // Re-sends the exact same envelope verbatim, to exercise replay-rejection
-    // behavior once Phase 4 server-side replay defense (ADR-0003) ships.
+    // behavior once server-side replay defense (ADR-0003) ships.
     async replayLastMessage() {
       if (!agent.lastPayload) {
         throw new Error("No message sent yet; nothing to replay");

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/agent-protocol.schema.json",
   "title": "CertOps Agent Protocol Message",
-  "description": "M4 agent/executor message envelope and per-messageType bodies under TOKENTIMER_CERTOPS_PLAN v1.19 sections 7.2-7.6 and ADR-0002/0003. The agent is outbound-only (it polls the control plane); the control plane never opens connections to agents. Messages MUST NOT carry private key material (enforced by apps/api/utils/secretMaterial.js at the ingest boundary). Bodies here are bootstrap-phase shapes for the packages/agent client stubs; server-side routes, Ed25519 signature verification, and replay-cache enforcement land with the Phase 4 control-plane agent backend (Dev A lane) and must stay in lockstep with this file.",
+  "description": "Agent/executor message envelope and per-messageType bodies (see ADR-0002/0003). The agent is outbound-only (it polls the control plane); the control plane never opens connections to agents. Messages MUST NOT carry private key material (enforced by apps/api/utils/secretMaterial.js at the ingest boundary). Bodies here are bootstrap-phase shapes for the packages/agent client stubs; server-side routes, Ed25519 signature verification, and replay-cache enforcement land with the control-plane agent backend and must stay in lockstep with this file.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"],
@@ -16,7 +16,7 @@
       "minLength": 1,
       "maxLength": 32,
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Agent protocol semver the agent speaks (7.6 version negotiation). The register message is the only messageType where agentId is a placeholder pending assignment."
+      "description": "Agent protocol semver the agent speaks (version negotiation). The register message is the only messageType where agentId is a placeholder pending assignment."
     },
     "messageType": {
       "type": "string",
@@ -28,7 +28,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "Stable agent identifier. For messageType=register this is a client-generated candidate id echoed back by the control plane; the control plane is the source of truth once registration succeeds (7.2)."
+      "description": "Stable agent identifier. For messageType=register this is a client-generated candidate id echoed back by the control plane; the control plane is the source of truth once registration succeeds."
     },
     "workspaceId": {
       "type": ["string", "null"],
@@ -40,7 +40,7 @@
     },
     "clockOffsetMs": {
       "type": ["integer", "null"],
-      "description": "Agent-reported offset vs control-plane time, used for clock-drift detection (7.4/M4). Present on heartbeat and result; optional elsewhere."
+      "description": "Agent-reported offset vs control-plane time, used for clock-drift detection. Present on heartbeat and result; optional elsewhere."
     },
     "body": {
       "description": "Message-type-specific payload. Structurally validated against the matching *Body definition below via the if/then rules in `allOf`; each body definition is additionalProperties:false, so unconstrained extra fields are rejected per messageType.",
@@ -94,7 +94,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["bootstrapTokenId", "agentVersion"],
-      "description": "7.2 agent identity lifecycle: POST /agents/register + single-use hashed bootstrap token. The raw bootstrap token travels as a bearer credential (outside this JSON body, per the machine-token pattern in 7.1), never as a body field; bootstrapTokenId is an opaque non-secret reference used for correlation/audit only.",
+      "description": "Agent identity lifecycle: POST /agents/register + single-use hashed bootstrap token. The raw bootstrap token travels as a bearer credential (outside this JSON body, per the machine-token pattern), never as a body field; bootstrapTokenId is an opaque non-secret reference used for correlation/audit only.",
       "properties": {
         "bootstrapTokenId": {
           "type": "string",
@@ -122,7 +122,7 @@
         "declaredTargetSelectors": {
           "type": "array",
           "maxItems": 64,
-          "description": "Non-secret target scope declared at registration (7.5 item 3, defense in depth: server must not offer jobs outside this declared scope).",
+          "description": "Non-secret target scope declared at registration (defense in depth: server must not offer jobs outside this declared scope).",
           "items": {
             "type": "string",
             "minLength": 1,
@@ -132,7 +132,7 @@
         "declaredCommandProfileNames": {
           "type": "array",
           "maxItems": 64,
-          "description": "Names only of agent-local command profiles (7.5): argv itself never leaves the agent config file.",
+          "description": "Names only of agent-local command profiles: argv itself never leaves the agent config file.",
           "items": {
             "type": "string",
             "minLength": 1,
@@ -146,7 +146,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["agentVersion"],
-      "description": "7.2/7.6 steady-state heartbeat: updates last_seen_at, carries version-negotiation and clock-drift-relevant fields. A retired agent's heartbeat returns 410 without updating last_seen_at (7.7 item 11); that behavior lives server-side and is out of scope for this body shape.",
+      "description": "Steady-state heartbeat: updates last_seen_at, carries version-negotiation and clock-drift-relevant fields. A retired agent's heartbeat returns 410 without updating last_seen_at; that behavior lives server-side and is out of scope for this body shape.",
       "properties": {
         "agentVersion": {
           "type": "string",
@@ -155,7 +155,7 @@
         },
         "ntpSynced": {
           "type": ["boolean", "null"],
-          "description": "Optional local NTP sync status, used alongside clockOffsetMs for fleet clock-drift alerts (M4 clock drift handling)."
+          "description": "Optional local NTP sync status, used alongside clockOffsetMs for fleet clock-drift alerts."
         },
         "uptimeSeconds": {
           "type": ["integer", "null"],
@@ -165,14 +165,14 @@
           "type": ["string", "null"],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
-          "description": "Job-signing public key id currently pinned by the agent (7.4), so the control plane can detect agents still on a retiring key during rotation overlap."
+          "description": "Job-signing public key id currently pinned by the agent, so the control plane can detect agents still on a retiring key during rotation overlap."
         }
       }
     },
     "claimBody": {
       "type": "object",
       "additionalProperties": false,
-      "description": "7.3 job dispatch model: the agent polls a claim endpoint (FOR UPDATE SKIP LOCKED server-side); this body only expresses the agent's own poll preferences, never a specific job selection.",
+      "description": "Job dispatch model: the agent polls a claim endpoint (FOR UPDATE SKIP LOCKED server-side); this body only expresses the agent's own poll preferences, never a specific job selection.",
       "properties": {
         "maxJobs": {
           "type": "integer",
@@ -196,7 +196,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["jobId", "attemptId", "status"],
-      "description": "7.4 job integrity and 7.7 result reporting. Distinct from the M2 external-executor events surface (executor-event.schema.json): this is the signed-job execution result path added in M4. attemptId is single-use per the server-side claim/lease model (7.4).",
+      "description": "Job integrity and result reporting. Distinct from the external-executor events surface (executor-event.schema.json): this is the signed-job execution result path. attemptId is single-use per the server-side claim/lease model.",
       "properties": {
         "jobId": {
           "type": "string",
@@ -229,11 +229,11 @@
             "clock_drift_suspected",
             null
           ],
-          "description": "Populated when status is rejected/blocked due to agent-local policy (7.5) or job-integrity/replay checks (7.4). Always reported as evidence too, per 7.5's 'operator sees policy conflicts, not silent failures' rule."
+          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule."
         },
         "keyRotated": {
           "type": ["boolean", "null"],
-          "description": "9.3 key rotation policy: whether this job generated a new key vs reused the existing one. Never accompanied by the key itself."
+          "description": "Key rotation policy: whether this job generated a new key vs reused the existing one. Never accompanied by the key itself."
         },
         "errorMessage": {
           "type": ["string", "null"],

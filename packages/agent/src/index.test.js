@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * Tests for the M4 bootstrap entrypoint wiring (src/index.js): job
+ * Tests for the bootstrap entrypoint wiring (src/index.js): job
  * descriptor mapping, per-job handling (policy rejection -> evidence +
- * rejected result; policy pass -> blocked result until the Phase 4 runtime
+ * rejected result; policy pass -> blocked result until the signed-dispatch runtime
  * lands), and first-run registration.
  */
 
@@ -147,7 +147,7 @@ describe("handleClaimedJob", () => {
     assert.equal(outcome.rejectionReason, REJECTION_REASONS.KEY_EXPORT_REQUESTED);
   });
 
-  it("reports blocked (not executed) when policy allows the job, until the Phase 4 runtime lands", async () => {
+  it("reports blocked (not executed) when policy allows the job, until the signed-dispatch runtime lands", async () => {
     const client = createRecordingClient();
     const policyEngine = engineWith({}, { declaredTargetSelectors: ["example.com"] });
 
@@ -168,7 +168,7 @@ describe("handleClaimedJob", () => {
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "blocked");
     assert.equal(result.attemptId, "attempt-cp-1");
-    assert.match(result.errorMessage, /Phase 4 runtime/);
+    assert.match(result.errorMessage, /signed-dispatch runtime/);
   });
 
   it("skips jobs without a jobId without reporting anything", async () => {

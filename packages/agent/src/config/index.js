@@ -1,19 +1,19 @@
 "use strict";
 
 /**
- * Agent configuration loading and secure credential storage (M4 bootstrap).
+ * Agent configuration loading and secure credential storage (agent bootstrap).
  *
- * Per the CertOps architecture plan section 7.2 ("Agent credential storage"):
+ * Agent credential storage requirements:
  *   - config directory 0700, credential file 0600
  *   - the credential is never printed after registration and is redacted
  *     from agent logs by the same scrub stage that guards key material
- *   - rotation works without downtime (overlap window is a server/Phase 4
+ *   - rotation works without downtime (overlap window is a server-side
  *     concern; this module only swaps the locally stored credential)
  *   - container deployments prefer mounted secrets / orchestrator-native
  *     secrets over baked-in env values; this module's file-based storage is
  *     the default host pattern, not the only supported one
  *
- * Per section 7.7 design lessons ("Memory hygiene"): keys are written 0600
+ * Memory hygiene: keys are written 0600
  * in 0700 dirs, and permissions are re-asserted before every write. The same
  * discipline is applied here to the agent's own registration credential,
  * even though it is not customer key material: it is still a bearer secret
@@ -261,7 +261,7 @@ function loadAgentConfig({ configDir } = {}) {
   // (loadPolicyConfig) owns deep validation and fails loudly on bad shapes.
   const policy = validatePolicyObject(fileConfig.policy);
 
-  // Filesystem discovery config (M4: observe-only certificate inventory).
+  // Filesystem discovery config (observe-only certificate inventory).
   // null means discovery is disabled entirely.
   const discovery = validateDiscoveryObject(fileConfig.discovery);
 
@@ -355,9 +355,9 @@ function writeCredential(configDir, rawCredential) {
  * Rotates the agent's stored credential to a new value, once the control
  * plane has confirmed the rotation. This is the same validation/write path
  * as writeCredential, exposed as a distinct named function so intent is
- * clear at rotation call sites (section 7.2). The overlap-window
+ * clear at rotation call sites. The overlap-window
  * orchestration itself (accepting both old and new credentials for a
- * transition period) is a control-plane/Phase 4 concern, not this module's
+ * transition period) is a control-plane concern, not this module's
  * job: the agent's only responsibility is to swap what it has stored.
  * @param {string} configDir
  * @param {string} newRawCredential

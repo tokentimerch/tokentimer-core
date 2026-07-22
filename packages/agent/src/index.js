@@ -9,7 +9,7 @@
  * stores them. Every module here must stay safe to run against an untrusted
  * or compromised control plane (agent-local policy wins, ADR-0002).
  *
- * M4 bootstrap scope (current): this file wires the landed modules together
+ * Bootstrap scope (current): this file wires the landed modules together
  * into a runnable outbound-only process:
  *   - config: config.json + secure credential storage (src/config)
  *   - policy: agent-local allowlist engine, default-deny (src/policy)
@@ -20,7 +20,7 @@
  *     certificate.observed evidence (src/discovery)
  *
  * Job execution is deliberately NOT implemented here. Ed25519 signature
- * verification, the replay cache, and clock-drift handling are Phase 4
+ * verification, the replay cache, and clock-drift handling are runtime
  * runtime work (ADR-0003); until that lands, every policy-allowed job is
  * reported back as "blocked" with an explanatory error message, and every
  * policy-rejected job is reported as "rejected" with evidence. This keeps
@@ -28,7 +28,7 @@
  * exercisable end to end against the fake-agent harness without ever
  * running an unverified job.
  *
- * M5 scope (future): src/keys, src/x509, src/acme, src/deploy, src/reload,
+ * Execution scope (future): src/keys, src/x509, src/acme, src/deploy, src/reload,
  * src/connectors become load-bearing; today they are placeholders.
  */
 
@@ -62,10 +62,10 @@ const { version: AGENT_VERSION } = require("../package.json");
  *
  * Only fields that are present on the job are forwarded: the policy engine
  * checks each dimension independently, and absent dimensions are simply not
- * checked (checkNoKeyExport always runs). The M2 job payload does not carry
+ * checked (checkNoKeyExport always runs). The unsigned job payload does not carry
  * commandRef/caEndpoint/dnsZone/dnsProvider yet; those become load-bearing
- * with the Phase 4 signed dispatch payload, and this mapping already passes
- * them through when present so Phase 4 does not need to change call sites.
+ * with the signed dispatch payload, and this mapping already passes
+ * them through when present so signed dispatch does not need to change call sites.
  *
  * @param {object} job claimed job payload
  * @returns {object} policy jobDescriptor
@@ -94,9 +94,9 @@ function buildJobPolicyDescriptor(job) {
 }
 
 /**
- * Handles a single claimed job in M4 bootstrap mode: evaluate agent-local
+ * Handles a single claimed job in bootstrap mode: evaluate agent-local
  * policy, then report either a policy rejection (with evidence) or a
- * "blocked" result explaining that execution lands with the Phase 4
+ * "blocked" result explaining that execution lands with the signed-dispatch
  * runtime. Never throws for per-job failures; errors are reported through
  * the protocol client and logged.
  *
@@ -115,7 +115,7 @@ async function handleClaimedJob({ job, policyEngine, client, log = console.error
     log("tokentimer-agent: claimed job missing jobId; skipping");
     return { status: "skipped", rejectionReason: null };
   }
-  // The M2 payload does not carry attemptId (it is an M4 signed-dispatch
+  // The unsigned payload does not carry attemptId (it is a signed-dispatch
   // addition); until the control plane assigns one, derive a local id so
   // result reporting stays schema-valid and idempotency-debuggable.
   const attemptId =
@@ -145,8 +145,8 @@ async function handleClaimedJob({ job, policyEngine, client, log = console.error
     return { status: "rejected", rejectionReason: verdict.rejectionReason };
   }
 
-  // Policy allows the job, but M4 bootstrap has no execution runtime yet
-  // (signature verification / replay cache are Phase 4, ADR-0003). Report
+  // Policy allows the job, but the bootstrap agent has no execution runtime yet
+  // (signature verification / replay cache are signed-dispatch work, ADR-0003). Report
   // "blocked" rather than silently dropping so the control plane sees an
   // explicit terminal state.
   await client.reportResult({
@@ -154,7 +154,7 @@ async function handleClaimedJob({ job, policyEngine, client, log = console.error
     attemptId,
     status: "blocked",
     errorMessage:
-      "agent runtime does not execute jobs yet (M4 bootstrap; execution lands with the Phase 4 runtime)",
+      "agent runtime does not execute jobs yet; execution lands with the signed-dispatch runtime",
   });
   return { status: "blocked", rejectionReason: null };
 }
@@ -217,7 +217,7 @@ async function runDiscoveryScan({ directories, client, log = console.error }) {
  * Performs first-run registration when no credential is stored yet.
  * Requires TOKENTIMER_AGENT_BOOTSTRAP_TOKEN (and optionally
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID) in the environment; the bootstrap
- * token is single-use and never persisted by the agent (plan section 7.2).
+ * token is single-use and never persisted by the agent.
  *
  * @param {object} params
  * @param {object} params.client
@@ -267,7 +267,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
  * Runs the agent process: load config, register if needed, then run the
  * heartbeat and claim loops until SIGINT/SIGTERM or until the control plane
  * retires this agent (heartbeat HTTP 410 -> clean exit, no respawn loop,
- * ADR-0002 / plan 7.7 item 11).
+ * ADR-0002).
  *
  * @param {string[]} _argv CLI arguments (none supported yet; configuration
  *   is via config.json and TOKENTIMER_AGENT_* env vars)
@@ -327,7 +327,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
-        // ntpSynced / pinnedSigningKeyId / clockOffsetMs are Phase 4
+        // ntpSynced / pinnedSigningKeyId / clockOffsetMs are signed-dispatch
         // runtime concerns (drift measurement, key pinning); reported as
         // null until that lands.
       });
@@ -353,7 +353,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     },
   });
 
-  // Observe-only discovery loop (M4: filesystem certificate inventory).
+  // Observe-only discovery loop (filesystem certificate inventory).
   // Only started when config.json opts in with a discovery.directories list;
   // scans run immediately on start, then on the configured interval.
   const loops = [heartbeatLoop, claimLoop];

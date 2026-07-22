@@ -1,15 +1,15 @@
 "use strict";
 
 /**
- * Agent-local policy engine (CertOps M4).
+ * Agent-local policy engine.
  *
- * ADR-0002 / CertOps plan 7.5: "agent-local policy always wins over
+ * ADR-0002: "agent-local policy always wins over
  * control-plane intent." Jobs dispatched by the control plane reference
  * command profiles, paths, CA endpoints, and DNS zones/providers by name or
  * value only; this module is the sole authority that decides whether those
  * references are allowed to run on this host. It never trusts anything the
  * control plane sends beyond an opaque reference/value to look up against
- * agent-local configuration (7.7: "the agent distrusts the server").
+ * agent-local configuration ("the agent distrusts the server").
  *
  * This module is intentionally self-contained: it accepts plain data
  * (a parsed policy config object, and per-call job/target descriptors) as
@@ -21,10 +21,10 @@
  * command_not_allowlisted, path_not_allowlisted, ca_endpoint_not_allowlisted,
  * dns_zone_not_allowlisted, dns_provider_not_allowlisted,
  * key_export_requested. job_integrity_failed,
- * job_replay_rejected, and clock_drift_suspected belong to the Phase 4
+ * job_replay_rejected, and clock_drift_suspected belong to the signed-dispatch
  * signature/replay runtime and are NOT implemented here; this module's
  * rejection result shape ({ allowed, rejectionReason, detail }) is designed
- * to be identical to whatever shape Phase 4 code will produce for those
+ * to be identical to whatever shape the signed-dispatch runtime will produce for those
  * other reasons, so downstream consumers (evidence builder, result
  * reporting) can handle both uniformly.
  *
@@ -42,7 +42,7 @@ const path = require("node:path");
 
 /**
  * Shell metacharacters disallowed in any argv element of an allowlisted
- * command profile. Command profiles are exec'd without a shell (7.7), so
+ * command profile. Command profiles are exec'd without a shell, so
  * this is defense in depth against a misconfigured profile rather than a
  * shell-injection vector by itself -- but a profile that *looks* like it
  * contains shell syntax is almost certainly a config mistake and must fail
@@ -56,7 +56,7 @@ const SHELL_METACHARACTER_PATTERN = /[;|&$`><\r\n]/;
 /**
  * Rejection reasons this module can produce, mirroring the subset of
  * packages/contracts/certops/agent-protocol.schema.json's
- * resultBody.rejectionReason enum owned by agent-local policy (7.5).
+ * resultBody.rejectionReason enum owned by agent-local policy.
  * Downstream code (e.g. the evidence builder) should reference these
  * constants instead of re-typing the strings.
  */
@@ -431,7 +431,7 @@ function createPolicyEngine(policyConfig, { declaredTargetSelectors = [] } = {})
   /**
    * Exact-match check against the declared target selectors. Selector
    * *pattern* matching (globs, wildcards, etc.), if ever needed, is out of
-   * scope for the M4 bootstrap and is left as a future extension.
+   * scope for the agent bootstrap and is left as a future extension.
    *
    * @param {string} targetSelector
    * @returns {{ allowed: true } | ReturnType<typeof reject>}
@@ -452,7 +452,7 @@ function createPolicyEngine(policyConfig, { declaredTargetSelectors = [] } = {})
    * regardless of any other flags on `jobIntent` or any policy config. This
    * check can never be overridden or bypassed by allowlist configuration:
    * there is no config knob anywhere in this module that permits key
-   * export. Matches the CertOps plan's rejection table entry "key export
+   * export. Matches the rejection table entry "key export
    * requested (always)".
    *
    * @param {{ requestsKeyExport?: boolean }} jobIntent
