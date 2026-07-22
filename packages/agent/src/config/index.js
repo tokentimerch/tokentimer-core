@@ -34,6 +34,11 @@ const {
 const CONFIG_FILE_NAME = "config.json";
 const CREDENTIAL_FILE_NAME = "credential";
 const PENDING_REGISTRATION_FILE_NAME = "registration.pending.json";
+// Pinned control-plane job-signing key (ADR-0003 trust-on-first-use). The
+// stored PEM is PUBLIC key material only (never a private key), so this file
+// is not a secret; it still gets 0600 in the 0700 config dir purely as an
+// integrity measure (only the agent user may swap the pin).
+const SIGNING_KEY_PIN_FILE_NAME = "signing-key-pin.json";
 
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
@@ -47,6 +52,12 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_POLL_INTERVAL_MS = 15000;
 // Discovery is an inventory scan, not a control loop; hourly by default.
 const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
+// Execution (M5 signed-job dispatch) defaults: disabled and dry-run by
+// default so an upgraded agent never starts executing jobs without an
+// explicit operator opt-in (ADR-0003).
+const DEFAULT_CLOCK_DRIFT_TOLERANCE_MS = 30000;
+const KEYS_DIR_NAME = "keys";
+const REPLAY_STORE_FILE_NAME = "replay-store.json";
 
 const REDACTED_CREDENTIAL_PLACEHOLDER = "[AGENT_CREDENTIAL_REDACTED]";
 
@@ -335,6 +346,101 @@ function parseBooleanEnv(value, fallback, envName) {
 }
 
 /**
+ * Validates the optional "execution" config block (M5 signed-job dispatch).
+ * Fail-loud like validatePolicyObject/validateDiscoveryObject: a malformed
+ * block aborts startup instead of being silently normalized.
+ *
+ * Returned shape (defaults applied, all fields always present):
+ *   {
+ *     enabled: boolean            (default false),
+ *     dryRun: boolean             (default true),
+ *     keysDir: string             (default <configDir>/keys),
+ *     replayStorePath: string     (default <configDir>/replay-store.json),
+ *     clockDriftToleranceMs: int  (default 30000, must be a positive integer)
+ *   }
+ *
+ * Returns null when the block is absent entirely (execution disabled and
+ * not configured; callers treat null like { enabled: false }).
+ *
+ * @param {*} execution raw config.json "execution" value
+ * @param {string} configDir resolved config dir used for path defaults
+ * @returns {{
+ *   enabled: boolean,
+ *   dryRun: boolean,
+ *   keysDir: string,
+ *   replayStorePath: string,
+ *   clockDriftToleranceMs: number,
+ * }|null}
+ */
+function validateExecutionObject(execution, configDir) {
+  if (execution === undefined || execution === null) return null;
+  if (typeof execution !== "object" || Array.isArray(execution)) {
+    throw new Error(
+      "tokentimer-agent: execution in config.json must be an object " +
+        "({ enabled?, dryRun?, keysDir?, replayStorePath?, clockDriftToleranceMs? })",
+    );
+  }
+
+  const enabled = execution.enabled === undefined ? false : execution.enabled;
+  if (typeof enabled !== "boolean") {
+    throw new Error(
+      "tokentimer-agent: execution.enabled must be a boolean, got: " +
+        JSON.stringify(execution.enabled),
+    );
+  }
+
+  const dryRun = execution.dryRun === undefined ? true : execution.dryRun;
+  if (typeof dryRun !== "boolean") {
+    throw new Error(
+      "tokentimer-agent: execution.dryRun must be a boolean, got: " +
+        JSON.stringify(execution.dryRun),
+    );
+  }
+
+  let keysDir = path.join(configDir, KEYS_DIR_NAME);
+  if (execution.keysDir !== undefined) {
+    if (typeof execution.keysDir !== "string" || execution.keysDir.length === 0) {
+      throw new Error(
+        "tokentimer-agent: execution.keysDir must be a non-empty string, got: " +
+          JSON.stringify(execution.keysDir),
+      );
+    }
+    keysDir = execution.keysDir;
+  }
+
+  let replayStorePath = path.join(configDir, REPLAY_STORE_FILE_NAME);
+  if (execution.replayStorePath !== undefined) {
+    if (
+      typeof execution.replayStorePath !== "string" ||
+      execution.replayStorePath.length === 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: execution.replayStorePath must be a non-empty string, got: " +
+          JSON.stringify(execution.replayStorePath),
+      );
+    }
+    replayStorePath = execution.replayStorePath;
+  }
+
+  let clockDriftToleranceMs = DEFAULT_CLOCK_DRIFT_TOLERANCE_MS;
+  if (execution.clockDriftToleranceMs !== undefined) {
+    if (
+      typeof execution.clockDriftToleranceMs !== "number" ||
+      !Number.isInteger(execution.clockDriftToleranceMs) ||
+      execution.clockDriftToleranceMs <= 0
+    ) {
+      throw new Error(
+        "tokentimer-agent: execution.clockDriftToleranceMs must be a positive " +
+          `integer (milliseconds), got: ${JSON.stringify(execution.clockDriftToleranceMs)}`,
+      );
+    }
+    clockDriftToleranceMs = execution.clockDriftToleranceMs;
+  }
+
+  return { enabled, dryRun, keysDir, replayStorePath, clockDriftToleranceMs };
+}
+
+/**
  * Loads and returns the agent runtime config as a plain object.
  * Load order: config.json file (non-secret fields) -> env var overrides ->
  * defaults. The credential itself is never part of this object; use
@@ -352,6 +458,14 @@ function parseBooleanEnv(value, fallback, envName) {
  *   discovery: {directories: string[], intervalMs: number}|null,
  *   caBundlePath: string|null,
  *   allowInsecureLocalHttp: boolean,
+ *   execution: {
+ *     enabled: boolean,
+ *     dryRun: boolean,
+ *     keysDir: string,
+ *     replayStorePath: string,
+ *     clockDriftToleranceMs: number,
+ *   }|null,
+ *   pinnedSigningKey: {signingKeyId: string, publicKeyPem: string}|null,
  * }}
  */
 function loadAgentConfig({ configDir } = {}) {
@@ -426,6 +540,14 @@ function loadAgentConfig({ configDir } = {}) {
     "TOKENTIMER_AGENT_ALLOW_INSECURE_LOCAL_HTTP",
   );
 
+  // Signed-job execution config; null means execution not configured
+  // (treated everywhere as { enabled: false }).
+  const execution = validateExecutionObject(fileConfig.execution, resolvedDir);
+
+  // Pinned control-plane job-signing key, persisted at registration by
+  // writeSigningKeyPin. Public key material only.
+  const pinnedSigningKey = readSigningKeyPin(resolvedDir);
+
   return {
     serverUrl,
     agentId,
@@ -438,6 +560,8 @@ function loadAgentConfig({ configDir } = {}) {
     discovery,
     caBundlePath,
     allowInsecureLocalHttp,
+    execution,
+    pinnedSigningKey,
   };
 }
 
@@ -457,6 +581,93 @@ function writeAgentIdentity(configDir, { agentId }) {
   const existing = readConfigFile(configDir);
   const merged = { ...existing, agentId };
   writeFileAtomically(configPath, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
+}
+
+/**
+ * Persists the control-plane job-signing key pin received at registration
+ * (ADR-0003 trust-on-first-use). The stored publicKeyPem is PUBLIC key
+ * material, not a secret, so storing it on disk is safe; the file still
+ * follows the module's 0600-in-0700-dir convention so only the agent user
+ * can replace the pin (integrity, not confidentiality).
+ * @param {string} configDir
+ * @param {{signingKeyId: string, signingPublicKeyPem: string}} pin
+ * @returns {void}
+ */
+function writeSigningKeyPin(configDir, { signingKeyId, signingPublicKeyPem }) {
+  if (typeof signingKeyId !== "string" || signingKeyId.length === 0) {
+    throw new Error(
+      "tokentimer-agent: signingKeyId must be a non-empty string, got: " +
+        JSON.stringify(signingKeyId),
+    );
+  }
+  if (
+    typeof signingPublicKeyPem !== "string" ||
+    !signingPublicKeyPem.includes("BEGIN PUBLIC KEY")
+  ) {
+    throw new Error(
+      "tokentimer-agent: signingPublicKeyPem must be a PEM-encoded PUBLIC key " +
+        "(refusing to pin anything that does not look like public key material)",
+    );
+  }
+  if (signingPublicKeyPem.includes("PRIVATE KEY")) {
+    throw new Error(
+      "tokentimer-agent: refusing to pin signingPublicKeyPem containing " +
+        "private key material",
+    );
+  }
+  ensureConfigDir(configDir);
+
+  const pinPath = path.join(configDir, SIGNING_KEY_PIN_FILE_NAME);
+  const payload = { signingKeyId, publicKeyPem: signingPublicKeyPem };
+  fs.writeFileSync(pinPath, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  try {
+    fs.chmodSync(pinPath, 0o600);
+  } catch (_err) {
+    // Best-effort on win32; see the comment in ensureConfigDir for rationale.
+  }
+}
+
+/**
+ * Reads the persisted signing-key pin, returning null when none is stored.
+ * A present-but-corrupted pin file fails loudly (never silently unpinned).
+ * @param {string} configDir
+ * @returns {{signingKeyId: string, publicKeyPem: string}|null}
+ */
+function readSigningKeyPin(configDir) {
+  const pinPath = path.join(configDir, SIGNING_KEY_PIN_FILE_NAME);
+  let raw;
+  try {
+    raw = fs.readFileSync(pinPath, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `tokentimer-agent: failed to parse signing key pin ${pinPath}: ${err.message}`,
+    );
+  }
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    typeof parsed.signingKeyId !== "string" ||
+    parsed.signingKeyId.length === 0 ||
+    typeof parsed.publicKeyPem !== "string" ||
+    !parsed.publicKeyPem.includes("BEGIN PUBLIC KEY")
+  ) {
+    throw new Error(
+      `tokentimer-agent: ${pinPath} is corrupted (expected ` +
+        "{ signingKeyId, publicKeyPem } with a PEM public key); refusing to " +
+        "start unsigned. Re-register the agent to re-pin.",
+    );
+  }
+  return { signingKeyId: parsed.signingKeyId, publicKeyPem: parsed.publicKeyPem };
 }
 
 /**
@@ -612,6 +823,9 @@ module.exports = {
   readCaBundle,
   validateCaBundlePath,
   writeAgentIdentity,
+  writeSigningKeyPin,
+  readSigningKeyPin,
+  validateExecutionObject,
   readCredential,
   writeCredential,
   rotateCredential,

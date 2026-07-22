@@ -15,7 +15,9 @@ const path = require("node:path");
 
 const {
   handleClaimedJob,
+  buildExecutionContext,
   buildJobPolicyDescriptor,
+  resolveJobCertPath,
   runDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
@@ -23,6 +25,7 @@ const {
 } = require("./index.js");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const { ensureConfigDir, writeCredential, readCredential, loadAgentConfig } = require("./config");
+const { generateSigningKeyPair, signJobPayload } = require("./signing");
 
 function makeTempConfigDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ttagent-index-test-"));
@@ -144,7 +147,7 @@ describe("handleClaimedJob", () => {
     assert.equal(outcome.rejectionReason, "job_integrity_failed");
   });
 
-  it("reports blocked (not executed) when policy allows the job, until the signed-dispatch runtime lands", async () => {
+  it("reports blocked (not executed) when policy allows the job but execution is not enabled", async () => {
     const client = createRecordingClient();
     const policyEngine = engineWith({}, { declaredTargetSelectors: ["example.com"] });
 
@@ -161,7 +164,7 @@ describe("handleClaimedJob", () => {
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "blocked");
     assert.match(result.attemptId, /^local-job-3-/);
-    assert.match(result.errorMessage, /does not execute jobs yet/);
+    assert.match(result.errorMessage, /execution is not enabled/);
   });
 
   it("skips jobs without a jobId without reporting anything", async () => {
@@ -416,5 +419,318 @@ describe("createCandidateAgentId", () => {
     assert.match(candidate, /^[A-Za-z0-9_.:-]{1,128}$/);
     assert.ok(candidate.length <= 128);
     assert.match(candidate, /^candidate-/);
+  });
+});
+
+describe("signed-job dispatch chain (handleClaimedJob with executionContext)", () => {
+  let workDir;
+  let signingKey;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function makeExecutionContext({ dryRun = true, pinned = true } = {}) {
+    const keysDir = path.join(workDir, "keys");
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun,
+        keysDir,
+        replayStorePath: path.join(workDir, "replay-store.json"),
+        clockDriftToleranceMs: 30000,
+      },
+      pinnedSigningKey: pinned
+        ? {
+            signingKeyId: signingKey.signingKeyId,
+            publicKeyPem: signingKey.publicKeyPem,
+          }
+        : null,
+    };
+    return buildExecutionContext({ config });
+  }
+
+  function makeSignedJob(overrides = {}) {
+    const nowMs = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: overrides.jobId || "job-m5-1",
+      workspaceId: "11111111-2222-3333-4444-555555555555",
+      certificateId: "cert-1",
+      action: "noop",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs - 1000).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(36).slice(2)}-0123456789abcdef`,
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+    job.signature = signJobPayload({ job, privateKeyPem: signingKey.privateKeyPem });
+    return job;
+  }
+
+  function permissiveEngine() {
+    return engineWith(
+      { allowedPaths: [workDir] },
+      { declaredTargetSelectors: ["example.com"] },
+    );
+  }
+
+  it("rejects an unsigned (M2) job with job_integrity_failed while execution is enabled", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob();
+    delete job.signature;
+    delete job.nonce;
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    assert.equal(client.calls.reportResult[0].status, "rejected");
+    assert.equal(client.calls.reportEvidence.length, 1);
+  });
+
+  it("rejects a tampered job with job_integrity_failed", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob();
+    job.action = "renew"; // mutate after signing
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
+  });
+
+  it("rejects a replayed job with job_replay_rejected on the second dispatch", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext();
+    const policyEngine = permissiveEngine();
+    const job = makeSignedJob();
+
+    const first = await handleClaimedJob({
+      job,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+    assert.equal(first.status, "succeeded");
+
+    const second = await handleClaimedJob({
+      job,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+    assert.equal(second.status, "rejected");
+    assert.equal(second.rejectionReason, "job_replay_rejected");
+  });
+
+  it("rejects a stale job with clock_drift_suspected", async () => {
+    const client = createRecordingClient();
+    const nowMs = Date.now();
+    const job = makeSignedJob({
+      issuedAt: new Date(nowMs - 10 * 60 * 1000).toISOString(),
+      expiresAt: new Date(nowMs - 5 * 60 * 1000).toISOString(),
+    });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, "clock_drift_suspected");
+  });
+
+  it("reports blocked (never executes) when execution is enabled but no key is pinned", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext({ pinned: false }),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    assert.equal(client.calls.reportResult.length, 1);
+    assert.match(client.calls.reportResult[0].errorMessage, /no control-plane signing key is pinned/);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
+
+  it("executes a verified noop job with validation.passed evidence", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob();
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(client.calls.reportResult[0].status, "succeeded");
+    assert.equal(client.calls.reportEvidence.length, 1);
+    assert.equal(
+      client.calls.reportEvidence[0].evidenceItems[0].eventType,
+      "validation.passed",
+    );
+  });
+
+  it("dry-run renew succeeds with a plan and performs zero filesystem side effects", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: true });
+    const job = makeSignedJob({
+      action: "renew",
+      commandRef: "certbot-renew",
+      caEndpoint: "https://acme.example/dir",
+      certPath: path.join(workDir, "deployed", "cert.pem"),
+    });
+    const policyEngine = engineWith(
+      {
+        allowedPaths: [workDir],
+        allowedCommands: { "certbot-renew": { argv: ["certbot"] } },
+        allowedCaEndpoints: ["https://acme.example/dir"],
+      },
+      { declaredTargetSelectors: ["example.com"] },
+    );
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const result = client.calls.reportResult[0];
+    assert.equal(result.status, "succeeded");
+    assert.equal(result.keyRotated, null);
+    assert.equal(result.errorMessage, null);
+
+    // Plan evidence: policy.checked items flagged dryRun.
+    assert.equal(client.calls.reportEvidence.length, 1);
+    const items = client.calls.reportEvidence[0].evidenceItems;
+    assert.ok(items.length >= 4);
+    for (const item of items) {
+      assert.equal(item.eventType, "policy.checked");
+      assert.ok(item.metadata.some((m) => m.name === "dryRun" && m.value === true));
+      assert.match(item.summary, /No side effects were performed/);
+    }
+
+    // Zero side effects: keysDir was never created, no cert deployed.
+    assert.equal(fs.existsSync(executionContext.execution.keysDir), false);
+    assert.equal(fs.existsSync(path.join(workDir, "deployed")), false);
+  });
+
+  it("blocks revoke jobs and deploy jobs without certificatePem", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const policyEngine = permissiveEngine();
+
+    const revokeOutcome = await handleClaimedJob({
+      job: makeSignedJob({ jobId: "job-revoke", action: "revoke" }),
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+    assert.equal(revokeOutcome.status, "blocked");
+
+    const deployOutcome = await handleClaimedJob({
+      job: makeSignedJob({ jobId: "job-deploy", action: "deploy" }),
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+    assert.equal(deployOutcome.status, "blocked");
+    const deployResult = client.calls.reportResult.find((r) => r.jobId === "job-deploy");
+    assert.match(deployResult.errorMessage, /certificatePem/);
+  });
+
+  it("strictly rejects a signed-dispatch job when executionContext is null", async () => {
+    const client = createRecordingClient();
+    const job = makeSignedJob(); // signed-dispatch fields are not valid bootstrap input
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: null,
+      log: silentLog,
+    });
+
+    // Without execution enabled the strict bootstrap validator rejects the
+    // unknown signed-dispatch fields outright; the job is never executed.
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
+    assert.equal(client.calls.reportResult[0].status, "rejected");
+  });
+
+  it("buildExecutionContext returns null when execution is absent or disabled and throws on a corrupted replay store", () => {
+    assert.equal(buildExecutionContext({ config: {} }), null);
+    assert.equal(
+      buildExecutionContext({
+        config: { execution: { enabled: false } },
+      }),
+      null,
+    );
+
+    const storePath = path.join(workDir, "replay-store.json");
+    fs.writeFileSync(storePath, "{corrupted", "utf8");
+    assert.throws(
+      () =>
+        buildExecutionContext({
+          config: {
+            execution: {
+              enabled: true,
+              dryRun: true,
+              keysDir: path.join(workDir, "keys"),
+              replayStorePath: storePath,
+              clockDriftToleranceMs: 30000,
+            },
+            pinnedSigningKey: null,
+          },
+        }),
+      /replay store/,
+    );
+  });
+
+  it("resolveJobCertPath prefers job.certPath, falls back to absolute target.reference, else null", () => {
+    const abs = process.platform === "win32" ? "C:\\certs\\a.pem" : "/certs/a.pem";
+    const abs2 = process.platform === "win32" ? "C:\\certs\\b.pem" : "/certs/b.pem";
+    assert.equal(resolveJobCertPath({ certPath: abs, target: { reference: abs2 } }), abs);
+    assert.equal(resolveJobCertPath({ target: { reference: abs2 } }), abs2);
+    assert.equal(resolveJobCertPath({ target: { reference: "example.com" } }), null);
   });
 });

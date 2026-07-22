@@ -557,3 +557,204 @@ test("startPollLoop: startImmediately true invokes the first tick without waitin
   });
   assert.equal(tickCount, 1);
 });
+
+/**
+ * Like stubFetch but the queued entries may carry a dateHeader that is
+ * exposed through response.headers.get("date"), for clock-sampling tests.
+ */
+function stubFetchWithHeaders(responses) {
+  const calls = [];
+  let index = 0;
+  global.fetch = (url, init) => {
+    const entry = responses[Math.min(index, responses.length - 1)];
+    index += 1;
+    calls.push({ url, init, parsedBody: init?.body ? JSON.parse(init.body) : null });
+    return Promise.resolve({
+      ok: entry.status >= 200 && entry.status < 300,
+      status: entry.status,
+      headers: {
+        get: (name) =>
+          String(name).toLowerCase() === "date" && entry.dateHeader ? entry.dateHeader : null,
+      },
+      json: () => Promise.resolve(entry.json ?? {}),
+    });
+  };
+  return calls;
+}
+
+test("register: returns null signing-key fields when the response omits them", async () => {
+  stubFetch([
+    {
+      status: 201,
+      json: { agentId: "agent-1", credential: CREDENTIAL, protocolVersion: "1.0.0" },
+    },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "candidate-agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => null,
+  });
+  const result = await client.register({
+    bootstrapToken: "raw-bootstrap-token",
+    bootstrapTokenId: "bst_abc123",
+    agentVersion: "0.1.0",
+  });
+  assert.equal(result.signingKeyId, null);
+  assert.equal(result.signingPublicKeyPem, null);
+});
+
+test("register: passes through signingKeyId and signingPublicKeyPem when the response carries them", async () => {
+  const signingPublicKeyPem =
+    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfake\n-----END PUBLIC KEY-----\n";
+  stubFetch([
+    {
+      status: 201,
+      json: {
+        agentId: "agent-1",
+        credential: CREDENTIAL,
+        protocolVersion: "1.0.0",
+        signingKeyId: "signing-key-1",
+        signingPublicKeyPem,
+      },
+    },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "candidate-agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => null,
+  });
+  const result = await client.register({
+    bootstrapToken: "raw-bootstrap-token",
+    bootstrapTokenId: "bst_abc123",
+    agentVersion: "0.1.0",
+  });
+  assert.equal(result.signingKeyId, "signing-key-1");
+  assert.equal(result.signingPublicKeyPem, signingPublicKeyPem);
+});
+
+test("register: rejects a signingKeyId without its public key (and vice versa)", async () => {
+  stubFetch([
+    {
+      status: 201,
+      json: {
+        agentId: "agent-1",
+        credential: CREDENTIAL,
+        protocolVersion: "1.0.0",
+        signingKeyId: "signing-key-1",
+      },
+    },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "candidate-agent-1",
+    protocolVersion: "1.0.0",
+  });
+  await assert.rejects(
+    () => client.register({ bootstrapToken: "bootstrap-token", bootstrapTokenId: "bst_1", agentVersion: "0.1.0" }),
+    (err) => {
+      assert.equal(err.code, AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+      return true;
+    },
+  );
+});
+
+test("register: rejects a signingPublicKeyPem containing private key material", async () => {
+  stubFetch([
+    {
+      status: 201,
+      json: {
+        agentId: "agent-1",
+        credential: CREDENTIAL,
+        protocolVersion: "1.0.0",
+        signingKeyId: "signing-key-1",
+        signingPublicKeyPem:
+          "-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----\n-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n",
+      },
+    },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "candidate-agent-1",
+    protocolVersion: "1.0.0",
+  });
+  await assert.rejects(
+    () => client.register({ bootstrapToken: "bootstrap-token", bootstrapTokenId: "bst_1", agentVersion: "0.1.0" }),
+    (err) => {
+      assert.equal(err.code, AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+      return true;
+    },
+  );
+});
+
+test("onServerDate: fires with the Date header and a local timestamp on successful requests", async () => {
+  const dateHeader = "Wed, 22 Jul 2026 12:00:00 GMT";
+  stubFetchWithHeaders([
+    { status: 200, dateHeader, json: {} },
+    { status: 200, dateHeader, json: { jobs: [] } },
+  ]);
+
+  const samples = [];
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+    onServerDate: (dateHeaderValue, localNowMs) => {
+      samples.push({ dateHeaderValue, localNowMs });
+    },
+  });
+
+  const before = Date.now();
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  await client.claim({ maxJobs: 1 });
+  const after = Date.now();
+
+  assert.equal(samples.length, 2);
+  for (const sample of samples) {
+    assert.equal(sample.dateHeaderValue, dateHeader);
+    assert.ok(sample.localNowMs >= before && sample.localNowMs <= after);
+  }
+});
+
+test("onServerDate: not fired on non-2xx responses or when the Date header is absent", async () => {
+  stubFetchWithHeaders([
+    { status: 500, dateHeader: "Wed, 22 Jul 2026 12:00:00 GMT", json: {} },
+    { status: 200, json: {} },
+  ]);
+
+  const samples = [];
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+    onServerDate: (dateHeaderValue, localNowMs) => {
+      samples.push({ dateHeaderValue, localNowMs });
+    },
+  });
+
+  await assert.rejects(() => client.heartbeat({ agentVersion: "0.1.0" }));
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal(samples.length, 0);
+});
+
+test("onServerDate: a throwing callback never fails the protocol request", async () => {
+  stubFetchWithHeaders([
+    { status: 200, dateHeader: "Wed, 22 Jul 2026 12:00:00 GMT", json: {} },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+    onServerDate: () => {
+      throw new Error("clock sampling exploded");
+    },
+  });
+
+  const result = await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.deepEqual(result, {});
+});

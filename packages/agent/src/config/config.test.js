@@ -12,6 +12,8 @@ const {
   loadAgentConfig,
   readCaBundle,
   writeAgentIdentity,
+  writeSigningKeyPin,
+  readSigningKeyPin,
   readCredential,
   writeCredential,
   rotateCredential,
@@ -338,6 +340,212 @@ describe("loadAgentConfig", () => {
         /discovery in config\.json must be an object/,
       );
     });
+  });
+
+  it("defaults execution to null when the block is absent", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const config = loadAgentConfig({ configDir: dir });
+      assert.equal(config.execution, null);
+      assert.equal(config.pinnedSigningKey, null);
+    });
+  });
+
+  it("applies execution defaults (disabled, dry-run, config-dir paths, 30s tolerance)", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        execution: {},
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const { execution } = loadAgentConfig({ configDir: dir });
+      assert.deepEqual(execution, {
+        enabled: false,
+        dryRun: true,
+        keysDir: path.join(dir, "keys"),
+        replayStorePath: path.join(dir, "replay-store.json"),
+        clockDriftToleranceMs: 30000,
+      });
+    });
+  });
+
+  it("passes through explicit execution values", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        execution: {
+          enabled: true,
+          dryRun: false,
+          keysDir: "/var/lib/tokentimer-agent/keys",
+          replayStorePath: "/var/lib/tokentimer-agent/replay.json",
+          clockDriftToleranceMs: 5000,
+        },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const { execution } = loadAgentConfig({ configDir: dir });
+      assert.deepEqual(execution, {
+        enabled: true,
+        dryRun: false,
+        keysDir: "/var/lib/tokentimer-agent/keys",
+        replayStorePath: "/var/lib/tokentimer-agent/replay.json",
+        clockDriftToleranceMs: 5000,
+      });
+    });
+  });
+
+  it("fails loudly on a malformed execution block", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const configPath = path.join(dir, "config.json");
+    const badBlocks = [
+      { execution: "not-an-object", pattern: /execution in config\.json must be an object/ },
+      { execution: { enabled: "yes" }, pattern: /execution\.enabled must be a boolean/ },
+      { execution: { dryRun: 1 }, pattern: /execution\.dryRun must be a boolean/ },
+      { execution: { keysDir: "" }, pattern: /execution\.keysDir must be a non-empty string/ },
+      {
+        execution: { replayStorePath: 42 },
+        pattern: /execution\.replayStorePath must be a non-empty string/,
+      },
+      {
+        execution: { clockDriftToleranceMs: -1 },
+        pattern: /execution\.clockDriftToleranceMs must be a positive integer/,
+      },
+      {
+        execution: { clockDriftToleranceMs: 1.5 },
+        pattern: /execution\.clockDriftToleranceMs must be a positive integer/,
+      },
+    ];
+    for (const { execution, pattern } of badBlocks) {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ serverUrl: "https://control-plane.example.com", execution }),
+        "utf8",
+      );
+      withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+        assert.throws(() => loadAgentConfig({ configDir: dir }), pattern);
+      });
+    }
+  });
+});
+
+describe("signing key pin round trip", () => {
+  const SAMPLE_PUBLIC_KEY_PEM =
+    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfakefakefakefakefakefakefakefake\n-----END PUBLIC KEY-----\n";
+
+  it("returns null from readSigningKeyPin when no pin is stored", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    assert.equal(readSigningKeyPin(dir), null);
+  });
+
+  it("round-trips write/read of the signing key pin", () => {
+    const dir = makeTempConfigDir();
+    writeSigningKeyPin(dir, {
+      signingKeyId: "signing-key-1",
+      signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+    });
+
+    const pin = readSigningKeyPin(dir);
+    assert.deepEqual(pin, {
+      signingKeyId: "signing-key-1",
+      publicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+    });
+  });
+
+  it("loadAgentConfig exposes the stored pin as pinnedSigningKey", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://control-plane.example.com" }),
+      "utf8",
+    );
+    writeSigningKeyPin(dir, {
+      signingKeyId: "signing-key-1",
+      signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+    });
+
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      const config = loadAgentConfig({ configDir: dir });
+      assert.deepEqual(config.pinnedSigningKey, {
+        signingKeyId: "signing-key-1",
+        publicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+      });
+    });
+  });
+
+  it("sets 0600 permissions on the pin file on non-win32 platforms", { skip: IS_WIN32 }, () => {
+    const dir = makeTempConfigDir();
+    writeSigningKeyPin(dir, {
+      signingKeyId: "signing-key-1",
+      signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+    });
+    const mode = fs.statSync(path.join(dir, "signing-key-pin.json")).mode & 0o777;
+    assert.equal(mode, 0o600);
+  });
+
+  it("rejects an empty signingKeyId or non-PEM public key", () => {
+    const dir = makeTempConfigDir();
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "",
+          signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+        }),
+      /signingKeyId must be a non-empty string/,
+    );
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "signing-key-1",
+          signingPublicKeyPem: "not-a-pem",
+        }),
+      /PEM-encoded PUBLIC key/,
+    );
+  });
+
+  it("refuses to pin anything containing private key material", () => {
+    const dir = makeTempConfigDir();
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "signing-key-1",
+          signingPublicKeyPem:
+            "-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----\n" +
+            "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n",
+        }),
+      /private key material/,
+    );
+  });
+
+  it("fails loudly on a corrupted pin file instead of silently unpinning", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(path.join(dir, "signing-key-pin.json"), "{not json", "utf8");
+    assert.throws(() => readSigningKeyPin(dir), /failed to parse signing key pin/);
+
+    fs.writeFileSync(
+      path.join(dir, "signing-key-pin.json"),
+      JSON.stringify({ signingKeyId: "signing-key-1" }),
+      "utf8",
+    );
+    assert.throws(() => readSigningKeyPin(dir), /corrupted/);
   });
 });
 

@@ -42,6 +42,13 @@ const { createRequire } = require("module");
 const supertest = require("supertest");
 
 const { TestUtils } = require("./setup");
+// Signing utilities shared with the real agent runtime so harness-signed
+// jobs are guaranteed to interoperate with the agent-side verification
+// chain (identical canonicalization on both sides, per ADR-0003).
+const {
+  generateSigningKeyPair,
+  signJobPayload,
+} = require("../../packages/agent/src/signing");
 
 const apiRequire = createRequire(
   require.resolve("../../apps/api/package.json"),
@@ -105,6 +112,10 @@ function createInMemoryAgentControlPlaneState() {
     claims: [],
     results: [],
     evidence: [],
+    // Signed-dispatch queue: only populated via the dispatch* helpers when
+    // buildFakeAgentControlPlaneApp is created with signedJobDispatch: true.
+    // Harmless (always empty) in unsigned mode.
+    pendingJobs: [],
   };
 }
 
@@ -128,6 +139,34 @@ function defaultRegisterHandler(state) {
   };
 }
 
+// Register handler used when signed job dispatch is enabled: same as the
+// default, but the response additionally carries the control plane's job
+// signing PUBLIC key (PEM) + signingKeyId, mirroring how a real agent will
+// learn/pin the verification key at registration time (7.4 key pinning).
+// The PRIVATE key never appears in any response or recorded message; it
+// stays inside the harness closure.
+function signedRegisterHandler(state, signingKeys) {
+  return (req, res) => {
+    const envelope = req.body || {};
+    const agentId = envelope.agentId || `agent-${crypto.randomUUID()}`;
+    const credential = issueFakeAgentCredential(agentId);
+    state.registeredAgents.set(agentId, {
+      agentId,
+      credential,
+      registeredAt: new Date().toISOString(),
+      body: envelope.body || null,
+    });
+    return res.status(201).json({
+      ok: true,
+      agentId,
+      credential,
+      protocolVersion: envelope.protocolVersion || DEFAULT_PROTOCOL_VERSION,
+      signingKeyId: signingKeys.signingKeyId,
+      signingPublicKeyPem: signingKeys.publicKeyPem,
+    });
+  };
+}
+
 function defaultHeartbeatHandler(state) {
   return (req, res) => {
     const envelope = req.body || {};
@@ -141,6 +180,20 @@ function defaultClaimHandler(state) {
     const envelope = req.body || {};
     state.claims.push(envelope);
     return res.status(200).json({ ok: true, jobs: [] });
+  };
+}
+
+// Claim handler used when signed job dispatch is enabled: drains the
+// harness-side pendingJobs queue (populated by the dispatch* helpers on the
+// app) up to the agent's requested maxJobs. Unsigned mode keeps
+// defaultClaimHandler's fixed `jobs: []` so existing tests are unaffected.
+function signedDispatchClaimHandler(state) {
+  return (req, res) => {
+    const envelope = req.body || {};
+    state.claims.push(envelope);
+    const maxJobs = envelope.body?.maxJobs || 1;
+    const jobs = state.pendingJobs.splice(0, maxJobs);
+    return res.status(200).json({ ok: true, jobs });
   };
 }
 
@@ -183,6 +236,21 @@ function dispatchResultOrEvidence(state, resultHandler, evidenceHandler) {
 // agent-protocol.schema.json and ADR-0002/0003, with in-memory state. Every
 // handler can be overridden per-test, e.g. a test wants heartbeat to return
 // 410 to exercise agent retirement handling once that lands server-side.
+//
+// Signed job dispatch (Phase 4, ADR-0003) is OPT-IN via
+// `signedJobDispatch: true` so all existing unsigned-mode tests keep
+// working unchanged. When enabled, the app:
+//   - generates an Ed25519 keypair (packages/agent signing module) at build
+//     time; the private key never leaves the app closure and never appears
+//     in any HTTP response or recorded state,
+//   - returns signingKeyId + signingPublicKeyPem from the register response
+//     (also exposed via app.getSigningKeyInfo() for tests that skip
+//     registration),
+//   - queues signed jobs via app.dispatchSignedJob(...) which the (now
+//     queue-draining) claim handler hands to the next claim, and
+//   - offers tamper helpers (dispatchTamperedJob / dispatchReplayedJob /
+//     dispatchExpiredJob / dispatchWrongKeyJob) that produce the exact
+//     attack shapes the agent-side verification chain must reject.
 function buildFakeAgentControlPlaneApp({
   registerHandler,
   heartbeatHandler,
@@ -190,20 +258,35 @@ function buildFakeAgentControlPlaneApp({
   resultHandler,
   evidenceHandler,
   state: providedState,
+  signedJobDispatch = false,
 } = {}) {
   const state = providedState || createInMemoryAgentControlPlaneState();
+  if (!Array.isArray(state.pendingJobs)) {
+    state.pendingJobs = [];
+  }
   const app = express();
   app.use(express.json());
 
-  app.post(
-    AGENT_REGISTER_ROUTE,
-    registerHandler || defaultRegisterHandler(state),
-  );
+  // Only generated in signed mode; keys.privateKeyPem stays in this closure.
+  const signingKeys = signedJobDispatch ? generateSigningKeyPair() : null;
+
+  const effectiveRegisterHandler =
+    registerHandler ||
+    (signedJobDispatch
+      ? signedRegisterHandler(state, signingKeys)
+      : defaultRegisterHandler(state));
+  const effectiveClaimHandler =
+    claimHandler ||
+    (signedJobDispatch
+      ? signedDispatchClaimHandler(state)
+      : defaultClaimHandler(state));
+
+  app.post(AGENT_REGISTER_ROUTE, effectiveRegisterHandler);
   app.post(
     AGENT_HEARTBEAT_ROUTE,
     heartbeatHandler || defaultHeartbeatHandler(state),
   );
-  app.post(AGENT_CLAIM_ROUTE, claimHandler || defaultClaimHandler(state));
+  app.post(AGENT_CLAIM_ROUTE, effectiveClaimHandler);
   app.post(
     AGENT_RESULT_ROUTE,
     dispatchResultOrEvidence(state, resultHandler, evidenceHandler),
@@ -218,6 +301,108 @@ function buildFakeAgentControlPlaneApp({
   });
 
   app.state = state;
+
+  if (signedJobDispatch) {
+    // Base job payload per job-payload.schema.json plus the M4 signed
+    // dispatch fields (nonce/issuedAt/expiresAt/signingKeyId/signature).
+    const buildJobPayload = (overrides = {}) => {
+      const nowMs = Date.now();
+      return {
+        schemaVersion: 1,
+        jobId: `job-${crypto.randomUUID()}`,
+        workspaceId: crypto.randomUUID(),
+        certificateId: `cert-${crypto.randomUUID()}`,
+        action: "renew",
+        target: { type: "domain", reference: "example.com" },
+        keyMode: "agent-local",
+        requestedAt: new Date(nowMs).toISOString(),
+        nonce: crypto.randomUUID(),
+        issuedAt: new Date(nowMs).toISOString(),
+        expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+        signingKeyId: signingKeys.signingKeyId,
+        ...overrides,
+      };
+    };
+
+    const signAndQueue = (job, privateKeyPem = signingKeys.privateKeyPem) => {
+      const signed = {
+        ...job,
+        signature: signJobPayload({ job, privateKeyPem }),
+      };
+      state.pendingJobs.push(signed);
+      return signed;
+    };
+
+    // Non-secret pinning info, mirroring what the register response carries.
+    app.getSigningKeyInfo = () => ({
+      signingKeyId: signingKeys.signingKeyId,
+      publicKeyPem: signingKeys.publicKeyPem,
+    });
+
+    // Queues a correctly signed job for the next claim. `overrides` merge
+    // into the job payload BEFORE signing (so the signature stays valid).
+    app.dispatchSignedJob = (overrides = {}) =>
+      signAndQueue(buildJobPayload(overrides));
+
+    // Valid signature, then a field mutated AFTER signing => the agent must
+    // reject with job_integrity_failed.
+    app.dispatchTamperedJob = ({
+      tamperField = "action",
+      tamperValue = "revoke",
+      ...overrides
+    } = {}) => {
+      const signed = signAndQueue(buildJobPayload(overrides));
+      signed[tamperField] = tamperValue;
+      return signed;
+    };
+
+    // Queues the SAME signed job (same nonce + jobId) twice => the second
+    // claim must be rejected by the replay cache (job_replay_rejected).
+    app.dispatchReplayedJob = (overrides = {}) => {
+      const signed = signAndQueue(buildJobPayload(overrides));
+      state.pendingJobs.push({ ...signed });
+      return signed;
+    };
+
+    // Correctly signed but with expiresAt already in the past (window
+    // checked by checkJobTimeWindow, signature itself stays valid).
+    app.dispatchExpiredJob = (overrides = {}) => {
+      const nowMs = Date.now();
+      return signAndQueue(
+        buildJobPayload({
+          issuedAt: new Date(nowMs - 10 * 60 * 1000).toISOString(),
+          expiresAt: new Date(nowMs - 5 * 60 * 1000).toISOString(),
+          ...overrides,
+        }),
+      );
+    };
+
+    // Two wrong-key variants (both must fail as job_integrity_failed):
+    //   variant: "wrong-signature" (default) -- signed with a DIFFERENT
+    //     keypair while claiming the pinned signingKeyId, i.e. a forgery.
+    //   variant: "wrong-key-id" -- correctly signed by a rogue keypair that
+    //     also advertises its own (unpinned) signingKeyId; rejected at the
+    //     key-id pinning check before signature verification.
+    app.dispatchWrongKeyJob = ({
+      variant = "wrong-signature",
+      ...overrides
+    } = {}) => {
+      const rogueKeys = generateSigningKeyPair();
+      if (variant === "wrong-key-id") {
+        return signAndQueue(
+          buildJobPayload({ signingKeyId: rogueKeys.signingKeyId, ...overrides }),
+          rogueKeys.privateKeyPem,
+        );
+      }
+      if (variant !== "wrong-signature") {
+        throw new Error(
+          `dispatchWrongKeyJob: unknown variant "${variant}" (use "wrong-signature" or "wrong-key-id")`,
+        );
+      }
+      return signAndQueue(buildJobPayload(overrides), rogueKeys.privateKeyPem);
+    };
+  }
+
   return app;
 }
 

@@ -476,7 +476,7 @@ async function readBoundedResponseJson(response) {
   }
 }
 
-async function postJson(url, { token, envelope, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch }) {
+async function postJson(url, { token, envelope, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, onServerDate = null }) {
   const { envelope: safeEnvelope, serialized } = prepareOutboundEnvelope(envelope);
   const headers = { "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -495,6 +495,17 @@ async function postJson(url, { token, envelope, signal, requestTimeoutMs = REQUE
   if (response.status >= 300 && response.status < 400) {
     throw new AgentProtocolError("control-plane redirect was refused", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
   }
+  if (response.ok && typeof onServerDate === "function") {
+    const dateHeaderValue = response.headers?.get?.("date");
+    if (dateHeaderValue) {
+      try {
+        onServerDate(dateHeaderValue, Date.now());
+      } catch (_err) {
+        // A clock-sampling callback failure must never fail the protocol
+        // request itself; the sample is simply lost.
+      }
+    }
+  }
   const json = await readBoundedResponseJson(response);
   return { status: response.status, ok: response.ok, json, envelope: safeEnvelope };
 }
@@ -503,9 +514,13 @@ function validateRegistrationResponse(json, expectedProtocolVersion) {
   if (!isPlainObject(json)) {
     throw new AgentProtocolError("registration response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
   }
-  const expectedKeys = new Set(["agentId", "credential", "protocolVersion"]);
+  // signingKeyId/signingPublicKeyPem carry the control plane's job-signing
+  // key pin (ADR-0003 trust-on-first-use); optional so a server that does
+  // not sign dispatch yet still registers cleanly.
+  const requiredKeys = new Set(["agentId", "credential", "protocolVersion"]);
+  const optionalKeys = new Set(["signingKeyId", "signingPublicKeyPem"]);
   const keys = Object.keys(json);
-  if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) {
+  if (keys.some((key) => !requiredKeys.has(key) && !optionalKeys.has(key)) || [...requiredKeys].some((key) => !keys.includes(key))) {
     throw new AgentProtocolError("registration response contains unknown or missing fields", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
   }
   if (typeof json.agentId !== "string" || !AGENT_ID_PATTERN.test(json.agentId)) {
@@ -518,20 +533,43 @@ function validateRegistrationResponse(json, expectedProtocolVersion) {
   if (typeof json.protocolVersion !== "string" || !PROTOCOL_VERSION_PATTERN.test(json.protocolVersion) || json.protocolVersion !== expectedProtocolVersion) {
     throw new AgentProtocolError("registration response contains an unsupported protocolVersion", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
   }
-  return { agentId: json.agentId, credential: json.credential, protocolVersion: json.protocolVersion };
+  let signingKeyId = null;
+  let signingPublicKeyPem = null;
+  if (json.signingKeyId !== undefined && json.signingKeyId !== null) {
+    if (typeof json.signingKeyId !== "string" || !AGENT_ID_PATTERN.test(json.signingKeyId)) {
+      throw new AgentProtocolError("registration response contains an invalid signingKeyId", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    }
+    signingKeyId = json.signingKeyId;
+  }
+  if (json.signingPublicKeyPem !== undefined && json.signingPublicKeyPem !== null) {
+    if (
+      typeof json.signingPublicKeyPem !== "string" ||
+      json.signingPublicKeyPem.length === 0 ||
+      json.signingPublicKeyPem.length > 8192 ||
+      !json.signingPublicKeyPem.includes("BEGIN PUBLIC KEY") ||
+      json.signingPublicKeyPem.includes("PRIVATE KEY")
+    ) {
+      throw new AgentProtocolError("registration response contains an invalid signingPublicKeyPem", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    }
+    signingPublicKeyPem = json.signingPublicKeyPem;
+  }
+  if ((signingKeyId === null) !== (signingPublicKeyPem === null)) {
+    throw new AgentProtocolError("registration response must provide signingKeyId and signingPublicKeyPem together", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  return { agentId: json.agentId, credential: json.credential, protocolVersion: json.protocolVersion, signingKeyId, signingPublicKeyPem };
 }
 
 async function resolveCredential(getCredential) {
   return typeof getCredential === "function" ? await getCredential() : null;
 }
 
-function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false } = {}) {
+function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false, onServerDate = null } = {}) {
   const baseUrl = parseServerUrl(serverUrl, { allowInsecureLocalHttp });
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000) {
     throw new AgentProtocolError("requestTimeoutMs must be an integer between 1 and 120000", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
   }
   const routeUrl = (route) => `${baseUrl}${route}`;
-  const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl });
+  const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl, onServerDate });
 
   async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [] } = {}) {
     if (typeof bootstrapToken !== "string" || bootstrapToken.length === 0) {
