@@ -5,9 +5,10 @@
 //
 // Exercises the agent-side verification chain DIRECTLY
 // (signing.verifyJobSignature -> replay cache -> signing.checkJobTimeWindow)
-// rather than via packages/agent/src/index.js, which is not yet wired for
-// dispatch (that wiring is a separate work item). The chain order mirrors
-// what the wiring must do: integrity first (never trust an unverified
+// rather than via packages/agent/src/index.js. The full dispatch wiring in
+// src/index.js is exercised end to end by agent-renewal.test.js; this suite
+// keeps direct coverage of the chain order the wiring must preserve:
+// integrity first (never trust an unverified
 // payload's fields), then replay, then time window, and consume() only
 // after every gate passes.
 //
