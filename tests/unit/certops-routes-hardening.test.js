@@ -106,7 +106,7 @@ describe("CertOps route hardening", () => {
     );
   });
 
-  it("implements only the frozen workspace, M2, and M3-A7 routes", () => {
+  it("implements only the frozen workspace, executor, and controller routes", () => {
     const routeMatches = Array.from(
       routesSource.matchAll(/router\.(get|post|put)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);

@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; finalize in M0, detail in M2/M4.
+Proposed (2026-06-25). Phase 0 skeleton; details land with the executor API and
+agent protocol phases.
 
 ## Context
 
@@ -36,5 +37,5 @@ let any agent forge jobs for any other; they are not acceptable.
 
 - The signature must cover a canonical serialization excluding the `signature`
   field; canonicalization must be defined precisely to avoid verification drift.
-- TODO (M0): signing key rotation policy and `signingKeyId` lifecycle; canonical
+- TODO (ratification): signing key rotation policy and `signingKeyId` lifecycle; canonical
   serialization; replay-cache size/TTL; clock-drift thresholds.

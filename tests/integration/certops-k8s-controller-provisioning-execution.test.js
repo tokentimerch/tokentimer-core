@@ -130,7 +130,7 @@ function createKubernetesClient({ fail = null } = {}) {
 }
 
 function createTokenFile(token) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-m3a7-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-controller-"));
   const file = path.join(directory, "token");
   fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
   return { directory, file };
@@ -158,7 +158,7 @@ async function jobStatus(jobId) {
   return result.rows[0]?.status;
 }
 
-describe("M3-A7 controller provisioning execution path", function () {
+describe("controller provisioning execution path", function () {
   this.timeout(90_000);
   let previousCertOpsEnabled;
 

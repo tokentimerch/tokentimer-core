@@ -1,7 +1,7 @@
 import apiClient from '../../utils/apiClient';
 
 /**
- * CertOps jobs API helpers (M2 read-only job / log / evidence surface).
+ * CertOps jobs API helpers (read-only job / log / evidence surface).
  *
  * Additive module scoped to `/api/v1/workspaces/:id/certops/jobs/*`.
  * Returns 404 when `certops.enabled` is off.

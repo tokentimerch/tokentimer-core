@@ -97,11 +97,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **CertOps M0–M2 (self-hosted)** — gated certificate operations broker under `/api/v1/workspaces/:id/certops/*`, enabled with `CERTOPS_ENABLED=true`. TokenTimer remains zero-custody: private-key material is rejected at the API boundary and never persisted, logged, or returned.
-- **Managed certificate inventory (M1)** — `managed_certificates`, `certificate_targets`, and `certificate_instances` persistence; public PEM import/upsert by fingerprint; inventory list/detail/retire APIs; endpoint/domain-monitor observation bridge; retire-first lifecycle (`revoked` / `decommissioned`) with status mirrored onto the linked token.
-- **Dashboard CertOps surfaces (M1/M2)** — token-detail enrichment (key locality, observation history, retire modal), Import tokens PEM path, Control Center / preferences entry to Certificate operations, and `/certops/operations` for machine API tokens, jobs, and evidence timelines.
-- **Machine executor API (M2)** — workspace-bound CertOps API tokens with scopes `certops:read`, `certops:jobs:read`, `certops:events:write`, `certops:evidence:write`; bearer auth; CSRF exemption on machine routes; dedicated machine-token rate limiting; job/log/evidence persistence; aggregate and per-job executor event ingestion with idempotent replay and monotonic lifecycle transitions.
-- **Manual job creation (M2 amendment)** — `POST /api/v1/workspaces/:id/certops/jobs` (session-authenticated, manager+) plus dashboard "Create manual job" for the pre-scheduler / break-glass path; jobs are always recorded with `source: "api"`.
+- **CertOps (self-hosted)** — gated certificate operations broker under `/api/v1/workspaces/:id/certops/*`, enabled with `CERTOPS_ENABLED=true`. TokenTimer remains zero-custody: private-key material is rejected at the API boundary and never persisted, logged, or returned.
+- **Managed certificate inventory** — `managed_certificates`, `certificate_targets`, and `certificate_instances` persistence; public PEM import/upsert by fingerprint; inventory list/detail/retire APIs; endpoint/domain-monitor observation bridge; retire-first lifecycle (`revoked` / `decommissioned`) with status mirrored onto the linked token.
+- **Dashboard CertOps surfaces** — token-detail enrichment (key locality, observation history, retire modal), Import tokens PEM path, Control Center / preferences entry to Certificate operations, and `/certops/operations` for machine API tokens, jobs, and evidence timelines.
+- **Machine executor API** — workspace-bound CertOps API tokens with scopes `certops:read`, `certops:jobs:read`, `certops:events:write`, `certops:evidence:write`; bearer auth; CSRF exemption on machine routes; dedicated machine-token rate limiting; job/log/evidence persistence; aggregate and per-job executor event ingestion with idempotent replay and monotonic lifecycle transitions.
+- **Manual job creation** — `POST /api/v1/workspaces/:id/certops/jobs` (session-authenticated, manager+) plus dashboard "Create manual job" for the pre-scheduler / break-glass path; jobs are always recorded with `source: "api"`.
 - **Contracts and docs** — OpenAPI CertOps paths/schemas, route-compat and evidence/executor-event contracts, enablement docs, and ADR/CONTEXT updates for the CertOps broker model.
 
 ### Changed

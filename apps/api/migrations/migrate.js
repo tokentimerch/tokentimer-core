@@ -1326,7 +1326,7 @@ const migrations = [
     version: 19,
     name: "certops_workspace_kill_switch",
     sql: `
-      -- M3-A1 workspace-scoped CertOps incident control. This is deliberately
+      -- Workspace-scoped CertOps incident control. This is deliberately
       -- separate from system_settings.certops_settings.enabled: the latter is
       -- the deployment-wide rollout flag, while this column stops new work for
       -- exactly one workspace. Existing rows receive the safe unpaused default.
@@ -1356,8 +1356,8 @@ const migrations = [
     version: 21,
     name: "certops_controller_observation_reporting",
     sql: `
-      -- M3-A6 binds the narrow controller-observation scope to one immutable
-      -- workspace-local cluster label. Existing M1/M2 tokens remain valid with
+      -- Binds the narrow controller-observation scope to one immutable
+      -- workspace-local cluster label. Existing executor tokens remain valid with
       -- a NULL binding; the binding is only meaningful for this new write scope.
       ALTER TABLE api_tokens
         ADD COLUMN IF NOT EXISTS controller_cluster_id TEXT NULL;
@@ -1470,8 +1470,8 @@ const migrations = [
     version: 22,
     name: "certops_controller_provisioning",
     sql: `
-      -- M3-A7 adds a second narrow controller scope. A cluster binding is
-      -- required exactly for either controller-owned scope; legacy M1/M2
+      -- Adds a second narrow controller scope. A cluster binding is
+      -- required exactly for either controller-owned scope; legacy executor
       -- tokens remain valid with no binding.
       ALTER TABLE api_tokens
         DROP CONSTRAINT IF EXISTS api_tokens_scopes_check;
@@ -1496,7 +1496,7 @@ const migrations = [
         );
 
       -- This is intentionally only a bounded redelivery throttle for the
-      -- narrow M3 controller command endpoint. It has no agent identity,
+      -- narrow controller command endpoint. It has no agent identity,
       -- attempt, lease, heartbeat, or general job-claim semantics.
       CREATE TABLE IF NOT EXISTS certificate_controller_provision_deliveries (
         job_id UUID PRIMARY KEY REFERENCES certificate_jobs(id) ON DELETE CASCADE,
@@ -1515,8 +1515,8 @@ const migrations = [
     version: 23,
     name: "certops_controller_provisioning_event_timestamps",
     sql: `
-      -- First accepted M3 controller-event times make deterministic event
-      -- retries truthful without adding M4 attempts, claims, or leases.
+      -- First accepted controller-event times make deterministic event
+      -- retries truthful without adding agent attempts, claims, or leases.
       ALTER TABLE certificate_jobs
         DROP CONSTRAINT IF EXISTS certificate_jobs_source_check;
       ALTER TABLE certificate_jobs

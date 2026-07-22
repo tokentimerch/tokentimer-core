@@ -27,7 +27,7 @@ const {
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
-const CANONICAL_M3_A7_SCOPES = [
+const CANONICAL_TOKEN_SCOPES = [
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
@@ -262,8 +262,8 @@ describe("CertOps API token service", () => {
     }
   });
 
-  it("uses canonical scopes and keeps jobs claim deferred to M4", async () => {
-    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_M3_A7_SCOPES);
+  it("uses canonical scopes and keeps jobs claim deferred to the agent protocol phase", async () => {
+    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_TOKEN_SCOPES);
 
     const client = createMemoryClient();
     const created = await createApiToken({

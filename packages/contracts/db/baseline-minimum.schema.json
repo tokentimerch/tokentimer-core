@@ -62,7 +62,7 @@
           "$ref": "#/definitions/tableCertificateJobLog"
         },
         "certificate_evidence": {
-          "$ref": "#/definitions/tableCertificateEvidenceM2"
+          "$ref": "#/definitions/tableCertificateEvidence"
         },
         "certificate_executor_events": {
           "$ref": "#/definitions/tableCertificateExecutorEvents"
@@ -360,7 +360,7 @@
         }
       }
     },
-    "tableCertificateEvidenceM2": {
+    "tableCertificateEvidence": {
       "type": "object",
       "additionalProperties": false,
       "required": ["requiredColumns"],

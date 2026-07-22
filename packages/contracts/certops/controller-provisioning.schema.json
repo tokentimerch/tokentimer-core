@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/controller-provisioning.schema.json",
   "title": "CertOps Controller Provisioning",
-  "description": "Narrow M3-A7 public desired Certificate command. It is not an M4 agent protocol and contains no Kubernetes manifest, Secret data, CSR, credential, or private material.",
+  "description": "Narrow public desired Certificate command. It is not an agent protocol and contains no Kubernetes manifest, Secret data, CSR, credential, or private material.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "workspaceId", "clusterId", "jobId", "managedCertificateId", "namespace", "certificateName", "secretName", "issuerRef", "dnsNames"],

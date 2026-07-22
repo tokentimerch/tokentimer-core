@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/controller-observation.schema.json",
   "title": "CertOps Controller Observation",
-  "description": "M3-A6 normalized public cert-manager observation. This controller-specific transport is not the M4 agent protocol and cannot carry private keys, credentials, Kubernetes Secret objects, CSRs, or metadata bags.",
+  "description": "Normalized public cert-manager observation. This controller-specific transport is not the agent protocol and cannot carry private keys, credentials, Kubernetes Secret objects, CSRs, or metadata bags.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "observationId", "idempotencyKey", "workspaceId", "clusterId", "namespace", "certificateName", "certificateUid", "issuerRef", "secretName", "certificateRequestRef", "dnsNames", "conditions", "ready", "publicCertificate", "observationSource", "observedAt"],

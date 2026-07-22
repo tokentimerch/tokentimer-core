@@ -87,14 +87,14 @@ function provisionRequest(overrides = {}) {
     schemaVersion: 1,
     clusterId: "cluster-a",
     namespace: "certops",
-    certificateName: "m3-a8-cert",
-    secretName: "m3-a8-tls",
+    certificateName: "controller-e2e-cert",
+    secretName: "controller-e2e-tls",
     issuerRef: {
       group: "cert-manager.io",
       kind: "ClusterIssuer",
       name: "public-issuer",
     },
-    dnsNames: ["m3-a8.example.test"],
+    dnsNames: ["controller-e2e.example.test"],
     ...overrides,
   };
 }
@@ -201,7 +201,7 @@ async function cleanupWorkspace({ ownerId, workspaceId }) {
 }
 
 function createTokenFile(token) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-m3-a8-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-controller-e2e-"));
   const file = path.join(directory, "token");
   fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
   return {
@@ -428,7 +428,7 @@ function createKubernetesBoundary() {
 async function createControllerToken(fixture, scopes) {
   return createApiToken({
     workspaceId: fixture.workspaceId,
-    name: `M3-A8 controller ${crypto.randomUUID()}`,
+    name: `Controller e2e ${crypto.randomUUID()}`,
     scopes,
     controllerClusterId: "cluster-a",
     createdBy: fixture.ownerId,
@@ -452,7 +452,7 @@ async function inventoryCounts(workspaceId, certificateName) {
   return result.rows[0];
 }
 
-describe("CertOps M3-A8 end-to-end composition", function () {
+describe("CertOps controller end-to-end composition", function () {
   this.timeout(120_000);
 
   let previousCertOpsEnabled;
@@ -469,7 +469,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
   });
 
   it("composes status-first observation and the instrumented tls.crt fallback into real inventory", async () => {
-    const fixture = await createWorkspace("m3-a8-observe");
+    const fixture = await createWorkspace("controller-e2e-observe");
     const server = await startApiServer(fixture.ownerId);
     let tokenFile;
     try {
@@ -606,7 +606,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
   });
 
   it("preserves source identity through replay, rotation, UID replacement, and both D7 terminal states", async () => {
-    const fixture = await createWorkspace("m3-a8-inventory");
+    const fixture = await createWorkspace("controller-e2e-inventory");
     const server = await startApiServer(fixture.ownerId);
     let tokenFile;
     try {
@@ -737,7 +737,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
   });
 
   it("composes manager intent, command execution, owned create/patch, evidence, and eventual issuance observation", async () => {
-    const fixture = await createWorkspace("m3-a8-provision");
+    const fixture = await createWorkspace("controller-e2e-provision");
     const server = await startApiServer(fixture.ownerId);
     let tokenFile;
     try {
@@ -748,7 +748,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
         "certops:evidence:write",
       ]);
       tokenFile = createTokenFile(token.plaintextToken);
-      const firstKey = `m3-a8-${crypto.randomUUID()}`;
+      const firstKey = `controller-e2e-${crypto.randomUUID()}`;
       const firstRequest = provisionRequest();
       const first = await fetchJson(
         `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/provision-intents`,
@@ -819,8 +819,8 @@ describe("CertOps M3-A8 end-to-end composition", function () {
       expect(boundary.calls.createCertificate).to.have.length(1);
 
       const secondRequest = provisionRequest({
-        secretName: "m3-a8-tls-v2",
-        dnsNames: ["rotated.m3-a8.example.test"],
+        secretName: "controller-e2e-tls-v2",
+        dnsNames: ["rotated.controller-e2e.example.test"],
       });
       const second = await fetchJson(
         `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/provision-intents`,
@@ -828,7 +828,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": `m3-a8-${crypto.randomUUID()}`,
+            "Idempotency-Key": `controller-e2e-${crypto.randomUUID()}`,
           },
           body: JSON.stringify(secondRequest),
         },
@@ -848,14 +848,14 @@ describe("CertOps M3-A8 end-to-end composition", function () {
       await secondRunner.close();
       expect(boundary.calls.patchCertificate).to.have.length(1);
 
-      const createdCertificate = boundary.getCertificate("certops", "m3-a8-cert");
+      const createdCertificate = boundary.getCertificate("certops", "controller-e2e-cert");
       expect(createdCertificate).to.deep.include({
         apiVersion: "cert-manager.io/v1",
         kind: "Certificate",
       });
       expect(createdCertificate.spec).to.deep.equal({
-        secretName: "m3-a8-tls-v2",
-        dnsNames: ["rotated.m3-a8.example.test"],
+        secretName: "controller-e2e-tls-v2",
+        dnsNames: ["rotated.controller-e2e.example.test"],
         issuerRef: secondRequest.issuerRef,
       });
       expect(createdCertificate.metadata.labels).to.include({
@@ -866,7 +866,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
         "certops.tokentimer.io/last-intent-id": second.body.job.id,
       });
 
-      boundary.setSecret("certops", "m3-a8-tls-v2", {
+      boundary.setSecret("certops", "controller-e2e-tls-v2", {
         data: {
           "tls.crt": ENCODED_PUBLIC_CERT,
           "tls.key": PRIVATE_SENTINEL,
@@ -880,8 +880,8 @@ describe("CertOps M3-A8 end-to-end composition", function () {
           resourceVersion: "99",
         },
         status: certificateResource({
-          certificateName: "m3-a8-cert",
-          secretName: "m3-a8-tls-v2",
+          certificateName: "controller-e2e-cert",
+          secretName: "controller-e2e-tls-v2",
         }).status,
       });
       const reporter = createControllerObservationReporter({
@@ -953,7 +953,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
   });
 
   it("keeps key rejection ahead of scope and pause while passive reporting remains available", async () => {
-    const fixture = await createWorkspace("m3-a8-pause");
+    const fixture = await createWorkspace("controller-e2e-pause");
     const server = await startApiServer(fixture.ownerId);
     try {
       const controllerToken = await createControllerToken(fixture, [
@@ -964,7 +964,7 @@ describe("CertOps M3-A8 end-to-end composition", function () {
       ]);
       const wrongScopeToken = await createApiToken({
         workspaceId: fixture.workspaceId,
-        name: "M3-A8 wrong scope",
+        name: "Controller e2e wrong scope",
         scopes: ["certops:events:write", "certops:evidence:write"],
         createdBy: fixture.ownerId,
       });

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-28). Plan decision D7 (v1.5).
+Accepted (2026-06-28). Design decision D7.
 
 ## Context
 
@@ -16,7 +16,7 @@ Today there is no product path to remove a managed certificate without row
 deletion. Hard-deleting tokens that reference managed certificates would orphan
 inventory (`ON DELETE SET NULL` on `token_id`) and destroy audit visibility.
 
-M1 adds a **retire-first** removal model: status transitions instead of FK
+This ADR adds a **retire-first** removal model: status transitions instead of FK
 cascade deletes, with restricted hard purge for manually created cert tokens
 only.
 
@@ -37,16 +37,16 @@ only.
 3. **Hard purge (restricted).** Only a manually created cert-category token that
    is **not** backed by a `managed_certificate` may use the existing
    `DELETE /api/tokens/:id` path. Managed-backed certificates are never row-
-   deleted from the product in M1; a gated retention/decommission purge belongs
-   to a later milestone (M7 `decommission`, enterprise retention policy).
+   deleted from the product today; a gated retention/decommission purge belongs
+   to a later phase (`decommission`, enterprise retention policy).
 4. **Reverse direction via status sync, not cascade.** Retiring a managed
    certificate retires its linked token. The FK stays `ON DELETE SET NULL` so an
    accidental token row delete still cannot destroy the certificate record.
 5. **Dashboard defaults.** Retired certificates (`revoked`, `decommissioned`)
    are hidden from the asset list by default with a "Retired" filter toggle.
 6. **Audit.** Retire writes a `CERTOPS_CERTIFICATE_RETIRED` audit row (exact
-   code name is flexible pre-GA; see plan section 0.3) with optional reason in
-   metadata. Reason is not required in M1 UI display.
+   code name is flexible pre-GA) with optional reason in
+   metadata. Reason is not required in the initial UI display.
 
 ### Schema implication
 
@@ -74,7 +74,7 @@ endpoint (see PR #47). That is acceptable under D7 when:
 ## Consequences
 
 - Dashboard ships `RetireCertificateModal`, retire gating on managed certs, and
-  retired filtering (aligned with v1.5 / this ADR).
+  retired filtering (aligned with this ADR).
 - Backend must implement the retire route, token status sync, and audit event
   before GA; until then UI degrades gracefully on 404.
-- Hard purge of managed-backed certificates remains out of M1 scope.
+- Hard purge of managed-backed certificates remains out of scope for now.

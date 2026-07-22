@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/certops-inventory.schema.json",
   "title": "CertOps Managed Certificate Inventory Record",
-  "description": "Public-material-only inventory record for a CertOps managed certificate. Frozen in Phase 0; descriptive fields expand in M1. A conforming record MUST NOT contain private key material under any property (enforced at runtime by apps/api/utils/secretMaterial.js and the API rejection boundary).",
+  "description": "Public-material-only inventory record for a CertOps managed certificate. Frozen in Phase 0; descriptive fields expanded with the inventory milestone. A conforming record MUST NOT contain private key material under any property (enforced at runtime by apps/api/utils/secretMaterial.js and the API rejection boundary).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "id", "workspaceId", "status"],
@@ -114,7 +114,7 @@
         "external-unknown",
         null
       ],
-      "description": "Where the private key lives on the execution plane (plan section 9.1). The control plane records the mode only; it never holds the key."
+      "description": "Where the private key lives on the execution plane. The control plane records the mode only; it never holds the key."
     },
     "keyReference": {
       "type": ["string", "null"],

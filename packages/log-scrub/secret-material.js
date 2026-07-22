@@ -46,7 +46,7 @@ const PRIVATE_KEY_PEM_BLOCK_PATTERN = new RegExp(
 );
 
 // Conservative Authorization-header / bearer-token redaction for generic
-// secret scrubbing (extended in M2 evidence redaction work).
+// secret scrubbing (extended in the evidence redaction work).
 const AUTHORIZATION_VALUE_PATTERN =
   /\b(Authorization\s*[:=]\s*)(?:Bearer|Basic|Token)\s+("[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const COOKIE_HEADER_PATTERN =
@@ -620,7 +620,7 @@ function redactPrivateKeyMaterial(value) {
  * material is rejected before traversal; this helper must never be used as a
  * fallback that converts prohibited key material into accepted data.
  *
- * Phase 0 baseline; the secret pattern set expands in M2 evidence redaction.
+ * Phase 0 baseline; the secret pattern set expands with evidence redaction.
  * @param {*} value
  * @returns {*} redacted copy
  */

@@ -92,7 +92,7 @@ describe("CertOps Kubernetes controller configuration", () => {
     }
   });
 
-  it("allows only the explicit M3-A7 provision mode", () => {
+  it("allows only the explicit provision mode", () => {
     const provision = loadControllerConfig(validEnv({
       CERTOPS_CONTROLLER_MODE: "provision",
       CERTOPS_CLUSTER_WIDE: "true",

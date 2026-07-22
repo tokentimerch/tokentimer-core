@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/job-payload.schema.json",
-  "title": "CertOps M2 Job Payload",
-  "description": "M2-A1 public, unsigned planning/reporting skeleton for future certificate lifecycle jobs under TOKENTIMER_CERTOPS_PLAN v1.7. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. The action field is the M2 lifecycle action vocabulary, not the future M4 signed job dispatch protocol. Agent execution, job signing, attemptId, agentId/selector, nonce replay cache, signingKeyId, signature, signed dispatch, and related replay enforcement are M4 additions and are not required for M2 validation. Customer private key material and key-bearing bundles are outside this contract.",
+  "title": "CertOps Job Payload",
+  "description": "Public, unsigned planning/reporting skeleton for future certificate lifecycle jobs. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. The action field is the current lifecycle action vocabulary, not the future signed agent dispatch protocol. Agent execution, job signing, attemptId, agentId/selector, nonce replay cache, signingKeyId, signature, signed dispatch, and related replay enforcement are agent protocol additions and are not required for validation today. Customer private key material and key-bearing bundles are outside this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,7 +25,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "Unique public job identifier. M4 signed dispatch adds replay-protection semantics."
+      "description": "Unique public job identifier. Future signed agent dispatch adds replay-protection semantics."
     },
     "workspaceId": {
       "type": "string",
@@ -131,32 +131,32 @@
     "issuedAt": {
       "type": "string",
       "format": "date-time",
-      "description": "M4-reserved signed job dispatch timestamp. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: job dispatch timestamp. Optional and not required for validation today."
     },
     "expiresAt": {
       "type": "string",
       "format": "date-time",
-      "description": "M4-reserved signed job validity bound. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: signed job validity bound. Optional and not required for validation today."
     },
     "nonce": {
       "type": "string",
       "minLength": 16,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "M4-reserved single-use nonce for signed job replay protection. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: single-use nonce for signed job replay protection. Optional and not required for validation today."
     },
     "signingKeyId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "M4-reserved identifier of the control-plane operational signing key. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: identifier of the control-plane operational signing key. Optional and not required for validation today."
     },
     "signature": {
       "type": "string",
       "minLength": 64,
       "maxLength": 1024,
-      "description": "M4-reserved signature over the canonical job payload. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: signature over the canonical job payload. Optional and not required for validation today."
     }
   },
   "definitions": {

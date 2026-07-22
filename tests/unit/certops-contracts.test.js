@@ -113,7 +113,7 @@ const SAFE_METADATA_NAMES = [
   "executor",
 ];
 
-const CANONICAL_M3_A7_SCOPES = [
+const CANONICAL_TOKEN_SCOPES = [
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
@@ -122,7 +122,7 @@ const CANONICAL_M3_A7_SCOPES = [
   "certops:provision:execute",
 ];
 
-const PLAN_M2_JOB_STATUSES = [
+const PLAN_JOB_STATUSES = [
   "pending_approval",
   "approved",
   "rejected",
@@ -135,7 +135,7 @@ const PLAN_M2_JOB_STATUSES = [
   "cancelled",
 ];
 
-const PLAN_M2_EXECUTOR_EVENT_STATUSES = [
+const PLAN_EXECUTOR_EVENT_STATUSES = [
   "accepted",
   "claimed",
   "running",
@@ -147,10 +147,10 @@ const PLAN_M2_EXECUTOR_EVENT_STATUSES = [
 ];
 
 const STALE_STATUS_VALUES = ["queued", "dispatched", "canceled", "expired"];
-const M2_RFC3339_TIMESTAMP_PATTERN =
+const RFC3339_TIMESTAMP_PATTERN =
   "^(?:200[0-9]|20[1-9][0-9]|2100)-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$";
 
-const m2Schemas = {
+const certopsSchemas = {
   "job-payload.schema.json": jobPayloadSchema,
   "evidence.schema.json": evidenceSchema,
   "executor-event.schema.json": executorEventSchema,
@@ -217,7 +217,7 @@ function createAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
 
-  for (const schema of Object.values(m2Schemas)) {
+  for (const schema of Object.values(certopsSchemas)) {
     ajv.addSchema(schema);
   }
 
@@ -424,11 +424,11 @@ function openApiPropertyEnum(componentName, propertyName) {
   return values;
 }
 
-describe("CertOps M2 contract skeletons", () => {
-  it("includes the M2 job, executor event, and evidence schemas in the manifest", () => {
+describe("CertOps contract skeletons", () => {
+  it("includes the job, executor event, and evidence schemas in the manifest", () => {
     const paths = manifestPaths();
 
-    for (const fileName of Object.keys(m2Schemas)) {
+    for (const fileName of Object.keys(certopsSchemas)) {
       assert.ok(
         paths.has(`packages/contracts/certops/${fileName}`),
         `${fileName} must be listed in contracts.manifest.json`,
@@ -436,8 +436,8 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("keeps M2 schemas bounded and free of private-key custody-shaped field names", () => {
-    for (const [fileName, schema] of Object.entries(m2Schemas)) {
+  it("keeps CertOps schemas bounded and free of private-key custody-shaped field names", () => {
+    for (const [fileName, schema] of Object.entries(certopsSchemas)) {
       assert.equal(schema.additionalProperties, false);
       assertNoAdditionalPropertiesTrue(schema, fileName);
 
@@ -455,7 +455,7 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("rejects custody-shaped fields and metadata names in M2 schema examples", () => {
+  it("rejects custody-shaped fields and metadata names in CertOps schema examples", () => {
     const ajv = createAjv();
     const examples = [
       {
@@ -597,7 +597,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.equal(
       validateEvent(boundedOutput),
       true,
-      "M2-A10 embedded evidence output must be bounded and redacted before persistence",
+      "embedded evidence output must be bounded and redacted before persistence",
     );
 
     assert.equal(
@@ -655,11 +655,11 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
-  it("keeps M2 job payload signing and replay fields optional and documented as M4", () => {
+  it("keeps job payload signing and replay fields optional and documented as agent-protocol-reserved", () => {
     const ajv = createAjv();
     const validate = ajv.getSchema(jobPayloadSchema.$id);
 
-    for (const m4OnlyField of [
+    for (const agentOnlyField of [
       "issuedAt",
       "expiresAt",
       "nonce",
@@ -667,20 +667,20 @@ describe("CertOps M2 contract skeletons", () => {
       "signature",
     ]) {
       assert.equal(
-        jobPayloadSchema.required.includes(m4OnlyField),
+        jobPayloadSchema.required.includes(agentOnlyField),
         false,
-        `${m4OnlyField} must not be required in M2-A1`,
+        `${agentOnlyField} must not be required today`,
       );
       assert.match(
-        jobPayloadSchema.properties[m4OnlyField].description,
-        /M4-reserved|M4/i,
-        `${m4OnlyField} must be documented as M4-reserved`,
+        jobPayloadSchema.properties[agentOnlyField].description,
+        /reserved for signed agent dispatch/i,
+        `${agentOnlyField} must be documented as reserved for signed agent dispatch`,
       );
     }
 
-    assert.match(jobPayloadSchema.description, /M2-A1 public, unsigned/i);
-    assert.match(jobPayloadSchema.description, /M4/i);
-    assert.match(jobPayloadSchema.description, /signed job dispatch/i);
+    assert.match(jobPayloadSchema.description, /public, unsigned/i);
+    assert.match(jobPayloadSchema.description, /signed agent dispatch/i);
+    assert.match(jobPayloadSchema.description, /job signing/i);
     assert.equal(validate(validJobPayload()), true);
     assert.equal(validate({ ...validJobPayload(), privateKey: "nope" }), false);
   });
@@ -856,7 +856,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(
       certOpsExecutorRoutesSource,
       /EVIDENCE_ITEM_FIELDS[\s\S]*?"output"/,
-      "M2-A10 runtime must allow bounded executor output for redaction and separate storage",
+      "runtime must allow bounded executor output for redaction and separate storage",
     );
   });
 
@@ -878,17 +878,17 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(certOpsExecutorRoutesSource, /optionalFingerprintSha256\(item\.fingerprintSha256\)/);
   });
 
-  it("documents the shared M2 executor timestamp policy and fail-closed audit response", () => {
+  it("documents the shared executor timestamp policy and fail-closed audit response", () => {
     const embeddedEvidence =
       executorEventSchema.definitions.embeddedEvidenceItem.properties;
     assert.equal(
       executorEventSchema.properties.occurredAt.pattern,
-      M2_RFC3339_TIMESTAMP_PATTERN,
+      RFC3339_TIMESTAMP_PATTERN,
     );
-    assert.equal(embeddedEvidence.observedAt.pattern, M2_RFC3339_TIMESTAMP_PATTERN);
+    assert.equal(embeddedEvidence.observedAt.pattern, RFC3339_TIMESTAMP_PATTERN);
     assert.equal(
       evidenceSchema.properties.observedAt.pattern,
-      M2_RFC3339_TIMESTAMP_PATTERN,
+      RFC3339_TIMESTAMP_PATTERN,
     );
 
     for (const componentName of [
@@ -1067,20 +1067,20 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(metadataComponent, /case\/separator normalization/i);
   });
 
-  it("uses only v1.7 job and executor event statuses", () => {
+  it("uses only canonical job and executor event statuses", () => {
     assert.deepEqual(
       openApiPropertyEnum("CertOpsJob", "status"),
-      PLAN_M2_JOB_STATUSES,
+      PLAN_JOB_STATUSES,
     );
     assert.deepEqual(
       openApiPropertyEnum("CertOpsExecutorEventRequest", "status"),
-      PLAN_M2_EXECUTOR_EVENT_STATUSES,
+      PLAN_EXECUTOR_EVENT_STATUSES,
     );
 
     const ajv = createAjv();
     const validateExecutorEvent = ajv.getSchema(executorEventSchema.$id);
 
-    for (const status of PLAN_M2_EXECUTOR_EVENT_STATUSES) {
+    for (const status of PLAN_EXECUTOR_EVENT_STATUSES) {
       assert.equal(
         validateExecutorEvent({ ...validExecutorEvent(), status }),
         true,
@@ -1090,12 +1090,12 @@ describe("CertOps M2 contract skeletons", () => {
 
     for (const status of STALE_STATUS_VALUES) {
       assert.equal(
-        PLAN_M2_JOB_STATUSES.includes(status),
+        PLAN_JOB_STATUSES.includes(status),
         false,
         `${status} must not remain a CertOps job status`,
       );
       assert.equal(
-        PLAN_M2_EXECUTOR_EVENT_STATUSES.includes(status),
+        PLAN_EXECUTOR_EVENT_STATUSES.includes(status),
         false,
         `${status} must not remain a CertOps executor event status`,
       );
@@ -1107,20 +1107,20 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("keeps M2-A5 persistence statuses aligned with the v1.7 contract", () => {
+  it("keeps persistence statuses aligned with the status contract", () => {
     const jobsMigration = migrations.find(
       (migration) => migration.name === "certops_jobs_evidence_schema",
     );
-    assert.ok(jobsMigration, "M2-A5 jobs migration must exist");
-    assert.deepEqual(JOB_STATUSES, PLAN_M2_JOB_STATUSES);
-    assert.deepEqual(LOG_STATUSES, PLAN_M2_JOB_STATUSES);
+    assert.ok(jobsMigration, "jobs migration must exist");
+    assert.deepEqual(JOB_STATUSES, PLAN_JOB_STATUSES);
+    assert.deepEqual(LOG_STATUSES, PLAN_JOB_STATUSES);
     for (const stale of ["queued", "canceled"]) {
       assert.equal(JOB_STATUSES.includes(stale), false);
       assert.equal(LOG_STATUSES.includes(stale), false);
       assert.equal(
         jobsMigration.sql.includes(`'${stale}'`),
         false,
-        `${stale} must not remain in M2-A5 migration checks`,
+        `${stale} must not remain in jobs migration checks`,
       );
     }
   });
@@ -1168,7 +1168,7 @@ describe("CertOps M2 contract skeletons", () => {
     );
   });
 
-  it("keeps per-job request schemas aligned with the M2 runtime contract", () => {
+  it("keeps per-job request schemas aligned with the executor runtime contract", () => {
     const eventSchema = openApiComponentBlock("CertOpsPerJobExecutorEventRequest");
     const evidenceSchema = openApiComponentBlock("CertOpsPerJobEvidenceRequest");
     const authScheme = openApiSource.slice(
@@ -1196,7 +1196,7 @@ describe("CertOps M2 contract skeletons", () => {
     assert.match(executorNotes, /empty required-scope configuration is invalid/i);
   });
 
-  it("uses additive M3 controller scopes without broad write implication", () => {
+  it("uses additive controller scopes without broad write implication", () => {
     const canonicalScopes = [
       "certops:read",
       "certops:events:write",
@@ -1248,7 +1248,7 @@ describe("CertOps M2 contract skeletons", () => {
 
     assert.deepEqual(
       openApiComponentEnum("CertOpsApiTokenScope"),
-      CANONICAL_M3_A7_SCOPES,
+      CANONICAL_TOKEN_SCOPES,
     );
 
     for (const componentName of [
@@ -1281,12 +1281,12 @@ describe("CertOps M2 contract skeletons", () => {
       assert.equal(
         openApiSource.includes(oldScope),
         false,
-        `${oldScope} must not appear in the M2-A1 OpenAPI`,
+        `${oldScope} must not appear in the OpenAPI`,
       );
     }
   });
 
-  it("documents M2-A7 scanner rejection, pagination, and the strict job detail shape", () => {
+  it("documents scanner rejection, pagination, and the strict job detail shape", () => {
     const listPath = openApiPathBlock("/api/v1/workspaces/{id}/certops/jobs");
     const logPath = openApiPathBlock(
       "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log",
@@ -1342,7 +1342,7 @@ describe("CertOps M2 contract skeletons", () => {
     }
   });
 
-  it("documents M2-A8 token management alongside stable M2-A10 aliases", () => {
+  it("documents token management alongside stable per-job aliases", () => {
     const tokenPath = openApiPathBlock(
       "/api/v1/workspaces/{id}/certops/tokens",
     );
@@ -1389,9 +1389,9 @@ describe("CertOps M2 contract skeletons", () => {
     );
     assert.match(createResponse, /minLength: 85/);
     assert.match(createResponse, /maxLength: 85/);
-    assert.match(executorNotes, /aggregate M2 ingestion route/i);
-    assert.match(executorNotes, /stable path-scoped M2 machine routes/i);
-    assert.doesNotMatch(executorNotes, /not part of M2/i);
+    assert.match(executorNotes, /aggregate executor ingestion route/i);
+    assert.match(executorNotes, /stable path-scoped executor machine routes/i);
+    assert.doesNotMatch(executorNotes, /not part of the executor surface/i);
   });
 
   it("keeps inventory routes free of executor and job table coupling", () => {

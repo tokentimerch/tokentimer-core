@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton (P0.2). Finalize in M0.
+Proposed (2026-06-25). Phase 0 skeleton (P0.2). To be finalized before
+ratification.
 
 ## Context
 
@@ -10,7 +11,7 @@ CertOps spans a control plane that holds no private keys and an execution plane
 (agent / k8s controller) that does. The boundary between them is the primary
 security surface. This ADR enumerates threats and the mitigation for each, with
 each mitigation expressed as something that can be tested. It is a living
-document; M0 fleshes out the TODOs and links each mitigation to a test id.
+document; ratification fleshes out the TODOs and links each mitigation to a test id.
 
 Trust boundaries:
 
@@ -45,6 +46,6 @@ Adopt the threat / mitigation table below. Every mitigation must have a test.
 
 ## Consequences
 
-- Each row becomes one or more tests, tracked in the M1/M2 issue map.
-- TODO (M0): assign a test id to every row; add abuse cases for T1 (PKCS#12),
+- Each row becomes one or more tests, tracked in the CertOps issue map.
+- TODO (ratification): assign a test id to every row; add abuse cases for T1 (PKCS#12),
   T6 (drift thresholds), and T10 (scope matrix).

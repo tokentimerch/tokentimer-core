@@ -1,6 +1,6 @@
 "use strict";
 
-// These bounds are part of the published M3-A6 controller-observation
+// These bounds are part of the published controller-observation
 // contract. The controller imports this module so it cannot construct a
 // public-certificate payload that the API boundary rejects for size alone.
 const MAX_PUBLIC_TEXT_LENGTH = 1_024;

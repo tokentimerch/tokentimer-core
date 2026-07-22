@@ -14,7 +14,7 @@ const {
   retryDelay,
 } = require("./observation-reporter");
 
-// These values mirror the public M3-A7 provisioning command schema. The
+// These values mirror the public provisioning command schema. The
 // response additionally carries up to three persisted ISO-8601 event times,
 // so it cannot share the observation reporter's deliberately smaller 8 KiB
 // response limit.

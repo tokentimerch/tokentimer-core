@@ -39,7 +39,7 @@ function normalizedRequestPath(requestPath) {
 }
 
 /**
- * Returns the stable M2 machine route family for exact route spellings only.
+ * Returns the stable executor machine route family for exact route spellings only.
  * The optional mounted form is used by middleware mounted beneath /api, where
  * Express exposes /v1/... in req.path. This deliberately does not accept
  * arbitrary prefixes, empty path segments, duplicate slashes, or descendants.
@@ -146,7 +146,7 @@ function handleCertOpsMachineWriteBodyParserError(error, _req, res, next) {
 }
 
 /**
- * Production-only pre-parser boundary for the exact M2 machine write routes.
+ * Production-only pre-parser boundary for the exact executor machine write routes.
  * It applies the cheap prefix/IP limiter before any JSON parsing, feature
  * gating, token hashing, database access, or handler work. The router checks
  * the request marker and applies its own limiter only when mounted standalone.

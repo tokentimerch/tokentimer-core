@@ -71,14 +71,14 @@ tests/integration/endpoint-health-alerts.test.js
 tests/integration/endpoint-check-worker.integration.test.js
 tests/integration/domain-checker.integration.test.js
 
-# CertOps M1-M3-A1
+# CertOps
 tests/integration/certops-migration.test.js
 tests/integration/certops-inventory.test.js
 tests/integration/certops-inventory-import-helpers.test.js
 tests/integration/certops-controller-observations.test.js
 tests/integration/certops-controller-provisioning.test.js
 tests/integration/certops-k8s-controller-provisioning-execution.test.js
-tests/integration/certops-m3-a8-e2e.test.js
+tests/integration/certops-controller-e2e.test.js
 tests/integration/certops-api-tokens.test.js
 tests/integration/certops-api-token-routes.test.js
 tests/integration/certops-api-token-auth.test.js

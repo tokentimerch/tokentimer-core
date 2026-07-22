@@ -1,8 +1,8 @@
-# CertOps machine APIs (M2 executor and M3 controller)
+# CertOps machine APIs (executor and cert-manager controller)
 
 Reference for external systems that report certificate lifecycle events and
-for the customer-side cert-manager controller. Neither surface is the M4 agent
-protocol. See
+for the customer-side cert-manager controller. Neither surface is the future
+agent protocol. See
 `docs/certops/CONTEXT.md` for domain language and ADR-0006 for where the
 executor jobs/evidence UI lives in the dashboard.
 
@@ -33,7 +33,7 @@ admin role, `/certops/operations` page, "Machine API tokens" panel.
     and a request that includes evidence with an events-only token is
     rejected).
   - `certops:observations:write` - report normalized public cert-manager
-    observations through the M3 controller route.
+    observations through the controller route.
   - `certops:provision:execute` - fetch the next narrow cert-manager
     provisioning command bound to the token's cluster.
   - No machine-token read route exists yet, so `certops:read` and
@@ -66,7 +66,7 @@ the token's own workspace (403 `CERTOPS_EXECUTOR_WORKSPACE_MISMATCH`).
 
 A job must already exist before an executor can report against it.
 **TokenTimer creates jobs, not the executor** (there is no public "create
-job" API for executors in M2); jobs come from the workspace's existing
+job" API for executors); jobs come from the workspace's existing
 CertOps flows. Posting to an unknown `jobId` returns 404
 `CERTOPS_JOB_NOT_FOUND`.
 
@@ -244,7 +244,7 @@ All error bodies use the flat envelope
 ## 6. Minimal external executor example
 
 A plain HTTP loop is enough to be a valid executor; there is no SDK
-requirement in M2.
+requirement.
 
 ```bash
 #!/usr/bin/env bash
@@ -313,10 +313,10 @@ jobs panel + evidence timeline) for workspace managers/admins, with status
 badges, redaction markers, and audit links where available. See
 `apps/dashboard/src/components/certops/{JobStatusBadge,EvidenceTimeline,CertificateTimeline}.jsx`.
 
-## 9. Kubernetes controller routes (M3)
+## 9. Kubernetes controller routes
 
-The M3 customer-cluster controller uses dedicated, additive transports. They do
-not register an M4 agent or implement heartbeats, general job claims, attempts,
+The customer-cluster controller uses dedicated, additive transports. They do
+not register an agent or implement heartbeats, general job claims, attempts,
 leases, signatures, or nonces.
 
 ### Report a public observation
@@ -366,7 +366,7 @@ certops:evidence:write
 
 Workspace pause blocks command delivery but does not delete or permanently
 claim existing work. The controller reports `job.started`, then either the
-bounded completed evidence or a safe failure through the M2 routes above.
+bounded completed evidence or a safe failure through the executor routes above.
 Successful completion means the owned cert-manager `Certificate` was created,
 reconciled, or already matched; issuance completion arrives later through the
 observation route.

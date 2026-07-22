@@ -3054,8 +3054,8 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
   # ----------------------------------------------------------------------------
-  # CertOps routes. M1 inventory routes are implemented with precise public-only
-  # schemas below. M2/M4 machine, token, job, and agent namespaces remain frozen
+  # CertOps routes. Inventory routes are implemented with precise public-only
+  # schemas below. Machine, token, job, and agent namespaces remain frozen
   # skeletons so downstream overlays can build without route churn.
   # ----------------------------------------------------------------------------
   /api/v1/workspaces/{id}/certops/certificates:
@@ -3509,7 +3509,7 @@ paths:
       summary: Pause or resume new CertOps work for a workspace
       operationId: updateCertOpsWorkspaceSettings
       description: >-
-        Changes only the workspace-local M3-A1 kill switch and remains available
+        Changes only the workspace-local kill switch and remains available
         while the deployment-wide rollout flag is disabled. Requires a human
         cookie/session-authenticated workspace admin; internal worker bearer
         credentials are not accepted. A paused workspace rejects new manual jobs and future dispatch or
@@ -3711,7 +3711,7 @@ paths:
       summary: Create a cert-manager provisioning intent
       operationId: createCertOpsProvisionIntent
       description: >-
-        Manager-only M3-A7 human surface. It creates an idempotent `deploy` job
+        Manager-only human surface. It creates an idempotent `deploy` job
         with a strict public cert-manager desired state. The route is blocked by
         both CertOps rollout and workspace pause gates and never accepts a
         Kubernetes manifest, Secret data, CSR, or private key material.
@@ -4166,7 +4166,7 @@ paths:
       summary: Report a public cert-manager observation
       operationId: createCertOpsControllerObservation
       description: >-
-        Additive M3-A6 controller transport, not the M4 agent protocol. Requires
+        Additive controller transport, not the agent protocol. Requires
         `certops:observations:write` and a token immutable controllerClusterId
         binding. Workspace and cluster provenance are derived from that token;
         body values must match. Private material is audited and rejected before
@@ -4223,9 +4223,9 @@ paths:
       summary: Fetch one narrow cert-manager provisioning command
       operationId: nextCertOpsControllerProvisioningCommand
       description: >-
-        M3-A7 controller-specific command transport. Requires exactly
+        Controller-specific command transport. Requires exactly
         `certops:provision:execute` and immutable controller cluster binding.
-        It is not M4 agent polling or claim protocol. Non-terminal work may be
+        It is not agent polling or claim protocol. Non-terminal work may be
         redelivered after a bounded throttle; no Secrets or private material are
         returned.
       security:
@@ -4249,12 +4249,12 @@ paths:
       summary: Reauthorize one controller provisioning mutation
       operationId: authorizeCertOpsControllerProvisioningMutation
       description: >-
-        Narrow M3 controller authorization check called immediately before each
+        Narrow controller authorization check called immediately before each
         Kubernetes Certificate create or patch. Requires
         `certops:provision:execute`, immutable controller cluster binding, an
         active server-owned provisioning job, the deployment-wide CertOps
         rollout gate, and an unpaused workspace. Retries recheck the same
-        authoritative state. This is not an M4 claim, lease, heartbeat, or
+        authoritative state. This is not a claim, lease, heartbeat, or
         agent-protocol operation.
       security:
         - certOpsTokenAuth: []
@@ -4278,7 +4278,7 @@ paths:
       summary: Report executor events
       operationId: createCertOpsExecutorEvent
       description: >-
-        M2 aggregate executor ingestion endpoint for normalized job and public
+        Aggregate executor ingestion endpoint for normalized job and public
         evidence events. Lifecycle events require `certops:events:write`;
         evidence-bearing events additionally require `certops:evidence:write`.
         The route is hidden with 404 when `certops.enabled` is disabled.
@@ -4379,7 +4379,7 @@ paths:
       tags: [CertOps Agent]
       summary: Register an agent
       operationId: createCertOpsAgentRegistration
-      description: Outbound-only agent enrollment using a single-use bootstrap token; returns a per-agent credential shown once. Frozen namespace skeleton; body schema lands in M4.
+      description: Outbound-only agent enrollment using a single-use bootstrap token; returns a per-agent credential shown once. Frozen namespace skeleton; body schema lands with the agent protocol.
       security:
         - agentBootstrapTokenAuth: []
       requestBody:
@@ -4406,7 +4406,7 @@ paths:
       tags: [CertOps Agent]
       summary: Agent heartbeat
       operationId: createCertOpsAgentHeartbeat
-      description: Agent heartbeat including reported clock offset (clock-drift detection). Per-agent credential authenticated. Frozen skeleton; body schema lands in M4.
+      description: Agent heartbeat including reported clock offset (clock-drift detection). Per-agent credential authenticated. Frozen skeleton; body schema lands with the agent protocol.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4433,7 +4433,7 @@ paths:
       tags: [CertOps Agent]
       summary: Claim pending jobs
       operationId: createCertOpsAgentJobClaim
-      description: Agent polls for and claims signed jobs. Per-agent credential authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) in M4.
+      description: Agent polls for and claims signed jobs. Per-agent credential authenticated. Frozen skeleton; returns signed job payloads (job-payload.schema.json) once the agent protocol lands.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4460,7 +4460,7 @@ paths:
       tags: [CertOps Agent]
       summary: Report job results and evidence
       operationId: createCertOpsAgentJobResult
-      description: Agent reports job results and evidence metadata. Per-agent credential authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands in M4.
+      description: Agent reports job results and evidence metadata. Per-agent credential authenticated. Payloads containing private key material are rejected (422). Frozen skeleton; body schema lands with the agent protocol.
       security:
         - agentCredentialAuth: []
       requestBody:
@@ -4499,7 +4499,7 @@ components:
     certOpsTokenAuth:
       type: http
       scheme: bearer
-      description: Scoped CertOps API token (bearer) used by M2 machine routes. Allowed M2 scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope. Bearer-only and non-cookie; CSRF-exempt only for the exact planned POST machine routes. Empty required-scope configuration is invalid.
+      description: Scoped CertOps API token (bearer) used by the executor machine routes. Allowed executor scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope. Bearer-only and non-cookie; CSRF-exempt only for the exact planned POST machine routes. Empty required-scope configuration is invalid.
     agentBootstrapTokenAuth:
       type: http
       scheme: bearer
@@ -5398,7 +5398,7 @@ components:
         eventTimestamps:
           type: object
           additionalProperties: false
-          description: First accepted real executor-event times for bounded M3 command redelivery; not an M4 attempt or lease record.
+          description: First accepted real executor-event times for bounded controller command redelivery; not an agent attempt or lease record.
           properties:
             started: { type: string, format: date-time }
             completed: { type: string, format: date-time }
@@ -5412,7 +5412,7 @@ components:
         - certops:evidence:write
         - certops:observations:write
         - certops:provision:execute
-      description: Canonical CertOps API-token scope. Either M3 controller scope requires a controller cluster binding; job-claim and signed-agent scopes remain deferred to M4.
+      description: Canonical CertOps API-token scope. Either controller scope requires a controller cluster binding; job-claim and signed-agent scopes remain deferred to the agent protocol phase.
     CertOpsApiToken:
       type: object
       additionalProperties: false
@@ -5455,7 +5455,7 @@ components:
           minLength: 1
           maxLength: 63
           pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-          description: Immutable binding required exactly when scopes includes either M3 controller scope.
+          description: Immutable binding required exactly when scopes includes either controller scope.
         status:
           type: string
           enum: [active, revoked, expired]
@@ -5519,7 +5519,7 @@ components:
           minLength: 1
           maxLength: 63
           pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-          description: Required exactly when scopes includes either M3 controller scope; creation-only and immutable.
+          description: Required exactly when scopes includes either controller scope; creation-only and immutable.
     CertOpsApiTokenCreateResponse:
       type: object
       additionalProperties: false
@@ -5544,7 +5544,7 @@ components:
     CertOpsEvidenceMetadata:
       type: object
       additionalProperties: false
-      description: Strict standalone normalized/persisted public evidence metadata. M2-A10 separately stores bounded executor output after private-key rejection and generic-secret redaction; raw output and key-bearing artifacts are excluded here.
+      description: Strict standalone normalized/persisted public evidence metadata. The runtime separately stores bounded executor output after private-key rejection and generic-secret redaction; raw output and key-bearing artifacts are excluded here.
       required:
         - schemaVersion
         - evidenceId
@@ -5650,7 +5650,7 @@ components:
     CertOpsEmbeddedExecutorEvidenceItem:
       type: object
       additionalProperties: false
-      description: Relaxed embedded evidence item for the M2 executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata. Raw executor output is deferred to M2-A10.
+      description: Relaxed embedded evidence item for the executor event envelope. Only eventType is required at the embedded boundary; later runtime may derive or soft-fill jobId, workspaceId, source, and observedAt from the envelope/path. Standalone normalized evidence remains strict in CertOpsEvidenceMetadata. Raw executor output is stored separately after redaction.
       required: [eventType]
       properties:
         schemaVersion:
@@ -5751,7 +5751,7 @@ components:
     CertOpsExecutorEventRequest:
       type: object
       additionalProperties: false
-      description: M2 external executor event envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. eventId is an idempotency key within workspaceId and jobId. Private key material is rejected; generic secrets in log and evidence metadata are redacted before persistence. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed protocol and job signing are deferred to M4.
+      description: External executor event envelope. eventId is an idempotency key within workspaceId and jobId. Private key material is rejected; generic secrets in log and evidence metadata are redacted before persistence. Older operational lifecycle names are represented as normalized job/evidence events; richer agent-executed protocol and job signing are deferred to the agent protocol phase.
       required:
         - schemaVersion
         - eventId
@@ -5985,7 +5985,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: Server-side job log event identifier; matches eventId for M2 runtime responses.
+          description: Server-side job log event identifier; matches eventId for current runtime responses.
         jobId:
           type: string
           format: uuid

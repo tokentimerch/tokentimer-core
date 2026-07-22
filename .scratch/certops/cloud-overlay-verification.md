@@ -1,10 +1,11 @@
 # CertOps cloud overlay verification (P0.5)
 
-Status: verified 2026-06-25 against tokentimer-cloud working tree.
-Owner: Dev B. Reviewer: Dev A.
+Status: verified 2026-06-25 against the cloud working tree.
+Owner: overlays. Reviewer: backend.
 
-Purpose: confirm the cloud path and manifest assumptions the CertOps plan was
-written against, and record corrections so M1/M2 overlay work is not blocked.
+Purpose: confirm the cloud path and manifest assumptions the CertOps work was
+written against, and record corrections so inventory/executor overlay work is
+not blocked.
 
 ## Verified facts
 
@@ -48,7 +49,7 @@ written against, and record corrections so M1/M2 overlay work is not blocked.
 - **Rate limiting**: authenticated `/api/*` is keyed `user-${id}` via
   `authenticatedBaselineLimiter`; dev/test skips the global limiter on `/api`.
 
-## Manifest checklist for CertOps cloud overlays (M1+)
+## Manifest checklist for CertOps cloud overlays
 
 - [ ] New cloud-only route file -> `overrides.manifest.json` entry, `kind: saaSOnly`, `targetCorePath: null`.
 - [ ] Overriding a core file -> `kind: fileOverride`, set `targetCorePath`.

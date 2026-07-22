@@ -195,7 +195,7 @@ expect_controller_failure() {
   fi
 }
 
-# M3-A8 release validation retains an explicit, narrowly bounded controller
+# Release validation retains an explicit, narrowly bounded controller
 # capability surface across every supported mode/scope/fallback combination.
 controller_base_args=(
   --namespace certops-system

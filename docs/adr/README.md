@@ -19,8 +19,8 @@ We distinguish:
   review to change (zero private-key custody, control plane vs execution plane,
   agent-local policy wins, outbound-only agent model).
 - **Accepted decisions**: current implementation direction, amendable through ADRs
-  before GA (D1-D4, D6, D7 in `tokentimer-canvas/plans/TOKENTIMER_CERTOPS_PLAN.md`).
-- **Flexible implementation details**: milestone-level details that may change in PRs
+  before GA (tracked design decisions pending before GA).
+- **Flexible implementation details**: phase-level details that may change in PRs
   as long as they do not violate hard invariants or published contracts (UI copy,
   exact column names, PR pairing, quota numbers, agent packaging location).
 
@@ -51,10 +51,10 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0006](0006-certops-dashboard-ux-split.md) | CertOps dashboard UX split (D6) | Accepted |
 | [0007](0007-certops-certificate-removal-lifecycle.md) | CertOps certificate removal and lifecycle model (D7) | Accepted |
 
-ADR-0001 through ADR-0005 were authored as Phase 0 skeletons to unblock M1/M2
-parallel work. They remain `Proposed` until M0 ratification moves them to
+ADR-0001 through ADR-0005 were authored as Phase 0 skeletons to unblock
+parallel inventory and executor work. They remain `Proposed` until ratification moves them to
 `Accepted` and their TODO markers are resolved. ADR-0006 and ADR-0007 record
-plan decisions D6 and D7 and are `Accepted` as of 2026-06-28.
+design decisions D6 and D7 and are `Accepted` as of 2026-06-28.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.

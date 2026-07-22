@@ -242,7 +242,7 @@ describe("CertOps controller provisioning", function () {
     const migration = migrations.find((item) => item.version === 22);
     expect(migration?.name).to.equal("certops_controller_provisioning");
 
-    const schema = `m3a7_upgrade_${crypto.randomUUID().replaceAll("-", "")}`;
+    const schema = `provisioning_upgrade_${crypto.randomUUID().replaceAll("-", "")}`;
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -307,10 +307,10 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
-  it("upgrades the M3-A7 delivery shape from migration 22 to 23", async () => {
+  it("upgrades the earlier controller delivery shape from migration 22 to 23", async () => {
     const migration = migrations.find((item) => item.version === 23);
     expect(migration?.name).to.equal("certops_controller_provisioning_event_timestamps");
-    const schema = `m3a7_delivery_${crypto.randomUUID().replaceAll("-", "")}`;
+    const schema = `provisioning_delivery_${crypto.randomUUID().replaceAll("-", "")}`;
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -685,7 +685,7 @@ describe("CertOps controller provisioning", function () {
   it("rolls back inventory, job, idempotency, and audit state when the required audit write fails", async () => {
     const fixture = await createWorkspace("controller-provisioning-rollback");
     const app = createHumanProvisioningApp(fixture.ownerId);
-    const triggerName = `m3a7_provision_audit_${crypto.randomUUID().replaceAll("-", "")}`;
+    const triggerName = `provisioning_audit_${crypto.randomUUID().replaceAll("-", "")}`;
     const functionName = `${triggerName}_fn`;
     const key = `rollback-${crypto.randomUUID()}`;
     try {
@@ -914,7 +914,7 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
-  it("returns 204 for no work and uses SKIP LOCKED delivery without creating an M4 protocol record", async () => {
+  it("returns 204 for no work and uses SKIP LOCKED delivery without creating an agent protocol record", async () => {
     const fixture = await createWorkspace("controller-provisioning-concurrency");
     const humanApp = createHumanProvisioningApp(fixture.ownerId);
     const executorApp = createControllerExecutorApp();
@@ -937,7 +937,7 @@ describe("CertOps controller provisioning", function () {
       expect(delivered.body.command.jobId).to.equal(intent.body.job.id);
       expect(await provisioningCounts(fixture.workspaceId)).to.deep.include({ deliveries: 1, jobs: 1 });
 
-      const m4Tables = await TestUtils.execQuery(
+      const agentProtocolTables = await TestUtils.execQuery(
         `SELECT table_name
            FROM information_schema.tables
           WHERE table_schema = 'public'
@@ -950,7 +950,7 @@ describe("CertOps controller provisioning", function () {
           "certificate_job_nonces",
         ]],
       );
-      expect(m4Tables.rows).to.deep.equal([]);
+      expect(agentProtocolTables.rows).to.deep.equal([]);
       const payload = await TestUtils.execQuery(
         "SELECT payload FROM certificate_jobs WHERE id = $1",
         [intent.body.job.id],
@@ -1170,7 +1170,7 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
-  it("preserves later controller times, explicit evidence times, and generic M2 event times", async () => {
+  it("preserves later controller times, explicit evidence times, and generic executor event times", async () => {
     const fixture = await createWorkspace("controller-provisioning-timestamp-scope");
     const humanApp = createHumanProvisioningApp(fixture.ownerId);
     const executorApp = createControllerExecutorApp();
@@ -1251,7 +1251,7 @@ describe("CertOps controller provisioning", function () {
 
       const genericToken = await createApiToken({
         workspaceId: fixture.workspaceId,
-        name: "Generic M2 executor",
+        name: "Generic executor",
         scopes: ["certops:events:write"],
         createdBy: fixture.ownerId,
       });

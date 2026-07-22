@@ -1,5 +1,5 @@
 /**
- * Truncation display helpers for paginated CertOps read APIs (M2).
+ * Truncation display helpers for paginated CertOps read APIs.
  *
  * The job/log/evidence endpoints return `pagination: { limit, offset }` and
  * may later grow `total` / `hasMore`. Load-more is explicitly deferred; these

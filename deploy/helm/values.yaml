@@ -259,12 +259,12 @@ worker:
 
 # -- CertOps Kubernetes controller -------------------------------------------
 # The controller is independently opt-in. Observe is the default; provision
-# adds only cert-manager Certificate create/patch rights in M3-A7.
+# adds only cert-manager Certificate create/patch rights.
 certops:
   controller:
     enabled: false
     mode: observe
-    # Leader election is not available in M3, so exactly one replica is safe.
+    # Leader election is not available yet, so exactly one replica is safe.
     replicaCount: 1
     # Cluster-wide RBAC is explicit. A non-empty watchNamespaces value is
     # invalid when this is true; an empty list otherwise means the release namespace.
@@ -279,7 +279,7 @@ certops:
       digest: ""
       pullPolicy: IfNotPresent
 
-    # M3-A2 controller configuration. These are required when enabled.
+    # Controller configuration. These are required when enabled.
     api:
       url: ""
       workspaceId: ""

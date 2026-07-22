@@ -25,7 +25,7 @@ const desired = Object.freeze({
   dnsNames: ["www.example.test", "example.test", "example.test"],
 });
 
-describe("M3-A7 controller provisioning normalization", () => {
+describe("controller provisioning normalization", () => {
   it("accepts only the bounded public desired Certificate shape", () => {
     const normalized = normalizeDesiredCertificate(desired);
     assert.deepEqual(normalized.dnsNames, ["example.test", "www.example.test"]);

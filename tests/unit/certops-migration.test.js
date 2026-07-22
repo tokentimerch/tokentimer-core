@@ -102,7 +102,7 @@ const BASELINE_CERTOPS_COLUMNS = {
   ],
 };
 
-const BASELINE_M2_COLUMNS = {
+const BASELINE_MACHINE_COLUMNS = {
   api_tokens: [
     "id",
     "workspace_id",
@@ -267,7 +267,7 @@ function resolveBaselineSchema(schema) {
 }
 
 describe("CertOps inventory migration", () => {
-  it("defines the M1 inventory migration", () => {
+  it("defines the CertOps inventory migration", () => {
     assert.ok(certOpsMigration, "expected certops_inventory_schema migration");
     assert.equal(certOpsMigration.version, 10);
   });
@@ -304,7 +304,7 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("defines the CertOps API token migration after M1 schema migrations", () => {
+  it("defines the CertOps API token migration after the inventory schema migrations", () => {
     assert.ok(
       certOpsApiTokensMigration,
       "expected certops_api_tokens_schema migration",
@@ -324,7 +324,7 @@ describe("CertOps inventory migration", () => {
     );
     assert.doesNotMatch(
       certOpsApiTokensMigration.sql,
-      /certops_m2_plan_alignment/,
+      /certops_.*_plan_alignment/,
     );
     assert.doesNotMatch(
       certOpsApiTokensMigration.sql,
@@ -356,7 +356,7 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("defines the CertOps jobs and evidence migration after M2 auth migrations", () => {
+  it("defines the CertOps jobs and evidence migration after the machine auth migrations", () => {
     assert.ok(
       certOpsJobsEvidenceMigration,
       "expected certops_jobs_evidence_schema migration",
@@ -493,7 +493,7 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("defines the additive M3-A1 workspace kill-switch migration", () => {
+  it("defines the additive workspace kill-switch migration", () => {
     assert.ok(
       certOpsWorkspaceKillSwitchMigration,
       "expected certops_workspace_kill_switch migration",
@@ -525,7 +525,7 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("keeps released migration 18 and the M3 migration tail unique and ordered", () => {
+  it("keeps released migration 18 and the controller migration tail unique and ordered", () => {
     const expectedVersions = new Map([
       ["tokens_certops_api_token_link", 18],
       ["certops_workspace_kill_switch", 19],
@@ -550,7 +550,7 @@ describe("CertOps inventory migration", () => {
     );
   });
 
-  it("creates the final canonical M2 schema without an unshipped compatibility migration", () => {
+  it("creates the final canonical machine schema without an unshipped compatibility migration", () => {
     assert.doesNotMatch(
       certOpsApiTokensMigration.sql,
       /certops:executor:events|certops:jobs:write|certops:jobs:claim/,
@@ -824,14 +824,14 @@ describe("CertOps inventory migration", () => {
     }
   });
 
-  it("includes the CertOps M2/M3 machine tables in the baseline DB contract", () => {
+  it("includes the CertOps machine tables in the baseline DB contract", () => {
     // The baseline must mirror every shipped machine-ingestion and controller
     // delivery table with the same no-private-key-custody guard.
     const tableSchema = baselineMinimumSchema.properties.tables.properties;
     const requiredTables = baselineMinimumSchema.properties.tables.required;
 
     for (const [tableName, expectedColumns] of Object.entries(
-      BASELINE_M2_COLUMNS,
+      BASELINE_MACHINE_COLUMNS,
     )) {
       assert.ok(
         requiredTables.includes(tableName),
@@ -983,7 +983,7 @@ describe("CertOps inventory migration", () => {
     assert.doesNotMatch(certOpsControllerObservationMigration.sql, /\braw_request\b|\brequest_body\b|\bauthorization_header\b/i);
   });
 
-  it("defers dedicated security events and audit hash-chain storage beyond M2", () => {
+  it("defers dedicated security events and audit hash-chain storage beyond the executor phase", () => {
     assert.doesNotMatch(
       certOpsJobsEvidenceMigration.sql,
       /\bsecurity_events\b|\bprev_hash\b|\brow_hash\b|\balert_queue\b/i,

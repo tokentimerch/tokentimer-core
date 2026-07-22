@@ -324,7 +324,7 @@ function validateAuthenticatedProvisioningBinding(apiToken, desired) {
 }
 
 /**
- * Reauthorize one already delivered M3 provisioning command immediately before
+ * Reauthorize one already delivered provisioning command immediately before
  * a Kubernetes create/patch. The workspace row lock and rollout resolution are
  * intentionally repeated here so a pause or global disable after delivery
  * cannot be bypassed by controller retries.
@@ -563,8 +563,8 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
 }
 
 /**
- * Persist first-seen real event times for the narrow M3 delivery only. These
- * are idempotency aids, not M4 attempts, claims, leases, or heartbeats.
+ * Persist first-seen real event times for the narrow controller delivery only.
+ * These are idempotency aids, not agent attempts, claims, leases, or heartbeats.
  */
 async function recordControllerProvisioningEventTimestamp({
   client,

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/agent-protocol.schema.json",
   "title": "CertOps Agent Protocol Message (STUB)",
-  "description": "STUB frozen in Phase 0. Freezes only the outbound message envelope shared by every agent/executor message so the M2 executor API and the M4 agent are not blocked. The agent is outbound-only (it polls the control plane); the control plane never opens connections to agents. Per-message bodies are specified in M4. Messages MUST NOT carry private key material (enforced by apps/api/utils/secretMaterial.js at the ingest boundary).",
+  "description": "STUB frozen in Phase 0. Freezes only the outbound message envelope shared by every agent/executor message so the executor API and the future agent are not blocked. The agent is outbound-only (it polls the control plane); the control plane never opens connections to agents. Per-message bodies are specified in the agent protocol phase. Messages MUST NOT carry private key material (enforced by apps/api/utils/secretMaterial.js at the ingest boundary).",
   "type": "object",
   "additionalProperties": true,
   "required": ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"],
@@ -18,7 +18,7 @@
     "messageType": {
       "type": "string",
       "enum": ["register", "heartbeat", "claim", "result", "evidence"],
-      "description": "register/heartbeat/claim/result/evidence. Bodies defined in M4."
+      "description": "register/heartbeat/claim/result/evidence. Bodies defined in the agent protocol phase."
     },
     "agentId": {
       "type": "string"
@@ -32,12 +32,12 @@
     },
     "clockOffsetMs": {
       "type": ["integer", "null"],
-      "description": "Agent-reported offset vs control-plane time, used for clock-drift detection (M4)."
+      "description": "Agent-reported offset vs control-plane time, used for clock-drift detection (agent protocol phase)."
     },
     "body": {
       "type": ["object", "null"],
       "additionalProperties": true,
-      "description": "Message-type-specific payload. Specified per messageType in M4."
+      "description": "Message-type-specific payload. Specified per messageType in the agent protocol phase."
     }
   }
 }

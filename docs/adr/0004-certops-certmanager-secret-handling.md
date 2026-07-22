@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted (2026-07-21). Implemented and release-validated in M3-A3 through
-M3-A8.
+Accepted (2026-07-21). Implemented and release-validated with the cert-manager
+controller.
 
 ## Context
 

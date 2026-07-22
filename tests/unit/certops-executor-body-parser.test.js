@@ -264,7 +264,7 @@ describe("CertOps executor body parser", () => {
     }
   });
 
-  it("matches only exact case-insensitive M2 machine write paths", () => {
+  it("matches only exact case-insensitive executor machine write paths", () => {
     assert.equal(
       certOpsMachineWriteRouteFamily(
         "/API/v1/CertOps/Jobs/11111111-1111-4111-8111-111111111111/Events/",

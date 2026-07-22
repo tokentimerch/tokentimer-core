@@ -17,23 +17,23 @@
       "prefix": "/api/v1/certops/executor",
       "auth": "certOpsTokenAuth",
       "notes": [
-        "Machine surface for M2 executor writes plus narrow M3 controller observation and provisioning transport. Scoped API-token bearer auth only; machine routes never use cookies.",
+        "Machine surface for executor writes plus narrow controller observation and provisioning transport. Scoped API-token bearer auth only; machine routes never use cookies.",
         "Allowed scopes are certops:read, certops:events:write, certops:jobs:read, certops:evidence:write, certops:observations:write, and certops:provision:execute. certops:read implies certops:jobs:read only, never a write scope; neither controller scope is implied by another scope and either requires an immutable controllerClusterId binding. Empty required-scope configuration is invalid.",
         "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events, controller observations, provisioning command fetch and mutation authorization, and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
-        "POST /api/v1/certops/executor/events is the aggregate M2 ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped M2 machine routes.",
-        "The three M2 executor routes retain the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior. POST /api/v1/certops/executor/observations is passive controller-specific M3 transport. POST /api/v1/certops/executor/provisioning-commands/next is a cluster-bound provision-command transport that redelivers only server-owned controller_provisioning jobs safely. POST /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation is a narrow M3 just-in-time rollout/workspace/job recheck immediately before each Certificate create or patch and every mutation retry. Neither provisioning route introduces M4 claims, agents, heartbeats, signatures, nonces, leases, or polling protocol. Both reject private material before scope or extension gates and deny mutation work while a workspace is paused."
+        "POST /api/v1/certops/executor/events is the aggregate executor ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped executor machine routes.",
+        "The three executor write routes retain the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior. POST /api/v1/certops/executor/observations is passive controller-specific transport. POST /api/v1/certops/executor/provisioning-commands/next is a cluster-bound provision-command transport that redelivers only server-owned controller_provisioning jobs safely. POST /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation is a narrow controller just-in-time rollout/workspace/job recheck immediately before each Certificate create or patch and every mutation retry. Neither provisioning route introduces agent claims, agent registration, heartbeats, signatures, nonces, leases, or polling protocol. Both reject private material before scope or extension gates and deny mutation work while a workspace is paused."
       ]
     },
     "agent": {
       "prefix": "/api/v1/certops/agent",
       "auth": "split-by-route",
       "notes": [
-        "Outbound-only agent polling surface (M4). The control plane never connects to agents.",
+        "Outbound-only agent polling surface (future agent protocol). The control plane never connects to agents.",
         "Enrollment and steady state use different credentials, by design.",
         "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
         "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
-        "All routes CSRF-exempt (token-authenticated, non-cookie). Frozen in Phase 0 to reserve the namespace; bodies specified in M4."
+        "All routes CSRF-exempt (token-authenticated, non-cookie). Frozen in Phase 0 to reserve the namespace; bodies specified in the agent protocol phase."
       ]
     }
   },
@@ -90,7 +90,7 @@
       "workspaceCertOpsPaused": {
         "status": 409,
         "code": "CERTOPS_WORKSPACE_PAUSED",
-        "notes": "The M3-A1 workspace-local kill switch blocks new CertOps jobs and future dispatch/provision side effects only. It does not block inventory, status, audit, evidence, or executor event reporting for existing work. It composes with, and never replaces, the deployment-wide certops.enabled rollout flag."
+        "notes": "The workspace-local kill switch blocks new CertOps jobs and future dispatch/provision side effects only. It does not block inventory, status, audit, evidence, or executor event reporting for existing work. It composes with, and never replaces, the deployment-wide certops.enabled rollout flag."
       }
     }
   }
