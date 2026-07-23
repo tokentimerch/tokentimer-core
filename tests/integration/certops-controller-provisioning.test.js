@@ -937,20 +937,23 @@ describe("CertOps controller provisioning", function () {
       expect(delivered.body.command.jobId).to.equal(intent.body.job.id);
       expect(await provisioningCounts(fixture.workspaceId)).to.deep.include({ deliveries: 1, jobs: 1 });
 
-      const agentProtocolTables = await TestUtils.execQuery(
-        `SELECT table_name
-           FROM information_schema.tables
-          WHERE table_schema = 'public'
-            AND table_name = ANY($1::text[])`,
-        [[
-          "certops_agents",
-          "certificate_job_claims",
-          "certificate_job_signatures",
-          "certificate_agent_heartbeats",
-          "certificate_job_nonces",
-        ]],
+      const agentProtocolCounts = await TestUtils.execQuery(
+        `SELECT
+           (SELECT COUNT(*)::int FROM certops_agents WHERE workspace_id = $1) AS agents,
+           (SELECT COUNT(*)::int FROM certops_agent_bootstrap_tokens WHERE workspace_id = $1) AS bootstrap_tokens,
+           (SELECT COUNT(*)::int FROM certops_consumed_nonces WHERE workspace_id = $1) AS nonces,
+           (SELECT COUNT(*)::int FROM certops_job_approvals WHERE workspace_id = $1) AS approvals`,
+        [fixture.workspaceId],
       );
-      expect(agentProtocolTables.rows).to.deep.equal([]);
+      // certops_signing_keys is intentionally excluded: it is a single
+      // control-plane-wide Ed25519 key, not scoped to any workspace, so its
+      // presence says nothing about this workspace's controller-only flow.
+      expect(agentProtocolCounts.rows[0]).to.deep.equal({
+        agents: 0,
+        bootstrap_tokens: 0,
+        nonces: 0,
+        approvals: 0,
+      });
       const payload = await TestUtils.execQuery(
         "SELECT payload FROM certificate_jobs WHERE id = $1",
         [intent.body.job.id],
