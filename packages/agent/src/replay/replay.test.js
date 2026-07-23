@@ -192,7 +192,13 @@ describe("persistence", () => {
 });
 
 describe("sweep and bounded growth", () => {
-  it("sweep drops entries whose expiresAt has passed and reports the count", () => {
+  // Sweep eviction happens at expiresAt + retention tolerance (default
+  // 30000 ms, mirroring the signing module's clock tolerance), never at
+  // bare expiresAt: checkJobTimeWindow still accepts a job inside the
+  // tolerance tail, so its nonce must still be remembered there.
+  const RETENTION_TOLERANCE_MS = 30000;
+
+  it("sweep drops entries whose expiresAt+tolerance has passed and reports the count", () => {
     const storePath = makeStorePath();
     const cache = createReplayCache({ storePath, now: () => NOW_MS });
 
@@ -202,23 +208,60 @@ describe("sweep and bounded growth", () => {
     cache.consume(alive);
     assert.equal(cache.size(), 2);
 
-    const removed = cache.sweep(NOW_MS + 2000);
+    const removed = cache.sweep(NOW_MS + 1000 + RETENTION_TOLERANCE_MS + 1);
     assert.equal(removed, 1);
     assert.equal(cache.size(), 1);
 
-    // The expired pair is forgettable: window checks reject it anyway.
+    // The fully expired pair is forgettable: even with maximum tolerance,
+    // window checks reject it anyway.
     assert.deepEqual(cache.check(expired), { allowed: true });
     assert.equal(cache.check(alive).allowed, false);
+  });
+
+  it("retains a consumed nonce through the clock-tolerance tail after expiresAt", () => {
+    const storePath = makeStorePath();
+    const cache = createReplayCache({ storePath, now: () => NOW_MS });
+
+    const job = entry({ expiresAt: NOW_MS + 1000 });
+    cache.consume(job);
+
+    // Inside (expiresAt, expiresAt + tolerance]: checkJobTimeWindow would
+    // still accept a replayed copy, so the sweep must NOT evict it.
+    const withinTail = cache.sweep(NOW_MS + 1000 + RETENTION_TOLERANCE_MS - 1);
+    assert.equal(withinTail, 0);
+    assert.equal(cache.check(job).allowed, false);
+
+    // Past the tail the entry is unreplayable and may be forgotten.
+    const pastTail = cache.sweep(NOW_MS + 1000 + RETENTION_TOLERANCE_MS + 1);
+    assert.equal(pastTail, 1);
   });
 
   it("sweep persists the pruned store", () => {
     const storePath = makeStorePath();
     const cache = createReplayCache({ storePath, now: () => NOW_MS });
     cache.consume(entry({ expiresAt: NOW_MS + 1000 }));
-    cache.sweep(NOW_MS + 2000);
+    cache.sweep(NOW_MS + 1000 + RETENTION_TOLERANCE_MS + 1);
 
     const reloaded = createReplayCache({ storePath, now: () => NOW_MS });
     assert.equal(reloaded.size(), 0);
+  });
+
+  it("persists atomically: no temp files linger and the store stays loadable", () => {
+    const storePath = makeStorePath();
+    const cache = createReplayCache({ storePath, now: () => NOW_MS });
+    for (let i = 0; i < 5; i += 1) {
+      cache.consume(entry({ expiresAt: FUTURE_MS }));
+    }
+
+    const siblings = fs.readdirSync(path.dirname(storePath));
+    assert.equal(
+      siblings.some((name) => name.endsWith(".tmp")),
+      false,
+      "no temp file may remain after persists",
+    );
+
+    const reloaded = createReplayCache({ storePath, now: () => NOW_MS });
+    assert.equal(reloaded.size(), 5);
   });
 
   it("rejects new jobs with job_replay_rejected when full after sweep, never evicting unexpired nonces", () => {
@@ -244,7 +287,7 @@ describe("sweep and bounded growth", () => {
     assert.equal(cache.check(second).allowed, false);
   });
 
-  it("frees capacity via sweep when full entries have expired", () => {
+  it("frees capacity via sweep when full entries have fully expired", () => {
     let clock = NOW_MS;
     const cache = createReplayCache({
       storePath: makeStorePath(),
@@ -255,8 +298,9 @@ describe("sweep and bounded growth", () => {
     cache.consume(entry({ expiresAt: NOW_MS + 1000 }));
     cache.consume(entry({ expiresAt: NOW_MS + 1000 }));
 
-    // Advance past expiry: the internal sweep during consume frees room.
-    clock = NOW_MS + 5000;
+    // Advance past expiry AND the retention tolerance: the internal sweep
+    // during consume frees room.
+    clock = NOW_MS + 1000 + RETENTION_TOLERANCE_MS + 1;
     assert.deepEqual(cache.consume(entry({ expiresAt: clock + 60000 })), {
       allowed: true,
     });

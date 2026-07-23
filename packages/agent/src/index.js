@@ -86,7 +86,7 @@ const {
   hasReportableJobId,
 } = require("./claimed-job");
 const { defaultAgentLogger } = require("./logging");
-const { verifyJobSignature, checkJobTimeWindow } = require("./signing");
+const { verifyJobSignature, checkJobTimeWindow, DEFAULT_TIME_WINDOW_TOLERANCE_MS } = require("./signing");
 const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
 const { generateKeyPairToFile, generateCsr } = require("./keys");
@@ -808,6 +808,131 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
 }
 
 /**
+ * Rolls back a completed deploy after a later tail step (reload or verify)
+ * failed. Without this, a reload/verify failure would leave the NEW
+ * certificate installed while the job reports failure -- the operator sees
+ * "failed" but the destination silently changed.
+ *
+ * Only applies when the deploy actually wrote (deployed: true) AND left a
+ * backup of the previous content (backupPath). An idempotent skip changed
+ * nothing (nothing to roll back), and a first-ever deploy has no previous
+ * certificate to restore (deleting the fresh file would be worse: the
+ * job's failure report plus the deployment.updated evidence trail already
+ * tells the operator exactly what is on disk).
+ *
+ * The restore goes through deployCertificate itself, so it gets the same
+ * policy re-check, atomic write, and metrics as any deploy. After a
+ * successful restore, the service reload (when the job requested one and
+ * the refs resolve) is re-run best-effort so the service picks the old
+ * content back up; its outcome is reported in the rollback evidence but
+ * never changes the job's (already failed) result.
+ *
+ * @param {object} params
+ * @returns {Promise<{ rolledBack: boolean, reason: string|null }>}
+ */
+async function rollbackAfterFailedTail({
+  job,
+  jobId,
+  policyEngine,
+  client,
+  deployResult,
+  failedStep,
+  log,
+}) {
+  if (deployResult?.deployed !== true) {
+    return { rolledBack: false, reason: "deploy step made no change (idempotent skip)" };
+  }
+  if (typeof deployResult.backupPath !== "string" || deployResult.backupPath.length === 0) {
+    return { rolledBack: false, reason: "no previous certificate existed to restore" };
+  }
+
+  let previousPem;
+  try {
+    previousPem = fs.readFileSync(deployResult.backupPath, "utf8");
+  } catch (err) {
+    emitLog(log, `tokentimer-agent: rollback for job ${jobId} could not read the backup: ${err.message}`);
+    return { rolledBack: false, reason: "backup file could not be read" };
+  }
+
+  const restore = await deployCertificate({
+    target: {
+      type: job?.target?.type ?? "endpoint",
+      reference: job?.target?.reference ?? deployResult.destination,
+      certPath: deployResult.destination,
+    },
+    certificatePem: previousPem,
+    checkPath: (candidate) => policyEngine.checkPath(candidate),
+  });
+  const restored = restore.deployed === true || restore.skipped === true;
+  if (!restored) {
+    emitLog(log, `tokentimer-agent: rollback restore failed for job ${jobId} at stage ${restore.stage}`);
+  }
+
+  // Best-effort re-reload so the service serves the restored content again.
+  let reloadNote = "not requested";
+  if (restored && typeof job.reloadService === "string" && job.reloadService.length > 0) {
+    reloadNote = "skipped (command refs unavailable)";
+    const refs = job.reloadCommandRefs;
+    if (refs && typeof refs === "object" && typeof refs.validate === "string" && typeof refs.reload === "string") {
+      const validateVerdict = policyEngine.checkCommandRef(refs.validate);
+      const reloadVerdict = policyEngine.checkCommandRef(refs.reload);
+      if (validateVerdict.allowed && reloadVerdict.allowed) {
+        try {
+          const outcome = await reloadService({
+            service: job.reloadService,
+            commandProfiles: {
+              validateArgv: validateVerdict.argv,
+              reloadArgv: reloadVerdict.argv,
+            },
+          });
+          reloadNote = outcome.reloaded === true ? "reloaded" : `reload failed at stage ${outcome.stage}`;
+        } catch (err) {
+          reloadNote = `reload errored: ${err.message}`;
+        }
+      }
+    }
+  }
+
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: "deployment.updated",
+      observedAt: new Date().toISOString(),
+      summary: restored
+        ? `Rolled back job ${jobId}: previous certificate restored after the ${failedStep} step failed.`
+        : `Rollback attempted for job ${jobId} after the ${failedStep} step failed, but the restore did not complete; the backup file still holds the previous content.`,
+      metadata: [
+        { name: "step", value: "rollback" },
+        { name: "failedStep", value: String(failedStep) },
+        { name: "restored", value: restored },
+        { name: "reloadAfterRestore", value: reloadNote },
+      ],
+    }),
+  ]);
+
+  return restored
+    ? { rolledBack: true, reason: null }
+    : { rolledBack: false, reason: "restore write failed; backup retained" };
+}
+
+/**
+ * Appends a rollback disposition note to a failed/rejected tail outcome's
+ * errorMessage so the reported result states what is on disk.
+ *
+ * @param {object} outcome reportResult fields
+ * @param {{ rolledBack: boolean, reason: string|null }} rollback
+ * @returns {object}
+ */
+function withRollbackNote(outcome, rollback) {
+  const note = rollback.rolledBack
+    ? "rolled back to the previous certificate"
+    : `not rolled back: ${rollback.reason}`;
+  return {
+    ...outcome,
+    errorMessage: boundErrorMessage(`${outcome.errorMessage} (${note})`),
+  };
+}
+
+/**
  * Shared deploy -> optional reload -> verify tail used by both renew and
  * deploy actions. Reports per-step evidence (deployment.updated with the
  * deploy module's metrics counters, validation.passed/failed for reload
@@ -888,7 +1013,16 @@ async function runDeployReloadVerify({
   // command profile refs resolve through the agent-local allowlist.
   const reloadOutcome = await maybeReloadForJob({ job, jobId, policyEngine, client, log });
   if (reloadOutcome !== null && reloadOutcome.status !== "succeeded") {
-    return reloadOutcome;
+    const rollback = await rollbackAfterFailedTail({
+      job,
+      jobId,
+      policyEngine,
+      client,
+      deployResult,
+      failedStep: "reload",
+      log,
+    });
+    return withRollbackNote(reloadOutcome, rollback);
   }
 
   // Verify step: always fingerprint the deployed PEM; probe the live
@@ -897,6 +1031,41 @@ async function runDeployReloadVerify({
   const fingerprint = computeCertificateFingerprint(deployedPem);
   let verifySummary = `Verified deployed certificate fingerprint for job ${jobId}.`;
   if (typeof job.verifyHost === "string" && job.verifyHost.length > 0) {
+    // Authorization gate: verifyHost/verifyPort are job-controlled and
+    // direct the agent to open a TLS connection, so the destination must
+    // pass agent-local policy (metadata/link-local hard-denied, loopback
+    // and off-target hosts require an explicit allowlist entry).
+    const destinationVerdict = policyEngine.checkVerifyHost(job.verifyHost, {
+      targetReference: job?.target?.reference,
+    });
+    if (!destinationVerdict.allowed) {
+      await reportStepEvidence(client, jobId, [
+        buildEvidenceItem({
+          eventType: "validation.failed",
+          observedAt: new Date().toISOString(),
+          summary: `Verify step rejected for job ${jobId}: the verify destination is not authorized by agent-local policy.`,
+          metadata: [{ name: "step", value: "verify" }],
+        }),
+      ]);
+      const rollback = await rollbackAfterFailedTail({
+        job,
+        jobId,
+        policyEngine,
+        client,
+        deployResult,
+        failedStep: "verify-authorization",
+        log,
+      });
+      return withRollbackNote(
+        {
+          status: "rejected",
+          rejectionReason: destinationVerdict.rejectionReason,
+          errorMessage: boundErrorMessage(destinationVerdict.detail),
+        },
+        rollback,
+      );
+    }
+
     const probe = await verifyDeployedCertificate({
       host: job.verifyHost,
       port: typeof job.verifyPort === "number" ? job.verifyPort : undefined,
@@ -912,12 +1081,24 @@ async function runDeployReloadVerify({
           metadata: [{ name: "step", value: "verify" }],
         }),
       ]);
-      return {
-        status: "failed",
-        errorMessage: boundErrorMessage(
-          "verify step failed: live endpoint does not serve the deployed certificate",
-        ),
-      };
+      const rollback = await rollbackAfterFailedTail({
+        job,
+        jobId,
+        policyEngine,
+        client,
+        deployResult,
+        failedStep: "verify",
+        log,
+      });
+      return withRollbackNote(
+        {
+          status: "failed",
+          errorMessage: boundErrorMessage(
+            "verify step failed: live endpoint does not serve the deployed certificate",
+          ),
+        },
+        rollback,
+      );
     }
     verifySummary = `Verified deployed certificate fingerprint for job ${jobId} against live endpoint.`;
   }
@@ -1171,11 +1352,18 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
   // Trust-on-first-use pinning (ADR-0003): when the register response
   // carries the control plane's job-signing key info, persist it so every
   // later run verifies jobs against the same key. Public material only.
+  // allowRepin: this IS the explicit registration flow, the only place a
+  // pin rotation is legitimate (a fresh bootstrap token was presented);
+  // writeSigningKeyPin refuses silent re-pins everywhere else.
   if (registration.signingKeyId && registration.signingPublicKeyPem) {
-    writeSigningKeyPin(configDir, {
-      signingKeyId: registration.signingKeyId,
-      signingPublicKeyPem: registration.signingPublicKeyPem,
-    });
+    writeSigningKeyPin(
+      configDir,
+      {
+        signingKeyId: registration.signingKeyId,
+        signingPublicKeyPem: registration.signingPublicKeyPem,
+      },
+      { allowRepin: true },
+    );
   }
   return registration.agentId;
 }
@@ -1218,10 +1406,18 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
   }
+  const clockEstimator = createClockOffsetEstimator();
   let replayCache;
   try {
     replayCache = createReplayCache({
       storePath: config.execution.replayStorePath,
+      // Retention must cover the same tolerance tail checkJobTimeWindow
+      // accepts (expiresAt + tolerance), and the sweep must run on the
+      // same offset-adjusted timeline as the acceptance decision --
+      // otherwise a nonce could be evicted while its job is still
+      // acceptable, reopening the replay window.
+      retentionToleranceMs: DEFAULT_TIME_WINDOW_TOLERANCE_MS,
+      now: () => Date.now() + (clockEstimator.getOffsetMs() ?? 0),
     });
   } catch (err) {
     throw new Error(
@@ -1235,7 +1431,7 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
     enabled: true,
     execution: config.execution,
     replayCache,
-    clockEstimator: createClockOffsetEstimator(),
+    clockEstimator,
     pinnedSigningKey: config.pinnedSigningKey,
     acmeExecFileImpl,
   };

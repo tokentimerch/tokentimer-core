@@ -678,6 +678,67 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.match(deployResult.errorMessage, /certificatePem/);
   });
 
+  it("rejects an unauthorized verify destination after deploy and rolls back to the previous certificate", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const fakeCertPem = (seed) => {
+      const body = Buffer.from(`fake-der-${seed}`).toString("base64");
+      return `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----\n`;
+    };
+    const certPath = path.join(workDir, "tls", "cert.pem");
+    fs.mkdirSync(path.dirname(certPath), { recursive: true });
+    const previousPem = fakeCertPem("previous");
+    const newPem = fakeCertPem("new");
+    fs.writeFileSync(certPath, previousPem);
+
+    const job = makeSignedJob({
+      jobId: "job-verify-gate",
+      action: "deploy",
+      certificatePem: newPem,
+      certPath,
+      // Metadata-endpoint class destination: hard-denied by policy no
+      // matter what the allowlist says.
+      verifyHost: "169.254.169.254",
+    });
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(outcome.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+
+    // The deploy happened first, then the verify gate rejected and the
+    // previous certificate was restored on disk.
+    assert.equal(fs.readFileSync(certPath, "utf8"), previousPem);
+
+    const result = client.calls.reportResult.find((r) => r.jobId === "job-verify-gate");
+    assert.match(result.errorMessage, /rolled back to the previous certificate/);
+
+    const allItems = client.calls.reportEvidence.flatMap((c) => c.evidenceItems);
+    assert.ok(
+      allItems.some(
+        (item) =>
+          item.eventType === "validation.failed" &&
+          item.metadata.some((m) => m.name === "step" && m.value === "verify"),
+      ),
+      "expected a validation.failed verify-step evidence item",
+    );
+    assert.ok(
+      allItems.some(
+        (item) =>
+          item.eventType === "deployment.updated" &&
+          item.metadata.some((m) => m.name === "step" && m.value === "rollback") &&
+          item.metadata.some((m) => m.name === "restored" && m.value === true),
+      ),
+      "expected a rollback evidence item with restored=true",
+    );
+  });
+
   it("strictly rejects a signed-dispatch job when executionContext is null", async () => {
     const client = createRecordingClient();
     const job = makeSignedJob(); // signed-dispatch fields are not valid bootstrap input

@@ -41,6 +41,11 @@ const PENDING_REGISTRATION_FILE_NAME = "registration.pending.json";
 const SIGNING_KEY_PIN_FILE_NAME = "signing-key-pin.json";
 
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+// Same character/length policy as the protocol validator's key-id bound;
+// enforced locally too so writeSigningKeyPin is safe regardless of caller.
+const SIGNING_KEY_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+// Mirrors the protocol validator's registration-response PEM bound.
+const MAX_SIGNING_KEY_PEM_BYTES = 8192;
 const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const CREDENTIAL_SHAPE_PATTERN =
   /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-]{16,1024})$/;
@@ -589,23 +594,51 @@ function writeAgentIdentity(configDir, { agentId }) {
  * material, not a secret, so storing it on disk is safe; the file still
  * follows the module's 0600-in-0700-dir convention so only the agent user
  * can replace the pin (integrity, not confidentiality).
+ *
+ * Hardening (all fail loudly):
+ *   - the PEM must parse via crypto.createPublicKey AND be Ed25519
+ *     (ADR-0003 mandates Ed25519 job signing; pinning any other key type
+ *     would soft-reject every job as job_integrity_failed, which looks
+ *     like an attack instead of the misconfiguration it is);
+ *   - signingKeyId and PEM sizes are bounded locally (not only by the
+ *     protocol validator upstream);
+ *   - an existing pin path that is a symlink or non-regular file is
+ *     refused (integrity of the pin is the whole point of the file);
+ *   - overwriting an existing pin with a DIFFERENT key requires an
+ *     explicit allowRepin flag (re-registration is the only flow allowed
+ *     to rotate the pin; a silent overwrite would let any code path
+ *     re-pin an attacker-supplied key). Rewriting the identical pin is a
+ *     no-op-equivalent and stays allowed.
+ *
  * @param {string} configDir
  * @param {{signingKeyId: string, signingPublicKeyPem: string}} pin
+ * @param {{allowRepin?: boolean}} [options]
  * @returns {void}
  */
-function writeSigningKeyPin(configDir, { signingKeyId, signingPublicKeyPem }) {
-  if (typeof signingKeyId !== "string" || signingKeyId.length === 0) {
+function writeSigningKeyPin(
+  configDir,
+  { signingKeyId, signingPublicKeyPem },
+  { allowRepin = false } = {},
+) {
+  if (
+    typeof signingKeyId !== "string" ||
+    !SIGNING_KEY_ID_PATTERN.test(signingKeyId)
+  ) {
     throw new Error(
-      "tokentimer-agent: signingKeyId must be a non-empty string, got: " +
+      "tokentimer-agent: signingKeyId must be a 1-128 char string of " +
+        "[A-Za-z0-9_.:-], got: " +
         JSON.stringify(signingKeyId),
     );
   }
   if (
     typeof signingPublicKeyPem !== "string" ||
+    signingPublicKeyPem.length === 0 ||
+    signingPublicKeyPem.length > MAX_SIGNING_KEY_PEM_BYTES ||
     !signingPublicKeyPem.includes("BEGIN PUBLIC KEY")
   ) {
     throw new Error(
       "tokentimer-agent: signingPublicKeyPem must be a PEM-encoded PUBLIC key " +
+        `of at most ${MAX_SIGNING_KEY_PEM_BYTES} bytes ` +
         "(refusing to pin anything that does not look like public key material)",
     );
   }
@@ -615,19 +648,60 @@ function writeSigningKeyPin(configDir, { signingKeyId, signingPublicKeyPem }) {
         "private key material",
     );
   }
+
+  // Parse-and-type check: the pin must be a well-formed Ed25519 public key
+  // NOW, at write time, not when the first job soft-rejects.
+  let parsedKey;
+  try {
+    parsedKey = crypto.createPublicKey(signingPublicKeyPem);
+  } catch (err) {
+    throw new Error(
+      `tokentimer-agent: signingPublicKeyPem does not parse as a public key: ${err.message}`,
+    );
+  }
+  if (parsedKey.asymmetricKeyType !== "ed25519") {
+    throw new Error(
+      "tokentimer-agent: signingPublicKeyPem must be an Ed25519 public key " +
+        `(ADR-0003), got ${JSON.stringify(parsedKey.asymmetricKeyType)}`,
+    );
+  }
+
   ensureConfigDir(configDir);
 
   const pinPath = path.join(configDir, SIGNING_KEY_PIN_FILE_NAME);
-  const payload = { signingKeyId, publicKeyPem: signingPublicKeyPem };
-  fs.writeFileSync(pinPath, `${JSON.stringify(payload, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+
+  // Refuse symlinked/special pin files and silent re-pins to a different key.
+  let existingStats = null;
   try {
-    fs.chmodSync(pinPath, 0o600);
-  } catch (_err) {
-    // Best-effort on win32; see the comment in ensureConfigDir for rationale.
+    existingStats = fs.lstatSync(pinPath);
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") throw err;
   }
+  if (existingStats !== null) {
+    if (existingStats.isSymbolicLink() || !existingStats.isFile()) {
+      throw new Error(
+        `tokentimer-agent: signing key pin path ${pinPath} exists but is ` +
+          "not a regular file (symlink or special file); refusing to write " +
+          "the pin through it",
+      );
+    }
+    const existingPin = readSigningKeyPin(configDir);
+    const samePin =
+      existingPin !== null &&
+      existingPin.signingKeyId === signingKeyId &&
+      existingPin.publicKeyPem === signingPublicKeyPem;
+    if (!samePin && !allowRepin) {
+      throw new Error(
+        "tokentimer-agent: a different signing key is already pinned " +
+          `(pinned id ${JSON.stringify(existingPin?.signingKeyId)}, new id ` +
+          `${JSON.stringify(signingKeyId)}); refusing to silently re-pin. ` +
+          "Pass allowRepin: true only from an explicit re-registration flow.",
+      );
+    }
+  }
+
+  const payload = { signingKeyId, publicKeyPem: signingPublicKeyPem };
+  writeFileAtomically(pinPath, `${JSON.stringify(payload, null, 2)}\n`, 0o600);
 }
 
 /**

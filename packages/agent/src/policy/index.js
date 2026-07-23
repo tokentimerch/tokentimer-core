@@ -39,6 +39,7 @@
  */
 
 const path = require("node:path");
+const net = require("node:net");
 
 /**
  * Shell metacharacters disallowed in any argv element of an allowlisted
@@ -218,12 +219,18 @@ function loadPolicyConfig(rawConfigObject) {
     rawConfigObject.allowedDnsProviders,
   );
 
+  const allowedVerifyHosts = validateStringList(
+    "allowedVerifyHosts",
+    rawConfigObject.allowedVerifyHosts,
+  );
+
   return {
     allowedCommands,
     allowedPaths,
     allowedCaEndpoints,
     allowedDnsZones,
     allowedDnsProviders,
+    allowedVerifyHosts,
   };
 }
 
@@ -294,6 +301,59 @@ function isZoneCoveredBy(zone, allowedZone) {
     normalizedZone === normalizedAllowed ||
     normalizedZone.endsWith(`.${normalizedAllowed}`)
   );
+}
+
+/**
+ * Classifies a verify destination host for the checkVerifyHost dimension.
+ *
+ * Returns one of:
+ *   "denied"    -- never probeable, regardless of any allowlist: the
+ *                  unspecified addresses, IPv4/IPv6 link-local (which
+ *                  includes every cloud metadata endpoint such as
+ *                  169.254.169.254), multicast, and broadcast. There is no
+ *                  legitimate TLS certificate deployment on these.
+ *   "loopback"  -- 127.0.0.0/8, ::1, and localhost names. Probing the
+ *                  agent's own host CAN be legitimate (a local nginx), but
+ *                  only when the operator explicitly allowlists it.
+ *   "ordinary"  -- everything else (public/private IPs and hostnames).
+ *
+ * IPv4-mapped IPv6 (::ffff:a.b.c.d) is unwrapped and classified as its
+ * embedded IPv4 address so the mapping cannot bypass the deny list.
+ *
+ * @param {string} host
+ * @returns {"denied"|"loopback"|"ordinary"}
+ */
+function classifyVerifyHost(host) {
+  // Bare IPv6 in URL-style brackets: strip for classification.
+  const bare = host.startsWith("[") && host.endsWith("]")
+    ? host.slice(1, -1)
+    : host;
+  const lowered = bare.toLowerCase();
+
+  const ipVersion = net.isIP(lowered);
+  if (ipVersion === 4) {
+    const octets = lowered.split(".").map(Number);
+    if (octets[0] === 127) return "loopback";
+    if (octets[0] === 0) return "denied"; // 0.0.0.0/8 unspecified
+    if (octets[0] === 169 && octets[1] === 254) return "denied"; // link-local / metadata
+    if (octets[0] >= 224) return "denied"; // multicast + reserved + broadcast
+    return "ordinary";
+  }
+  if (ipVersion === 6) {
+    // IPv4-mapped: classify the embedded IPv4 address.
+    const mappedMatch = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lowered);
+    if (mappedMatch) return classifyVerifyHost(mappedMatch[1]);
+    if (lowered === "::" || lowered === "0:0:0:0:0:0:0:0") return "denied";
+    if (lowered === "::1" || lowered === "0:0:0:0:0:0:0:1") return "loopback";
+    if (/^fe[89ab]/.test(lowered)) return "denied"; // fe80::/10 link-local
+    if (lowered.startsWith("ff")) return "denied"; // ff00::/8 multicast
+    return "ordinary";
+  }
+
+  if (lowered === "localhost" || lowered.endsWith(".localhost")) {
+    return "loopback";
+  }
+  return "ordinary";
 }
 
 /**
@@ -429,6 +489,88 @@ function createPolicyEngine(policyConfig, { declaredTargetSelectors = [] } = {})
   }
 
   /**
+   * Verify-destination authorization for the post-deploy live probe.
+   *
+   * A signed job's verifyHost/verifyPort direct the agent to open a TLS
+   * connection, so the destination must be authorized agent-locally like
+   * every other job-controlled reference (ADR-0002: agent-local policy
+   * always wins over control-plane intent). Decision order:
+   *
+   *   1. hard deny (never probeable, regardless of allowlists): the
+   *      unspecified addresses, IPv4/IPv6 link-local (including cloud
+   *      metadata endpoints such as 169.254.169.254), multicast/broadcast;
+   *   2. loopback (127/8, ::1, localhost): allowed only when explicitly
+   *      present in allowedVerifyHosts;
+   *   3. otherwise allowed when the host equals the job's own
+   *      target.reference (case-insensitive; verifying the domain being
+   *      renewed is the normal case and needs no extra config), or when it
+   *      is covered by allowedVerifyHosts (exact match for IPs,
+   *      dot-boundary suffix match for hostnames, same semantics as DNS
+   *      zone coverage).
+   *
+   * Uses the target_out_of_scope rejection reason: the destination is
+   * outside this agent's authorized verification scope.
+   *
+   * @param {string} host verify destination from the job
+   * @param {{ targetReference?: string }} [context]
+   * @returns {{ allowed: true } | ReturnType<typeof reject>}
+   */
+  function checkVerifyHost(host, { targetReference } = {}) {
+    if (!isNonEmptyString(host) || host.length > 255) {
+      return reject(
+        REJECTION_REASONS.TARGET_OUT_OF_SCOPE,
+        "Verify destination host must be a non-empty string of at most 255 characters.",
+      );
+    }
+
+    const classification = classifyVerifyHost(host);
+    if (classification === "denied") {
+      return reject(
+        REJECTION_REASONS.TARGET_OUT_OF_SCOPE,
+        `Verify destination "${host}" is a link-local, unspecified, or ` +
+          "multicast address and can never be probed (metadata-endpoint " +
+          "class destinations are always denied).",
+      );
+    }
+
+    const loweredHost = host.toLowerCase();
+    const allowlisted = policyConfig.allowedVerifyHosts.some((allowedHost) => {
+      const loweredAllowed = allowedHost.toLowerCase();
+      if (loweredAllowed === loweredHost) return true;
+      // Hostname entries also cover subdomains at a dot boundary; IP
+      // entries only ever match exactly (net.isIP guards the suffix rule).
+      return (
+        net.isIP(loweredAllowed) === 0 &&
+        net.isIP(loweredHost) === 0 &&
+        isZoneCoveredBy(loweredHost, loweredAllowed)
+      );
+    });
+
+    if (classification === "loopback") {
+      if (allowlisted) return { allowed: true };
+      return reject(
+        REJECTION_REASONS.TARGET_OUT_OF_SCOPE,
+        `Verify destination "${host}" is a loopback address, which is only ` +
+          "probeable when explicitly present in allowedVerifyHosts.",
+      );
+    }
+
+    if (
+      isNonEmptyString(targetReference) &&
+      targetReference.toLowerCase() === loweredHost
+    ) {
+      return { allowed: true };
+    }
+    if (allowlisted) return { allowed: true };
+
+    return reject(
+      REJECTION_REASONS.TARGET_OUT_OF_SCOPE,
+      `Verify destination "${host}" neither matches the job's target ` +
+        "reference nor any allowedVerifyHosts entry.",
+    );
+  }
+
+  /**
    * Exact-match check against the declared target selectors. Selector
    * *pattern* matching (globs, wildcards, etc.), if ever needed, is out of
    * scope for the agent bootstrap and is left as a future extension.
@@ -558,6 +700,7 @@ function createPolicyEngine(policyConfig, { declaredTargetSelectors = [] } = {})
     checkCaEndpoint,
     checkDnsZone,
     checkDnsProvider,
+    checkVerifyHost,
     checkTargetScope,
     checkNoKeyExport,
     evaluateJob,

@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const {
   resolveConfigDir,
@@ -445,8 +446,12 @@ describe("loadAgentConfig", () => {
 });
 
 describe("signing key pin round trip", () => {
-  const SAMPLE_PUBLIC_KEY_PEM =
-    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfakefakefakefakefakefakefakefake\n-----END PUBLIC KEY-----\n";
+  // A real Ed25519 public key: writeSigningKeyPin parses the PEM and
+  // enforces the key type at write time (ADR-0003).
+  const SAMPLE_PUBLIC_KEY_PEM = crypto
+    .generateKeyPairSync("ed25519")
+    .publicKey.export({ type: "spki", format: "pem" })
+    .toString();
 
   it("returns null from readSigningKeyPin when no pin is stored", () => {
     const dir = makeTempConfigDir();
@@ -508,7 +513,7 @@ describe("signing key pin round trip", () => {
           signingKeyId: "",
           signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
         }),
-      /signingKeyId must be a non-empty string/,
+      /signingKeyId must be a 1-128 char string/,
     );
     assert.throws(
       () =>
@@ -517,6 +522,87 @@ describe("signing key pin round trip", () => {
           signingPublicKeyPem: "not-a-pem",
         }),
       /PEM-encoded PUBLIC key/,
+    );
+  });
+
+  it("rejects a public key that is not Ed25519", () => {
+    const dir = makeTempConfigDir();
+    const rsaPublicPem = crypto
+      .generateKeyPairSync("rsa", { modulusLength: 2048 })
+      .publicKey.export({ type: "spki", format: "pem" })
+      .toString();
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "signing-key-1",
+          signingPublicKeyPem: rsaPublicPem,
+        }),
+      /must be an Ed25519 public key/,
+    );
+  });
+
+  it("rejects an unparseable PEM at write time", () => {
+    const dir = makeTempConfigDir();
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "signing-key-1",
+          signingPublicKeyPem:
+            "-----BEGIN PUBLIC KEY-----\nnot/base64/key/material\n-----END PUBLIC KEY-----\n",
+        }),
+      /does not parse as a public key/,
+    );
+  });
+
+  it("refuses a silent re-pin to a different key without allowRepin", () => {
+    const dir = makeTempConfigDir();
+    writeSigningKeyPin(dir, {
+      signingKeyId: "signing-key-1",
+      signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+    });
+
+    const otherKeyPem = crypto
+      .generateKeyPairSync("ed25519")
+      .publicKey.export({ type: "spki", format: "pem" })
+      .toString();
+
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "signing-key-2",
+          signingPublicKeyPem: otherKeyPem,
+        }),
+      /refusing to silently re-pin/,
+    );
+
+    // Rewriting the identical pin stays allowed (idempotent).
+    writeSigningKeyPin(dir, {
+      signingKeyId: "signing-key-1",
+      signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+    });
+
+    // An explicit re-registration flow may rotate the pin.
+    writeSigningKeyPin(
+      dir,
+      { signingKeyId: "signing-key-2", signingPublicKeyPem: otherKeyPem },
+      { allowRepin: true },
+    );
+    assert.equal(readSigningKeyPin(dir).signingKeyId, "signing-key-2");
+  });
+
+  it("refuses to write the pin through a symlink", { skip: IS_WIN32 }, () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const decoyPath = path.join(dir, "decoy.json");
+    fs.writeFileSync(decoyPath, "{}", "utf8");
+    fs.symlinkSync(decoyPath, path.join(dir, "signing-key-pin.json"));
+    assert.throws(
+      () =>
+        writeSigningKeyPin(dir, {
+          signingKeyId: "signing-key-1",
+          signingPublicKeyPem: SAMPLE_PUBLIC_KEY_PEM,
+        }),
+      /not a regular file/,
     );
   });
 

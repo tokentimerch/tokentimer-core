@@ -98,8 +98,46 @@ function ensureKeyDir(keyPath) {
 }
 
 /**
+ * Inspects keyPath without following symlinks. Returns "absent" when the
+ * path does not exist. Throws when the path exists but is a symlink or any
+ * non-regular file: a symlink at the key path is a classic
+ * swap-the-destination attack (write 0600 key bytes through a link into an
+ * attacker-chosen location), so it is refused outright rather than
+ * followed or silently replaced.
+ * @param {string} keyPath
+ * @returns {"absent"|"regular"}
+ */
+function classifyExistingKeyPath(keyPath) {
+  let stats;
+  try {
+    stats = fs.lstatSync(keyPath);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return "absent";
+    throw buildError(
+      `tokentimer-agent keys: could not inspect key path ${keyPath}: ${err.message}`,
+    );
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw buildError(
+      `tokentimer-agent keys: key path ${keyPath} exists but is not a ` +
+        "regular file (symlink or special file); refusing to write key " +
+        "material through it",
+    );
+  }
+  return "regular";
+}
+
+/**
  * Generates a keypair, writes the private key PEM (PKCS#8) to keyPath with
  * mode 0600 (parent dir 0700), and returns ONLY public material.
+ *
+ * Write discipline:
+ *   - fresh key: exclusive create (flag "wx"), so a file (or symlink)
+ *     racing into existence between the existence check and the write
+ *     fails the write instead of being followed/clobbered;
+ *   - rotation (overwrite: true): written to a 0600 temp file in the same
+ *     directory and renamed over the destination, so a crash mid-rotation
+ *     can never leave a truncated key file.
  *
  * The private key PEM is exported into a Buffer, written from that Buffer,
  * and the Buffer is zeroized (fill(0)) immediately after the write. See the
@@ -123,7 +161,10 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
     );
   }
 
-  if (!overwrite && fs.existsSync(keyPath)) {
+  // lstat-based classification: throws on symlinks/special files whether or
+  // not overwrite was requested (see classifyExistingKeyPath).
+  const existing = classifyExistingKeyPath(keyPath);
+  if (!overwrite && existing === "regular") {
     throw buildError(
       `tokentimer-agent keys: refusing to overwrite existing key file at ${keyPath} ` +
         "(pass overwrite: true only when a rekey is explicitly intended)",
@@ -141,7 +182,39 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
     privateKey.export({ type: "pkcs8", format: "pem" }),
   );
   try {
-    fs.writeFileSync(keyPath, privatePemBuffer, { mode: 0o600 });
+    if (existing === "regular") {
+      // Rotation: atomic replace via same-directory temp file + rename.
+      const tempPath = path.join(
+        path.dirname(keyPath),
+        `.${path.basename(keyPath)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`,
+      );
+      let fd;
+      try {
+        fd = fs.openSync(tempPath, "wx", 0o600);
+        fs.writeFileSync(fd, privatePemBuffer);
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = undefined;
+        fs.renameSync(tempPath, keyPath);
+      } catch (err) {
+        if (fd !== undefined) {
+          try {
+            fs.closeSync(fd);
+          } catch (_err) {
+            // Best-effort close before cleanup.
+          }
+        }
+        try {
+          fs.unlinkSync(tempPath);
+        } catch (_err) {
+          // The temp file may already have been renamed or never created.
+        }
+        throw err;
+      }
+    } else {
+      // Fresh key: exclusive create; never follows a racing symlink.
+      fs.writeFileSync(keyPath, privatePemBuffer, { mode: 0o600, flag: "wx" });
+    }
     try {
       fs.chmodSync(keyPath, 0o600);
     } catch (_err) {

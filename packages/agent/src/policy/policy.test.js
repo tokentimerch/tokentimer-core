@@ -414,3 +414,105 @@ test("evaluateJob falls through to path rejection when command passes", () => {
   });
   assert.equal(result.rejectionReason, REJECTION_REASONS.PATH_NOT_ALLOWLISTED);
 });
+
+// ---------------------------------------------------------------------------
+// checkVerifyHost
+// ---------------------------------------------------------------------------
+
+function verifyEngine(allowedVerifyHosts = []) {
+  const config = loadPolicyConfig({
+    ...baseRawConfig(),
+    allowedVerifyHosts,
+  });
+  return createPolicyEngine(config, {
+    declaredTargetSelectors: ["host:web-01"],
+  });
+}
+
+test("checkVerifyHost allows the job's own target reference without extra config", () => {
+  const engine = verifyEngine();
+  assert.deepEqual(
+    engine.checkVerifyHost("web.example.com", { targetReference: "web.example.com" }),
+    { allowed: true },
+  );
+  // Case-insensitive match.
+  assert.deepEqual(
+    engine.checkVerifyHost("WEB.Example.COM", { targetReference: "web.example.com" }),
+    { allowed: true },
+  );
+});
+
+test("checkVerifyHost rejects a host matching neither target reference nor allowlist", () => {
+  const engine = verifyEngine();
+  const result = engine.checkVerifyHost("internal-service.corp", {
+    targetReference: "web.example.com",
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+});
+
+test("checkVerifyHost hard-denies metadata/link-local/unspecified/multicast destinations even when allowlisted", () => {
+  const engine = verifyEngine([
+    "169.254.169.254",
+    "0.0.0.0",
+    "::",
+    "fe80::1",
+    "ff02::1",
+    "::ffff:169.254.169.254",
+  ]);
+  for (const host of [
+    "169.254.169.254",
+    "0.0.0.0",
+    "::",
+    "fe80::1",
+    "ff02::1",
+    "::ffff:169.254.169.254",
+    "[fe80::1]",
+  ]) {
+    const result = engine.checkVerifyHost(host, { targetReference: host });
+    assert.equal(result.allowed, false, `expected ${host} to be denied`);
+    assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+  }
+});
+
+test("checkVerifyHost allows loopback only when explicitly allowlisted", () => {
+  const closed = verifyEngine();
+  for (const host of ["127.0.0.1", "::1", "localhost"]) {
+    const result = closed.checkVerifyHost(host, { targetReference: host });
+    assert.equal(result.allowed, false, `expected ${host} to be rejected`);
+    assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+  }
+
+  const open = verifyEngine(["127.0.0.1", "::1", "localhost"]);
+  for (const host of ["127.0.0.1", "::1", "localhost"]) {
+    assert.deepEqual(open.checkVerifyHost(host), { allowed: true });
+  }
+});
+
+test("checkVerifyHost hostname allowlist covers subdomains at a dot boundary only", () => {
+  const engine = verifyEngine(["example.com"]);
+  assert.deepEqual(engine.checkVerifyHost("example.com"), { allowed: true });
+  assert.deepEqual(engine.checkVerifyHost("web.example.com"), { allowed: true });
+
+  const result = engine.checkVerifyHost("evilexample.com");
+  assert.equal(result.allowed, false);
+  assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+});
+
+test("checkVerifyHost IP allowlist entries match exactly, never as suffixes", () => {
+  const engine = verifyEngine(["10.0.0.5"]);
+  assert.deepEqual(engine.checkVerifyHost("10.0.0.5"), { allowed: true });
+
+  const result = engine.checkVerifyHost("110.0.0.5");
+  assert.equal(result.allowed, false);
+  assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+});
+
+test("checkVerifyHost rejects empty, non-string, and oversized hosts", () => {
+  const engine = verifyEngine(["example.com"]);
+  for (const host of ["", undefined, null, 42, "a".repeat(256)]) {
+    const result = engine.checkVerifyHost(host);
+    assert.equal(result.allowed, false);
+    assert.equal(result.rejectionReason, REJECTION_REASONS.TARGET_OUT_OF_SCOPE);
+  }
+});

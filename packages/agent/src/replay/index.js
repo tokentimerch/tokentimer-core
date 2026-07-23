@@ -41,11 +41,23 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const REPLAY_REJECTION_REASON = "job_replay_rejected";
 
 const STORE_SCHEMA_VERSION = 1;
 const DEFAULT_MAX_ENTRIES = 5000;
+
+/**
+ * Default retention slack past an entry's expiresAt, mirroring the signing
+ * module's DEFAULT_TIME_WINDOW_TOLERANCE_MS. checkJobTimeWindow accepts a
+ * job until expiresAt + tolerance, so the replay cache must retain a
+ * consumed nonce for at least that same tolerance: evicting at bare
+ * expiresAt would open a real replay window during (expiresAt,
+ * expiresAt + tolerance]. Wiring (src/index.js) passes the signing module's
+ * constant explicitly; this default only guards direct constructions.
+ */
+const DEFAULT_RETENTION_TOLERANCE_MS = 30000;
 
 /**
  * @param {string} detail
@@ -166,8 +178,14 @@ function loadStore(storePath) {
  * @param {number} [params.maxEntries=5000] hard bound on stored entries;
  *   when reached (after sweeping expired entries), new jobs are rejected
  *   rather than evicting unexpired nonces (see module doc for why)
- * @param {() => number} [params.now] clock injection for tests; defaults to
- *   Date.now
+ * @param {number} [params.retentionToleranceMs=30000] extra retention past
+ *   an entry's expiresAt before the sweep may evict it; MUST be >= the
+ *   signing module's time-window tolerance (see
+ *   DEFAULT_RETENTION_TOLERANCE_MS for why)
+ * @param {() => number} [params.now] clock injection; defaults to Date.now.
+ *   Wiring should pass an offset-adjusted clock (local time + the clock
+ *   module's estimated server offset) so sweep eviction uses the same
+ *   timeline as checkJobTimeWindow's acceptance decision.
  * @returns {{
  *   check: (entry: { nonce: string, jobId: string, expiresAt: number|string }) =>
  *     ({ allowed: true } | { allowed: false, rejectionReason: string, detail: string }),
@@ -180,6 +198,7 @@ function loadStore(storePath) {
 function createReplayCache({
   storePath,
   maxEntries = DEFAULT_MAX_ENTRIES,
+  retentionToleranceMs = DEFAULT_RETENTION_TOLERANCE_MS,
   now = Date.now,
 } = {}) {
   if (typeof storePath !== "string" || storePath.length === 0) {
@@ -188,6 +207,12 @@ function createReplayCache({
   if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
     throw new Error(
       "replay: createReplayCache maxEntries must be a positive integer",
+    );
+  }
+  if (!Number.isFinite(retentionToleranceMs) || retentionToleranceMs < 0) {
+    throw new Error(
+      "replay: createReplayCache retentionToleranceMs must be a " +
+        "non-negative finite number",
     );
   }
   if (typeof now !== "function") {
@@ -206,10 +231,36 @@ function createReplayCache({
       schemaVersion: STORE_SCHEMA_VERSION,
       entries: [...entries.values()],
     });
-    fs.writeFileSync(storePath, `${serialized}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
+    // Atomic write (temp file + rename in the same directory, content
+    // fsynced before the rename): a crash mid-write must never leave a
+    // torn store file, because the fail-loud loader would then refuse to
+    // start the agent until an operator intervenes.
+    const tempPath = `${storePath}.${process.pid}.${crypto
+      .randomBytes(8)
+      .toString("hex")}.tmp`;
+    let fd;
+    try {
+      fd = fs.openSync(tempPath, "wx", 0o600);
+      fs.writeFileSync(fd, `${serialized}\n`, "utf8");
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fd = undefined;
+      fs.renameSync(tempPath, storePath);
+    } catch (err) {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch (_err) {
+          // Best-effort close before cleanup.
+        }
+      }
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (_err) {
+        // The temp file may already have been renamed or never created.
+      }
+      throw err;
+    }
     try {
       fs.chmodSync(storePath, 0o600);
     } catch (_err) {
@@ -218,13 +269,15 @@ function createReplayCache({
   }
 
   /**
-   * Drops entries whose expiresAt has passed. Expired nonces are safe to
-   * forget: checkJobTimeWindow independently rejects any job past its
-   * expiresAt (plus tolerance), so an expired nonce can never be replayed
-   * successfully anyway. This is what keeps the store's growth bounded in
-   * normal operation.
+   * Drops entries whose expiresAt has passed by MORE than the retention
+   * tolerance. The tolerance matters: checkJobTimeWindow accepts jobs
+   * until expiresAt + tolerance, so an entry evicted at bare expiresAt
+   * could be replayed during the tolerance tail. Only entries the signing
+   * module could no longer accept under ANY circumstance are forgotten.
+   * This is what keeps the store's growth bounded in normal operation.
    *
-   * @param {number} [nowMs] defaults to the injected clock
+   * @param {number} [nowMs] defaults to the injected clock (which wiring
+   *   makes offset-adjusted; see createReplayCache's now param)
    * @returns {number} number of entries removed
    */
   function sweep(nowMs = now()) {
@@ -233,7 +286,7 @@ function createReplayCache({
     }
     let removed = 0;
     for (const [key, entry] of entries) {
-      if (entry.expiresAtMs < nowMs) {
+      if (entry.expiresAtMs + retentionToleranceMs < nowMs) {
         entries.delete(key);
         removed += 1;
       }
@@ -308,5 +361,6 @@ function createReplayCache({
 module.exports = {
   REPLAY_REJECTION_REASON,
   DEFAULT_MAX_ENTRIES,
+  DEFAULT_RETENTION_TOLERANCE_MS,
   createReplayCache,
 };

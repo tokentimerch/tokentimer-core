@@ -188,6 +188,42 @@ describe("generateKeyPairToFile", () => {
     assert.notEqual(second.publicKeyPem, first.publicKeyPem);
   });
 
+  it("refuses to write through a symlink at the key path", { skip: IS_WIN32 }, () => {
+    const dir = makeTempKeyDir();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const realTarget = path.join(dir, "attacker-target.pem");
+    fs.writeFileSync(realTarget, "sentinel", { mode: 0o600 });
+    const linkPath = path.join(dir, "linked.key.pem");
+    fs.symlinkSync(realTarget, linkPath);
+
+    for (const overwrite of [false, true]) {
+      assert.throws(
+        () => generateKeyPairToFile({ keyPath: linkPath, overwrite }),
+        /not a\s+regular file|refusing to write key/,
+      );
+    }
+    // The symlink target was never clobbered with key material.
+    assert.equal(fs.readFileSync(realTarget, "utf8"), "sentinel");
+  });
+
+  it("rotation replaces the key atomically and leaves no temp files behind", () => {
+    const dir = makeTempKeyDir();
+    const keyPath = path.join(dir, "rotate.key.pem");
+    const first = generateKeyPairToFile({ keyPath });
+    const second = generateKeyPairToFile({ keyPath, overwrite: true });
+    assert.notEqual(second.publicKeyPem, first.publicKeyPem);
+
+    // The on-disk key is complete and matches the returned public half.
+    const derivedPublic = crypto
+      .createPublicKey(crypto.createPrivateKey(fs.readFileSync(keyPath, "utf8")))
+      .export({ type: "spki", format: "pem" })
+      .toString();
+    assert.equal(derivedPublic, second.publicKeyPem);
+
+    const leftovers = fs.readdirSync(dir).filter((name) => name.endsWith(".tmp"));
+    assert.deepEqual(leftovers, []);
+  });
+
   it("never includes 'PRIVATE KEY' in a thrown error message", () => {
     const keyPath = path.join(makeTempKeyDir(), "err.key.pem");
     generateKeyPairToFile({ keyPath });
