@@ -38,7 +38,7 @@ function createReaperClient(rows) {
       if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK") {
         return { rows: [] };
       }
-      if (normalized.startsWith("SELECT id, workspace_id, status")) {
+      if (normalized.startsWith("SELECT cj.id, cj.workspace_id")) {
         return { rows };
       }
       return { rows: [] };
@@ -94,24 +94,34 @@ describe("certops maintenance worker", () => {
       log: silentLogger,
     });
 
-    assert.deepStrictEqual(summary, { scanned: 0, requeued: 0, failed: 0 });
+    assert.deepStrictEqual(summary, {
+      scanned: 0,
+      requeued: 0,
+      failed: 0,
+      deferred: 0,
+    });
     assert.strictEqual(client.queries[0].sql, "BEGIN");
     const select = client.queries[1].sql;
-    assert.match(select, /status IN \('claimed', 'running'\)/);
-    assert.match(select, /lease_expires_at < NOW\(\)/);
-    assert.match(select, /FOR UPDATE SKIP LOCKED/);
+    assert.match(select, /cj\.status IN \('claimed', 'running'\)/);
+    assert.match(select, /cj\.lease_expires_at < NOW\(\)/);
+    assert.match(select, /LEFT JOIN certops_agents ca/);
+    assert.match(select, /AS agent_alive/);
+    assert.match(select, /AS past_hard_grace/);
+    assert.match(select, /FOR UPDATE OF cj SKIP LOCKED/);
     assert.strictEqual(client.queries.at(-1).sql, "COMMIT");
   });
 
-  it("requeues claimed jobs with retry budget and clears claim fields with backoff", async () => {
+  it("requeues claimed jobs with retry budget when the agent is gone", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
         id: "job-1",
         workspace_id: "ws-1",
         status: "claimed",
-        attempt_count: 0,
+        attempt_count: 1,
         max_attempts: 3,
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
 
@@ -120,7 +130,12 @@ describe("certops maintenance worker", () => {
       log: silentLogger,
     });
 
-    assert.deepStrictEqual(summary, { scanned: 1, requeued: 1, failed: 0 });
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 1,
+      failed: 0,
+      deferred: 0,
+    });
 
     const update = client.queries.find((q) =>
       q.sql.startsWith("UPDATE certificate_jobs SET status = 'pending'"),
@@ -129,7 +144,9 @@ describe("certops maintenance worker", () => {
     assert.match(update.sql, /claimed_by_agent_id = NULL/);
     assert.match(update.sql, /claim_id = NULL/);
     assert.match(update.sql, /lease_expires_at = NULL/);
-    assert.match(update.sql, /attempt_count = attempt_count \+ 1/);
+    // attempt_count is NOT incremented here: the claim path already
+    // counted this dispatch attempt.
+    assert.doesNotMatch(update.sql, /attempt_count = attempt_count \+ 1/);
     assert.match(update.sql, /next_attempt_at = NOW\(\)/);
     assert.deepStrictEqual(update.params, ["job-1", "60000"]);
 
@@ -145,6 +162,72 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(metadata.backoffMs, 60000);
   });
 
+  it("defers claimed jobs whose agent is still alive within the hard grace", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-alive",
+        workspace_id: "ws-1",
+        status: "claimed",
+        attempt_count: 1,
+        max_attempts: 3,
+        agent_alive: true,
+        past_hard_grace: false,
+      },
+    ]);
+
+    const summary = await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+    });
+
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 0,
+      deferred: 1,
+    });
+    // Deferred rows are left completely untouched this sweep.
+    assert.ok(
+      !client.queries.some((q) => q.sql.startsWith("UPDATE certificate_jobs")),
+      "a deferred job must not be updated",
+    );
+  });
+
+  it("fails alive-but-silent agents past the hard grace without requeue", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-hung",
+        workspace_id: "ws-1",
+        status: "claimed",
+        attempt_count: 1,
+        max_attempts: 3,
+        agent_alive: true,
+        past_hard_grace: true,
+      },
+    ]);
+
+    const summary = await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+    });
+
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 1,
+      deferred: 0,
+    });
+    const update = client.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
+    );
+    assert.ok(update, "expected a fail UPDATE");
+    // The agent may have executed side effects: never requeue, and record
+    // lease_expired (not agent_offline) because the agent is still alive.
+    assert.deepStrictEqual(update.params, ["job-hung", "lease_expired"]);
+  });
+
   it("fails claimed jobs without retry budget as agent_offline", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
@@ -154,6 +237,8 @@ describe("certops maintenance worker", () => {
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
 
@@ -162,14 +247,19 @@ describe("certops maintenance worker", () => {
       log: silentLogger,
     });
 
-    assert.deepStrictEqual(summary, { scanned: 1, requeued: 0, failed: 1 });
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 1,
+      deferred: 0,
+    });
 
     const update = client.queries.find((q) =>
       q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
     );
     assert.ok(update, "expected a fail UPDATE");
-    assert.match(update.sql, /error_code = 'agent_offline'/);
-    assert.deepStrictEqual(update.params, ["job-2"]);
+    assert.match(update.sql, /error_code = \$2/);
+    assert.deepStrictEqual(update.params, ["job-2", "agent_offline"]);
 
     const logInsert = client.queries.find((q) =>
       q.sql.startsWith("INSERT INTO certificate_job_log"),
@@ -189,6 +279,8 @@ describe("certops maintenance worker", () => {
         status: "running",
         attempt_count: 0,
         max_attempts: 3,
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
 
@@ -197,7 +289,12 @@ describe("certops maintenance worker", () => {
       log: silentLogger,
     });
 
-    assert.deepStrictEqual(summary, { scanned: 1, requeued: 0, failed: 1 });
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 1,
+      deferred: 0,
+    });
     const update = client.queries.find((q) =>
       q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
     );
@@ -211,7 +308,7 @@ describe("certops maintenance worker", () => {
       async query(sql, params = []) {
         const normalized = normalizeSql(sql);
         queries.push(normalized);
-        if (normalized.startsWith("SELECT id, workspace_id, status")) {
+        if (normalized.startsWith("SELECT cj.id, cj.workspace_id")) {
           return {
             rows: [
               {
@@ -220,6 +317,8 @@ describe("certops maintenance worker", () => {
                 status: "claimed",
                 attempt_count: 0,
                 max_attempts: 3,
+                agent_alive: false,
+                past_hard_grace: false,
               },
             ],
           };
@@ -274,7 +373,10 @@ describe("certops maintenance worker", () => {
     const update = queries[0];
     assert.match(update.sql, /SET status = 'offline'/);
     assert.match(update.sql, /WHERE status = 'active'/);
-    assert.match(update.sql, /last_seen_at < NOW\(\)/);
+    assert.match(
+      update.sql,
+      /COALESCE\(last_seen_at, created_at\) < NOW\(\)/,
+    );
     assert.deepStrictEqual(update.params, ["600000"]);
 
     assert.strictEqual(warned.length, 1);

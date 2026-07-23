@@ -31,6 +31,10 @@ const {
   invalidateApprovalForClaim,
 } = require("./jobApprovals");
 const { queueCertRenewalFailedAlert } = require("./renewalFailureAlerts");
+const {
+  redactGenericSecrets,
+  redactPrivateKeyMaterial,
+} = require("../../utils/secretMaterial");
 const { logger } = require("../../utils/logger");
 
 // --- Frozen error codes ---
@@ -49,6 +53,11 @@ const CERTOPS_AGENT_RESULT_STATUS_INVALID =
   "CERTOPS_AGENT_RESULT_STATUS_INVALID";
 
 const DEFAULT_JOB_LEASE_SECONDS = 900;
+// The dispatch nonce must stay consumable for the whole window the agent is
+// allowed to work and report: lease + clock-drift tolerance + bounded
+// result-delivery grace. A nonce that expires before the lease would reject
+// legitimate results from long-running (but in-lease) jobs.
+const NONCE_TTL_GRACE_SECONDS = 300;
 
 // result body status -> certificate_jobs terminal status. "rejected" and
 // "blocked" from the agent-protocol resultBody map to the jobs.js statuses
@@ -305,6 +314,20 @@ async function claimJobs({
     // these to 409 / 404 and no job is claimed.
     await lockWorkspace({ client, workspaceId: agent.workspaceId });
 
+    // Claiming is a liveness signal: an agent polling for jobs is alive, so
+    // last_seen_at advances and an 'offline' agent flips back to 'active'.
+    // Without this, a stale-swept agent could keep receiving jobs while
+    // being displayed as offline.
+    await client.query(
+      `UPDATE certops_agents
+          SET last_seen_at = NOW(),
+              status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
+              updated_at = NOW()
+        WHERE id = $1
+          AND status <> 'retired'`,
+      [agent.id],
+    );
+
     if (supportedActions.length === 0) return { jobs: [] };
 
     const selected = await client.query(
@@ -388,6 +411,10 @@ async function claimJobs({
         job: basePayload,
         agentId: agent.id,
         workspaceId: agent.workspaceId,
+        // Nonce validity covers the full lease plus grace so a legitimate
+        // in-lease result can always consume its nonce (see
+        // NONCE_TTL_GRACE_SECONDS).
+        nonceTtlSeconds: leaseSeconds + NONCE_TTL_GRACE_SECONDS,
       });
       jobs.push(signedJob);
     }
@@ -436,7 +463,7 @@ async function ingestResult({
   return await withTransaction(dbPool, async (client) => {
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
-              subject_type, subject_id
+              subject_type, subject_id, error_code, completed_at
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -462,13 +489,34 @@ async function ingestResult({
       );
     }
 
-    // Single-use nonce consumption (replay ledger).
+    // Single-use nonce consumption (replay ledger), bound to the workspace
+    // and the agent the nonce was issued to.
     const nonceOutcome = await consume({
       client,
       nonce: body.nonce,
       jobId: body.jobId,
+      workspaceId: agent.workspaceId,
+      agentRowId: agent.id,
     });
     if (!nonceOutcome?.consumed) {
+      // Idempotent duplicate delivery: the same owner re-sending the exact
+      // terminal outcome it already reported (e.g. a retry after a lost
+      // response) is acknowledged instead of erroring. Anything else stays
+      // a hard rejection.
+      if (
+        nonceOutcome?.code === CERTOPS_NONCE_REPLAYED &&
+        job.status === jobStatus &&
+        job.completed_at
+      ) {
+        return {
+          ok: true,
+          jobId: String(job.id),
+          status: job.status,
+          errorCode: job.error_code || null,
+          completedAt: dateToIso(job.completed_at),
+          duplicate: true,
+        };
+      }
       const error = serviceError(
         "Result nonce was rejected",
         CERTOPS_AGENT_RESULT_NONCE_REJECTED,
@@ -490,9 +538,13 @@ async function ingestResult({
     const errorCode = isFailure
       ? body.rejectionReason || `AGENT_RESULT_${jobStatus.toUpperCase()}`
       : null;
+    // Agent-provided error text is untrusted: scrub private-key material
+    // and generic secrets before it is stored, logged, audited or alerted.
     const errorMessage =
       isFailure && typeof body.errorMessage === "string"
-        ? body.errorMessage.slice(0, 1024)
+        ? redactGenericSecrets(
+            redactPrivateKeyMaterial(body.errorMessage),
+          ).slice(0, 1024)
         : null;
 
     const updated = await client.query(
@@ -562,6 +614,43 @@ async function ingestResult({
   });
 }
 
+// --- Evidence ownership (7.4) ---
+
+/**
+ * Evidence appends are workspace-scoped writes coming from a machine
+ * credential, so they must be bound to a claim: the reporting agent must be
+ * the agent that claimed the job (claimed_by_agent_id survives completion,
+ * so post-result evidence from the same agent stays valid). Throws
+ * CERTOPS_AGENT_JOB_NOT_FOUND / CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH.
+ */
+async function assertEvidenceClaimOwnership({
+  dbPool = pool,
+  agent,
+  jobId,
+} = {}) {
+  const result = await dbPool.query(
+    `SELECT claimed_by_agent_id
+       FROM certificate_jobs
+      WHERE id = $1
+        AND workspace_id = $2
+      LIMIT 1`,
+    [jobId, agent.workspaceId],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw serviceError(
+      "Certificate job not found",
+      CERTOPS_AGENT_JOB_NOT_FOUND,
+    );
+  }
+  if (String(row.claimed_by_agent_id || "") !== String(agent.id)) {
+    throw serviceError(
+      "Evidence does not match the claim for this job",
+      CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+    );
+  }
+}
+
 module.exports = {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
   CERTOPS_AGENT_JOB_NOT_FOUND,
@@ -572,12 +661,14 @@ module.exports = {
   CERTOPS_AGENT_RESULT_STATUS_INVALID,
   CERTOPS_AGENT_RETIRED,
   DEFAULT_JOB_LEASE_SECONDS,
+  assertEvidenceClaimOwnership,
   claimJobs,
   ingestResult,
   jobLeaseSeconds,
   recordHeartbeat,
   registerAgent,
   _test: {
+    NONCE_TTL_GRACE_SECONDS,
     RESULT_STATUS_TO_JOB_STATUS,
     dateToIso,
     safeParseJson,

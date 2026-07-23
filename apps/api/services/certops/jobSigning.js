@@ -149,7 +149,9 @@ async function getActiveSigningKeyPublicInfo(options = {}) {
 /**
  * Returns the single active signing key, generating one if none exists.
  * Key generation requires the env encryption key (fail-closed). The
- * unique-partial-index race (23505) is handled by re-selecting the winner.
+ * single-active race is resolved with INSERT ... ON CONFLICT DO NOTHING:
+ * no error is raised inside the caller's transaction (a caught 23505 would
+ * abort it), and the loser re-selects the winner's row.
  * Returns { signingKeyId, publicKeyPem } only; never the private key.
  */
 async function ensureActiveSigningKey(options = {}) {
@@ -172,25 +174,27 @@ async function ensureActiveSigningKey(options = {}) {
   const signingKeyId = generateSigningKeyId();
   const privateKeyEncrypted = encryptPrivateKeyPem(privateKeyPem);
 
-  try {
-    const inserted = await db.query(
-      `INSERT INTO certops_signing_keys (
-         signing_key_id, public_key_pem, private_key_encrypted,
-         encryption_version, status
-       )
-       VALUES ($1, $2, $3, $4, 'active')
-       RETURNING id, signing_key_id, public_key_pem`,
-      [signingKeyId, publicKeyPem, privateKeyEncrypted, ENCRYPTION_VERSION],
-    );
-    return publicInfoFromRow(inserted.rows[0]);
-  } catch (error) {
-    if (error?.code === "23505") {
-      // Lost the single-active race: another writer inserted first.
-      const winner = await selectActiveKeyRow(db);
-      if (winner) return publicInfoFromRow(winner);
-    }
-    throw error;
-  }
+  const inserted = await db.query(
+    `INSERT INTO certops_signing_keys (
+       signing_key_id, public_key_pem, private_key_encrypted,
+       encryption_version, status
+     )
+     VALUES ($1, $2, $3, $4, 'active')
+     ON CONFLICT DO NOTHING
+     RETURNING id, signing_key_id, public_key_pem`,
+    [signingKeyId, publicKeyPem, privateKeyEncrypted, ENCRYPTION_VERSION],
+  );
+  if (inserted.rows[0]) return publicInfoFromRow(inserted.rows[0]);
+
+  // Lost the single-active race: another writer inserted first. The
+  // transaction is still healthy (no constraint error was raised), so the
+  // winner's row is visible to a plain re-select.
+  const winner = await selectActiveKeyRow(db);
+  if (winner) return publicInfoFromRow(winner);
+  throw serviceError(
+    "Active signing key could not be created or found",
+    CERTOPS_SIGNING_KEY_UNAVAILABLE,
+  );
 }
 
 async function getActiveKeyWithPrivate(db) {
@@ -319,13 +323,18 @@ async function signJobForDispatch(options = {}) {
 
 /**
  * Single-use consume of an issued nonce (called at result ingestion).
+ * Binding: the nonce row must match the job AND, when the caller provides
+ * them, the workspace and the agent the nonce was issued to. A nonce
+ * dispensed to one agent can never be consumed by another, and a nonce from
+ * one workspace can never satisfy a result in a different one.
  * Returns { consumed: true } or { consumed: false, code } where code
  * distinguishes CERTOPS_NONCE_REPLAYED (already consumed) from
- * CERTOPS_NONCE_UNKNOWN_OR_EXPIRED (never issued, or past expires_at).
+ * CERTOPS_NONCE_UNKNOWN_OR_EXPIRED (never issued, issued to a different
+ * agent/workspace, or past expires_at).
  */
 async function consumeNonce(options = {}) {
   const db = options.client || pool;
-  const { nonce, jobId } = options;
+  const { nonce, jobId, workspaceId = null, agentRowId = null } = options;
   if (typeof nonce !== "string" || !NONCE_PATTERN.test(nonce)) {
     return { consumed: false, code: CERTOPS_NONCE_UNKNOWN_OR_EXPIRED };
   }
@@ -335,21 +344,28 @@ async function consumeNonce(options = {}) {
         SET consumed_at = NOW()
       WHERE nonce = $1
         AND job_id = $2
+        AND ($3::uuid IS NULL OR workspace_id = $3::uuid)
+        AND ($4::uuid IS NULL OR issued_to_agent_id IS NULL
+             OR issued_to_agent_id = $4::uuid)
         AND consumed_at IS NULL
         AND expires_at > NOW()
       RETURNING nonce`,
-    [nonce, jobId],
+    [nonce, jobId, workspaceId, agentRowId],
   );
   if (updated.rows[0]) return { consumed: true };
 
-  // Distinguish replay from unknown/expired with an existence check.
+  // Distinguish replay from unknown/expired/foreign with an existence check
+  // under the same binding.
   const existing = await db.query(
     `SELECT consumed_at
        FROM certops_consumed_nonces
       WHERE nonce = $1
         AND job_id = $2
+        AND ($3::uuid IS NULL OR workspace_id = $3::uuid)
+        AND ($4::uuid IS NULL OR issued_to_agent_id IS NULL
+             OR issued_to_agent_id = $4::uuid)
       LIMIT 1`,
-    [nonce, jobId],
+    [nonce, jobId, workspaceId, agentRowId],
   );
   const row = existing.rows[0];
   if (row && row.consumed_at !== null && row.consumed_at !== undefined) {

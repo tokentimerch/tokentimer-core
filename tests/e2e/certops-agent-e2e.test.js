@@ -413,7 +413,7 @@ describe("CertOps agent surface E2E", () => {
   // Shared across the sequential subtests below.
   const state = {};
 
-  it("happy path: register, heartbeat, claim, verify, result, nonce replay 409", async (t) => {
+  it("happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack", async (t) => {
     if (!dbAvailable) return t.skip(skipReason);
 
     const agentId = `e2e-agent-${RUN_ID}-happy`;
@@ -498,14 +498,35 @@ describe("CertOps agent surface E2E", () => {
     assert.equal(result.status, 200, JSON.stringify(result.body));
     assert.equal(result.body.status, "succeeded");
 
-    // Nonce replay: same result again must be rejected by the replay ledger.
+    // Duplicate delivery of the same terminal outcome is acknowledged
+    // idempotently: the replayed nonce is recognized as belonging to this
+    // already-completed job and returns the recorded outcome instead of 409.
     const replay = await postAgent(
       "jobs/results",
       reg.credential,
       envelope("result", agentId, resultBody),
     );
-    assert.equal(replay.status, 409, JSON.stringify(replay.body));
-    assert.equal(replay.body.code, "CERTOPS_AGENT_RESULT_NONCE_REJECTED");
+    assert.equal(replay.status, 200, JSON.stringify(replay.body));
+    assert.equal(replay.body.status, "succeeded");
+    assert.equal(replay.body.duplicate, true);
+
+    // A conflicting outcome for the completed job is still rejected by the
+    // replay ledger: idempotent acks only apply to matching terminal states.
+    const conflicting = await postAgent(
+      "jobs/results",
+      reg.credential,
+      envelope("result", agentId, {
+        ...resultBody,
+        status: "failed",
+        errorCode: "deploy_failed",
+        errorMessage: "conflicting replay",
+      }),
+    );
+    assert.equal(conflicting.status, 409, JSON.stringify(conflicting.body));
+    assert.equal(
+      conflicting.body.code,
+      "CERTOPS_AGENT_RESULT_NONCE_REJECTED",
+    );
   });
 
   it("tamper: mutating a signed field fails agent-side verification", async (t) => {
@@ -666,7 +687,7 @@ describe("CertOps agent surface E2E", () => {
     assert.equal(second.body.jobs.length, 0);
   });
 
-  it("lease reaper requeues an expired claimed job with retry budget", async (t) => {
+  it("lease reaper defers, then requeues once the claiming agent goes silent", async (t) => {
     if (!dbAvailable) return t.skip(skipReason);
     const jobId = state.leasedJob.jobId;
     await pool.query(
@@ -681,8 +702,30 @@ describe("CertOps agent surface E2E", () => {
     ).href;
     const worker = await import(workerUrl);
 
-    const client = await pool.connect();
+    // Pass 1: the claiming agent is still heartbeating (fresh last_seen_at),
+    // so the expired lease is deferred, not requeued.
+    let client = await pool.connect();
     let summary;
+    try {
+      summary = await worker.reapExpiredLeases({ client });
+    } finally {
+      client.release();
+    }
+    assert.ok(summary.deferred >= 1, JSON.stringify(summary));
+    const deferred = await pool.query(
+      `SELECT status FROM certificate_jobs WHERE id = $1`,
+      [jobId],
+    );
+    assert.equal(deferred.rows[0].status, "claimed");
+
+    // Pass 2: silence the agent past the offline threshold; now the job
+    // is provably orphaned and gets requeued.
+    await pool.query(
+      `UPDATE certops_agents SET last_seen_at = NOW() - INTERVAL '1 hour'
+        WHERE agent_id = $1`,
+      [state.agent.agentId],
+    );
+    client = await pool.connect();
     try {
       summary = await worker.reapExpiredLeases({ client });
     } finally {
@@ -697,8 +740,9 @@ describe("CertOps agent surface E2E", () => {
       [jobId],
     );
     assert.equal(rows[0].status, "pending");
-    // Requeue consumes one retry: claim set attempt_count to 1, reaper bumps to 2.
-    assert.equal(rows[0].attempt_count, 2);
+    // The claim path counted this dispatch attempt; the reaper does not
+    // consume an extra retry on requeue.
+    assert.equal(rows[0].attempt_count, 1);
     assert.equal(rows[0].claim_id, null);
     assert.equal(rows[0].lease_expires_at, null);
     state.requeuedJobId = jobId;
@@ -728,6 +772,13 @@ describe("CertOps agent surface E2E", () => {
               lease_expires_at = NOW() - INTERVAL '1 minute'
         WHERE id = $1`,
       [jobId],
+    );
+    // Silence the agent so the terminal failure is attributed to
+    // agent_offline rather than lease_expired.
+    await pool.query(
+      `UPDATE certops_agents SET last_seen_at = NOW() - INTERVAL '1 hour'
+        WHERE agent_id = $1`,
+      [state.agent.agentId],
     );
 
     const workerUrl = pathToFileURL(

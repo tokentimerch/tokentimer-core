@@ -230,7 +230,14 @@ describe("agentDispatch.claimJobs", () => {
   };
 
   it("claims pending jobs, sets lease fields, and returns signed payloads", async () => {
+    let livenessUpdates = 0;
     const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        livenessUpdates += 1;
+        assert.equal(params[0], "agent-row-1");
+        assert.match(sql, /status <> 'retired'/);
+        return { rows: [] };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         assert.equal(params[0], WORKSPACE_A);
         assert.deepEqual(params[1], ["renew"]);
@@ -295,12 +302,20 @@ describe("agentDispatch.claimJobs", () => {
     assert.equal(job.nonce, "n-1");
     assert.equal(job.signature, "sig");
     assert.equal(job.signingKeyId, "key-1");
+    assert.equal(
+      livenessUpdates,
+      1,
+      "claiming must advance the agent's last_seen_at (liveness signal)",
+    );
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
   it("honors CERTOPS_JOB_LEASE_SECONDS from env", async () => {
     let leaseParam = null;
     const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        return { rows: [] };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         return {
           rows: [{ id: 1, operation: "renew", payload: {} }],
@@ -360,6 +375,9 @@ describe("agentDispatch.claimJobs", () => {
 
   it("returns an empty set without selecting when supportedActions is empty", async () => {
     const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        return { rows: [] };
+      }
       throw new Error(`no job query expected, got: ${sql}`);
     });
     const result = await claimJobs({

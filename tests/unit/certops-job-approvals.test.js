@@ -470,6 +470,9 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
     const invalidations = [];
 
     const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        return { rows: [] };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         return {
           rows: [
@@ -525,6 +528,9 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
     const boundHash = sha256Hex(canonicalizeJobPayload(payload));
 
     const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        return { rows: [] };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         return {
           rows: [
@@ -578,6 +584,9 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
 
   it("leaves never-gated jobs (no stored hash) untouched", async () => {
     const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        return { rows: [] };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         return {
           rows: [

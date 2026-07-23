@@ -477,7 +477,7 @@ function createReaperClient(rows) {
       ) {
         return { rows: [] };
       }
-      if (normalized.startsWith("SELECT id, workspace_id, status")) {
+      if (normalized.startsWith("SELECT cj.id, cj.workspace_id")) {
         return { rows };
       }
       return { rows: [] };
@@ -500,6 +500,8 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         operation: "renew",
         subject_type: "managed_certificate",
         subject_id: "cert-1",
+        agent_alive: false,
+        past_hard_grace: false,
       },
       {
         id: "job-deploy",
@@ -510,6 +512,8 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         operation: "deploy",
         subject_type: "managed_certificate",
         subject_id: "cert-2",
+        agent_alive: false,
+        past_hard_grace: false,
       },
       {
         id: "job-requeue",
@@ -520,6 +524,8 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         operation: "renew",
         subject_type: "managed_certificate",
         subject_id: "cert-3",
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
     const calls = [];
@@ -533,7 +539,12 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
       },
     });
 
-    assert.deepStrictEqual(summary, { scanned: 3, requeued: 1, failed: 2 });
+    assert.deepStrictEqual(summary, {
+      scanned: 3,
+      requeued: 1,
+      failed: 2,
+      deferred: 0,
+    });
     // Only the terminally failed renew job emits; deploy and requeued do not.
     assert.equal(calls.length, 1);
     assert.equal(calls[0].job.id, "job-renew");
@@ -554,6 +565,8 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         operation: "renew",
         subject_type: "managed_certificate",
         subject_id: "cert-1",
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
     const warnings = [];
@@ -569,7 +582,12 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
       },
     });
 
-    assert.deepStrictEqual(summary, { scanned: 1, requeued: 0, failed: 1 });
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 1,
+      deferred: 0,
+    });
     assert.strictEqual(client.queries.at(-1).sql, "COMMIT");
     assert.ok(
       warnings.some((w) => w.msg === "certops-renewal-failed-alert-error"),
@@ -592,6 +610,8 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         operation: "renew",
         subject_type: "managed_certificate",
         subject_id: "cert-1",
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
     const warnings = [];

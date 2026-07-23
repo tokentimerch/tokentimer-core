@@ -61,7 +61,11 @@ function createMemoryClient() {
     signingKeyRows,
     nonceRows,
     queries: [],
-    failNextInsertWith23505: false,
+    // Simulates losing the single-active race under ON CONFLICT DO NOTHING:
+    // the insert is silently skipped (no error, no returned row) and the
+    // winner's row becomes visible to the follow-up re-select.
+    skipNextInsertAsConflict: false,
+    conflictWinnerRow: null,
     async query(sql, params = []) {
       const normalizedSql = sql.replace(/\s+/g, " ").trim();
       client.queries.push({ sql: normalizedSql, params });
@@ -76,11 +80,12 @@ function createMemoryClient() {
       }
 
       if (normalizedSql.includes("INSERT INTO certops_signing_keys")) {
-        if (client.failNextInsertWith23505) {
-          client.failNextInsertWith23505 = false;
-          const err = new Error("duplicate key value");
-          err.code = "23505";
-          throw err;
+        if (client.skipNextInsertAsConflict) {
+          client.skipNextInsertAsConflict = false;
+          if (client.conflictWinnerRow) {
+            signingKeyRows.push(client.conflictWinnerRow);
+          }
+          return { rows: [] };
         }
         const row = {
           id: `key-${nextId++}`,
@@ -265,10 +270,12 @@ describe("certops job signing service", () => {
 
     it("re-selects the winner after losing the single-active insert race", async () => {
       const client = createMemoryClient();
-      client.failNextInsertWith23505 = true;
 
-      // Simulate the concurrent winner's row appearing before the re-select.
-      const winner = {
+      // Simulate the concurrent winner: our ON CONFLICT DO NOTHING insert
+      // returns no row (no 23505 is raised, so a surrounding transaction
+      // stays healthy) and the winner's row is visible to the re-select.
+      client.skipNextInsertAsConflict = true;
+      client.conflictWinnerRow = {
         id: "key-winner",
         signing_key_id: "ttsk_winner",
         public_key_pem: "-----BEGIN PUBLIC KEY-----\nwinner\n-----END PUBLIC KEY-----\n",
@@ -276,23 +283,14 @@ describe("certops job signing service", () => {
         encryption_version: 1,
         status: "active",
       };
-      const originalQuery = client.query.bind(client);
-      let insertFailed = false;
-      client.query = async (sql, params) => {
-        try {
-          return await originalQuery(sql, params);
-        } catch (err) {
-          if (err.code === "23505") {
-            insertFailed = true;
-            client.signingKeyRows.push(winner);
-          }
-          throw err;
-        }
-      };
 
       const info = await ensureActiveSigningKey({ client });
-      assert.equal(insertFailed, true);
       assert.equal(info.signingKeyId, "ttsk_winner");
+      // Exactly one active row remains: the winner's.
+      assert.equal(
+        client.signingKeyRows.filter((row) => row.status === "active").length,
+        1,
+      );
     });
   });
 

@@ -411,6 +411,7 @@ describe("Results handler", () => {
   it("evidence path appends lock-free without an ingestResult transition", async () => {
     const res = createResponse();
     const evidenceCalls = [];
+    const ownershipCalls = [];
     let ingestCalled = false;
     await _test.resultsHandler(
       {
@@ -432,6 +433,9 @@ describe("Results handler", () => {
           ingestCalled = true;
           throw new Error("must not be called for evidence");
         },
+        assertEvidenceClaimOwnership: async (options) => {
+          ownershipCalls.push(options);
+        },
         createCertificateEvidence: async (options) => {
           evidenceCalls.push(options);
           return { id: "ev-1" };
@@ -441,12 +445,51 @@ describe("Results handler", () => {
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, { ok: true, evidenceCount: 1 });
     assert.equal(ingestCalled, false);
+    // Claim ownership is proven before anything is persisted.
+    assert.equal(ownershipCalls.length, 1);
+    assert.equal(ownershipCalls[0].jobId, "42");
     assert.equal(evidenceCalls.length, 1);
     assert.equal(evidenceCalls[0].jobId, "42");
     assert.equal(evidenceCalls[0].evidenceType, "certificate.observed");
     // Lock-free: the evidence service receives the pool directly (undefined
     // here because no dbPool option was injected), never a locked tx client.
     assert.equal(evidenceCalls[0].client, undefined);
+  });
+
+  it("evidence from a non-claiming agent is rejected before persistence", async () => {
+    const res = createResponse();
+    let persisted = false;
+    await _test.resultsHandler(
+      {
+        certopsAgent: agentFixture(),
+        body: envelope("evidence", {
+          jobId: "42",
+          evidenceItems: [
+            {
+              eventType: "certificate.observed",
+              observedAt: "2026-07-22T10:00:00.000Z",
+            },
+          ],
+        }),
+      },
+      res,
+      {
+        assertEvidenceClaimOwnership: async () => {
+          const error = new Error(
+            "Evidence does not match the claim for this job",
+          );
+          error.code = "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH";
+          throw error;
+        },
+        createCertificateEvidence: async () => {
+          persisted = true;
+          return { id: "ev-x" };
+        },
+      },
+    );
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.code, "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH");
+    assert.equal(persisted, false);
   });
 });
 

@@ -62,6 +62,32 @@ const CERTOPS_APPROVAL_REASON_INVALID = "CERTOPS_APPROVAL_REASON_INVALID";
 
 const MAX_APPROVAL_REASON_LENGTH = 1024;
 
+/**
+ * Runs fn inside a transaction when the caller did not supply a client.
+ * Approval decisions write three rows (job status, ledger, job log): they
+ * must land atomically, never as independent autocommit statements. Callers
+ * that pass options.client own the surrounding transaction themselves.
+ */
+async function withDecisionTransaction(options, fn) {
+  if (options.client) return fn(options.client);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // The original error is more useful to the caller.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 const SAFE_APPROVAL_SELECT_FIELDS = `
   id,
   workspace_id,
@@ -270,13 +296,13 @@ async function requestApprovalState(options) {
  * separate meaning in this per-job gate.
  */
 async function approveJob(options) {
-  const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const jobId = normalizeRequiredId(options.jobId);
   const approverUserId = normalizeApproverUserId(options.approverUserId);
   const reason = normalizeReason(options.reason);
   const logAppender = options.logAppender || appendCertificateJobLog;
 
+  return withDecisionTransaction(options, async (db) => {
   const job = await loadJobForApproval(db, workspaceId, jobId);
   if (job.status !== "pending_approval") {
     throw serviceError(
@@ -340,6 +366,7 @@ async function approveJob(options) {
     payloadHash: row.approved_payload_hash,
     approval,
   };
+  });
 }
 
 /**
@@ -348,13 +375,13 @@ async function approveJob(options) {
  * terminal 'rejected' status, ledger row, approval.rejected log event.
  */
 async function rejectJob(options) {
-  const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const jobId = normalizeRequiredId(options.jobId);
   const approverUserId = normalizeApproverUserId(options.approverUserId);
   const reason = normalizeReason(options.reason);
   const logAppender = options.logAppender || appendCertificateJobLog;
 
+  return withDecisionTransaction(options, async (db) => {
   const job = await loadJobForApproval(db, workspaceId, jobId);
   if (job.status !== "pending_approval") {
     throw serviceError(
@@ -409,6 +436,7 @@ async function rejectJob(options) {
     status: row.status,
     approval,
   };
+  });
 }
 
 /**

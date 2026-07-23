@@ -46,6 +46,7 @@ const {
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
   CERTOPS_AGENT_RESULT_STATUS_INVALID,
   CERTOPS_AGENT_RETIRED,
+  assertEvidenceClaimOwnership,
   claimJobs,
   ingestResult,
   recordHeartbeat,
@@ -544,8 +545,19 @@ async function resultsHandler(req, res, options = {}) {
         // a jobId has no persistence target yet.
         throw messageError("jobId is required for agent evidence messages");
       }
+      // Claim-ownership binding: only the agent that claimed the job may
+      // append evidence to it (409 CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
+      // otherwise). Post-result evidence from the same agent stays valid
+      // because claimed_by_agent_id survives completion.
+      await (options.assertEvidenceClaimOwnership ||
+        assertEvidenceClaimOwnership)({
+        dbPool: options.dbPool,
+        agent: req.certopsAgent,
+        jobId: body.jobId,
+      });
       // Lock-free append (no job row lock, no ownership transition):
-      // createCertificateEvidence only verifies the job exists.
+      // ownership was proven above; createCertificateEvidence only
+      // verifies the job exists.
       const persist =
         options.createCertificateEvidence || createCertificateEvidence;
       const created = [];

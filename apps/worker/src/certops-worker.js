@@ -42,6 +42,11 @@ const { queueCertRenewalFailedAlert } = require(
 
 export const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 export const DEFAULT_LEASE_REAPER_BATCH_SIZE = 100;
+// An expired lease held by an agent that is still heartbeating is deferred
+// (the agent is likely still executing and will report). After this hard
+// grace past lease expiry the job is failed WITHOUT requeue, because the
+// silent-but-alive agent may have executed side effects.
+export const DEFAULT_LEASE_HARD_GRACE_MS = 60 * 60 * 1000;
 // Exponential backoff for requeued attempts: attempt 1 -> 1m, 2 -> 2m,
 // 3 -> 4m, capped at 30m.
 const BACKOFF_BASE_MS = 60_000;
@@ -96,54 +101,72 @@ async function insertJobLog(
  * FOR UPDATE SKIP LOCKED so concurrent reapers (or the claim path) never
  * double-process a row.
  *
- * Requeue policy: only 'claimed' jobs with retry budget return to 'pending'.
- * This claimed -> pending requeue is the lease-expiry transition (the
- * agent never started work, so replay is safe); it is intentionally not in
- * jobs.js JOB_STATUS_TRANSITIONS, which models executor-driven transitions
- * only, and the reaper is its single writer. A 'running' job is never
- * requeued because the agent may already have executed side effects, so
- * running leases and exhausted retry budgets both transition to 'failed'
- * (legal from both claimed and running) with error_code 'agent_offline'.
+ * Requeue policy: a 'claimed' job with retry budget is requeued ONLY when
+ * the claiming agent is provably gone (offline/retired/deleted or silent
+ * past offlineAfterMs). If the agent is still heartbeating, the job may
+ * still be executing, so it is deferred until the hard grace elapses and
+ * then failed WITHOUT requeue (the agent may have executed side effects;
+ * replaying could double-execute them). A 'running' job is never requeued
+ * for the same reason. Requeue does not touch attempt_count: the claim
+ * path already counted this dispatch attempt.
  */
 export async function reapExpiredLeases({
   client,
   batchSize = DEFAULT_LEASE_REAPER_BATCH_SIZE,
+  offlineAfterMs = DEFAULT_AGENT_OFFLINE_AFTER_MS,
+  hardGraceMs = DEFAULT_LEASE_HARD_GRACE_MS,
   log = logger,
   queueRenewalFailedAlert = queueCertRenewalFailedAlert,
 } = {}) {
-  const summary = { scanned: 0, requeued: 0, failed: 0 };
+  const summary = { scanned: 0, requeued: 0, failed: 0, deferred: 0 };
 
   await client.query("BEGIN");
   try {
     const expired = await client.query(
-      `SELECT id, workspace_id, status, attempt_count, max_attempts,
-              operation, subject_type, subject_id
-         FROM certificate_jobs
-        WHERE status IN ('claimed', 'running')
-          AND lease_expires_at IS NOT NULL
-          AND lease_expires_at < NOW()
-        ORDER BY lease_expires_at ASC
+      `SELECT cj.id, cj.workspace_id, cj.status, cj.attempt_count,
+              cj.max_attempts, cj.operation, cj.subject_type, cj.subject_id,
+              (ca.id IS NOT NULL
+                AND ca.status = 'active'
+                AND COALESCE(ca.last_seen_at, ca.created_at)
+                      >= NOW() - ($2 || ' milliseconds')::interval
+              ) AS agent_alive,
+              (cj.lease_expires_at
+                < NOW() - ($3 || ' milliseconds')::interval
+              ) AS past_hard_grace
+         FROM certificate_jobs cj
+         LEFT JOIN certops_agents ca ON ca.id = cj.claimed_by_agent_id
+        WHERE cj.status IN ('claimed', 'running')
+          AND cj.lease_expires_at IS NOT NULL
+          AND cj.lease_expires_at < NOW()
+        ORDER BY cj.lease_expires_at ASC
         LIMIT $1
-        FOR UPDATE SKIP LOCKED`,
-      [batchSize],
+        FOR UPDATE OF cj SKIP LOCKED`,
+      [batchSize, String(offlineAfterMs), String(hardGraceMs)],
     );
     summary.scanned = expired.rows.length;
 
     for (const row of expired.rows) {
       const attemptCount = row.attempt_count ?? 0;
       const maxAttempts = row.max_attempts ?? 3;
-      const canRequeue =
+      const hasRetryBudget =
         row.status === "claimed" && attemptCount < maxAttempts;
 
-      if (canRequeue) {
-        const backoffMs = computeBackoffMs(attemptCount + 1);
+      if (hasRetryBudget && row.agent_alive && !row.past_hard_grace) {
+        // The claiming agent is still heartbeating: it is probably still
+        // executing this job and will report. Leave the row untouched;
+        // the next sweep re-evaluates it against the hard grace.
+        summary.deferred += 1;
+        continue;
+      }
+
+      if (hasRetryBudget && !row.agent_alive) {
+        const backoffMs = computeBackoffMs(attemptCount);
         await client.query(
           `UPDATE certificate_jobs
               SET status = 'pending',
                   claimed_by_agent_id = NULL,
                   claim_id = NULL,
                   lease_expires_at = NULL,
-                  attempt_count = attempt_count + 1,
                   next_attempt_at = NOW() + ($2 || ' milliseconds')::interval,
                   updated_at = NOW()
             WHERE id = $1`,
@@ -153,21 +176,25 @@ export async function reapExpiredLeases({
           eventType: "job.status_updated",
           status: "pending",
           message:
-            "Lease expired; job requeued by the certops maintenance worker",
+            "Lease expired with the claiming agent gone; job requeued by " +
+            "the certops maintenance worker",
           metadata: {
             sweep: "lease-reaper",
             outcome: "requeued",
-            attemptCount: attemptCount + 1,
+            attemptCount,
             maxAttempts,
             backoffMs,
           },
         });
         summary.requeued += 1;
       } else {
+        // Running jobs, exhausted retry budgets, and alive-but-silent
+        // agents past the hard grace all fail without requeue.
+        const errorCode = row.agent_alive ? "lease_expired" : "agent_offline";
         await client.query(
           `UPDATE certificate_jobs
               SET status = 'failed',
-                  error_code = 'agent_offline',
+                  error_code = $2,
                   error_message = 'Agent lease expired and the job cannot be retried',
                   claimed_by_agent_id = NULL,
                   claim_id = NULL,
@@ -175,17 +202,18 @@ export async function reapExpiredLeases({
                   completed_at = COALESCE(completed_at, NOW()),
                   updated_at = NOW()
             WHERE id = $1`,
-          [row.id],
+          [row.id, errorCode],
         );
         await insertJobLog(client, row, {
           eventType: "job.failed",
           status: "failed",
           message:
-            "Lease expired; job failed as agent_offline by the certops maintenance worker",
+            `Lease expired; job failed as ${errorCode} by the certops ` +
+            "maintenance worker",
           metadata: {
             sweep: "lease-reaper",
             outcome: "failed",
-            errorCode: "agent_offline",
+            errorCode,
             attemptCount,
             maxAttempts,
             previousStatus: row.status,
@@ -193,9 +221,9 @@ export async function reapExpiredLeases({
         });
         summary.failed += 1;
 
-        // A terminal agent_offline failure of a renew job queues a
-        // cert_renewal_failed alert. Best-effort inside a savepoint so an
-        // alert failure never aborts the reaper transaction.
+        // A terminal failure of a renew job queues a cert_renewal_failed
+        // alert. Best-effort inside a savepoint so an alert failure never
+        // aborts the reaper transaction.
         if (row.operation === "renew") {
           try {
             await client.query("SAVEPOINT certops_renewal_alert");
@@ -203,7 +231,7 @@ export async function reapExpiredLeases({
               client,
               job: row,
               workspaceId: row.workspace_id,
-              errorCode: "agent_offline",
+              errorCode,
             });
             await client.query("RELEASE SAVEPOINT certops_renewal_alert");
             if (!alertOutcome?.queued) {
@@ -245,9 +273,11 @@ export async function reapExpiredLeases({
 /**
  * Stale-agent sweep. certops_agents statuses are 'active'/'offline'/'retired'
  * (Migration 24); 'offline' is a legal status, so stale active agents are
- * marked offline. Recovery back to 'active' happens on the agent's next
- * authenticated poll (owned by the API claim path). Retirement is never
- * automated: offline is observational fleet status only.
+ * marked offline. An agent that registered but never heartbeated is judged
+ * on its created_at, so it cannot stay displayed 'active' forever.
+ * Recovery back to 'active' happens on the agent's next authenticated poll
+ * (owned by the API heartbeat/claim paths). Retirement is never automated:
+ * offline is observational fleet status only.
  */
 export async function sweepStaleAgents({
   client,
@@ -259,8 +289,8 @@ export async function sweepStaleAgents({
         SET status = 'offline',
             updated_at = NOW()
       WHERE status = 'active'
-        AND last_seen_at IS NOT NULL
-        AND last_seen_at < NOW() - ($1 || ' milliseconds')::interval
+        AND COALESCE(last_seen_at, created_at)
+              < NOW() - ($1 || ' milliseconds')::interval
       RETURNING id, agent_id, workspace_id, last_seen_at`,
     [String(offlineAfterMs)],
   );
@@ -323,7 +353,7 @@ export async function runCertOpsMaintenance({
   const results = {};
 
   results.leaseReaper = await runIsolated("lease-reaper", log, () =>
-    withClientFn((client) => reapExpiredLeases({ client, log })),
+    withClientFn((client) => reapExpiredLeases({ client, offlineAfterMs, log })),
   );
   if (results.leaseReaper.status === "success") {
     const { requeued, failed } = results.leaseReaper.result;
