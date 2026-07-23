@@ -23,6 +23,7 @@ import axios from "axios";
 import { isAutoSyncProviderAllowed } from "./auto-sync-providers.js";
 import {
   formatAutoSyncError,
+  recordAutoSyncCompleted,
   recordAutoSyncFailure,
 } from "./shared/autoSyncFailure.js";
 
@@ -414,6 +415,19 @@ async function runAutoSync() {
              WHERE id = $5`,
             [syncStatus, syncError, importedCount, nextSync, id],
           );
+
+          // Scheduled runs must leave an audit trail like manual runs do
+          // (AUTO_SYNC_TRIGGERED is only written by the API "run now" path).
+          await recordAutoSyncCompleted(client, {
+            configId: id,
+            workspaceId: workspace_id,
+            provider,
+            createdBy,
+            status: syncStatus,
+            itemsScanned: itemsCount,
+            itemsImported: importedCount,
+            error: syncError,
+          });
 
           cAutoSync.inc({ provider, status: syncStatus });
           cAutoSyncItems.inc({ provider }, importedCount);

@@ -93,6 +93,7 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
     contactGroups,
     onSelectionChange,
     autoSyncManageMode = false,
+    initialScanParams = null,
     initialFilterRules = null,
     initialCleanupObsolete = null,
   },
@@ -140,6 +141,34 @@ const ImportGitLabForm = React.forwardRef(function ImportGitLabForm(
       setFilterRules(initialFilterRules);
     }
   }, [initialFilterRules]);
+
+  // Restore base URL and scan filters saved with the auto-sync config so
+  // reopening the modal shows the configured values instead of the defaults
+  // (the token itself is never returned by the API and stays blank).
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    const sp = initialScanParams;
+    if (sp.baseUrl) setGitlabBaseUrl(sp.baseUrl);
+    const f = sp.filters;
+    if (!f) return;
+    if (typeof f.includePATs === 'boolean') setGitlabIncludePATs(f.includePATs);
+    if (typeof f.includeProjectTokens === 'boolean')
+      setGitlabIncludeProjectTokens(f.includeProjectTokens);
+    if (typeof f.includeGroupTokens === 'boolean')
+      setGitlabIncludeGroupTokens(f.includeGroupTokens);
+    if (typeof f.includeDeployTokens === 'boolean')
+      setGitlabIncludeDeployTokens(f.includeDeployTokens);
+    if (typeof f.includeTriggerTokens === 'boolean')
+      setGitlabIncludeTriggerTokens(f.includeTriggerTokens);
+    if (typeof f.includeSSHKeys === 'boolean')
+      setGitlabIncludeSSHKeys(f.includeSSHKeys);
+    if (typeof f.excludeUserPATs === 'boolean')
+      setGitlabExcludeUserPATs(f.excludeUserPATs);
+    if (typeof f.includeExpired === 'boolean')
+      setGitlabIncludeExpired(f.includeExpired);
+    if (typeof f.includeRevoked === 'boolean')
+      setGitlabIncludeRevoked(f.includeRevoked);
+  }, [initialScanParams]);
 
   React.useEffect(() => {
     if (typeof initialCleanupObsolete === 'boolean') {

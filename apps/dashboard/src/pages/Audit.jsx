@@ -159,6 +159,7 @@ const ALL_ACTION_TYPES = [
   'AUTO_SYNC_UPDATED',
   'AUTO_SYNC_DELETED',
   'AUTO_SYNC_TRIGGERED',
+  'AUTO_SYNC_COMPLETED',
   'AUTO_SYNC_FAILED',
   // WhatsApp
   'WHATSAPP_TEST_SENT',
@@ -1084,6 +1085,10 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const md = ev?.metadata || {};
       const parts = [];
       if (md.provider) parts.push(`Provider: ${md.provider}`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.items_scanned != null) parts.push(`Scanned: ${md.items_scanned}`);
+      if (md.items_imported != null)
+        parts.push(`Imported: ${md.items_imported}`);
       if (md.error) parts.push(`Error: ${md.error}`);
       if (md.http_status != null) parts.push(`HTTP status: ${md.http_status}`);
       if (md.config_id) parts.push(`Config ID: ${md.config_id}`);
@@ -1269,6 +1274,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       action === 'AUTO_SYNC_UPDATED' ||
       action === 'AUTO_SYNC_DELETED' ||
       action === 'AUTO_SYNC_TRIGGERED' ||
+      action === 'AUTO_SYNC_COMPLETED' ||
       action === 'AUTO_SYNC_FAILED'
     ) {
       const formatted = formatAutoSyncMetadata(ev);

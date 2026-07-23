@@ -1017,6 +1017,7 @@ export default function ImportTokensModal({
 
   // Auto-sync state
   const [autoSyncConfig, setAutoSyncConfig] = React.useState(null); // null = not loaded, false = not exists, object = exists
+  const [restoredScanParams, setRestoredScanParams] = React.useState(null);
   const [restoredFilterRules, setRestoredFilterRules] = React.useState(null);
   const [restoredCleanupObsolete, setRestoredCleanupObsolete] =
     React.useState(null);
@@ -1071,6 +1072,10 @@ export default function ImportTokensModal({
         // Restore non-secret form fields from scan_params when auto-sync is already configured
         if (existing && existing.scan_params) {
           const sp = existing.scan_params;
+          // Forms (GitLab/GitHub) own their field state; hand them the full
+          // saved scan_params so reopening the modal shows the configured
+          // values instead of the defaults.
+          setRestoredScanParams(sp);
           setRestoredFilterRules(
             Array.isArray(sp.filterRules) ? sp.filterRules : null
           );
@@ -1159,9 +1164,11 @@ export default function ImportTokensModal({
           }
         } else if (source === 'aws') {
           setAwsAutoSyncScanParams(null);
+          setRestoredScanParams(null);
           setRestoredFilterRules(null);
           setRestoredCleanupObsolete(null);
         } else {
+          setRestoredScanParams(null);
           setRestoredFilterRules(null);
           setRestoredCleanupObsolete(null);
         }
@@ -2655,6 +2662,7 @@ export default function ImportTokensModal({
                   extractQuotaFromError={extractQuotaFromError}
                   autoSyncManageMode={autoSyncManageMode}
                   contactGroups={contactGroups}
+                  initialScanParams={restoredScanParams}
                   initialFilterRules={restoredFilterRules}
                   initialCleanupObsolete={restoredCleanupObsolete}
                 />
@@ -2686,6 +2694,7 @@ export default function ImportTokensModal({
                   formatQuotaError={formatQuotaError}
                   extractQuotaFromError={extractQuotaFromError}
                   contactGroups={contactGroups}
+                  initialScanParams={restoredScanParams}
                   initialFilterRules={restoredFilterRules}
                   initialCleanupObsolete={restoredCleanupObsolete}
                 />
