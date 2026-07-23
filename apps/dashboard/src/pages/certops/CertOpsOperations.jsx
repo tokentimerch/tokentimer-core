@@ -30,6 +30,8 @@ import DashboardShell from '../../components/DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../../components/SEO.jsx';
 import ApiTokenPanel from '../../components/certops/ApiTokenPanel.jsx';
+import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
+import DeployAgentPanel from '../../components/certops/DeployAgentPanel.jsx';
 import EvidenceTimeline from '../../components/certops/EvidenceTimeline.jsx';
 import JobStatusBadge from '../../components/certops/JobStatusBadge.jsx';
 import {
@@ -431,6 +433,12 @@ export default function CertOpsOperations({
                 <ExecutorJobsPanel />
                 <DashboardPanel>
                   <ApiTokenPanel />
+                </DashboardPanel>
+                <DashboardPanel>
+                  <DeployAgentPanel />
+                </DashboardPanel>
+                <DashboardPanel>
+                  <AgentFleetPanel />
                 </DashboardPanel>
               </SimpleGrid>
             ) : (

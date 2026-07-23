@@ -1,0 +1,58 @@
+# TokenTimer Agent systemd unit (installed by install-agent.sh).
+#
+# Layout assumed by this unit:
+#   /opt/tokentimer-agent/app    agent package (read-only at runtime)
+#   /opt/tokentimer-agent/state  config dir: config.json, credential,
+#                                signing-key-pin.json, replay-store.json, keys/
+#
+# The agent is outbound-only (no listening sockets), runs as the unprivileged
+# tokentimer-agent user, and only ever writes inside its state dir, so the
+# hardening below can be strict without breaking anything.
+
+[Unit]
+Description=TokenTimer CertOps Agent (outbound-only execution plane)
+Documentation=https://github.com/tokentimer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tokentimer-agent
+Group=tokentimer-agent
+Environment=TOKENTIMER_AGENT_CONFIG_DIR=/opt/tokentimer-agent/state
+# Optional bootstrap env file written by install-agent.sh for first-run
+# registration (contains TOKENTIMER_AGENT_BOOTSTRAP_TOKEN, mode 0600).
+# The token is single-use; the agent never persists it. Delete the file
+# after the agent has registered.
+EnvironmentFile=-/opt/tokentimer-agent/state/bootstrap.env
+ExecStart=/usr/bin/env node /opt/tokentimer-agent/app/bin/tokentimer-agent.js
+Restart=always
+RestartSec=5
+
+# Hardening. ProtectSystem=strict makes the whole filesystem read-only for
+# the service except the explicit ReadWritePaths (its state dir).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tokentimer-agent/state
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+# Outbound HTTPS only; the agent accepts no inbound connections.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

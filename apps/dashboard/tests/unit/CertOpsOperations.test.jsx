@@ -88,6 +88,26 @@ vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
   }),
 }));
 
+// The agent panels have their own dedicated unit tests; here they only need
+// stable hook returns so the page renders. `enabled: false` makes them
+// render null, keeping these page-level assertions focused on jobs/tokens.
+vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
+  useCertOpsAgents: () => ({
+    enabled: false,
+    agents: [],
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
+  }),
+  useCertOpsBootstrapTokens: () => ({
+    enabled: false,
+    tokens: [],
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
+  }),
+}));
+
 function renderWithProviders(ui) {
   return render(
     <ChakraProvider>
