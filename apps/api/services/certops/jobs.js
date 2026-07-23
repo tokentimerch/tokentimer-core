@@ -436,7 +436,7 @@ function normalizeEnum(value, allowedSet, code, fieldName, fallback = null) {
 // --- Execution-field validation (job-payload.schema.json bounds) ---
 //
 // The stored certificate_jobs payload may carry the execution fields the
-// agent consumes for renew/deploy/reload (blessed PR #88 deviations). This
+// agent consumes for renew/deploy/reload (blessed execution fields). This
 // validator mirrors the schema constraints so a malformed field is rejected
 // at creation instead of at dispatch. certificatePem is deliberately NOT in
 // this list: the persistence boundary (fieldNameLooksForbidden's "pem" ban)
