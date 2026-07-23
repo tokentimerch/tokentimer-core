@@ -46,8 +46,10 @@ const {
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
   CERTOPS_AGENT_RESULT_STATUS_INVALID,
   CERTOPS_AGENT_RETIRED,
+  CERTOPS_AGENT_SEQUENCE_REGRESSION,
   assertEvidenceClaimOwnership,
   claimJobs,
+  enforceAgentSequence,
   ingestResult,
   recordHeartbeat,
   registerAgent,
@@ -138,6 +140,14 @@ function validateEnvelope(body, expectedMessageType) {
     !Number.isInteger(body.clockOffsetMs)
   ) {
     throw messageError("clockOffsetMs must be an integer or null");
+  }
+  // Optional per-agent monotonic message counter (plain integer in the
+  // schema, never null); enforcement itself lives in agentDispatch.
+  if (
+    body.sequence !== undefined &&
+    (!Number.isInteger(body.sequence) || body.sequence < 1)
+  ) {
+    throw messageError("sequence must be an integer >= 1 when present");
   }
   return body;
 }
@@ -453,6 +463,12 @@ function handleAgentRouteError(res, error) {
         error: "Result nonce was rejected",
         code: CERTOPS_AGENT_RESULT_NONCE_REJECTED,
       });
+    case CERTOPS_AGENT_SEQUENCE_REGRESSION:
+      return res.status(409).json({
+        error:
+          "Message sequence is not greater than the last accepted sequence for this agent",
+        code: CERTOPS_AGENT_SEQUENCE_REGRESSION,
+      });
     case CERTOPS_AGENT_RESULT_STATUS_INVALID:
       return res.status(400).json({
         error: "Result status is invalid",
@@ -521,6 +537,7 @@ async function claimHandler(req, res, options = {}) {
     const result = await (options.claimJobs || claimJobs)({
       dbPool: options.dbPool,
       agent: req.certopsAgent,
+      envelope,
       body,
       env: options.env,
       deps: options.claimDeps,
@@ -545,6 +562,14 @@ async function resultsHandler(req, res, options = {}) {
         // a jobId has no persistence target yet.
         throw messageError("jobId is required for agent evidence messages");
       }
+      // Sequence enforcement (post-auth; evidence carries no dispatch
+      // nonce, so this is the only anti-replay/ordering gate here). Runs
+      // before any evidence row is appended.
+      await (options.enforceAgentSequence || enforceAgentSequence)({
+        client: options.dbPool,
+        agentRowId: req.certopsAgent.id,
+        envelope,
+      });
       // Claim-ownership binding: only the agent that claimed the job may
       // append evidence to it (409 CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
       // otherwise). Post-result evidence from the same agent stays valid
@@ -589,6 +614,7 @@ async function resultsHandler(req, res, options = {}) {
     const result = await (options.ingestResult || ingestResult)({
       dbPool: options.dbPool,
       agent: req.certopsAgent,
+      envelope,
       body: { ...body, claimId: body.claimId ?? body.attemptId },
       deps: options.resultDeps,
     });

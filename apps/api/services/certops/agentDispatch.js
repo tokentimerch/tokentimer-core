@@ -51,6 +51,7 @@ const CERTOPS_AGENT_RESULT_NONCE_REJECTED =
   "CERTOPS_AGENT_RESULT_NONCE_REJECTED";
 const CERTOPS_AGENT_RESULT_STATUS_INVALID =
   "CERTOPS_AGENT_RESULT_STATUS_INVALID";
+const CERTOPS_AGENT_SEQUENCE_REGRESSION = "CERTOPS_AGENT_SEQUENCE_REGRESSION";
 
 const DEFAULT_JOB_LEASE_SECONDS = 900;
 // The dispatch nonce must stay consumable for the whole window the agent is
@@ -108,6 +109,59 @@ function dateToIso(value) {
   return date.toISOString();
 }
 
+// --- Per-agent monotonic sequence enforcement (defense in depth) ---
+
+/**
+ * Extracts a usable sequence value from an envelope. Envelopes without a
+ * `sequence` field are legacy/backward-compatible traffic: enforcement is
+ * skipped entirely and certops_agents.last_sequence is left untouched.
+ */
+function envelopeSequence(envelope) {
+  const sequence = envelope?.sequence;
+  return Number.isInteger(sequence) && sequence >= 1 ? sequence : null;
+}
+
+/**
+ * Atomic compare-and-swap of certops_agents.last_sequence: a single UPDATE
+ * only matches when the incoming sequence strictly exceeds the stored one,
+ * so two concurrent messages can never both pass with the same value (the
+ * row lock serializes them and the loser sees last_sequence >= its own).
+ *
+ * Runs after credential auth (the agent row is known to exist) and after
+ * any nonce replay check, per the agent-route check ordering. A no-match is
+ * therefore always a sequence regression within the current registered
+ * generation and rejects the message with a 409-shaped error; the message
+ * must not be processed.
+ *
+ * No-op when the envelope carries no sequence (legacy agents).
+ *
+ * @param {object} params
+ * @param {object} [params.client] pg client or pool (injectable; defaults
+ *   to the shared pool)
+ * @param {string} params.agentRowId certops_agents.id (NOT the public
+ *   agent_id string)
+ * @param {object} params.envelope validated message envelope
+ */
+async function enforceAgentSequence({ client = pool, agentRowId, envelope }) {
+  const sequence = envelopeSequence(envelope);
+  if (sequence === null) return;
+
+  const result = await client.query(
+    `UPDATE certops_agents
+        SET last_sequence = $2
+      WHERE id = $1
+        AND last_sequence < $2
+      RETURNING id`,
+    [agentRowId, sequence],
+  );
+  if (result.rows.length === 0) {
+    throw serviceError(
+      "Message sequence is not greater than the last accepted sequence for this agent",
+      CERTOPS_AGENT_SEQUENCE_REGRESSION,
+    );
+  }
+}
+
 // --- Registration (7.2) ---
 
 /**
@@ -152,9 +206,10 @@ async function registerAgent({
          declared_target_selectors,
          declared_command_profile_names,
          status,
-         bootstrap_token_id
+         bootstrap_token_id,
+         last_sequence
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, 'active', $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, 'active', $13, $14)
        ON CONFLICT (agent_id) DO NOTHING
        RETURNING id, agent_id, protocol_version`,
       [
@@ -173,6 +228,12 @@ async function registerAgent({
         JSON.stringify(body.declaredTargetSelectors || []),
         JSON.stringify(body.declaredCommandProfileNames || []),
         bootstrapToken.id,
+        // Registration begins a new sequence generation: last_sequence is
+        // seeded from the register envelope's own sequence (or 0 when the
+        // agent does not send one), so an agent whose non-persisted counter
+        // restarted low is only ever compared against its new generation,
+        // never against a previous registration's high-water mark.
+        envelopeSequence(envelope) ?? 0,
       ],
     );
 
@@ -226,6 +287,12 @@ async function recordHeartbeat({
 } = {}) {
   const getSigningKey =
     deps.getActiveSigningKeyPublicInfo || getActiveSigningKeyPublicInfo;
+  const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
+
+  // Sequence enforcement runs after auth (route middleware) and before the
+  // heartbeat write; a regression rejects the message with no last_seen_at
+  // (or any other) update.
+  await enforceSequence({ client: dbPool, agentRowId: agent.id, envelope });
 
   const clockOffsetMs = Number.isInteger(envelope.clockOffsetMs)
     ? envelope.clockOffsetMs
@@ -290,6 +357,7 @@ async function recordHeartbeat({
 async function claimJobs({
   dbPool = pool,
   agent,
+  envelope = {},
   body = {},
   env = process.env,
   deps = {},
@@ -299,6 +367,7 @@ async function claimJobs({
   const signJob = deps.signJobForDispatch || signJobForDispatch;
   const invalidateApproval =
     deps.invalidateApprovalForClaim || invalidateApprovalForClaim;
+  const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
 
   const maxJobs =
     Number.isInteger(body.maxJobs) && body.maxJobs >= 1 && body.maxJobs <= 16
@@ -310,6 +379,12 @@ async function claimJobs({
   const leaseSeconds = jobLeaseSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
+    // Sequence enforcement first (post-auth, pre-dispatch): a regression
+    // rejects the poll before any workspace lock or job selection. Inside
+    // the transaction, so a claim that later fails rolls the counter back
+    // with everything else.
+    await enforceSequence({ client, agentRowId: agent.id, envelope });
+
     // Throws CERTOPS_WORKSPACE_PAUSED / CERTOPS_DISABLED; the route maps
     // these to 409 / 404 and no job is claimed.
     await lockWorkspace({ client, workspaceId: agent.workspaceId });
@@ -444,10 +519,12 @@ function safeParseJson(value) {
 async function ingestResult({
   dbPool = pool,
   agent,
+  envelope = {},
   body = {},
   deps = {},
 } = {}) {
   const consume = deps.consumeNonce || consumeNonce;
+  const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
   const queueRenewalFailedAlert =
     deps.queueCertRenewalFailedAlert || queueCertRenewalFailedAlert;
   const log = deps.logger || logger;
@@ -525,6 +602,13 @@ async function ingestResult({
       error.replayed = nonceOutcome?.code === CERTOPS_NONCE_REPLAYED;
       throw error;
     }
+
+    // Sequence enforcement after the nonce replay ledger (route-family
+    // check ordering: auth, nonce replay, sequence) and before the status
+    // transition. A regression aborts the transaction, so the nonce
+    // consumption above rolls back with it and the message is not
+    // processed.
+    await enforceSequence({ client, agentRowId: agent.id, envelope });
 
     if (job.status !== "claimed" && job.status !== "running") {
       throw serviceError(
@@ -660,9 +744,11 @@ module.exports = {
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
   CERTOPS_AGENT_RESULT_STATUS_INVALID,
   CERTOPS_AGENT_RETIRED,
+  CERTOPS_AGENT_SEQUENCE_REGRESSION,
   DEFAULT_JOB_LEASE_SECONDS,
   assertEvidenceClaimOwnership,
   claimJobs,
+  enforceAgentSequence,
   ingestResult,
   jobLeaseSeconds,
   recordHeartbeat,
@@ -671,6 +757,7 @@ module.exports = {
     NONCE_TTL_GRACE_SECONDS,
     RESULT_STATUS_TO_JOB_STATUS,
     dateToIso,
+    envelopeSequence,
     safeParseJson,
     serviceError,
     withTransaction,

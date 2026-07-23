@@ -7,13 +7,13 @@ const {
   ROUTES,
   AgentProtocolError,
   AGENT_PROTOCOL_ERROR_CODES,
+  validateEnvelopeShape,
   jitteredDelay,
   withRetry,
   startPollLoop,
   createCaAwareFetch,
   createProtocolClient,
   parseServerUrl,
-  validateEnvelopeShape,
 } = require("./index.js");
 
 const CREDENTIAL = "ttagent_agent-1_0123456789abcdef";
@@ -472,6 +472,109 @@ test("outbound boundary: rejects unknown/private fields and redacts allowed gene
     (err) => err.code === AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
   );
   assert.equal(calls.length, 1, "unsafe evidence must not reach fetch");
+});
+
+test("sequence: strictly increasing across every outbound message type", async () => {
+  const calls = stubFetch([
+    {
+      status: 201,
+      json: { agentId: "agent-1", credential: CREDENTIAL, protocolVersion: "1.0.0" },
+    },
+    { status: 200, json: {} },
+    { status: 200, json: { jobs: [] } },
+    { status: 202, json: { accepted: true } },
+    { status: 202, json: { accepted: true } },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  await client.register({
+    bootstrapToken: "raw-bootstrap-token",
+    bootstrapTokenId: "bst_abc123",
+    agentVersion: "0.1.0",
+  });
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  await client.claim({ maxJobs: 1 });
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "succeeded",
+  });
+  await client.reportEvidence({
+    jobId: "job-1",
+    evidenceItems: [
+      { eventType: "certificate.observed", observedAt: new Date().toISOString() },
+    ],
+  });
+
+  assert.equal(calls.length, 5);
+  calls.forEach((call, index) => {
+    assert.equal(
+      call.parsedBody.sequence,
+      index + 1,
+      `expected envelope ${index} to carry sequence ${index + 1}`,
+    );
+  });
+});
+
+test("sequence: each client instance keeps its own counter starting at 1", async () => {
+  const calls = stubFetch([
+    { status: 200, json: {} },
+    { status: 200, json: {} },
+    { status: 200, json: {} },
+  ]);
+
+  const clientA = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-a",
+    protocolVersion: "1.0.0",
+    getCredential: () => "ttagent_agent-a_0123456789abcdef",
+  });
+  const clientB = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-b",
+    protocolVersion: "1.0.0",
+    getCredential: () => "ttagent_agent-b_0123456789abcdef",
+  });
+
+  await clientA.heartbeat({ agentVersion: "0.1.0" });
+  await clientA.heartbeat({ agentVersion: "0.1.0" });
+  // A fresh client (e.g. after a process restart) restarts at 1; the
+  // control plane treats its register as a new generation.
+  await clientB.heartbeat({ agentVersion: "0.1.0" });
+
+  assert.equal(calls[0].parsedBody.sequence, 1);
+  assert.equal(calls[1].parsedBody.sequence, 2);
+  assert.equal(calls[2].parsedBody.sequence, 1);
+});
+
+test("validateEnvelopeShape: flags a non-positive or non-integer sequence, accepts absence", () => {
+  const base = {
+    schemaVersion: 1,
+    protocolVersion: "1.0.0",
+    messageType: "heartbeat",
+    agentId: "agent-1",
+    sentAt: new Date().toISOString(),
+    body: { agentVersion: "0.1.0", ntpSynced: null, uptimeSeconds: null },
+  };
+
+  assert.deepEqual(validateEnvelopeShape({ ...base }), []);
+  assert.deepEqual(validateEnvelopeShape({ ...base, sequence: 1 }), []);
+  assert.deepEqual(validateEnvelopeShape({ ...base, sequence: 999 }), []);
+
+  for (const bad of [0, -1, 1.5, "2", null]) {
+    const problems = validateEnvelopeShape({ ...base, sequence: bad });
+    assert.equal(
+      problems.some((p) => p.includes("sequence")),
+      true,
+      `expected sequence problem for ${JSON.stringify(bad)}`,
+    );
+  }
 });
 
 test("jitteredDelay: stays within expected bounds across many samples", () => {

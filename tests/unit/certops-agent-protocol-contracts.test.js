@@ -310,6 +310,42 @@ describe("CertOps agent protocol contracts", () => {
     );
   });
 
+  it("treats the sequence counter as optional and bounded (integer >= 1)", () => {
+    const validate = createAjv().getSchema(agentProtocolSchema.$id);
+
+    for (const [messageType, build] of Object.entries(VALID_MESSAGES)) {
+      // Absent: backward compatible with already-deployed agents.
+      assert.equal(
+        validate(build()),
+        true,
+        `${messageType} without sequence must stay valid`,
+      );
+      assert.equal(
+        validate({ ...build(), sequence: 1 }),
+        true,
+        `${messageType} with sequence 1 must be valid`,
+      );
+    }
+
+    for (const badSequence of [0, -1, 1.5, "2", null]) {
+      assert.equal(
+        validate({ ...VALID_MESSAGES.heartbeat(), sequence: badSequence }),
+        false,
+        `sequence ${JSON.stringify(badSequence)} must be rejected`,
+      );
+    }
+
+    // The agent module's local envelope check must agree with the schema.
+    assert.deepEqual(
+      validateEnvelopeShape({ ...VALID_MESSAGES.claim(), sequence: 3 }),
+      [],
+    );
+    assert.ok(
+      validateEnvelopeShape({ ...VALID_MESSAGES.claim(), sequence: 0 }).length >
+        0,
+    );
+  });
+
   it("enforces per-messageType body required fields", () => {
     const validate = createAjv().getSchema(agentProtocolSchema.$id);
 

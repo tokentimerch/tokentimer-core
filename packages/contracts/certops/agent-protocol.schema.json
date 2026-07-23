@@ -42,6 +42,11 @@
       "type": ["integer", "null"],
       "description": "Agent-reported offset vs control-plane time, used for clock-drift detection. Present on heartbeat and result; optional elsewhere."
     },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per-agent monotonically increasing message counter, enforced server-side when present (defense in depth on top of the single-use nonce replay ledger): the control plane rejects any message whose sequence does not exceed the last accepted one for this agent. The counter is not persisted across agent restarts; a successful register begins a new generation, so enforcement only rejects regressions within the current registered generation. Optional for backward compatibility with already-deployed agents that do not send it."
+    },
     "body": {
       "description": "Message-type-specific payload. Structurally validated against the matching *Body definition below via the if/then rules in `allOf`; each body definition is additionalProperties:false, so unconstrained extra fields are rejected per messageType.",
       "type": ["object", "null"]

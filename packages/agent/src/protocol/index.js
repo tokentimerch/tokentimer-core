@@ -154,6 +154,7 @@ function validateEnvelopeShape(message) {
     "workspaceId",
     "sentAt",
     "clockOffsetMs",
+    "sequence",
     "body",
   ]);
   if (!checkExactObject(message, envelopeKeys, ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"], "message", problems)) {
@@ -169,6 +170,9 @@ function validateEnvelopeShape(message) {
   }
   if (message.clockOffsetMs !== undefined && message.clockOffsetMs !== null && !Number.isInteger(message.clockOffsetMs)) {
     problems.push("clockOffsetMs must be an integer or null");
+  }
+  if (message.sequence !== undefined && (!Number.isInteger(message.sequence) || message.sequence < 1)) {
+    problems.push("sequence must be an integer >= 1 when present");
   }
 
   if (!MESSAGE_TYPE_VALUES.has(message.messageType)) return problems;
@@ -277,7 +281,7 @@ function prepareOutboundEnvelope(envelope) {
   return { envelope: sanitized, serialized };
 }
 
-function buildEnvelope({ agentId, protocolVersion, messageType, body = null, workspaceId = null, clockOffsetMs = null }) {
+function buildEnvelope({ agentId, protocolVersion, messageType, body = null, workspaceId = null, clockOffsetMs = null, sequence = null }) {
   const envelope = {
     schemaVersion: SCHEMA_VERSION,
     protocolVersion,
@@ -286,6 +290,9 @@ function buildEnvelope({ agentId, protocolVersion, messageType, body = null, wor
     workspaceId,
     sentAt: new Date().toISOString(),
     clockOffsetMs,
+    // Optional in the schema (plain integer, not nullable): carried only
+    // when the caller provides a valid counter value.
+    ...(Number.isInteger(sequence) && sequence >= 1 ? { sequence } : {}),
     body,
   };
   return prepareOutboundEnvelope(envelope).envelope;
@@ -576,6 +583,18 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   const routeUrl = (route) => `${baseUrl}${route}`;
   const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl, onServerDate });
 
+  // Per-client monotonically increasing message counter, included as the
+  // envelope's `sequence` field on every outbound message (register,
+  // heartbeat, claim, result, evidence). Deliberately NOT persisted: a
+  // process restart restarts the counter at 1, which is safe because the
+  // control plane only rejects regressions within the current registered
+  // agent generation and a successful register begins a new generation.
+  let lastSequence = 0;
+  function nextSequence() {
+    lastSequence += 1;
+    return lastSequence;
+  }
+
   async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [] } = {}) {
     if (typeof bootstrapToken !== "string" || bootstrapToken.length === 0) {
       throw new AgentProtocolError("register requires a bootstrapToken", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
@@ -584,6 +603,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       agentId,
       protocolVersion,
       messageType: MESSAGE_TYPES.REGISTER,
+      sequence: nextSequence(),
       body: { bootstrapTokenId, agentVersion, hostname, platform, nodeVersion, declaredTargetSelectors, declaredCommandProfileNames },
     }));
     if (!ok) throw new AgentProtocolError(`agent registration failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
@@ -591,14 +611,14 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   }
 
   async function heartbeat({ agentVersion, ntpSynced = null, uptimeSeconds = null, pinnedSigningKeyId = null, clockOffsetMs = null } = {}) {
-    const { status, ok, json } = await send(ROUTES.HEARTBEAT, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.HEARTBEAT, clockOffsetMs, body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId } }));
+    const { status, ok, json } = await send(ROUTES.HEARTBEAT, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.HEARTBEAT, clockOffsetMs, sequence: nextSequence(), body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId } }));
     if (status === 410) return { retired: true };
     if (!ok) throw new AgentProtocolError(`heartbeat failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
   async function claim({ maxJobs = 1, supportedActions = [] } = {}) {
-    const { status, ok, json } = await send(ROUTES.CLAIM, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.CLAIM, body: { maxJobs, supportedActions } }));
+    const { status, ok, json } = await send(ROUTES.CLAIM, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.CLAIM, sequence: nextSequence(), body: { maxJobs, supportedActions } }));
     if (!ok) throw new AgentProtocolError(`claim failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     if (json !== null && !isPlainObject(json)) throw new AgentProtocolError("claim response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     if (json?.jobs !== undefined && !Array.isArray(json.jobs)) throw new AgentProtocolError("claim response jobs must be an array", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
@@ -627,13 +647,13 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       ...(claimId !== null ? { claimId } : {}),
       ...(nonce !== null ? { nonce } : {}),
     };
-    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, body }));
+    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, sequence: nextSequence(), body }));
     if (!ok) throw new AgentProtocolError(`reportResult failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
   async function reportEvidence({ jobId = null, evidenceItems } = {}) {
-    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, body: { jobId, evidenceItems } }));
+    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence: nextSequence(), body: { jobId, evidenceItems } }));
     if (!ok) throw new AgentProtocolError(`reportEvidence failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }

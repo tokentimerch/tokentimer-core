@@ -283,6 +283,39 @@ describe("Heartbeat handler", () => {
     assert.equal(res.statusCode, 400);
     assert.equal(res.body.code, "CERTOPS_AGENT_MESSAGE_INVALID");
   });
+
+  it("rejects an invalid sequence field with 400 before the service runs", async () => {
+    let serviceCalled = false;
+    for (const badSequence of [0, -3, 1.5, "7", null]) {
+      const res = createResponse();
+      const body = envelope("heartbeat", { agentVersion: "0.1.0" });
+      body.sequence = badSequence;
+      await _test.heartbeatHandler({ certopsAgent: agentFixture(), body }, res, {
+        recordHeartbeat: async () => {
+          serviceCalled = true;
+          return { ok: true };
+        },
+      });
+      assert.equal(res.statusCode, 400, `sequence ${JSON.stringify(badSequence)}`);
+      assert.equal(res.body.code, "CERTOPS_AGENT_MESSAGE_INVALID");
+    }
+    assert.equal(serviceCalled, false);
+  });
+
+  it("maps a sequence regression from the service to 409", async () => {
+    const res = createResponse();
+    const body = envelope("heartbeat", { agentVersion: "0.1.0" });
+    body.sequence = 2;
+    await _test.heartbeatHandler({ certopsAgent: agentFixture(), body }, res, {
+      recordHeartbeat: async () => {
+        const error = new Error("regression");
+        error.code = "CERTOPS_AGENT_SEQUENCE_REGRESSION";
+        throw error;
+      },
+    });
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.code, "CERTOPS_AGENT_SEQUENCE_REGRESSION");
+  });
 });
 
 describe("Claim handler", () => {
@@ -490,6 +523,58 @@ describe("Results handler", () => {
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.code, "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH");
     assert.equal(persisted, false);
+  });
+
+  it("evidence path enforces the sequence before appending and maps regression to 409", async () => {
+    const res = createResponse();
+    let evidenceAppended = false;
+    const body = envelope("evidence", {
+      jobId: "42",
+      evidenceItems: [
+        {
+          eventType: "certificate.observed",
+          observedAt: "2026-07-22T10:00:00.000Z",
+        },
+      ],
+    });
+    body.sequence = 5;
+    await _test.resultsHandler({ certopsAgent: agentFixture(), body }, res, {
+      enforceAgentSequence: async ({ agentRowId, envelope: seen }) => {
+        assert.equal(agentRowId, "agent-row-1");
+        assert.equal(seen.sequence, 5);
+        const error = new Error("regression");
+        error.code = "CERTOPS_AGENT_SEQUENCE_REGRESSION";
+        throw error;
+      },
+      createCertificateEvidence: async () => {
+        evidenceAppended = true;
+        return { id: "ev-1" };
+      },
+    });
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.code, "CERTOPS_AGENT_SEQUENCE_REGRESSION");
+    assert.equal(evidenceAppended, false);
+  });
+
+  it("passes the envelope through to ingestResult for sequence enforcement", async () => {
+    const res = createResponse();
+    let seenEnvelope = null;
+    const body = envelope("result", {
+      jobId: "42",
+      attemptId: "claim-1",
+      claimId: "claim-1",
+      nonce: "n-1",
+      status: "succeeded",
+    });
+    body.sequence = 8;
+    await _test.resultsHandler({ certopsAgent: agentFixture(), body }, res, {
+      ingestResult: async ({ envelope: env }) => {
+        seenEnvelope = env;
+        return { ok: true, jobId: "42", status: "succeeded" };
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(seenEnvelope.sequence, 8);
   });
 });
 

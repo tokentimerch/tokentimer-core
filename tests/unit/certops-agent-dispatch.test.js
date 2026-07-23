@@ -8,7 +8,9 @@ const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
+  CERTOPS_AGENT_SEQUENCE_REGRESSION,
   claimJobs,
+  enforceAgentSequence,
   ingestResult,
   recordHeartbeat,
   registerAgent,
@@ -88,6 +90,60 @@ function registerBody() {
     declaredCommandProfileNames: ["nginx-reload"],
   };
 }
+
+describe("agentDispatch.enforceAgentSequence", () => {
+  it("accepts a strictly greater sequence via a single CAS UPDATE", async () => {
+    const queries = [];
+    const client = {
+      query: async (sql, params) => {
+        queries.push({ sql, params });
+        return { rows: [{ id: "agent-row-1" }] };
+      },
+    };
+    await enforceAgentSequence({
+      client,
+      agentRowId: "agent-row-1",
+      envelope: { sequence: 7 },
+    });
+    assert.equal(queries.length, 1);
+    assert.match(queries[0].sql, /SET last_sequence = \$2/);
+    assert.match(queries[0].sql, /last_sequence < \$2/);
+    assert.deepEqual(queries[0].params, ["agent-row-1", 7]);
+  });
+
+  it("rejects a replayed/lower sequence with CERTOPS_AGENT_SEQUENCE_REGRESSION", async () => {
+    const client = {
+      // Zero rows matched: stored last_sequence >= incoming sequence.
+      query: async () => ({ rows: [] }),
+    };
+    await assert.rejects(
+      enforceAgentSequence({
+        client,
+        agentRowId: "agent-row-1",
+        envelope: { sequence: 3 },
+      }),
+      (error) => error.code === CERTOPS_AGENT_SEQUENCE_REGRESSION,
+    );
+  });
+
+  it("is a no-op for envelopes without a sequence (legacy agents)", async () => {
+    const client = {
+      query: async () => {
+        throw new Error("no query expected for a sequence-less envelope");
+      },
+    };
+    await enforceAgentSequence({
+      client,
+      agentRowId: "agent-row-1",
+      envelope: {},
+    });
+    await enforceAgentSequence({
+      client,
+      agentRowId: "agent-row-1",
+      envelope: { sequence: 0 },
+    });
+  });
+});
 
 describe("agentDispatch.registerAgent", () => {
   it("registers happy path: inserts row, consumes token, returns credential once", async () => {
@@ -172,6 +228,50 @@ describe("agentDispatch.registerAgent", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
     assert.equal(dbPool.state.released, true);
   });
+
+  it("seeds last_sequence from the register envelope (new generation), 0 when absent", async () => {
+    const insertParams = [];
+    const makePool = () =>
+      createMockPool((sql, params) => {
+        if (sql.includes("INSERT INTO certops_agents")) {
+          insertParams.push(params);
+          return {
+            rows: [
+              { id: "agent-row-1", agent_id: "agent-01", protocol_version: "1.0.0" },
+            ],
+          };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+    const deps = {
+      ensureActiveSigningKey: async () => ({ signingKeyId: "key-1", publicKeyPem: "pem" }),
+      generateAgentCredential: () => ({
+        credentialPrefix: "ttagent_0123456789abcdef",
+        credentialHash: "hash",
+        plaintextCredential: "ttagent_x",
+      }),
+      consumeBootstrapToken: async () => ({ id: "boot-1" }),
+    };
+
+    await registerAgent({
+      dbPool: makePool(),
+      bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A },
+      envelope: { ...registerEnvelope(), sequence: 5 },
+      body: registerBody(),
+      deps,
+    });
+    await registerAgent({
+      dbPool: makePool(),
+      bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A },
+      envelope: registerEnvelope(),
+      body: registerBody(),
+      deps,
+    });
+
+    // last_sequence is the 14th insert parameter.
+    assert.equal(insertParams[0][13], 5);
+    assert.equal(insertParams[1][13], 0);
+  });
 });
 
 describe("agentDispatch.recordHeartbeat", () => {
@@ -213,6 +313,30 @@ describe("agentDispatch.recordHeartbeat", () => {
     assert.match(sql, /status = CASE WHEN status = 'offline' THEN 'active'/);
     assert.match(sql, /status <> 'retired'/);
     assert.match(sql, /last_seen_at = NOW\(\)/);
+  });
+
+  it("rejects a sequence regression before any heartbeat write", async () => {
+    const dbPool = createMockPool(() => ({ rows: [] }));
+    dbPool.query = async (sql, params) => {
+      if (sql.includes("SET last_sequence")) {
+        // CAS matches zero rows: regression.
+        return { rows: [] };
+      }
+      throw new Error(`no heartbeat write expected, got: ${sql}`);
+    };
+
+    await assert.rejects(
+      recordHeartbeat({
+        dbPool,
+        agent: agentFixture(),
+        envelope: { clockOffsetMs: null, sequence: 2 },
+        body: { agentVersion: "0.1.0" },
+        deps: {
+          getActiveSigningKeyPublicInfo: async () => null,
+        },
+      }),
+      (error) => error.code === CERTOPS_AGENT_SEQUENCE_REGRESSION,
+    );
   });
 });
 
@@ -390,6 +514,63 @@ describe("agentDispatch.claimJobs", () => {
     assert.deepEqual(result, { jobs: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
+
+  it("rejects a sequence regression before locking the workspace or claiming", async () => {
+    let workspaceLocked = false;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SET last_sequence")) {
+        return { rows: [] };
+      }
+      throw new Error(`no job query expected, got: ${sql}`);
+    });
+    await assert.rejects(
+      claimJobs({
+        dbPool,
+        agent: agentFixture(),
+        envelope: { sequence: 1 },
+        body: { maxJobs: 1, supportedActions: ["renew"] },
+        env: {},
+        deps: {
+          ...CLAIM_DEPS_BASE,
+          lockWorkspaceForCertOpsSideEffect: async () => {
+            workspaceLocked = true;
+            return { locked: true };
+          },
+        },
+      }),
+      (error) => error.code === CERTOPS_AGENT_SEQUENCE_REGRESSION,
+    );
+    assert.equal(workspaceLocked, false);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  it("accepts an increasing sequence and proceeds with the claim", async () => {
+    let casParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SET last_sequence")) {
+        casParams = params;
+        return { rows: [{ id: "agent-row-1" }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { sequence: 9 },
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(casParams, ["agent-row-1", 9]);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
 });
 
 describe("agentDispatch.ingestResult", () => {
@@ -534,5 +715,69 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(result.errorCode, null);
     assert.equal(updateParams[2], null);
     assert.equal(updateParams[3], null);
+  });
+
+  it("rejects a sequence regression after nonce consumption and rolls the whole transaction back", async () => {
+    let nonceConsumed = false;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow()] };
+      if (sql.includes("SET last_sequence")) {
+        // Check ordering: auth (route), nonce replay, then sequence.
+        assert.equal(nonceConsumed, true, "nonce must be checked before sequence");
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(
+      ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        envelope: { sequence: 4 },
+        body: resultBody(),
+        deps: {
+          consumeNonce: async () => {
+            nonceConsumed = true;
+            return { consumed: true };
+          },
+        },
+      }),
+      (error) => error.code === CERTOPS_AGENT_SEQUENCE_REGRESSION,
+    );
+    // Rollback also un-consumes the nonce ledger write for this message.
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  it("accepts an increasing sequence and completes result ingestion", async () => {
+    let casParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow()] };
+      if (sql.includes("SET last_sequence")) {
+        casParams = params;
+        return { rows: [{ id: "agent-row-1" }] };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        return {
+          rows: [
+            {
+              id: 42,
+              status: "failed",
+              error_code: params[2],
+              completed_at: new Date(),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const result = await ingestResult({
+      dbPool,
+      agent: agentFixture(),
+      envelope: { sequence: 11 },
+      body: resultBody(),
+      deps: { consumeNonce: async () => ({ consumed: true }) },
+    });
+    assert.equal(result.status, "failed");
+    assert.deepEqual(casParams, ["agent-row-1", 11]);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 });

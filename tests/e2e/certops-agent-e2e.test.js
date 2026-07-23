@@ -801,4 +801,111 @@ describe("CertOps agent surface E2E", () => {
     assert.equal(rows[0].status, "failed");
     assert.equal(rows[0].error_code, "agent_offline");
   });
+
+  it("sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted", async (t) => {
+    if (!dbAvailable) return t.skip(skipReason);
+
+    const agentId = `e2e-agent-${RUN_ID}-seq`;
+    const lastSequenceOf = async () => {
+      const { rows } = await pool.query(
+        `SELECT last_sequence FROM certops_agents WHERE agent_id = $1`,
+        [agentId],
+      );
+      return Number(rows[0].last_sequence);
+    };
+
+    // Register with a sequence: the new generation starts at that value.
+    const boot1 = await createBootstrap();
+    const reg1 = await postAgent(
+      "register",
+      boot1.plaintextToken,
+      envelope(
+        "register",
+        agentId,
+        { bootstrapTokenId: String(boot1.token.id), agentVersion: "1.0.0" },
+        { sequence: 3 },
+      ),
+    );
+    assert.equal(reg1.status, 201, JSON.stringify(reg1.body));
+    assert.equal(await lastSequenceOf(), 3);
+
+    const heartbeatWith = (sequence) =>
+      postAgent(
+        "heartbeat",
+        reg1.body.credential,
+        envelope(
+          "heartbeat",
+          agentId,
+          { agentVersion: "1.0.0" },
+          sequence === undefined ? {} : { sequence },
+        ),
+      );
+
+    // Normal increasing sequence is accepted.
+    const hb4 = await heartbeatWith(4);
+    assert.equal(hb4.status, 200, JSON.stringify(hb4.body));
+    assert.equal(await lastSequenceOf(), 4);
+
+    // Replayed (equal) and lower sequences are rejected with 409 and do not
+    // move the high-water mark.
+    for (const stale of [4, 2]) {
+      const rejected = await heartbeatWith(stale);
+      assert.equal(rejected.status, 409, JSON.stringify(rejected.body));
+      assert.equal(rejected.body.code, "CERTOPS_AGENT_SEQUENCE_REGRESSION");
+    }
+    assert.equal(await lastSequenceOf(), 4);
+
+    // A claim poll also participates in the same per-agent counter.
+    const claim = await postAgent(
+      "jobs/claim",
+      reg1.body.credential,
+      envelope(
+        "claim",
+        agentId,
+        { maxJobs: 1, supportedActions: ["renew"] },
+        { sequence: 5 },
+      ),
+    );
+    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    assert.equal(await lastSequenceOf(), 5);
+
+    // Backward compatibility: an envelope without a sequence is processed
+    // as today and leaves last_sequence untouched.
+    const legacy = await heartbeatWith(undefined);
+    assert.equal(legacy.status, 200, JSON.stringify(legacy.body));
+    assert.equal(await lastSequenceOf(), 5);
+
+    // Re-register (decommission + fresh install with the same agentId):
+    // registration begins a new generation, so a low restarted counter is
+    // accepted again. All FKs to certops_agents are ON DELETE SET NULL.
+    await pool.query(`DELETE FROM certops_agents WHERE agent_id = $1`, [
+      agentId,
+    ]);
+    const boot2 = await createBootstrap();
+    const reg2 = await postAgent(
+      "register",
+      boot2.plaintextToken,
+      envelope(
+        "register",
+        agentId,
+        { bootstrapTokenId: String(boot2.token.id), agentVersion: "1.0.0" },
+        { sequence: 1 },
+      ),
+    );
+    assert.equal(reg2.status, 201, JSON.stringify(reg2.body));
+    assert.equal(await lastSequenceOf(), 1);
+
+    const restarted = await postAgent(
+      "heartbeat",
+      reg2.body.credential,
+      envelope(
+        "heartbeat",
+        agentId,
+        { agentVersion: "1.0.0" },
+        { sequence: 2 },
+      ),
+    );
+    assert.equal(restarted.status, 200, JSON.stringify(restarted.body));
+    assert.equal(await lastSequenceOf(), 2);
+  });
 });
