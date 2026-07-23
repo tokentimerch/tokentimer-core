@@ -59,7 +59,7 @@
     "eslint-plugin-unused-imports": "3.2.0",
     "prettier": "3.8.1",
     "jsdom": "26.1.0",
-    "sharp": "0.33.5",
+    "sharp": "0.35.0",
     "typescript": "5.9.3",
     "vite": "6.4.3",
     "vitest": "4.1.8"
