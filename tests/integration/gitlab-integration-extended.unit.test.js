@@ -324,4 +324,85 @@ describe("GitLab integration helper coverage", () => {
     expect(groupToken).to.exist;
     expect(groupToken.description).to.equal("real group token description");
   });
+
+  it("skips revoked deploy tokens unless includeRevoked is enabled (issue: deploy tokens revoked in GitLab, hence hidden from its UI, were still imported because the scan only checked expires_at)", async () => {
+    const deployTokensResponse = [
+      {
+        id: 1,
+        name: "active-deploy-token",
+        revoked: false,
+        expired: false,
+        expires_at: "2099-01-01T00:00:00Z",
+        scopes: ["read_repository"],
+      },
+      {
+        id: 2,
+        name: "revoked-deploy-token",
+        revoked: true,
+        expired: false,
+        // Revoked but still carries a valid future expiration date
+        expires_at: "2099-01-01T00:00:00Z",
+        scopes: ["read_repository"],
+      },
+    ];
+    const axiosMock = async (config) => {
+      const { pathname } = new URL(config.url);
+      if (pathname === "/api/v4/user") {
+        return { data: { id: 1, username: "alice", is_admin: false } };
+      }
+      if (pathname === "/api/v4/projects") {
+        return {
+          data: [{ id: 10, name: "proj", path_with_namespace: "g/proj" }],
+          headers: {},
+        };
+      }
+      if (pathname === "/api/v4/projects/10/deploy_tokens") {
+        return { data: deployTokensResponse };
+      }
+      return { data: [] };
+    };
+    const gitlab = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+
+    const baseFilters = {
+      includePATs: false,
+      includeProjectTokens: false,
+      includeGroupTokens: false,
+      includeDeployTokens: true,
+      includeTriggerTokens: false,
+      includeSSHKeys: false,
+      excludeUserPATs: false,
+      includeExpired: false,
+      includeRevoked: false,
+    };
+
+    const { items } = await gitlab.scanGitLab({
+      baseUrl: "https://gitlab.example.com",
+      token: "token",
+      include: { tokens: true, keys: false },
+      filters: baseFilters,
+    });
+    const names = items
+      .filter((i) => i.source === "gitlab-deploy-token")
+      .map((i) => i.name);
+    expect(names).to.deep.equal(["active-deploy-token"]);
+
+    const gitlabWithRevoked = requireWithMocks(resolveGitlabModule(), {
+      axios: axiosMock,
+    });
+    const { items: itemsWithRevoked } = await gitlabWithRevoked.scanGitLab({
+      baseUrl: "https://gitlab.example.com",
+      token: "token",
+      include: { tokens: true, keys: false },
+      filters: { ...baseFilters, includeRevoked: true },
+    });
+    const namesWithRevoked = itemsWithRevoked
+      .filter((i) => i.source === "gitlab-deploy-token")
+      .map((i) => i.name);
+    expect(namesWithRevoked).to.deep.equal([
+      "active-deploy-token",
+      "revoked-deploy-token",
+    ]);
+  });
 });

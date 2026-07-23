@@ -46,6 +46,52 @@ async function writeAutoSyncAudit(
 }
 
 /**
+ * Emit AUTO_SYNC_COMPLETED audit after a scheduled worker run finishes with
+ * success or partial status. Manual runs write AUTO_SYNC_TRIGGERED from the
+ * API; without this, scheduled runs left no audit trail unless they failed.
+ */
+export async function recordAutoSyncCompleted(
+  client,
+  {
+    configId,
+    workspaceId,
+    provider,
+    createdBy = null,
+    status,
+    itemsScanned = null,
+    itemsImported = null,
+    error = null,
+  },
+) {
+  try {
+    const subjectUserId = await resolveAuditSubjectUserId(
+      client,
+      workspaceId,
+      createdBy,
+    );
+    await writeAutoSyncAudit(client, {
+      workspaceId,
+      subjectUserId,
+      action: "AUTO_SYNC_COMPLETED",
+      metadata: {
+        provider,
+        status,
+        items_scanned: itemsScanned,
+        items_imported: itemsImported,
+        ...(error ? { error } : {}),
+        config_id: configId,
+      },
+    });
+  } catch (err) {
+    logger.warn("Audit write failed (AUTO_SYNC_COMPLETED)", {
+      error: err.message,
+      workspace_id: workspaceId,
+      provider,
+    });
+  }
+}
+
+/**
  * Persist auto-sync failure and emit AUTO_SYNC_FAILED audit on first transition
  * into failed state (avoids hourly duplicate audit rows).
  */

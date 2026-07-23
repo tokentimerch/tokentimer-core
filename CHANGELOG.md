@@ -9,6 +9,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-07-23
+
+### Added
+
+- **AUTO_SYNC_COMPLETED audit event for scheduled auto-sync runs** — the auto-sync worker now writes an audit event whenever a scheduled (planned) sync finishes with `success` or `partial` status, including provider, run status, scanned/imported item counts, and the config id. Previously only manual "run now" (`AUTO_SYNC_TRIGGERED`, written by the API) and failures (`AUTO_SYNC_FAILED`) left an audit trail, so worker-scheduled runs were invisible in the Audit log. The Audit page recognizes the new action in the action-type filter and renders its metadata (status, scanned, imported).
+
+### Fixed
+
+- **Import modal showed defaults instead of the saved auto-sync configuration** — reopening the GitLab or GitHub import view after configuring auto-sync now restores the saved base URL and all scan filters (token types, exclude regular-user PATs, include expired/revoked, GitHub include flags) from the stored `scan_params`, alongside the already-restored filter rules and cleanup setting. The token itself is never returned by the API and stays blank, with the "Credentials saved for auto-sync" placeholder. Previously only filter rules and the cleanup flag reached the form, so every other field silently fell back to its default.
+- **Revoked GitLab deploy tokens were still imported by scans** — GitLab hides revoked/deleted deploy tokens in its UI but the API still returns them (`revoked: true`), often with a still-valid `expires_at`, so they kept showing up in TokenTimer. The deploy-token scan now skips revoked entries unless the "Include revoked tokens" filter is enabled, matching PAT and project/group token behaviour.
+
+### Changed
+
+- Version metadata bumped to 0.10.2 across all manifests, contracts, and Helm chart.
+
 ## [0.10.1] - 2026-07-22
 
 ### Added

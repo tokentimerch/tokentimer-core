@@ -98,6 +98,7 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
     contactGroups,
     onSelectionChange,
     autoSyncManageMode = false,
+    initialScanParams = null,
     initialFilterRules = null,
     initialCleanupObsolete = null,
   },
@@ -138,6 +139,22 @@ const ImportGitHubForm = React.forwardRef(function ImportGitHubForm(
       setFilterRules(initialFilterRules);
     }
   }, [initialFilterRules]);
+
+  // Restore base URL and include flags saved with the auto-sync config so
+  // reopening the modal shows the configured values instead of the defaults
+  // (the token itself is never returned by the API and stays blank).
+  React.useEffect(() => {
+    if (!initialScanParams) return;
+    const sp = initialScanParams;
+    if (sp.baseUrl) setGithubBaseUrl(sp.baseUrl);
+    const inc = sp.include;
+    if (!inc) return;
+    if (typeof inc.tokens === 'boolean') setGithubIncludeTokens(inc.tokens);
+    if (typeof inc.sshKeys === 'boolean') setGithubIncludeSSHKeys(inc.sshKeys);
+    if (typeof inc.deployKeys === 'boolean')
+      setGithubIncludeDeployKeys(inc.deployKeys);
+    if (typeof inc.secrets === 'boolean') setGithubIncludeSecrets(inc.secrets);
+  }, [initialScanParams]);
 
   React.useEffect(() => {
     if (typeof initialCleanupObsolete === 'boolean') {

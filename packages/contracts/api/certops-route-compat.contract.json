@@ -1,6 +1,6 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "status": "m2-runtime-stable",
   "description": "Frozen CertOps route namespaces and stable routes for M1/M2. M1/M2 Core workspace, machine-token executor, job read, job manual-create, evidence, and token-management routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
   "namespacePolicy": {

@@ -1088,6 +1088,16 @@ async function scanGitLab({
 
                 for (const dt of deployTokens) {
                   if (items.length >= maxItems) break;
+
+                  // GitLab hides revoked/deleted deploy tokens in its UI but
+                  // the API still returns them with revoked: true (their
+                  // expires_at can still be in the future). Skip them unless
+                  // the includeRevoked filter is enabled, matching PAT and
+                  // project/group token behaviour.
+                  if (dt.revoked === true && !filters.includeRevoked) {
+                    continue;
+                  }
+
                   const expiresAt = dt.expires_at
                     ? tryParseDate(dt.expires_at)
                     : null;
