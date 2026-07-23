@@ -392,6 +392,8 @@ describe("CertOps agents list route", () => {
       status: "active",
       lastSeenAt: "2026-07-01T12:00:00.000Z",
       clockOffsetMs: 25,
+      ntpSynced: null,
+      pinnedSigningKeyId: null,
       createdAt: "2026-06-01T00:00:00.000Z",
       retiredAt: null,
       retireReason: null,

@@ -429,6 +429,7 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
   const CLAIM_DEPS_BASE = {
     lockWorkspaceForCertOpsSideEffect: async () => ({ locked: true }),
     signJobForDispatch: async ({ job }) => ({ ...job, signature: "sig" }),
+    enforceAgentSequence: async () => {},
   };
 
   function agentFixture() {
