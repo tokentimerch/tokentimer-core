@@ -291,6 +291,11 @@ const KNOWN_DNS_PROVIDER_IDS = Object.freeze([
   "google-cloud-dns",
   "rfc2136",
   "acme-dns",
+  "ovhcloud",
+  "hetzner",
+  "infomaniak",
+  "exoscale",
+  "powerdns",
 ]);
 
 /**

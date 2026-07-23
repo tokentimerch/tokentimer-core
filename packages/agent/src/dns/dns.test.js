@@ -40,7 +40,7 @@ const CHALLENGE = {
 // listSupportedDnsProviders
 // ---------------------------------------------------------------------------
 
-test("listSupportedDnsProviders returns the six wave-1 provider ids", () => {
+test("listSupportedDnsProviders returns the wave-1 then wave-2 provider ids", () => {
   assert.deepEqual(listSupportedDnsProviders(), [
     "cloudflare",
     "route53",
@@ -48,6 +48,11 @@ test("listSupportedDnsProviders returns the six wave-1 provider ids", () => {
     "google-cloud-dns",
     "rfc2136",
     "acme-dns",
+    "ovhcloud",
+    "hetzner",
+    "infomaniak",
+    "exoscale",
+    "powerdns",
   ]);
 });
 

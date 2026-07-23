@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * DNS-01 challenge solvers (wave 1).
+ * DNS-01 challenge solvers (waves 1 and 2).
  *
  * Native, zero-dependency TXT-record solvers so the agent can satisfy ACME
  * DNS-01 challenges itself instead of relying on certbot/acme.sh DNS
@@ -36,7 +36,9 @@
  *
  * Supported providers (exact ids, matched against the policy engine's
  * allowedDnsProviders exact-match allowlist):
- *   cloudflare, route53, azure-dns, google-cloud-dns, rfc2136, acme-dns
+ *   wave 1: cloudflare, route53, azure-dns, google-cloud-dns, rfc2136,
+ *           acme-dns
+ *   wave 2: ovhcloud, hetzner, infomaniak, exoscale, powerdns
  *
  * This module is self-contained within src/dns: it does not import policy,
  * config, or other sibling src/<name> modules. Wiring policy checks +
@@ -57,6 +59,11 @@ const azureDns = require("./providers/azure-dns.js");
 const googleCloudDns = require("./providers/google-cloud-dns.js");
 const rfc2136 = require("./providers/rfc2136.js");
 const acmeDns = require("./providers/acme-dns.js");
+const ovhcloud = require("./providers/ovhcloud.js");
+const hetzner = require("./providers/hetzner.js");
+const infomaniak = require("./providers/infomaniak.js");
+const exoscale = require("./providers/exoscale.js");
+const powerdns = require("./providers/powerdns.js");
 
 /** Default per-request timeout. DNS APIs are fast; propagation waiting is
  * the ACME tool's job, not this module's. */
@@ -69,6 +76,11 @@ const PROVIDER_MODULES = Object.freeze({
   "google-cloud-dns": googleCloudDns,
   rfc2136,
   "acme-dns": acmeDns,
+  ovhcloud,
+  hetzner,
+  infomaniak,
+  exoscale,
+  powerdns,
 });
 
 const SUPPORTED_DNS_PROVIDERS = Object.freeze([
@@ -78,6 +90,11 @@ const SUPPORTED_DNS_PROVIDERS = Object.freeze([
   "google-cloud-dns",
   "rfc2136",
   "acme-dns",
+  "ovhcloud",
+  "hetzner",
+  "infomaniak",
+  "exoscale",
+  "powerdns",
 ]);
 
 /**
