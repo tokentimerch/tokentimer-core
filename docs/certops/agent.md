@@ -107,6 +107,7 @@ Top level:
 | `discovery` | object or null | null | Null disables discovery entirely. |
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
+| `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in section 5). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
 
 `policy` block (deep validation in `src/policy/loadPolicyConfig`, fail-loud):
 
@@ -151,8 +152,21 @@ routes (`src/protocol/index.js` `ROUTES`):
 Result and evidence share one route; the envelope's `messageType`
 disambiguates server-side. Every envelope carries `schemaVersion` (1),
 `protocolVersion`, `messageType`, `agentId`, `sentAt`, and optionally
-`workspaceId` and `clockOffsetMs`. Messages must never carry private key
-material (schema-level rule, enforced again by the evidence builder).
+`workspaceId`, `clockOffsetMs`, and `sequence`. Messages must never carry
+private key material (schema-level rule, enforced again by the evidence
+builder).
+
+Message sequence: the protocol client stamps every outbound envelope with
+`sequence`, a per-agent monotonically increasing counter, and the control
+plane rejects any message whose sequence does not exceed the last accepted
+one for that agent (HTTP 409, code `CERTOPS_AGENT_SEQUENCE_REGRESSION`).
+This is defense in depth on top of the single-use nonce replay ledger. The
+counter is not persisted: a restart begins at 1 again, which is safe because
+a successful `register` starts a new generation (the server resets its
+high-water mark to the register envelope's sequence), so regressions are only
+rejected within the current registered generation. Envelopes without
+`sequence` remain accepted for backward compatibility with already-deployed
+agents and never move the high-water mark.
 
 Authentication: `register` uses the bootstrap token as a Bearer token;
 everything else uses the stored `ttagent_...` credential as a Bearer token.
@@ -345,6 +359,77 @@ then instead of executing, the agent reports one `policy.checked` evidence
 item per step the action would run (with `dryRun: true` metadata) and
 returns `succeeded` with `keyRotated` null. Zero filesystem or exec side
 effects; the keys/acme/deploy/reload/verify modules are never called.
+
+### DNS-01 providers
+
+`src/dns` implements native TXT-record solvers so DNS-01 challenges no
+longer require the ACME tool's own DNS plugins. certbot/acme.sh still drive
+the ACME conversation; they call back into the agent through the
+`certops-dns-hook` executable (`packages/agent/bin/certops-dns-hook.js`).
+Zero npm dependencies: HTTP providers use global `fetch`, Route 53 SigV4 and
+the GCP JWT are signed with `node:crypto`, and RFC 2136 speaks the DNS wire
+format over `node:net` with a TSIG HMAC (RFC 8945, `hmac-sha1/224/256/384/512`).
+
+Wave-1 provider ids (exact-match against `policy.allowedDnsProviders`):
+`cloudflare`, `route53`, `azure-dns`, `google-cloud-dns`, `rfc2136`,
+`acme-dns`.
+
+Config (`config.json`): each configured provider maps to an object holding
+the absolute path of its agent-local credentials file plus optional
+non-secret options; the reserved `zoneProviderMap` key routes zones to
+providers on multi-provider hosts (longest matching zone wins, dot-boundary
+rule; with a single provider and no map entry, that provider is the
+default).
+
+```json
+{
+  "dnsProviders": {
+    "cloudflare": { "credentialsFile": "/etc/tokentimer-agent/dns/cloudflare.json" },
+    "rfc2136": { "credentialsFile": "/etc/tokentimer-agent/dns/rfc2136.json" },
+    "zoneProviderMap": {
+      "example.com": "cloudflare",
+      "internal.example.net": "rfc2136"
+    }
+  }
+}
+```
+
+Credentials files are JSON objects, must be `0600` (the agent refuses
+group/other-readable files on POSIX), and never leave the host:
+
+| Provider | Credentials file fields |
+|----------|-------------------------|
+| `cloudflare` | `apiToken` (scoped token, Zone.DNS:Edit); optional `zoneId` (looked up by zone name when absent) |
+| `route53` | `accessKeyId`, `secretAccessKey`; optional `sessionToken`, `hostedZoneId` (else `ListHostedZonesByName`), `region` (default `us-east-1`) |
+| `azure-dns` | `tenantId`, `clientId`, `clientSecret`, `subscriptionId`, `resourceGroup` (client-credentials flow, DNS Zone Contributor role) |
+| `google-cloud-dns` | `client_email`, `private_key`, `project_id` (standard SA JSON fields); optional `managedZone` (else looked up by `dnsName`). The SA key is a DNS credential: it signs the OAuth JWT locally and never leaves the host |
+| `rfc2136` | `server`, `keyName`, `keySecretBase64`; optional `port` (default 53), `keyAlgorithm` (default `hmac-sha256`) |
+| `acme-dns` | `baseUrl`, `username`, `password`, `subdomain` (from `/register`). Cleanup is a documented no-op: acme-dns rotates its two TXT slots automatically |
+
+Hook usage. certbot manual hooks (the hook derives the TXT name
+`_acme-challenge.$CERTBOT_DOMAIN` and reads `CERTBOT_DOMAIN` +
+`CERTBOT_VALIDATION` from the environment certbot sets):
+
+```
+certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
+  --manual-auth-hook    "certops-dns-hook present" \
+  --manual-cleanup-hook "certops-dns-hook cleanup"
+```
+
+For acme.sh, export the fallback variables from a thin dnsapi wrapper and
+call the same binary: `ACME_DOMAIN=<domain> ACME_TXT_VALUE=<txt>
+certops-dns-hook present|cleanup`.
+
+Policy gate: the hook resolves the provider and zone for the domain, then
+requires BOTH `checkDnsProvider` and `checkDnsZone` to pass against the
+agent-local policy engine before reading any credentials file or making any
+network call. A rejection prints the `{ allowed: false, rejectionReason,
+detail }` JSON to stderr and exits nonzero, so the provider id must be in
+`policy.allowedDnsProviders` and the zone covered by
+`policy.allowedDnsZones` (suffix match with dot boundary). Solver failures
+never carry secrets: every provider response excerpt is bounded to 1024
+chars and replaced wholesale with `[redacted]` if it contains a
+`PRIVATE KEY` marker or any of the credential strings themselves.
 
 ## 6. Zero-custody guarantees
 

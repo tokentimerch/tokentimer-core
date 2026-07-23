@@ -281,6 +281,174 @@ function validatePolicyObject(policy) {
   return policy;
 }
 
+/** Provider ids accepted in the dnsProviders config section. Must stay in
+ * sync with src/dns listSupportedDnsProviders (duplicated, not imported,
+ * to keep this module self-contained). */
+const KNOWN_DNS_PROVIDER_IDS = Object.freeze([
+  "cloudflare",
+  "route53",
+  "azure-dns",
+  "google-cloud-dns",
+  "rfc2136",
+  "acme-dns",
+]);
+
+/**
+ * Validates the optional "dnsProviders" config block (native DNS-01
+ * solvers, src/dns). Fail-loud like validateCaBundlePath: a malformed
+ * block aborts startup instead of being silently normalized.
+ *
+ * Shape: an object mapping provider id -> { credentialsFile: absolutePath,
+ * ...providerSpecificNonSecretOptions }, plus an optional reserved
+ * `zoneProviderMap` key (zone -> provider id) for hosts with more than one
+ * provider. Credentials themselves NEVER live in config.json; only the
+ * path to the 0600 credentials file does.
+ *
+ * @param {*} dnsProviders raw config.json "dnsProviders" value
+ * @returns {object|null} the validated block, or null when absent
+ */
+function validateDnsProvidersObject(dnsProviders) {
+  if (dnsProviders === undefined || dnsProviders === null) return null;
+  if (typeof dnsProviders !== "object" || Array.isArray(dnsProviders)) {
+    throw new Error(
+      "tokentimer-agent: dnsProviders in config.json must be an object " +
+        "mapping provider id -> { credentialsFile, ...options }",
+    );
+  }
+
+  const providerIds = Object.keys(dnsProviders).filter(
+    (key) => key !== "zoneProviderMap",
+  );
+
+  for (const providerId of providerIds) {
+    if (!KNOWN_DNS_PROVIDER_IDS.includes(providerId)) {
+      throw new Error(
+        `tokentimer-agent: dnsProviders.${providerId} is not a known DNS ` +
+          `provider id (known: ${KNOWN_DNS_PROVIDER_IDS.join(", ")})`,
+      );
+    }
+    const entry = dnsProviders[providerId];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(
+        `tokentimer-agent: dnsProviders.${providerId} must be an object ` +
+          "({ credentialsFile, ...options })",
+      );
+    }
+    if (
+      typeof entry.credentialsFile !== "string" ||
+      entry.credentialsFile.length === 0 ||
+      !path.isAbsolute(entry.credentialsFile)
+    ) {
+      throw new Error(
+        `tokentimer-agent: dnsProviders.${providerId}.credentialsFile must be ` +
+          `an absolute path string, got: ${JSON.stringify(entry.credentialsFile)}`,
+      );
+    }
+  }
+
+  const zoneProviderMap = dnsProviders.zoneProviderMap;
+  if (zoneProviderMap !== undefined) {
+    if (
+      zoneProviderMap === null ||
+      typeof zoneProviderMap !== "object" ||
+      Array.isArray(zoneProviderMap)
+    ) {
+      throw new Error(
+        "tokentimer-agent: dnsProviders.zoneProviderMap must be an object " +
+          "mapping zone -> provider id",
+      );
+    }
+    for (const [zone, providerId] of Object.entries(zoneProviderMap)) {
+      if (zone.length === 0) {
+        throw new Error(
+          "tokentimer-agent: dnsProviders.zoneProviderMap contains an empty zone key",
+        );
+      }
+      if (!providerIds.includes(providerId)) {
+        throw new Error(
+          `tokentimer-agent: dnsProviders.zoneProviderMap.${zone} references ` +
+            `provider ${JSON.stringify(providerId)}, which is not configured ` +
+            "in dnsProviders",
+        );
+      }
+    }
+  }
+
+  return dnsProviders;
+}
+
+/**
+ * Reads and JSON-parses the agent-local DNS credentials file for one
+ * configured provider. Fail-loud on every problem: missing config entry,
+ * unreadable file, non-JSON content, or (POSIX only, same posture as the
+ * 0600 credential file this module writes) a file readable by group/other.
+ * The parsed object is returned as-is; deep shape validation is the
+ * dns module's job (createDnsSolver fails loud on malformed credentials).
+ * The contents are never logged, including in errors.
+ *
+ * @param {string} providerId
+ * @param {{ dnsProviders?: object|null }} config loaded agent config
+ * @returns {object} parsed credentials object
+ */
+function readDnsCredentialsFile(providerId, config) {
+  const dnsProviders = config && config.dnsProviders;
+  const entry = dnsProviders ? dnsProviders[providerId] : undefined;
+  if (!entry || typeof entry.credentialsFile !== "string") {
+    throw new Error(
+      `tokentimer-agent: dnsProviders.${providerId} is not configured ` +
+        "(no credentialsFile)",
+    );
+  }
+
+  const credentialsPath = entry.credentialsFile;
+
+  if (process.platform !== "win32") {
+    let stats;
+    try {
+      stats = fs.statSync(credentialsPath);
+    } catch (err) {
+      throw new Error(
+        `tokentimer-agent: failed to stat DNS credentials file ${credentialsPath}: ${err.message}`,
+      );
+    }
+    // Same permission posture as the agent credential file: secrets are
+    // 0600. A group/other-readable credentials file is a misconfiguration
+    // the agent refuses to use rather than silently accepting.
+    if ((stats.mode & 0o077) !== 0) {
+      throw new Error(
+        `tokentimer-agent: refusing to read DNS credentials file ${credentialsPath}: ` +
+          "it is readable by group/other (chmod 600 it)",
+      );
+    }
+  }
+
+  let raw;
+  try {
+    raw = fs.readFileSync(credentialsPath, "utf8");
+  } catch (err) {
+    throw new Error(
+      `tokentimer-agent: failed to read DNS credentials file ${credentialsPath}: ${err.message}`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Deliberately does not include the parser message: it can echo file
+    // content, and this file holds secrets.
+    throw new Error(
+      `tokentimer-agent: DNS credentials file ${credentialsPath} is not valid JSON`,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `tokentimer-agent: DNS credentials file ${credentialsPath} must contain a JSON object`,
+    );
+  }
+  return parsed;
+}
+
 function validateDiscoveryObject(discovery) {
   if (discovery === undefined || discovery === null) return null;
   if (typeof discovery !== "object" || Array.isArray(discovery)) {
@@ -471,6 +639,7 @@ function validateExecutionObject(execution, configDir) {
  *     clockDriftToleranceMs: number,
  *   }|null,
  *   pinnedSigningKey: {signingKeyId: string, publicKeyPem: string}|null,
+ *   dnsProviders: object|null,
  * }}
  */
 function loadAgentConfig({ configDir } = {}) {
@@ -553,6 +722,11 @@ function loadAgentConfig({ configDir } = {}) {
   // writeSigningKeyPin. Public key material only.
   const pinnedSigningKey = readSigningKeyPin(resolvedDir);
 
+  // Native DNS-01 solver configuration (src/dns + certops-dns-hook). Only
+  // credential file PATHS live here; the secrets stay in their own 0600
+  // files, read on demand via readDnsCredentialsFile.
+  const dnsProviders = validateDnsProvidersObject(fileConfig.dnsProviders);
+
   return {
     serverUrl,
     agentId,
@@ -567,6 +741,7 @@ function loadAgentConfig({ configDir } = {}) {
     allowInsecureLocalHttp,
     execution,
     pinnedSigningKey,
+    dnsProviders,
   };
 }
 
@@ -900,6 +1075,8 @@ module.exports = {
   writeSigningKeyPin,
   readSigningKeyPin,
   validateExecutionObject,
+  validateDnsProvidersObject,
+  readDnsCredentialsFile,
   readCredential,
   writeCredential,
   rotateCredential,

@@ -8,7 +8,8 @@
   "type": "commonjs",
   "main": "src/index.js",
   "bin": {
-    "tokentimer-agent": "bin/tokentimer-agent.js"
+    "tokentimer-agent": "bin/tokentimer-agent.js",
+    "certops-dns-hook": "bin/certops-dns-hook.js"
   },
   "scripts": {
     "start": "node bin/tokentimer-agent.js",

@@ -22,6 +22,8 @@ const {
   recoverPendingRegistration,
   redactCredentialForLogging,
   MAX_CA_BUNDLE_BYTES,
+  validateDnsProvidersObject,
+  readDnsCredentialsFile,
 } = require("./index.js");
 
 const IS_WIN32 = process.platform === "win32";
@@ -896,5 +898,120 @@ describe("readCaBundle", () => {
     const oversizedPath = path.join(dir, "oversized.pem");
     fs.writeFileSync(oversizedPath, Buffer.alloc(MAX_CA_BUNDLE_BYTES + 1));
     assert.throws(() => readCaBundle(oversizedPath), /must be between 1 and/);
+  });
+});
+
+describe("validateDnsProvidersObject", () => {
+  const ABS = IS_WIN32 ? "C:\\certops\\dns\\cloudflare.json" : "/etc/certops/dns/cloudflare.json";
+
+  it("returns null when the block is absent", () => {
+    assert.equal(validateDnsProvidersObject(undefined), null);
+    assert.equal(validateDnsProvidersObject(null), null);
+  });
+
+  it("accepts a valid block with options and a zoneProviderMap", () => {
+    const block = {
+      cloudflare: { credentialsFile: ABS, zoneId: "z1" },
+      zoneProviderMap: { "example.com": "cloudflare" },
+    };
+    assert.equal(validateDnsProvidersObject(block), block);
+  });
+
+  it("rejects non-object blocks", () => {
+    assert.throws(() => validateDnsProvidersObject([]), /must be an object/);
+    assert.throws(() => validateDnsProvidersObject("cloudflare"), /must be an object/);
+  });
+
+  it("rejects unknown provider ids", () => {
+    assert.throws(
+      () => validateDnsProvidersObject({ namecheap: { credentialsFile: ABS } }),
+      /not a known DNS provider id/,
+    );
+  });
+
+  it("rejects a missing or relative credentialsFile", () => {
+    assert.throws(
+      () => validateDnsProvidersObject({ cloudflare: {} }),
+      /credentialsFile must be an absolute path/,
+    );
+    assert.throws(
+      () => validateDnsProvidersObject({ cloudflare: { credentialsFile: "dns/cf.json" } }),
+      /credentialsFile must be an absolute path/,
+    );
+  });
+
+  it("rejects a zoneProviderMap entry referencing an unconfigured provider", () => {
+    assert.throws(
+      () =>
+        validateDnsProvidersObject({
+          cloudflare: { credentialsFile: ABS },
+          zoneProviderMap: { "example.com": "route53" },
+        }),
+      /not configured/,
+    );
+  });
+});
+
+describe("readDnsCredentialsFile", () => {
+  function writeCredentialsFile(contents) {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const credentialsPath = path.join(dir, "cloudflare.json");
+    fs.writeFileSync(credentialsPath, contents, { encoding: "utf8", mode: 0o600 });
+    return credentialsPath;
+  }
+
+  function configFor(credentialsPath) {
+    return { dnsProviders: { cloudflare: { credentialsFile: credentialsPath } } };
+  }
+
+  it("reads and parses a 0600 JSON credentials file", () => {
+    const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
+    const parsed = readDnsCredentialsFile("cloudflare", configFor(credentialsPath));
+    assert.deepEqual(parsed, { apiToken: "cf-token" });
+  });
+
+  it("fails loudly when the provider is not configured", () => {
+    assert.throws(
+      () => readDnsCredentialsFile("cloudflare", { dnsProviders: null }),
+      /not configured/,
+    );
+  });
+
+  it("fails loudly on a missing file", () => {
+    const dir = makeTempConfigDir();
+    assert.throws(
+      () => readDnsCredentialsFile("cloudflare", configFor(path.join(dir, "absent.json"))),
+      IS_WIN32 ? /failed to read|failed to stat/ : /failed to stat/,
+    );
+  });
+
+  it("fails loudly on non-JSON content without echoing it", () => {
+    const credentialsPath = writeCredentialsFile("apiToken=oops-not-json");
+    assert.throws(
+      () => readDnsCredentialsFile("cloudflare", configFor(credentialsPath)),
+      (err) => {
+        assert.match(err.message, /not valid JSON/);
+        assert.ok(!err.message.includes("oops-not-json"));
+        return true;
+      },
+    );
+  });
+
+  it("fails loudly on a JSON file that is not an object", () => {
+    const credentialsPath = writeCredentialsFile('["array"]');
+    assert.throws(
+      () => readDnsCredentialsFile("cloudflare", configFor(credentialsPath)),
+      /must contain a JSON object/,
+    );
+  });
+
+  it("refuses a group/other-readable credentials file (POSIX)", { skip: IS_WIN32 }, () => {
+    const credentialsPath = writeCredentialsFile('{"apiToken":"cf-token"}');
+    fs.chmodSync(credentialsPath, 0o644);
+    assert.throws(
+      () => readDnsCredentialsFile("cloudflare", configFor(credentialsPath)),
+      /readable by group\/other/,
+    );
   });
 });
