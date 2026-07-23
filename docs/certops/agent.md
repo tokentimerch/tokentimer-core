@@ -55,6 +55,27 @@ node packages/agent/bin/tokentimer-agent.js
 or `pnpm start` from `packages/agent`. There are no CLI flags; configuration
 is via `config.json` and `TOKENTIMER_AGENT_*` environment variables.
 
+### Installer script (Linux, systemd)
+
+`packages/agent/scripts/install-agent.sh` automates the production install
+that the dashboard's Deploy-an-agent panel generates a command for. It:
+
+- verifies OS/arch and a Node >= 22 runtime;
+- creates a dedicated system user and install directory;
+- writes a `config.json` skeleton and stores the bootstrap token in a
+  0600-mode file consumed once at first start;
+- installs, enables, and starts the hardened systemd unit
+  (`packages/agent/scripts/tokentimer-agent.service`, `ProtectSystem=strict`
+  among other directives).
+
+`--dry-run` prints every action without touching the system; `--uninstall`
+removes the unit, user, and install directory. The script is POSIX shell and
+requires root (or sudo) for the real install. The recommended flow is:
+create a bootstrap token in the dashboard (shown exactly once), copy the
+generated install command, run it on the target host, and watch the
+dashboard's agent fleet panel flip the agent to registered on first
+heartbeat.
+
 ### Config directory
 
 Resolution order (`resolveConfigDir`): explicit argument >
@@ -366,13 +387,15 @@ effects; the keys/acme/deploy/reload/verify modules are never called.
 longer require the ACME tool's own DNS plugins. certbot/acme.sh still drive
 the ACME conversation; they call back into the agent through the
 `certops-dns-hook` executable (`packages/agent/bin/certops-dns-hook.js`).
-Zero npm dependencies: HTTP providers use global `fetch`, Route 53 SigV4 and
-the GCP JWT are signed with `node:crypto`, and RFC 2136 speaks the DNS wire
+Zero npm dependencies: HTTP providers use global `fetch`, Route 53 SigV4,
+the GCP JWT, the OVH request signature, and the Exoscale EXO2-HMAC-SHA256
+signature are computed with `node:crypto`, and RFC 2136 speaks the DNS wire
 format over `node:net` with a TSIG HMAC (RFC 8945, `hmac-sha1/224/256/384/512`).
 
 Wave-1 provider ids (exact-match against `policy.allowedDnsProviders`):
 `cloudflare`, `route53`, `azure-dns`, `google-cloud-dns`, `rfc2136`,
-`acme-dns`.
+`acme-dns`. Wave-2 provider ids: `ovhcloud`, `hetzner`, `infomaniak`,
+`exoscale`, `powerdns`.
 
 Config (`config.json`): each configured provider maps to an object holding
 the absolute path of its agent-local credentials file plus optional
@@ -405,6 +428,11 @@ group/other-readable files on POSIX), and never leave the host:
 | `google-cloud-dns` | `client_email`, `private_key`, `project_id` (standard SA JSON fields); optional `managedZone` (else looked up by `dnsName`). The SA key is a DNS credential: it signs the OAuth JWT locally and never leaves the host |
 | `rfc2136` | `server`, `keyName`, `keySecretBase64`; optional `port` (default 53), `keyAlgorithm` (default `hmac-sha256`) |
 | `acme-dns` | `baseUrl`, `username`, `password`, `subdomain` (from `/register`). Cleanup is a documented no-op: acme-dns rotates its two TXT slots automatically |
+| `ovhcloud` | `applicationKey`, `applicationSecret`, `consumerKey`; optional `endpoint` (default `https://eu.api.ovh.com/1.0`; other regions `https://ca.api.ovh.com/1.0`, `https://us.api.ovhcloud.com/1.0`). Requests are OVH-signed (`$1$` + SHA1) with the LOCAL unix time as `X-Ovh-Timestamp` (no `/auth/time` skew correction); a `POST /domain/zone/<zone>/refresh` follows every mutation so the change actually serves |
+| `hetzner` | `apiToken` (Auth-API-Token header, account-scoped); optional `zoneId` (looked up by zone name when absent). Cleanup of an already-absent record is idempotent success |
+| `infomaniak` | `apiToken` (Bearer, "domain" scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
+| `exoscale` | `apiKey`, `apiSecret`; optional `apiEndpoint` (default `https://api-ch-gva-2.exoscale.com/v2`; DNS is global, any zone endpoint works). Requests are EXO2-HMAC-SHA256 signed. Mutations are async on Exoscale's side: the accepted operation response is treated as success without polling (the ACME tool's propagation wait covers the apply window) |
+| `powerdns` | `apiUrl` (e.g. `http://127.0.0.1:8081`), `apiKey` (X-API-Key header); optional `serverId` (default `localhost`). Zone and record names carry a trailing dot and TXT content is double-quoted, per PowerDNS API rules. Present merges with existing TXT values at the name and `REPLACE`s the union (parallel challenges never clobber each other); cleanup `REPLACE`s the remainder or sends `changetype: DELETE` when none remain |
 
 Hook usage. certbot manual hooks (the hook derives the TXT name
 `_acme-challenge.$CERTBOT_DOMAIN` and reads `CERTBOT_DOMAIN` +

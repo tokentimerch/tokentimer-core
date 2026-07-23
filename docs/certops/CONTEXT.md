@@ -29,9 +29,12 @@ never holds customer key material. See ADR-0003.
 
 - **Control plane** - Core/Cloud/Enterprise backend and dashboard. Observes,
   plans, signs jobs, records evidence. Holds no private keys.
-- **Execution plane** - the TokenTimer **agent** and the customer-side
-  Kubernetes controller. A future agent may perform key-bearing work locally.
-  The cert-manager controller never handles a key: it asks cert-manager to reconcile a
+- **Execution plane** - the TokenTimer **agent** (`packages/agent`) and the customer-side
+  Kubernetes controller. The agent performs the key-bearing work locally:
+  keypair/CSR generation, ACME issuance (native HTTP-01/DNS-01 solvers plus
+  certbot/acme.sh exec adapters), atomic deploy/rollback, and service reload.
+  Its keys, DNS provider credentials, and ACME account keys never leave the
+  agent host. The cert-manager controller never handles a key: it asks cert-manager to reconcile a
   `Certificate`, and cert-manager generates and retains the key in Kubernetes.
 
 Execution-plane components are **outbound-only**: they call the control plane.
@@ -86,6 +89,17 @@ the shared detector scans every outbound envelope.
 - **Agent-local policy** - allowlists (commands, paths, CA endpoints, DNS
   zones/providers) the agent enforces locally. Local policy wins over
   control-plane intent; rejections are reported as evidence. See ADR-0002.
+- **Sequence** - optional per-agent monotonic message counter stamped on
+  protocol envelopes and enforced server-side (compare-and-swap on
+  `certops_agents.last_sequence`, 409 on regression, generation reset on
+  re-register). Defense in depth over the nonce replay cache.
+- **Per-CA cap** - sweep-time limit on in-flight renewal jobs per
+  `caEndpoint` (`CERTOPS_RENEWAL_PER_CA_CAP`) so the scheduler cannot flood
+  one CA; skipped certificates are reported in the sweep summary and picked
+  up by later sweeps.
+- **Bulk renew** - `POST .../certops/jobs/bulk-renew`: many certificates
+  through the same creation path as single renew (validation, approval
+  gates, kill switch identical) with a per-item partial-failure envelope.
 
 ## Dashboard certificate visibility (D6)
 
@@ -99,7 +113,9 @@ rather than adding a parallel inventory page. See ADR-0006.
 - **CertOps section** - orchestration only (agents, jobs, evidence,
   approvals), not a second certificate list. It ships
   `/certops/operations` (executor jobs, evidence timelines, machine API
-  tokens) mounted via the `/certops/*` splat route. No nav entry: it is
+  tokens, the Deploy-an-agent panel with the show-once bootstrap token and
+  install command, and the Agent fleet panel with status/heartbeat/retire)
+  mounted via the `/certops/*` splat route. No nav entry: it is
   reached from the Control Center certificate-operations panel footer link
   and from a Workspace Preferences entry (last section, shown only when
   `certops.enabled` is on).
