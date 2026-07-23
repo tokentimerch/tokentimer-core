@@ -37,14 +37,17 @@ const os = require("node:os");
 const {
   resolveConfigDir,
   loadAgentConfig,
-  writeAgentIdentity,
   readCredential,
-  writeCredential,
+  persistRegistration,
+  recoverPendingRegistration,
+  readCaBundle,
 } = require("./config");
 const { loadPolicyConfig, createPolicyEngine } = require("./policy");
 const {
   createProtocolClient,
+  createCaAwareFetch,
   startPollLoop,
+  validateRegistrationResponse,
 } = require("./protocol");
 const {
   buildPolicyRejectionEvidence,
@@ -53,6 +56,11 @@ const {
   assertEvidencePayloadSafe,
 } = require("./evidence");
 const { discoverCertificates } = require("./discovery");
+const {
+  validateClaimedJob,
+  hasReportableJobId,
+} = require("./claimed-job");
+const { defaultAgentLogger } = require("./logging");
 
 const { version: AGENT_VERSION } = require("../package.json");
 
@@ -60,37 +68,27 @@ const { version: AGENT_VERSION } = require("../package.json");
  * Maps a claimed job payload (packages/contracts/certops/job-payload.
  * schema.json shape) onto the policy engine's jobDescriptor vocabulary.
  *
- * Only fields that are present on the job are forwarded: the policy engine
- * checks each dimension independently, and absent dimensions are simply not
- * checked (checkNoKeyExport always runs). The unsigned job payload does not carry
- * commandRef/caEndpoint/dnsZone/dnsProvider yet; those become load-bearing
- * with the signed dispatch payload, and this mapping already passes
- * them through when present so signed dispatch does not need to change call sites.
+ * The claimed-job validator checks the full frozen public job shape first.
+ * Action-specific policy dimensions are required in public metadata and are
+ * never silently omitted. The bootstrap agent still does not execute jobs.
  *
  * @param {object} job claimed job payload
  * @returns {object} policy jobDescriptor
  */
 function buildJobPolicyDescriptor(job) {
-  const descriptor = {};
-  if (job?.target?.reference !== undefined) {
-    descriptor.targetSelector = job.target.reference;
+  return validateClaimedJob(job).policyDescriptor;
+}
+
+function emitLog(log, message, details) {
+  if (typeof log === "function") {
+    log(message, details);
+    return;
   }
-  for (const field of ["commandRef", "path", "caEndpoint", "dnsZone", "dnsProvider"]) {
-    if (job?.[field] !== undefined) descriptor[field] = job[field];
-  }
-  // Any custody-shaped intent on a job maps onto the engine's single
-  // unconditional key-export rejection flag. No job payload field is
-  // expected to carry this today (the schema forbids custody fields), but
-  // if a compromised control plane smuggled one in, this is the belt to
-  // the schema's suspenders.
-  if (
-    job?.requestsKeyExport === true ||
-    job?.exportPrivateKey === true ||
-    job?.keyExport === true
-  ) {
-    descriptor.requestsKeyExport = true;
-  }
-  return descriptor;
+  defaultAgentLogger.error(message, details);
+}
+
+function localAttemptId(jobId) {
+  return `local-${jobId}-${Date.now()}`;
 }
 
 /**
@@ -109,54 +107,75 @@ function buildJobPolicyDescriptor(job) {
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason: string|null }>}
  */
-async function handleClaimedJob({ job, policyEngine, client, log = console.error }) {
-  const jobId = job?.jobId;
-  if (typeof jobId !== "string" || jobId.length === 0) {
-    log("tokentimer-agent: claimed job missing jobId; skipping");
-    return { status: "skipped", rejectionReason: null };
+async function handleClaimedJob({ job, policyEngine, client, log = null }) {
+  const reportableJobId = hasReportableJobId(job?.jobId) ? job.jobId : null;
+  let validated;
+  try {
+    validated = validateClaimedJob(job);
+  } catch (err) {
+    emitLog(log, "rejected malformed claimed job before policy evaluation", err);
+    if (!reportableJobId) {
+      return { status: "skipped", rejectionReason: "job_integrity_failed" };
+    }
+    try {
+      const attemptId = localAttemptId(reportableJobId);
+      const evidenceBody = buildPolicyRejectionEvidence({
+        rejectionReason: "job_integrity_failed",
+        detail: "Claimed job failed agent-side shape and policy-dimension validation.",
+        jobId: reportableJobId,
+      });
+      assertEvidencePayloadSafe(evidenceBody);
+      await client.reportEvidence(evidenceBody);
+      await client.reportResult({
+        jobId: reportableJobId,
+        attemptId,
+        status: "rejected",
+        rejectionReason: "job_integrity_failed",
+      });
+      return { status: "rejected", rejectionReason: "job_integrity_failed" };
+    } catch (reportError) {
+      emitLog(log, "failed to report malformed claimed job", reportError);
+      return { status: "failed", rejectionReason: "job_integrity_failed" };
+    }
   }
-  // The unsigned payload does not carry attemptId (it is a signed-dispatch
-  // addition); until the control plane assigns one, derive a local id so
-  // result reporting stays schema-valid and idempotency-debuggable.
-  const attemptId =
-    typeof job.attemptId === "string" && job.attemptId.length > 0
-      ? job.attemptId
-      : `local-${jobId}-${Date.now()}`;
 
-  const verdict = policyEngine.evaluateJob(buildJobPolicyDescriptor(job));
+  const { job: validatedJob, policyDescriptor } = validated;
+  const attemptId = localAttemptId(validatedJob.jobId);
+  try {
+    const verdict = policyEngine.evaluateJob(policyDescriptor);
+    if (!verdict.allowed) {
+      emitLog(log, `job ${validatedJob.jobId} rejected by agent-local policy`, {
+        rejectionReason: verdict.rejectionReason,
+      });
+      const evidenceBody = buildPolicyRejectionEvidence({
+        rejectionReason: verdict.rejectionReason,
+        detail: verdict.detail,
+        jobId: validatedJob.jobId,
+      });
+      assertEvidencePayloadSafe(evidenceBody);
+      await client.reportEvidence(evidenceBody);
+      await client.reportResult({
+        jobId: validatedJob.jobId,
+        attemptId,
+        status: "rejected",
+        rejectionReason: verdict.rejectionReason,
+      });
+      return { status: "rejected", rejectionReason: verdict.rejectionReason };
+    }
 
-  if (!verdict.allowed) {
-    log(
-      `tokentimer-agent: job ${jobId} rejected by agent-local policy: ${verdict.rejectionReason}`,
-    );
-    const evidenceBody = buildPolicyRejectionEvidence({
-      rejectionReason: verdict.rejectionReason,
-      detail: verdict.detail,
-      jobId,
-    });
-    assertEvidencePayloadSafe(evidenceBody);
-    await client.reportEvidence(evidenceBody);
+    // Bootstrap deliberately never executes a job. Signed dispatch and every
+    // execution mechanism remain out of PR #78 scope.
     await client.reportResult({
-      jobId,
+      jobId: validatedJob.jobId,
       attemptId,
-      status: "rejected",
-      rejectionReason: verdict.rejectionReason,
+      status: "blocked",
+      errorMessage: "agent runtime does not execute jobs yet",
     });
-    return { status: "rejected", rejectionReason: verdict.rejectionReason };
+    return { status: "blocked", rejectionReason: null };
+  } catch (err) {
+    emitLog(log, `failed while handling claimed job ${validatedJob.jobId}`, err);
+    return { status: "failed", rejectionReason: null };
   }
-
-  // Policy allows the job, but the bootstrap agent has no execution runtime yet
-  // (signature verification / replay cache are signed-dispatch work, ADR-0003). Report
-  // "blocked" rather than silently dropping so the control plane sees an
-  // explicit terminal state.
-  await client.reportResult({
-    jobId,
-    attemptId,
-    status: "blocked",
-    errorMessage:
-      "agent runtime does not execute jobs yet; execution lands with the signed-dispatch runtime",
-  });
-  return { status: "blocked", rejectionReason: null };
 }
 
 /**
@@ -174,12 +193,12 @@ async function handleClaimedJob({ job, policyEngine, client, log = console.error
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ observed: number, warnings: number }>}
  */
-async function runDiscoveryScan({ directories, client, log = console.error }) {
+async function runDiscoveryScan({ directories, client, log = null }) {
   const { certificates, warnings, truncated } = discoverCertificates(directories, {
-    onWarning: (message) => log(`tokentimer-agent: ${message}`),
+    onWarning: (message) => emitLog(log, message),
   });
   if (truncated) {
-    log("tokentimer-agent: discovery scan hit a bound and was truncated");
+    emitLog(log, "discovery scan hit a bound and was truncated");
   }
 
   const items = [];
@@ -227,6 +246,9 @@ async function runDiscoveryScan({ directories, client, log = console.error }) {
  * @returns {Promise<string>} the assigned agentId
  */
 async function registerIfNeeded({ client, config, configDir, env = process.env }) {
+  const recovered = recoverPendingRegistration(configDir);
+  if (recovered !== null) return recovered.agentId;
+
   const existingCredential = readCredential(configDir);
   if (existingCredential !== null) {
     if (!config.agentId) {
@@ -248,7 +270,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     );
   }
 
-  const { agentId } = await client.register({
+  const registration = validateRegistrationResponse(await client.register({
     bootstrapToken,
     bootstrapTokenId: env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID || "unknown",
     agentVersion: AGENT_VERSION,
@@ -257,10 +279,23 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     nodeVersion: process.version,
     declaredTargetSelectors: config.declaredTargetSelectors,
     declaredCommandProfileNames: config.declaredCommandProfileNames,
-  });
+  }), config.protocolVersion);
 
-  writeAgentIdentity(configDir, { agentId });
-  return agentId;
+  persistRegistration(configDir, {
+    agentId: registration.agentId,
+    credential: registration.credential,
+  });
+  return registration.agentId;
+}
+
+function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
+  const normalizedHostname = String(hostname || "host")
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9_.:-]+/g, "-")
+    .replace(/[-_.:]+$/g, "")
+    .slice(0, 96) || "host";
+  const normalizedPid = Number.isInteger(pid) && pid >= 0 ? String(pid) : "0";
+  return `candidate-${normalizedHostname}-${normalizedPid}`.slice(0, 128);
 }
 
 /**
@@ -278,36 +313,6 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
 async function runAgent(_argv, { signal: externalSignal } = {}) {
   const configDir = resolveConfigDir();
   const config = loadAgentConfig({ configDir });
-
-  // Default deny: with no policy block in config.json every allowlist is
-  // empty, so the engine rejects all command/path/CA/DNS dimensions. The
-  // agent still runs (heartbeats, claims, reports rejections as evidence)
-  // so operators can see policy conflicts instead of silent failures.
-  const policyEngine = createPolicyEngine(loadPolicyConfig(config.policy || {}), {
-    declaredTargetSelectors: config.declaredTargetSelectors,
-  });
-
-  const clientForAgentId = (agentId) =>
-    createProtocolClient({
-      serverUrl: config.serverUrl,
-      agentId,
-      protocolVersion: config.protocolVersion,
-      getCredential: () => readCredential(configDir),
-      onCredentialIssued: (rawCredential) => writeCredential(configDir, rawCredential),
-    });
-
-  // For a not-yet-registered agent the envelope needs a client-generated
-  // candidate id; the control plane echoes back the assigned id (schema
-  // note on agentId). A registered agent uses its stored id.
-  const candidateAgentId = config.agentId || `candidate-${os.hostname()}-${process.pid}`;
-  const registeredAgentId = await registerIfNeeded({
-    client: clientForAgentId(candidateAgentId),
-    config,
-    configDir,
-  });
-
-  const client = clientForAgentId(registeredAgentId);
-
   const controller = new AbortController();
   const stop = () => controller.abort();
   if (externalSignal) {
@@ -317,12 +322,55 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
+  // Default deny: with no policy block in config.json every allowlist is
+  // empty, so the engine rejects all command/path/CA/DNS dimensions. The
+  // agent still runs (heartbeats, claims, reports rejections as evidence)
+  // so operators can see policy conflicts instead of silent failures.
+  const policyEngine = createPolicyEngine(loadPolicyConfig(config.policy || {}), {
+    declaredTargetSelectors: config.declaredTargetSelectors,
+  });
+
+  const fetchImpl = config.caBundlePath
+    ? createCaAwareFetch({ caBundlePem: readCaBundle(config.caBundlePath) })
+    : undefined;
+
+  const clientForAgentId = (agentId) =>
+    createProtocolClient({
+      serverUrl: config.serverUrl,
+      agentId,
+      protocolVersion: config.protocolVersion,
+      getCredential: () => readCredential(configDir),
+      signal: controller.signal,
+      fetchImpl,
+      allowInsecureLocalHttp: config.allowInsecureLocalHttp,
+    });
+
+  // For a not-yet-registered agent the envelope needs a client-generated
+  // candidate id; the control plane echoes back the assigned id (schema
+  // note on agentId). A registered agent uses its stored id.
+  let registeredAgentId;
+  try {
+    const candidateAgentId = config.agentId || createCandidateAgentId();
+    registeredAgentId = await registerIfNeeded({
+      client: clientForAgentId(candidateAgentId),
+      config,
+      configDir,
+    });
+  } catch (err) {
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    if (externalSignal) externalSignal.removeEventListener("abort", stop);
+    throw err;
+  }
+
+  const client = clientForAgentId(registeredAgentId);
+
   const startedAtMs = Date.now();
 
   const heartbeatLoop = startPollLoop({
     intervalMs: config.heartbeatIntervalMs,
     signal: controller.signal,
-    startImmediately: false,
+    startImmediately: true,
     onTick: async () => {
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
@@ -332,9 +380,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // null until that lands.
       });
       if (response && response.retired === true) {
-        console.error(
-          "tokentimer-agent: control plane retired this agent; exiting cleanly",
-        );
+        defaultAgentLogger.error("control plane retired this agent; exiting cleanly");
         stop();
       }
     },
@@ -343,7 +389,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   const claimLoop = startPollLoop({
     intervalMs: config.pollIntervalMs,
     signal: controller.signal,
-    startImmediately: false,
+    startImmediately: true,
     onTick: async () => {
       const jobs = await client.claim({ maxJobs: 1 });
       for (const job of jobs) {
@@ -362,7 +408,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       startPollLoop({
         intervalMs: config.discovery.intervalMs,
         signal: controller.signal,
-        startImmediately: false,
+        startImmediately: true,
         onTick: () =>
           runDiscoveryScan({
             directories: config.discovery.directories,
@@ -387,5 +433,6 @@ module.exports = {
   buildJobPolicyDescriptor,
   runDiscoveryScan,
   registerIfNeeded,
+  createCandidateAgentId,
   AGENT_VERSION,
 };

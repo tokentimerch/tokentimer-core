@@ -12,8 +12,9 @@
  */
 
 const { runAgent } = require("../src/index.js");
+const { defaultAgentLogger } = require("../src/logging");
 
 runAgent(process.argv.slice(2)).catch((err) => {
-  console.error(`tokentimer-agent: fatal error: ${err?.message || err}`);
+  defaultAgentLogger.error("fatal error", err);
   process.exit(1);
 });

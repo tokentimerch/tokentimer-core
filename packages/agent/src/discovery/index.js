@@ -38,12 +38,20 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { X509Certificate } = require("node:crypto");
+const {
+  containsPrivateKeyMaterial,
+} = require("../../../log-scrub/secret-material.js");
 
 // Maximum number of bytes read when peeking at a candidate key file. This is
 // an inspection bound, not a full read: even a multi-gigabyte file (or an
 // unrelated large binary that happens to match an extension) never has more
 // than this many bytes pulled into memory by peekLooksLikePrivateKeyPem.
 const KEY_PEEK_MAX_BYTES = 4096;
+const CERTIFICATE_SCAN_CHUNK_BYTES = 16 * 1024;
+// Certificate files should be small. Keeping this limit at 1 MiB supports
+// unusually large chains while ensuring discovery can never become a generic
+// arbitrary-file reader.
+const MAX_CERTIFICATE_FILE_BYTES = 1024 * 1024;
 
 // Mirrors the "BEGIN ... PRIVATE KEY" label shape used by
 // apps/api/utils/secretMaterial.js's PRIVATE_KEY_PEM_LABEL_PATTERN /
@@ -58,6 +66,52 @@ const PRIVATE_KEY_PEM_HEADER_PATTERN = new RegExp(
   String.raw`-----\s*BEGIN\s+${PRIVATE_KEY_PEM_LABEL_PATTERN}\s*-----`,
   "i",
 );
+
+function openRegularFileNoFollow(filePath, onWarning, purpose) {
+  let lstat;
+  try {
+    lstat = fs.lstatSync(filePath);
+  } catch (err) {
+    onWarning(`discovery: could not inspect "${filePath}" for ${purpose}: ${err?.message || err}`);
+    return null;
+  }
+  if (lstat.isSymbolicLink()) {
+    onWarning(`discovery: skipped symbolic link "${filePath}" during ${purpose}`);
+    return null;
+  }
+  if (!lstat.isFile()) {
+    onWarning(`discovery: skipped non-regular file "${filePath}" during ${purpose}`);
+    return null;
+  }
+
+  let fd;
+  try {
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.size !== lstat.size) {
+      throw new Error("file changed or is no longer a regular file");
+    }
+    return { fd, size: opened.size };
+  } catch (err) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (_err) {
+        // Best effort close.
+      }
+    }
+    onWarning(`discovery: could not safely open "${filePath}" for ${purpose}: ${err?.message || err}`);
+    return null;
+  }
+}
+
+function closeFile(fd) {
+  try {
+    fs.closeSync(fd);
+  } catch (_err) {
+    // Best effort close.
+  }
+}
 
 /**
  * Filename conventions that commonly indicate a private key file.
@@ -128,19 +182,11 @@ function filenameLooksLikePrivateKey(fileName) {
  * @returns {boolean} true if the peeked bytes contain a private-key PEM header
  */
 function peekLooksLikePrivateKeyPem(filePath, { onWarning = () => {} } = {}) {
-  let fd;
-  try {
-    fd = fs.openSync(filePath, "r");
-  } catch (err) {
-    onWarning(
-      `discovery: could not open "${filePath}" for key-content peek: ${err?.message || err}`,
-    );
-    return false;
-  }
-
+  const opened = openRegularFileNoFollow(filePath, onWarning, "key-content peek");
+  if (!opened) return false;
   try {
     const buffer = Buffer.alloc(KEY_PEEK_MAX_BYTES);
-    const bytesRead = fs.readSync(fd, buffer, 0, KEY_PEEK_MAX_BYTES, 0);
+    const bytesRead = fs.readSync(opened.fd, buffer, 0, KEY_PEEK_MAX_BYTES, 0);
     const peeked = buffer.toString("utf8", 0, bytesRead);
     return PRIVATE_KEY_PEM_HEADER_PATTERN.test(peeked);
   } catch (err) {
@@ -149,11 +195,82 @@ function peekLooksLikePrivateKeyPem(filePath, { onWarning = () => {} } = {}) {
     );
     return false;
   } finally {
-    try {
-      fs.closeSync(fd);
-    } catch (_err) {
-      // Best-effort close; nothing meaningful to do if this fails.
+    closeFile(opened.fd);
+  }
+}
+
+/**
+ * Examines a certificate candidate incrementally before the agent creates an
+ * in-memory certificate buffer. A private-key marker ends the scan early; a
+ * clean candidate is only read a second time after every bounded chunk has
+ * been inspected. This prevents a `.pem` key from ever taking the old
+ * readFileSync-to-X509 path.
+ */
+function scanCandidateForPrivateKey(filePath, maxFileSize, onWarning) {
+  const opened = openRegularFileNoFollow(filePath, onWarning, "certificate safety scan");
+  if (!opened) return { safe: false, size: null };
+
+  try {
+    if (opened.size < 1 || opened.size > maxFileSize) {
+      onWarning(
+        `discovery: skipped oversized certificate candidate "${filePath}" (${opened.size} bytes; max ${maxFileSize})`,
+      );
+      return { safe: false, size: null };
     }
+
+    const chunk = Buffer.allocUnsafe(CERTIFICATE_SCAN_CHUNK_BYTES);
+    let offset = 0;
+    let trailing = Buffer.alloc(0);
+    while (offset < opened.size) {
+      const toRead = Math.min(chunk.length, opened.size - offset);
+      const bytesRead = fs.readSync(opened.fd, chunk, 0, toRead, offset);
+      if (bytesRead === 0) {
+        onWarning(`discovery: certificate candidate "${filePath}" ended during safety scan`);
+        return { safe: false, size: null };
+      }
+      const inspected = Buffer.concat([trailing, chunk.subarray(0, bytesRead)]);
+      if (containsPrivateKeyMaterial(inspected)) {
+        onWarning(`discovery: skipped private-key material masquerading as certificate "${filePath}"`);
+        return { safe: false, size: null };
+      }
+      // Preserve enough overlap for a PEM header split across chunk boundaries
+      // without retaining the candidate's full contents.
+      trailing = inspected.subarray(Math.max(0, inspected.length - KEY_PEEK_MAX_BYTES));
+      offset += bytesRead;
+    }
+    return { safe: true, size: opened.size };
+  } catch (err) {
+    onWarning(`discovery: could not safety-scan "${filePath}": ${err?.message || err}`);
+    return { safe: false, size: null };
+  } finally {
+    closeFile(opened.fd);
+  }
+}
+
+function readSafeCertificateFile(filePath, expectedSize, onWarning) {
+  const opened = openRegularFileNoFollow(filePath, onWarning, "certificate read");
+  if (!opened || opened.size !== expectedSize) {
+    if (opened) closeFile(opened.fd);
+    if (opened && opened.size !== expectedSize) {
+      onWarning(`discovery: certificate candidate "${filePath}" changed after safety scan`);
+    }
+    return null;
+  }
+
+  try {
+    const buffer = Buffer.allocUnsafe(expectedSize);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fs.readSync(opened.fd, buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) throw new Error("file ended before declared size");
+      offset += bytesRead;
+    }
+    return buffer;
+  } catch (err) {
+    onWarning(`discovery: could not read certificate file "${filePath}": ${err?.message || err}`);
+    return null;
+  } finally {
+    closeFile(opened.fd);
   }
 }
 
@@ -354,7 +471,14 @@ function discoverCertificatesInDirectory(
         continue;
       }
 
-      if (!entry.isFile()) continue;
+      if (entry.isSymbolicLink()) {
+        warn(`discovery: skipped symbolic link "${path.join(currentDir, entry.name)}"`);
+        continue;
+      }
+      if (!entry.isFile()) {
+        warn(`discovery: skipped non-regular file "${path.join(currentDir, entry.name)}"`);
+        continue;
+      }
 
       scannedFileCount += 1;
 
@@ -362,13 +486,10 @@ function discoverCertificatesInDirectory(
       if (!normalizedExtensions.has(ext)) continue;
 
       const fullPath = path.join(currentDir, entry.name);
-      let fileBuffer;
-      try {
-        fileBuffer = fs.readFileSync(fullPath);
-      } catch (err) {
-        warn(`discovery: could not read certificate file "${fullPath}": ${err?.message || err}`);
-        continue;
-      }
+      const scan = scanCandidateForPrivateKey(fullPath, MAX_CERTIFICATE_FILE_BYTES, warn);
+      if (!scan.safe) continue;
+      const fileBuffer = readSafeCertificateFile(fullPath, scan.size, warn);
+      if (fileBuffer === null) continue;
 
       const certResult = parseCertificateFile(fullPath, fileBuffer);
       certResult.coLocatedKeyDetected = detectCoLocatedKey(
@@ -425,6 +546,7 @@ function discoverCertificates(directories, options = {}) {
 
 module.exports = {
   PRIVATE_KEY_FILENAME_PATTERNS,
+  MAX_CERTIFICATE_FILE_BYTES,
   peekLooksLikePrivateKeyPem,
   discoverCertificatesInDirectory,
   discoverCertificates,

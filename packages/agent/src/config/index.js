@@ -26,15 +26,21 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
+const {
+  assertNoPrivateKeyMaterial,
+} = require("../../../log-scrub/secret-material.js");
 
 const CONFIG_FILE_NAME = "config.json";
 const CREDENTIAL_FILE_NAME = "credential";
+const PENDING_REGISTRATION_FILE_NAME = "registration.pending.json";
 
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-// Permissive shape check only: the agent never needs to parse the id/secret
-// apart, so this is deliberately loose beyond the required prefix.
-const CREDENTIAL_SHAPE_PATTERN = /^ttagent_.+$/;
+const CREDENTIAL_SHAPE_PATTERN =
+  /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-]{16,1024})$/;
+const PEM_CERTIFICATE_PATTERN = /-----BEGIN CERTIFICATE-----/;
+const MAX_CA_BUNDLE_BYTES = 1024 * 1024;
 
 const DEFAULT_PROTOCOL_VERSION = "1.0.0";
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
@@ -43,6 +49,103 @@ const DEFAULT_POLL_INTERVAL_MS = 15000;
 const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
 
 const REDACTED_CREDENTIAL_PLACEHOLDER = "[AGENT_CREDENTIAL_REDACTED]";
+
+function fsyncParentDirectory(filePath) {
+  // fsync on a directory is the durable part of an atomic rename on POSIX.
+  // Windows does not support opening directories this way, so this remains
+  // best effort there while the atomic rename still prevents torn files.
+  let directoryFd;
+  try {
+    directoryFd = fs.openSync(path.dirname(filePath), "r");
+    fs.fsyncSync(directoryFd);
+  } catch (_err) {
+    // Best effort across platforms/filesystems.
+  } finally {
+    if (directoryFd !== undefined) {
+      try {
+        fs.closeSync(directoryFd);
+      } catch (_err) {
+        // Best effort close.
+      }
+    }
+  }
+}
+
+function writeFileAtomically(filePath, contents, mode) {
+  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(temporaryPath, "wx", mode);
+    fs.writeFileSync(fd, contents, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(temporaryPath, filePath);
+    try {
+      fs.chmodSync(filePath, mode);
+    } catch (_err) {
+      // Best effort on win32; see ensureConfigDir.
+    }
+    fsyncParentDirectory(filePath);
+  } catch (err) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (_err) {
+        // Best effort close.
+      }
+    }
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch (_err) {
+      // The file may already have been renamed, or may never have existed.
+    }
+    throw err;
+  }
+}
+
+function readBoundedRegularFile(filePath, maxBytes, label) {
+  let stats;
+  try {
+    stats = fs.lstatSync(filePath);
+  } catch (err) {
+    throw new Error(`tokentimer-agent: failed to inspect ${label}: ${err.message}`);
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error(`tokentimer-agent: ${label} must be a regular non-symlink file`);
+  }
+  if (stats.size < 1 || stats.size > maxBytes) {
+    throw new Error(`tokentimer-agent: ${label} must be between 1 and ${maxBytes} bytes`);
+  }
+
+  let fd;
+  try {
+    const noFollow = fs.constants.O_NOFOLLOW || 0;
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+    const openedStats = fs.fstatSync(fd);
+    if (!openedStats.isFile() || openedStats.size !== stats.size) {
+      throw new Error(`${label} changed while being opened`);
+    }
+    const buffer = Buffer.allocUnsafe(openedStats.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fs.readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) throw new Error(`${label} ended before its declared size`);
+      offset += bytesRead;
+    }
+    return buffer;
+  } catch (err) {
+    throw new Error(`tokentimer-agent: failed to read ${label}: ${err.message}`);
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (_err) {
+        // Best effort close.
+      }
+    }
+  }
+}
 
 /**
  * Resolves the agent config directory.
@@ -190,6 +293,47 @@ function validateDiscoveryObject(discovery) {
   return { directories, intervalMs };
 }
 
+function validateCaBundlePath(caBundlePath) {
+  if (caBundlePath === undefined || caBundlePath === null) return null;
+  if (typeof caBundlePath !== "string" || caBundlePath.length === 0) {
+    throw new Error(
+      "tokentimer-agent: caBundlePath must be a non-empty path to a PEM CA bundle",
+    );
+  }
+  return caBundlePath;
+}
+
+/**
+ * Reads an operator-provided private-CA bundle through a bounded, regular-file
+ * path. A trust bundle is public certificate material only; accepting keys
+ * here would violate the control-plane custody invariant before transport is
+ * even established.
+ * @param {string} caBundlePath
+ * @returns {string}
+ */
+function readCaBundle(caBundlePath) {
+  const raw = readBoundedRegularFile(
+    caBundlePath,
+    MAX_CA_BUNDLE_BYTES,
+    `CA bundle at ${caBundlePath}`,
+  );
+  assertNoPrivateKeyMaterial(raw);
+  const pem = raw.toString("utf8");
+  if (!PEM_CERTIFICATE_PATTERN.test(pem)) {
+    throw new Error(
+      `tokentimer-agent: CA bundle at ${caBundlePath} contains no PEM certificate block`,
+    );
+  }
+  return pem;
+}
+
+function parseBooleanEnv(value, fallback, envName) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`tokentimer-agent: ${envName} must be "true" or "false"`);
+}
+
 /**
  * Loads and returns the agent runtime config as a plain object.
  * Load order: config.json file (non-secret fields) -> env var overrides ->
@@ -206,6 +350,8 @@ function validateDiscoveryObject(discovery) {
  *   declaredCommandProfileNames: string[],
  *   policy: object|null,
  *   discovery: {directories: string[], intervalMs: number}|null,
+ *   caBundlePath: string|null,
+ *   allowInsecureLocalHttp: boolean,
  * }}
  */
 function loadAgentConfig({ configDir } = {}) {
@@ -265,6 +411,21 @@ function loadAgentConfig({ configDir } = {}) {
   // null means discovery is disabled entirely.
   const discovery = validateDiscoveryObject(fileConfig.discovery);
 
+  const caBundlePath = validateCaBundlePath(
+    process.env.TOKENTIMER_AGENT_CA_BUNDLE || fileConfig.caBundlePath,
+  );
+  if (
+    fileConfig.allowInsecureLocalHttp !== undefined &&
+    typeof fileConfig.allowInsecureLocalHttp !== "boolean"
+  ) {
+    throw new Error("tokentimer-agent: allowInsecureLocalHttp in config.json must be a boolean");
+  }
+  const allowInsecureLocalHttp = parseBooleanEnv(
+    process.env.TOKENTIMER_AGENT_ALLOW_INSECURE_LOCAL_HTTP,
+    fileConfig.allowInsecureLocalHttp || false,
+    "TOKENTIMER_AGENT_ALLOW_INSECURE_LOCAL_HTTP",
+  );
+
   return {
     serverUrl,
     agentId,
@@ -275,6 +436,8 @@ function loadAgentConfig({ configDir } = {}) {
     declaredCommandProfileNames,
     policy,
     discovery,
+    caBundlePath,
+    allowInsecureLocalHttp,
   };
 }
 
@@ -293,7 +456,7 @@ function writeAgentIdentity(configDir, { agentId }) {
   const configPath = path.join(configDir, CONFIG_FILE_NAME);
   const existing = readConfigFile(configDir);
   const merged = { ...existing, agentId };
-  fs.writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  writeFileAtomically(configPath, `${JSON.stringify(merged, null, 2)}\n`, 0o600);
 }
 
 /**
@@ -312,7 +475,9 @@ function readCredential(configDir) {
     if (err && err.code === "ENOENT") return null;
     throw err;
   }
-  return raw.trim();
+  const credential = raw.trim();
+  assertValidCredentialShape(credential);
+  return credential;
 }
 
 function assertValidCredentialShape(rawCredential) {
@@ -343,12 +508,73 @@ function writeCredential(configDir, rawCredential) {
   ensureConfigDir(configDir);
 
   const credentialPath = path.join(configDir, CREDENTIAL_FILE_NAME);
-  fs.writeFileSync(credentialPath, rawCredential, { encoding: "utf8", mode: 0o600 });
-  try {
-    fs.chmodSync(credentialPath, 0o600);
-  } catch (_err) {
-    // Best-effort on win32; see the comment in ensureConfigDir for rationale.
+  writeFileAtomically(credentialPath, rawCredential, 0o600);
+}
+
+function validateRegistrationRecord(record) {
+  if (
+    record === null ||
+    typeof record !== "object" ||
+    Array.isArray(record) ||
+    Object.keys(record).length !== 2 ||
+    !Object.prototype.hasOwnProperty.call(record, "agentId") ||
+    !Object.prototype.hasOwnProperty.call(record, "credential")
+  ) {
+    throw new Error("tokentimer-agent: pending registration record is malformed");
   }
+  validateAgentId(record.agentId);
+  assertValidCredentialShape(record.credential);
+  const credentialAgentId = CREDENTIAL_SHAPE_PATTERN.exec(record.credential)?.[1];
+  if (credentialAgentId !== record.agentId) {
+    throw new Error("tokentimer-agent: registration credential does not match assigned agentId");
+  }
+  return { agentId: record.agentId, credential: record.credential };
+}
+
+function readPendingRegistration(configDir) {
+  const pendingPath = path.join(configDir, PENDING_REGISTRATION_FILE_NAME);
+  let raw;
+  try {
+    raw = fs.readFileSync(pendingPath, "utf8");
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  }
+  try {
+    return validateRegistrationRecord(JSON.parse(raw));
+  } catch (err) {
+    throw new Error(`tokentimer-agent: pending registration recovery failed: ${err.message}`);
+  }
+}
+
+/**
+ * Persists a validated registration with a small write-ahead record. A crash
+ * after any individual rename leaves registration.pending.json, allowing the
+ * next start to replay the same identity/credential pair safely.
+ * @param {string} configDir
+ * @param {{agentId: string, credential: string}} registration
+ */
+function persistRegistration(configDir, registration) {
+  const validated = validateRegistrationRecord(registration);
+  ensureConfigDir(configDir);
+  const pendingPath = path.join(configDir, PENDING_REGISTRATION_FILE_NAME);
+  writeFileAtomically(pendingPath, `${JSON.stringify(validated)}\n`, 0o600);
+  writeAgentIdentity(configDir, validated);
+  writeCredential(configDir, validated.credential);
+  fs.unlinkSync(pendingPath);
+  fsyncParentDirectory(pendingPath);
+}
+
+/**
+ * Completes a previously interrupted registration transaction, if present.
+ * @param {string} configDir
+ * @returns {{agentId: string, credential: string}|null}
+ */
+function recoverPendingRegistration(configDir) {
+  const registration = readPendingRegistration(configDir);
+  if (registration === null) return null;
+  persistRegistration(configDir, registration);
+  return registration;
 }
 
 /**
@@ -383,9 +609,15 @@ module.exports = {
   resolveConfigDir,
   ensureConfigDir,
   loadAgentConfig,
+  readCaBundle,
+  validateCaBundlePath,
   writeAgentIdentity,
   readCredential,
   writeCredential,
   rotateCredential,
+  persistRegistration,
+  recoverPendingRegistration,
   redactCredentialForLogging,
+  CREDENTIAL_SHAPE_PATTERN,
+  MAX_CA_BUNDLE_BYTES,
 };

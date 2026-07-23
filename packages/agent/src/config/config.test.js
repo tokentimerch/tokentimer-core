@@ -10,11 +10,15 @@ const {
   resolveConfigDir,
   ensureConfigDir,
   loadAgentConfig,
+  readCaBundle,
   writeAgentIdentity,
   readCredential,
   writeCredential,
   rotateCredential,
+  persistRegistration,
+  recoverPendingRegistration,
   redactCredentialForLogging,
+  MAX_CA_BUNDLE_BYTES,
 } = require("./index.js");
 
 const IS_WIN32 = process.platform === "win32";
@@ -381,7 +385,7 @@ describe("credential file round trip", () => {
 
   it("round-trips write/read of the credential file, trimming whitespace", () => {
     const dir = makeTempConfigDir();
-    const credential = "ttagent_agent-01_s3cr3t-value";
+    const credential = "ttagent_agent-01_0123456789abcdef";
     writeCredential(dir, credential);
 
     const readBack = readCredential(dir);
@@ -390,7 +394,7 @@ describe("credential file round trip", () => {
 
   it("sets 0600 permissions on the credential file on non-win32 platforms", { skip: IS_WIN32 }, () => {
     const dir = makeTempConfigDir();
-    writeCredential(dir, "ttagent_agent-01_s3cr3t-value");
+    writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
     const mode = fs.statSync(path.join(dir, "credential")).mode & 0o777;
     assert.equal(mode, 0o600);
   });
@@ -398,7 +402,7 @@ describe("credential file round trip", () => {
   it("creates the config directory itself if missing", () => {
     const dir = makeTempConfigDir();
     assert.ok(!fs.existsSync(dir));
-    writeCredential(dir, "ttagent_agent-01_s3cr3t-value");
+    writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
     assert.ok(fs.existsSync(path.join(dir, "credential")));
   });
 
@@ -430,18 +434,18 @@ describe("credential file round trip", () => {
 
   it("rotateCredential overwrites the previously stored credential", () => {
     const dir = makeTempConfigDir();
-    writeCredential(dir, "ttagent_agent-01_original-secret");
-    rotateCredential(dir, "ttagent_agent-01_rotated-secret");
+    writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
+    rotateCredential(dir, "ttagent_agent-01_fedcba9876543210");
 
-    assert.equal(readCredential(dir), "ttagent_agent-01_rotated-secret");
+    assert.equal(readCredential(dir), "ttagent_agent-01_fedcba9876543210");
   });
 
   it("rotateCredential validates the new credential shape before writing", () => {
     const dir = makeTempConfigDir();
-    writeCredential(dir, "ttagent_agent-01_original-secret");
+    writeCredential(dir, "ttagent_agent-01_0123456789abcdef");
     assert.throws(() => rotateCredential(dir, "garbage"), /expected/);
     // The original credential must remain untouched after a rejected rotation.
-    assert.equal(readCredential(dir), "ttagent_agent-01_original-secret");
+    assert.equal(readCredential(dir), "ttagent_agent-01_0123456789abcdef");
   });
 });
 
@@ -469,5 +473,68 @@ describe("redactCredentialForLogging", () => {
     assert.equal(redactCredentialForLogging(null), "[AGENT_CREDENTIAL_REDACTED]");
     assert.equal(redactCredentialForLogging(undefined), "[AGENT_CREDENTIAL_REDACTED]");
     assert.equal(redactCredentialForLogging(12345), "[AGENT_CREDENTIAL_REDACTED]");
+  });
+});
+
+describe("registration persistence", () => {
+  const registration = {
+    agentId: "agent-registration-1",
+    credential: "ttagent_agent-registration-1_0123456789abcdef",
+  };
+
+  it("atomically persists a validated identity and credential without leaving a journal", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ serverUrl: "https://cp.example.test" }));
+
+    persistRegistration(dir, registration);
+
+    assert.equal(loadAgentConfig({ configDir: dir }).agentId, registration.agentId);
+    assert.equal(readCredential(dir), registration.credential);
+    assert.equal(fs.existsSync(path.join(dir, "registration.pending.json")), false);
+  });
+
+  it("recovers a partial write from the durable pending-registration journal", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ serverUrl: "https://cp.example.test" }));
+    fs.writeFileSync(path.join(dir, "registration.pending.json"), JSON.stringify(registration));
+    // Simulate a crash after config.json was atomically renamed but before the
+    // credential rename and pending-journal cleanup.
+    writeAgentIdentity(dir, { agentId: registration.agentId });
+
+    assert.deepEqual(recoverPendingRegistration(dir), registration);
+    assert.equal(readCredential(dir), registration.credential);
+    assert.equal(fs.existsSync(path.join(dir, "registration.pending.json")), false);
+  });
+
+  it("fails closed on a malformed pending-registration record", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(path.join(dir, "registration.pending.json"), "{bad json");
+    assert.throws(() => recoverPendingRegistration(dir), /recovery failed/);
+    assert.equal(readCredential(dir), null);
+  });
+});
+
+describe("readCaBundle", () => {
+  it("accepts a bounded public PEM certificate bundle", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const bundlePath = path.join(dir, "private-ca.pem");
+    fs.writeFileSync(bundlePath, "-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n");
+    assert.match(readCaBundle(bundlePath), /BEGIN CERTIFICATE/);
+  });
+
+  it("rejects private-key material and oversized bundles", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const keyBundlePath = path.join(dir, "key.pem");
+    fs.writeFileSync(keyBundlePath, "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n");
+    assert.throws(() => readCaBundle(keyBundlePath), /Private key material/);
+
+    const oversizedPath = path.join(dir, "oversized.pem");
+    fs.writeFileSync(oversizedPath, Buffer.alloc(MAX_CA_BUNDLE_BYTES + 1));
+    assert.throws(() => readCaBundle(oversizedPath), /must be between 1 and/);
   });
 });

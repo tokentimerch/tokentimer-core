@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "node bin/tokentimer-agent.js",
-    "build": "node --check bin/tokentimer-agent.js",
+    "build": "node scripts/check-shipped-sources.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --test src/**/*.test.js"

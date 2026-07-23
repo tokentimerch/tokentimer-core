@@ -18,6 +18,7 @@ const {
   buildJobPolicyDescriptor,
   runDiscoveryScan,
   registerIfNeeded,
+  createCandidateAgentId,
   AGENT_VERSION,
 } = require("./index.js");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
@@ -35,7 +36,7 @@ function createRecordingClient() {
       calls.register.push(params);
       return Promise.resolve({
         agentId: "agent-assigned-1",
-        credential: "ttagent_a_b",
+        credential: "ttagent_agent-assigned-1_0123456789abcdef",
         protocolVersion: "1.0.0",
       });
     },
@@ -56,38 +57,41 @@ function engineWith(policy = {}, options = {}) {
 
 const silentLog = () => {};
 
+function claimedJob(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    jobId: "job-1",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    certificateId: "certificate-1",
+    action: "noop",
+    target: { type: "domain", reference: "example.com" },
+    keyMode: "agent-local",
+    requestedAt: "2026-07-23T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("buildJobPolicyDescriptor", () => {
-  it("maps target.reference to targetSelector and passes through policy dimensions", () => {
-    const descriptor = buildJobPolicyDescriptor({
-      jobId: "job-1",
-      target: { type: "domain", reference: "example.com" },
-      commandRef: "nginx-reload",
-      path: "/etc/nginx/tls/cert.pem",
-      caEndpoint: "https://acme.example/dir",
-      dnsZone: "example.com",
-      dnsProvider: "route53",
-    });
+  it("maps validated metadata policy dimensions and target reference", () => {
+    const descriptor = buildJobPolicyDescriptor(claimedJob({
+      action: "renew",
+      metadata: [
+        { name: "caEndpoint", value: "https://acme.example/dir" },
+        { name: "dnsZone", value: "example.com" },
+        { name: "dnsProvider", value: "route53" },
+      ],
+    }));
     assert.deepEqual(descriptor, {
       targetSelector: "example.com",
-      commandRef: "nginx-reload",
-      path: "/etc/nginx/tls/cert.pem",
       caEndpoint: "https://acme.example/dir",
       dnsZone: "example.com",
       dnsProvider: "route53",
     });
   });
 
-  it("omits absent dimensions entirely", () => {
-    assert.deepEqual(buildJobPolicyDescriptor({ jobId: "job-1" }), {});
-  });
-
-  it("maps any custody-shaped intent flag onto requestsKeyExport", () => {
-    for (const field of ["requestsKeyExport", "exportPrivateKey", "keyExport"]) {
-      const descriptor = buildJobPolicyDescriptor({ jobId: "j", [field]: true });
-      assert.equal(descriptor.requestsKeyExport, true, field);
-    }
-    // Falsy values must not set the flag at all.
-    assert.deepEqual(buildJobPolicyDescriptor({ jobId: "j", keyExport: false }), {});
+  it("rejects missing policy dimensions and unknown properties before policy evaluation", () => {
+    assert.throws(() => buildJobPolicyDescriptor(claimedJob({ action: "reload" })), /missing required policy dimension/);
+    assert.throws(() => buildJobPolicyDescriptor(claimedJob({ exportPrivateKey: true })), /unknown field/);
   });
 });
 
@@ -97,10 +101,7 @@ describe("handleClaimedJob", () => {
     const policyEngine = engineWith({}, { declaredTargetSelectors: [] });
 
     const outcome = await handleClaimedJob({
-      job: {
-        jobId: "job-1",
-        target: { type: "domain", reference: "not-in-scope.example.com" },
-      },
+      job: claimedJob({ target: { type: "domain", reference: "not-in-scope.example.com" } }),
       policyEngine,
       client,
       log: silentLog,
@@ -125,7 +126,7 @@ describe("handleClaimedJob", () => {
     assert.match(result.attemptId, /^local-job-1-/);
   });
 
-  it("unconditionally rejects key-export intent even with permissive policy", async () => {
+  it("reports job_integrity_failed for unknown custody-shaped claimed-job fields", async () => {
     const client = createRecordingClient();
     const policyEngine = engineWith(
       { allowedPaths: ["/"] },
@@ -133,18 +134,14 @@ describe("handleClaimedJob", () => {
     );
 
     const outcome = await handleClaimedJob({
-      job: {
-        jobId: "job-2",
-        target: { type: "domain", reference: "example.com" },
-        exportPrivateKey: true,
-      },
+      job: claimedJob({ jobId: "job-2", exportPrivateKey: true }),
       policyEngine,
       client,
       log: silentLog,
     });
 
     assert.equal(outcome.status, "rejected");
-    assert.equal(outcome.rejectionReason, REJECTION_REASONS.KEY_EXPORT_REQUESTED);
+    assert.equal(outcome.rejectionReason, "job_integrity_failed");
   });
 
   it("reports blocked (not executed) when policy allows the job, until the signed-dispatch runtime lands", async () => {
@@ -152,11 +149,7 @@ describe("handleClaimedJob", () => {
     const policyEngine = engineWith({}, { declaredTargetSelectors: ["example.com"] });
 
     const outcome = await handleClaimedJob({
-      job: {
-        jobId: "job-3",
-        attemptId: "attempt-cp-1",
-        target: { type: "domain", reference: "example.com" },
-      },
+      job: claimedJob({ jobId: "job-3" }),
       policyEngine,
       client,
       log: silentLog,
@@ -167,8 +160,8 @@ describe("handleClaimedJob", () => {
     assert.equal(client.calls.reportResult.length, 1);
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "blocked");
-    assert.equal(result.attemptId, "attempt-cp-1");
-    assert.match(result.errorMessage, /signed-dispatch runtime/);
+    assert.match(result.attemptId, /^local-job-3-/);
+    assert.match(result.errorMessage, /does not execute jobs yet/);
   });
 
   it("skips jobs without a jobId without reporting anything", async () => {
@@ -176,7 +169,7 @@ describe("handleClaimedJob", () => {
     const policyEngine = engineWith();
 
     const outcome = await handleClaimedJob({
-      job: { target: { type: "domain", reference: "example.com" } },
+      job: { ...claimedJob(), jobId: undefined },
       policyEngine,
       client,
       log: silentLog,
@@ -300,7 +293,7 @@ describe("registerIfNeeded", () => {
       JSON.stringify({ serverUrl: "https://cp.example.com", agentId: "agent-existing" }),
       "utf8",
     );
-    writeCredential(dir, "ttagent_existing_secret");
+    writeCredential(dir, "ttagent_agent-existing_0123456789abcdef");
 
     const client = createRecordingClient();
     const agentId = await registerIfNeeded({
@@ -320,7 +313,7 @@ describe("registerIfNeeded", () => {
       JSON.stringify({ serverUrl: "https://cp.example.com" }),
       "utf8",
     );
-    writeCredential(dir, "ttagent_orphan_secret");
+    writeCredential(dir, "ttagent_agent-orphan_0123456789abcdef");
 
     await assert.rejects(
       registerIfNeeded({
@@ -382,11 +375,46 @@ describe("registerIfNeeded", () => {
     assert.deepEqual(registerCall.declaredTargetSelectors, ["example.com"]);
     assert.deepEqual(registerCall.declaredCommandProfileNames, ["nginx-reload"]);
 
-    // The assigned agentId is persisted to config.json (the credential is
-    // persisted by the protocol client's onCredentialIssued hook, which is
-    // not part of this recording client).
+    // The validated registration record is persisted as one recoverable
+    // identity + credential transaction by registerIfNeeded itself.
     const persisted = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
     assert.equal(persisted.agentId, "agent-assigned-1");
+    assert.equal(readCredential(dir), "ttagent_agent-assigned-1_0123456789abcdef");
+  });
+
+  it("does not persist any state when registration returns malformed identity data", async () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com" }),
+      "utf8",
+    );
+    const malformedClient = {
+      register: () => Promise.resolve({
+        agentId: "bad agent id",
+        credential: "ttagent_bad_0123456789abcdef",
+        protocolVersion: "1.0.0",
+      }),
+    };
+
+    await assert.rejects(
+      registerIfNeeded({
+        client: malformedClient,
+        config: loadConfigFrom(dir),
+        configDir: dir,
+        env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-token" },
+      }),
+      /invalid agentId/,
+    );
+    assert.equal(loadConfigFrom(dir).agentId, null);
     assert.equal(readCredential(dir), null);
+  });
+});
+
+describe("createCandidateAgentId", () => {
+  it("normalizes hostile hostnames into a bounded protocol-valid candidate id", () => {
+    const candidate = createCandidateAgentId("host name/with/unsafe😀characters".repeat(8), 1234);
+    assert.match(candidate, /^[A-Za-z0-9_.:-]{1,128}$/);
+    assert.ok(candidate.length <= 128);
+    assert.match(candidate, /^candidate-/);
   });
 });

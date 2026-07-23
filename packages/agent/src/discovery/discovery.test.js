@@ -9,6 +9,7 @@ const { execSync } = require("node:child_process");
 
 const {
   PRIVATE_KEY_FILENAME_PATTERNS,
+  MAX_CERTIFICATE_FILE_BYTES,
   peekLooksLikePrivateKeyPem,
   discoverCertificatesInDirectory,
   discoverCertificates,
@@ -268,6 +269,48 @@ describe("discoverCertificatesInDirectory", () => {
     const result = discoverCertificatesInDirectory(dir);
 
     assert.equal(result.certificates.length, 0);
+  });
+
+  it("rejects a private-key .pem candidate before certificate parsing", () => {
+    const dir = makeTempDir();
+    fs.writeFileSync(
+      path.join(dir, "misnamed-certificate.pem"),
+      "-----BEGIN PRIVATE KEY-----\n0123456789abcdef\n-----END PRIVATE KEY-----\n",
+      "utf8",
+    );
+
+    const result = discoverCertificatesInDirectory(dir);
+
+    assert.equal(result.certificates.length, 0);
+    assert.ok(result.warnings.some((warning) => warning.includes("private-key material")));
+  });
+
+  it("rejects oversized certificate candidates without reading them into memory", () => {
+    const dir = makeTempDir();
+    fs.writeFileSync(path.join(dir, "oversized.pem"), Buffer.alloc(MAX_CERTIFICATE_FILE_BYTES + 1));
+
+    const result = discoverCertificatesInDirectory(dir);
+
+    assert.equal(result.certificates.length, 0);
+    assert.ok(result.warnings.some((warning) => warning.includes("oversized certificate candidate")));
+  });
+
+  it("rejects symbolic-link certificate candidates", (t) => {
+    const dir = makeTempDir();
+    const targetPath = path.join(dir, "target.crt");
+    const linkPath = path.join(dir, "linked.crt");
+    fs.writeFileSync(targetPath, "garbage certificate\n", "utf8");
+    try {
+      fs.symlinkSync(targetPath, linkPath, "file");
+    } catch (err) {
+      t.skip(`symlink creation is unavailable: ${err.code || err.message}`);
+      return;
+    }
+
+    const result = discoverCertificatesInDirectory(dir);
+
+    assert.equal(result.certificates.length, 1);
+    assert.ok(result.warnings.some((warning) => warning.includes("symbolic link")));
   });
 
   it("sets coLocatedKeyDetected: true when a same-basename .key file sits next to a certificate (filename convention)", () => {

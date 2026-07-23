@@ -1,30 +1,27 @@
 "use strict";
 
 /**
- * CertOps agent protocol client (agent bootstrap scope).
+ * Outbound-only CertOps agent protocol client.
  *
- * Implements the outbound-only HTTP client for register/heartbeat/claim/
- * result/evidence per packages/contracts/certops/agent-protocol.schema.json
- * and docs/adr/0002-certops-agent-protocol.md (outbound-only model) and
- * docs/adr/0003-certops-job-signing-and-replay-protection.md (replay
- * protection; signature verification itself is signed-dispatch runtime work and is
- * intentionally out of scope here).
- *
- * This module is self-contained: it does not import sibling src/ modules
- * (config, policy, etc). Callers pass in everything it needs (server URL,
- * agent id, credential accessor, ...) as plain parameters/options.
- *
- * Uses Node's built-in global fetch (Node >=22, see package.json engines).
+ * This is the final agent-side wire boundary: every envelope is deep-scanned
+ * for prohibited key material, generic secrets in allowed text fields are
+ * redacted, and the complete schema shape is checked immediately before the
+ * bytes are handed to transport. No agent job execution lives here.
  */
+
+const https = require("node:https");
+const { URL } = require("node:url");
+const {
+  assertNoPrivateKeyMaterial,
+  redactGenericSecrets,
+} = require("../../../log-scrub/secret-material.js");
+const { defaultAgentLogger } = require("../logging");
 
 const SCHEMA_VERSION = 1;
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 64 * 1024;
+const MAX_OUTBOUND_ENVELOPE_BYTES = 512 * 1024;
 
-/**
- * Route paths under the frozen agent namespace
- * (packages/contracts/api/certops-route-compat.contract.json,
- * packages/contracts/openapi/openapi.yaml). Exported so callers/tests can
- * assert against them without hardcoding strings.
- */
 const ROUTES = Object.freeze({
   REGISTER: "/api/v1/certops/agent/register",
   HEARTBEAT: "/api/v1/certops/agent/heartbeat",
@@ -32,7 +29,6 @@ const ROUTES = Object.freeze({
   RESULTS: "/api/v1/certops/agent/jobs/results",
 });
 
-/** messageType values a caller of this module may send outbound. */
 const MESSAGE_TYPES = Object.freeze({
   REGISTER: "register",
   HEARTBEAT: "heartbeat",
@@ -41,19 +37,6 @@ const MESSAGE_TYPES = Object.freeze({
   EVIDENCE: "evidence",
 });
 
-/**
- * Typed error for protocol-level failures, distinct from programmer errors.
- * `code` is one of:
- *   - "network_error": fetch itself threw (DNS, TCP, TLS, abort, ...)
- *   - "http_error": server responded with a non-2xx status the caller must
- *     treat as a failure (i.e. not the special retired/410 case)
- *   - "retired": reserved for documentation; callers get { retired: true }
- *     instead of this error for the 410 case, but the code constant is
- *     exported for consistency/future use.
- *   - "invalid_message": the outgoing envelope failed the local shape check
- *   - "invalid_response": the server response body was not usable JSON or
- *     was missing required fields
- */
 class AgentProtocolError extends Error {
   constructor(message, code, options = {}) {
     super(message);
@@ -61,7 +44,6 @@ class AgentProtocolError extends Error {
     this.code = code;
     if (options.status !== undefined) this.status = options.status;
     if (options.cause !== undefined) this.cause = options.cause;
-    if (options.body !== undefined) this.body = options.body;
   }
 }
 
@@ -74,73 +56,223 @@ const AGENT_PROTOCOL_ERROR_CODES = Object.freeze({
 });
 
 const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const CREDENTIAL_PATTERN = /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-]{16,1024})$/;
 const MESSAGE_TYPE_VALUES = new Set(Object.values(MESSAGE_TYPES));
+const ACTION_VALUES = new Set(["renew", "deploy", "reload", "revoke", "noop"]);
+const RESULT_STATUS_VALUES = new Set(["succeeded", "failed", "rejected", "blocked"]);
+const REJECTION_REASON_VALUES = new Set([
+  "job_integrity_failed",
+  "job_replay_rejected",
+  "target_out_of_scope",
+  "command_not_allowlisted",
+  "path_not_allowlisted",
+  "ca_endpoint_not_allowlisted",
+  "dns_zone_not_allowlisted",
+  "dns_provider_not_allowlisted",
+  "key_export_requested",
+  "clock_drift_suspected",
+]);
+const EVENT_TYPE_VALUES = new Set([
+  "certificate.observed",
+  "deployment.checked",
+  "deployment.updated",
+  "validation.passed",
+  "validation.failed",
+  "policy.checked",
+]);
+const METADATA_NAME_PATTERN = /^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$/;
 
-/**
- * Minimal shape-checking helper for outgoing envelopes: defense in depth,
- * NOT a full JSON Schema validator (the schema is the source of truth and
- * is enforced server-side / in contract tests elsewhere in the monorepo).
- * Checks only the envelope-level required fields and formats described in
- * agent-protocol.schema.json's top-level `required`/`properties`.
- *
- * @param {object} message candidate envelope
- * @returns {string[]} list of human-readable problems; empty means "looks ok"
- */
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isIsoDateTime(value) {
+  return typeof value === "string" && ISO_DATE_TIME_PATTERN.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+function checkExactObject(value, allowedKeys, requiredKeys, label, problems) {
+  if (!isPlainObject(value)) {
+    problems.push(`${label} must be an object`);
+    return false;
+  }
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) problems.push(`${label} has unknown field "${key}"`);
+  }
+  for (const key of requiredKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      problems.push(`${label} is missing required field "${key}"`);
+    }
+  }
+  return true;
+}
+
+function checkString(value, label, problems, { min = 0, max, pattern } = {}) {
+  if (typeof value !== "string") {
+    problems.push(`${label} must be a string`);
+    return;
+  }
+  if (value.length < min) problems.push(`${label} must have at least ${min} characters`);
+  if (max !== undefined && value.length > max) problems.push(`${label} exceeds ${max} characters`);
+  if (pattern && !pattern.test(value)) problems.push(`${label} has an invalid format`);
+}
+
+function checkNullableString(value, label, problems, options = {}) {
+  if (value === null) return;
+  checkString(value, label, problems, options);
+}
+
+function validateMetadata(metadata, problems, label) {
+  if (!Array.isArray(metadata)) {
+    problems.push(`${label} must be an array`);
+    return;
+  }
+  if (metadata.length > 32) problems.push(`${label} has more than 32 entries`);
+  metadata.forEach((entry, index) => {
+    const entryLabel = `${label}[${index}]`;
+    if (!checkExactObject(entry, new Set(["name", "value"]), ["name", "value"], entryLabel, problems)) return;
+    checkString(entry.name, `${entryLabel}.name`, problems, { min: 1, max: 64, pattern: METADATA_NAME_PATTERN });
+    const value = entry.value;
+    if (value !== null && typeof value !== "string" && typeof value !== "boolean" && (typeof value !== "number" || !Number.isFinite(value))) {
+      problems.push(`${entryLabel}.value must be string, finite number, boolean, or null`);
+    }
+    if (typeof value === "string" && value.length > 512) {
+      problems.push(`${entryLabel}.value exceeds 512 characters`);
+    }
+  });
+}
+
 function validateEnvelopeShape(message) {
   const problems = [];
-  if (!message || typeof message !== "object") {
-    return ["message must be an object"];
+  const envelopeKeys = new Set([
+    "schemaVersion",
+    "protocolVersion",
+    "messageType",
+    "agentId",
+    "workspaceId",
+    "sentAt",
+    "clockOffsetMs",
+    "body",
+  ]);
+  if (!checkExactObject(message, envelopeKeys, ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"], "message", problems)) {
+    return problems;
   }
-  if (message.schemaVersion !== SCHEMA_VERSION) {
-    problems.push(`schemaVersion must be ${SCHEMA_VERSION}`);
+  if (message.schemaVersion !== SCHEMA_VERSION) problems.push(`schemaVersion must be ${SCHEMA_VERSION}`);
+  checkString(message.protocolVersion, "protocolVersion", problems, { min: 1, max: 32, pattern: PROTOCOL_VERSION_PATTERN });
+  if (!MESSAGE_TYPE_VALUES.has(message.messageType)) problems.push("messageType is invalid");
+  checkString(message.agentId, "agentId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
+  if (!isIsoDateTime(message.sentAt)) problems.push("sentAt must be an ISO date-time string");
+  if (message.workspaceId !== undefined && message.workspaceId !== null) {
+    checkString(message.workspaceId, "workspaceId", problems, { pattern: UUID_PATTERN });
   }
-  if (
-    typeof message.protocolVersion !== "string" ||
-    !PROTOCOL_VERSION_PATTERN.test(message.protocolVersion)
-  ) {
-    problems.push("protocolVersion must be a semver string (x.y.z)");
+  if (message.clockOffsetMs !== undefined && message.clockOffsetMs !== null && !Number.isInteger(message.clockOffsetMs)) {
+    problems.push("clockOffsetMs must be an integer or null");
   }
-  if (!MESSAGE_TYPE_VALUES.has(message.messageType)) {
-    problems.push(
-      `messageType must be one of: ${[...MESSAGE_TYPE_VALUES].join(", ")}`,
-    );
-  }
-  if (
-    typeof message.agentId !== "string" ||
-    message.agentId.length < 1 ||
-    message.agentId.length > 128 ||
-    !AGENT_ID_PATTERN.test(message.agentId)
-  ) {
-    problems.push("agentId must be a non-empty id matching ^[A-Za-z0-9_.:-]+$");
-  }
-  if (typeof message.sentAt !== "string" || Number.isNaN(Date.parse(message.sentAt))) {
-    problems.push("sentAt must be an ISO date-time string");
-  }
+
+  if (!MESSAGE_TYPE_VALUES.has(message.messageType)) return problems;
+  validateEnvelopeBody(message.messageType, message.body, problems);
   return problems;
 }
 
-/**
- * Builds the shared envelope fields and validates the result before it is
- * ever handed to fetch.
- *
- * @param {object} params
- * @param {string} params.agentId
- * @param {string} params.protocolVersion
- * @param {string} params.messageType
- * @param {object|null} [params.body]
- * @param {string|null} [params.workspaceId]
- * @param {number|null} [params.clockOffsetMs]
- * @returns {object} the envelope
- */
-function buildEnvelope({
-  agentId,
-  protocolVersion,
-  messageType,
-  body = null,
-  workspaceId = null,
-  clockOffsetMs = null,
-}) {
+function validateEnvelopeBody(messageType, body, problems) {
+  const label = `${messageType} body`;
+  if (!isPlainObject(body)) {
+    problems.push(`${label} must be an object`);
+    return;
+  }
+
+  if (messageType === MESSAGE_TYPES.REGISTER) {
+    if (!checkExactObject(body, new Set(["bootstrapTokenId", "agentVersion", "hostname", "platform", "nodeVersion", "declaredTargetSelectors", "declaredCommandProfileNames"]), ["bootstrapTokenId", "agentVersion"], label, problems)) return;
+    checkString(body.bootstrapTokenId, "register body.bootstrapTokenId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
+    checkString(body.agentVersion, "register body.agentVersion", problems, { min: 1, max: 32 });
+    if (body.hostname !== undefined) checkNullableString(body.hostname, "register body.hostname", problems, { max: 255 });
+    if (body.platform !== undefined && body.platform !== null && !["linux", "darwin", "win32"].includes(body.platform)) problems.push("register body.platform is invalid");
+    if (body.nodeVersion !== undefined) checkNullableString(body.nodeVersion, "register body.nodeVersion", problems, { max: 32 });
+    validateStringArray(body.declaredTargetSelectors, "register body.declaredTargetSelectors", problems, 64, 256);
+    validateStringArray(body.declaredCommandProfileNames, "register body.declaredCommandProfileNames", problems, 64, 128, AGENT_ID_PATTERN);
+    return;
+  }
+
+  if (messageType === MESSAGE_TYPES.HEARTBEAT) {
+    if (!checkExactObject(body, new Set(["agentVersion", "ntpSynced", "uptimeSeconds", "pinnedSigningKeyId"]), ["agentVersion"], label, problems)) return;
+    checkString(body.agentVersion, "heartbeat body.agentVersion", problems, { min: 1, max: 32 });
+    if (body.ntpSynced !== undefined && body.ntpSynced !== null && typeof body.ntpSynced !== "boolean") problems.push("heartbeat body.ntpSynced must be boolean or null");
+    if (body.uptimeSeconds !== undefined && body.uptimeSeconds !== null && (!Number.isInteger(body.uptimeSeconds) || body.uptimeSeconds < 0)) problems.push("heartbeat body.uptimeSeconds must be a non-negative integer or null");
+    if (body.pinnedSigningKeyId !== undefined) checkNullableString(body.pinnedSigningKeyId, "heartbeat body.pinnedSigningKeyId", problems, { max: 128, pattern: AGENT_ID_PATTERN });
+    return;
+  }
+
+  if (messageType === MESSAGE_TYPES.CLAIM) {
+    if (!checkExactObject(body, new Set(["maxJobs", "supportedActions"]), [], label, problems)) return;
+    if (body.maxJobs !== undefined && (!Number.isInteger(body.maxJobs) || body.maxJobs < 1 || body.maxJobs > 16)) problems.push("claim body.maxJobs must be an integer between 1 and 16");
+    if (body.supportedActions !== undefined) {
+      if (!Array.isArray(body.supportedActions) || body.supportedActions.length > 16 || body.supportedActions.some((action) => !ACTION_VALUES.has(action))) {
+        problems.push("claim body.supportedActions must contain at most 16 known actions");
+      }
+    }
+    return;
+  }
+
+  if (messageType === MESSAGE_TYPES.RESULT) {
+    if (!checkExactObject(body, new Set(["jobId", "attemptId", "status", "rejectionReason", "keyRotated", "errorMessage"]), ["jobId", "attemptId", "status"], label, problems)) return;
+    checkString(body.jobId, "result body.jobId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
+    checkString(body.attemptId, "result body.attemptId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
+    if (!RESULT_STATUS_VALUES.has(body.status)) problems.push("result body.status is invalid");
+    if (body.rejectionReason !== undefined && body.rejectionReason !== null && !REJECTION_REASON_VALUES.has(body.rejectionReason)) problems.push("result body.rejectionReason is invalid");
+    if (body.keyRotated !== undefined && body.keyRotated !== null && typeof body.keyRotated !== "boolean") problems.push("result body.keyRotated must be boolean or null");
+    if (body.errorMessage !== undefined) checkNullableString(body.errorMessage, "result body.errorMessage", problems, { max: 1024 });
+    return;
+  }
+
+  if (!checkExactObject(body, new Set(["jobId", "evidenceItems"]), ["evidenceItems"], label, problems)) return;
+  if (body.jobId !== undefined) checkNullableString(body.jobId, "evidence body.jobId", problems, { max: 128, pattern: AGENT_ID_PATTERN });
+  if (!Array.isArray(body.evidenceItems) || body.evidenceItems.length < 1 || body.evidenceItems.length > 16) {
+    problems.push("evidence body.evidenceItems must contain 1 to 16 entries");
+    return;
+  }
+  body.evidenceItems.forEach((item, index) => {
+    const itemLabel = `evidence body.evidenceItems[${index}]`;
+    if (!checkExactObject(item, new Set(["eventType", "observedAt", "fingerprintSha256", "summary", "metadata"]), ["eventType", "observedAt"], itemLabel, problems)) return;
+    if (!EVENT_TYPE_VALUES.has(item.eventType)) problems.push(`${itemLabel}.eventType is invalid`);
+    if (!isIsoDateTime(item.observedAt)) problems.push(`${itemLabel}.observedAt must be an ISO date-time string`);
+    if (item.fingerprintSha256 !== undefined) checkNullableString(item.fingerprintSha256, `${itemLabel}.fingerprintSha256`, problems, { pattern: /^[a-f0-9]{64}$/ });
+    if (item.summary !== undefined) checkNullableString(item.summary, `${itemLabel}.summary`, problems, { max: 1024 });
+    if (item.metadata !== undefined) validateMetadata(item.metadata, problems, `${itemLabel}.metadata`);
+  });
+}
+
+function validateStringArray(value, label, problems, maxItems, maxItemLength, pattern) {
+  if (!Array.isArray(value)) {
+    problems.push(`${label} must be an array`);
+    return;
+  }
+  if (value.length > maxItems) problems.push(`${label} has more than ${maxItems} entries`);
+  value.forEach((item, index) => checkString(item, `${label}[${index}]`, problems, { min: 1, max: maxItemLength, pattern }));
+}
+
+function prepareOutboundEnvelope(envelope) {
+  assertNoPrivateKeyMaterial(envelope);
+  const sanitized = redactGenericSecrets(envelope);
+  const problems = validateEnvelopeShape(sanitized);
+  if (problems.length > 0) {
+    throw new AgentProtocolError(
+      `refusing to send malformed envelope: ${problems.join("; ")}`,
+      AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
+    );
+  }
+  const serialized = JSON.stringify(sanitized);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_OUTBOUND_ENVELOPE_BYTES) {
+    throw new AgentProtocolError(
+      `refusing to send oversized envelope (max ${MAX_OUTBOUND_ENVELOPE_BYTES} bytes)`,
+      AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
+    );
+  }
+  return { envelope: sanitized, serialized };
+}
+
+function buildEnvelope({ agentId, protocolVersion, messageType, body = null, workspaceId = null, clockOffsetMs = null }) {
   const envelope = {
     schemaVersion: SCHEMA_VERSION,
     protocolVersion,
@@ -151,527 +283,299 @@ function buildEnvelope({
     clockOffsetMs,
     body,
   };
-  const problems = validateEnvelopeShape(envelope);
-  if (problems.length > 0) {
-    throw new AgentProtocolError(
-      `refusing to send malformed ${messageType} envelope: ${problems.join("; ")}`,
-      AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
-    );
-  }
-  return envelope;
+  return prepareOutboundEnvelope(envelope).envelope;
 }
 
-/**
- * Returns baseMs adjusted by +/- a random jitter fraction, floored at 0.
- * Used to avoid fleet thundering herd on heartbeat/poll cadences and on
- * retry backoff.
- *
- * @param {number} baseMs
- * @param {number} [jitterRatio=0.2] fraction of baseMs to jitter by, e.g.
- *   0.2 means the result is in [baseMs * 0.8, baseMs * 1.2]
- * @returns {number}
- */
 function jitteredDelay(baseMs, jitterRatio = 0.2) {
   const safeBase = Number.isFinite(baseMs) && baseMs > 0 ? baseMs : 0;
   const ratio = Number.isFinite(jitterRatio) && jitterRatio >= 0 ? jitterRatio : 0;
-  const jitterSpan = safeBase * ratio;
-  const jitter = (Math.random() * 2 - 1) * jitterSpan;
-  return Math.max(0, Math.round(safeBase + jitter));
-}
-
-/**
- * Runs `fn` with exponential backoff and full jitter on failure.
- *
- * @param {() => Promise<any>} fn
- * @param {object} [options]
- * @param {number} [options.maxAttempts=5]
- * @param {number} [options.baseDelayMs=250]
- * @param {number} [options.maxDelayMs=30000]
- * @param {(err: Error, attempt: number) => boolean} [options.shouldRetry]
- *   predicate deciding whether a given failure is retryable; defaults to
- *   always retry. Callers can use this to avoid retrying e.g. 4xx errors.
- * @returns {Promise<any>} resolves with fn()'s result
- * @throws the last error, once maxAttempts is exhausted
- */
-async function withRetry(fn, options = {}) {
-  const maxAttempts = options.maxAttempts ?? 5;
-  const baseDelayMs = options.baseDelayMs ?? 250;
-  const maxDelayMs = options.maxDelayMs ?? 30000;
-  const shouldRetry = options.shouldRetry ?? (() => true);
-
-  let lastError;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      const isLastAttempt = attempt >= maxAttempts;
-      if (isLastAttempt || !shouldRetry(err, attempt)) {
-        throw err;
-      }
-      const exponential = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
-      const delayMs = jitteredDelay(exponential, 1);
-      await sleep(Math.min(delayMs, maxDelayMs));
-    }
-  }
-  throw lastError;
+  return Math.max(0, Math.round(safeBase + (Math.random() * 2 - 1) * safeBase * ratio));
 }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Minimal outbound polling loop scaffold. Repeatedly awaits onTick() on a
- * jittered interval until `signal` aborts. Errors thrown by onTick are
- * caught and logged, never propagated, so a single failed tick (e.g. one
- * dropped heartbeat) does not kill the loop -- matching the outbound-only,
- * resilient-poller intent.
- *
- * Generic on purpose: heartbeat and claim polling both need this shape, so
- * this helper does not know or care which endpoint onTick calls.
- *
- * @param {object} params
- * @param {number} params.intervalMs base interval between ticks
- * @param {number} [params.jitterRatio=0.2]
- * @param {AbortSignal} params.signal used for clean shutdown
- * @param {() => Promise<void>} params.onTick called on every tick
- * @param {(err: Error) => void} [params.onError] override the default
- *   console.error-based error logging
- * @param {boolean} [params.startImmediately=true] whether the first tick
- *   fires immediately (after startup jitter) rather than waiting a full
- *   interval first
- * @returns {Promise<void>} resolves once `signal` aborts
- */
-async function startPollLoop({
-  intervalMs,
-  jitterRatio = 0.2,
-  signal,
-  onTick,
-  onError = defaultPollLoopErrorHandler,
-  startImmediately = true,
-}) {
+async function withRetry(fn, options = {}) {
+  const maxAttempts = options.maxAttempts ?? 5;
+  const baseDelayMs = options.baseDelayMs ?? 250;
+  const maxDelayMs = options.maxDelayMs ?? 30_000;
+  const shouldRetry = options.shouldRetry ?? (() => true);
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt >= maxAttempts || !shouldRetry(err, attempt)) throw err;
+      await sleep(Math.min(maxDelayMs, jitteredDelay(Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1)), 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function startPollLoop({ intervalMs, jitterRatio = 0.2, signal, onTick, onError = (err) => defaultAgentLogger.error("poll loop tick failed", err), startImmediately = true }) {
   if (!signal) {
-    throw new AgentProtocolError(
-      "startPollLoop requires an AbortSignal",
-      AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
-    );
+    throw new AgentProtocolError("startPollLoop requires an AbortSignal", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
   }
-
-  const waitJittered = async (ms) => {
-    const delay = jitteredDelay(ms, jitterRatio);
-    await abortableSleep(delay, signal);
-  };
-
-  if (startImmediately) {
-    await waitJittered(intervalMs);
-  }
-
+  const waitJittered = () => abortableSleep(jitteredDelay(intervalMs, jitterRatio), signal);
+  // Correct semantics: true means tick now; false means wait one interval.
+  if (!startImmediately) await waitJittered();
   while (!signal.aborted) {
     try {
       await onTick();
     } catch (err) {
       onError(err);
     }
-    if (signal.aborted) break;
-    await waitJittered(intervalMs);
+    if (!signal.aborted) await waitJittered();
   }
 }
 
-function defaultPollLoopErrorHandler(err) {
-  console.error(`tokentimer-agent: poll loop tick failed: ${err?.message || err}`);
-}
-
-/**
- * sleep() that resolves early (without throwing) if `signal` aborts first.
- */
 function abortableSleep(ms, signal) {
   return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
+    if (signal.aborted) return resolve();
     const onAbort = () => {
       clearTimeout(timer);
       resolve();
     };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
-/**
- * Performs a single JSON POST with a Bearer Authorization header and
- * translates fetch-level failures / non-2xx responses into
- * AgentProtocolError, except for the special 410 "retired" case which the
- * caller (heartbeat) turns into a distinct return value instead of a throw.
- *
- * @param {string} url
- * @param {object} params
- * @param {string|null} params.token raw bearer token; null/omitted sends
- *   no Authorization header
- * @param {object} params.envelope JSON body to send
- * @returns {Promise<{ status: number, ok: boolean, json: any }>}
- */
-async function postJson(url, { token, envelope }) {
+function isLocalHost(hostname) {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
+
+function parseServerUrl(serverUrl, { allowInsecureLocalHttp = false } = {}) {
+  if (typeof serverUrl !== "string" || serverUrl.length === 0 || serverUrl.trim() !== serverUrl) {
+    throw new AgentProtocolError("serverUrl must be a non-empty, unpadded URL", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+  }
+  let parsed;
+  try {
+    parsed = new URL(serverUrl);
+  } catch {
+    throw new AgentProtocolError("serverUrl must be an absolute URL", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+  }
+  if (parsed.username || parsed.password || parsed.hash || parsed.search || (parsed.pathname !== "/" && parsed.pathname !== "")) {
+    throw new AgentProtocolError("serverUrl must not contain credentials, a query, fragment, or path", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+  }
+  if (parsed.protocol === "https:") return parsed.origin;
+  if (parsed.protocol === "http:" && allowInsecureLocalHttp === true && isLocalHost(parsed.hostname)) {
+    return parsed.origin;
+  }
+  throw new AgentProtocolError("serverUrl must use HTTPS (HTTP is allowed only for explicit local development)", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+}
+
+function combinedAbortSignal(signal, timeoutMs) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+function createCaAwareFetch({ caBundlePem, baseFetch = fetch, maxResponseBytes = MAX_RESPONSE_BYTES } = {}) {
+  if (typeof caBundlePem !== "string" || caBundlePem.length === 0) {
+    throw new AgentProtocolError("createCaAwareFetch requires a non-empty CA bundle", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+  }
+  return (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return baseFetch(url, init);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        init.signal?.removeEventListener("abort", onAbort);
+        fn(value);
+      };
+      const onAbort = () => request.destroy(new Error("request aborted"));
+      const request = https.request({
+        protocol: "https:",
+        hostname: parsed.hostname,
+        port: parsed.port || 443,
+        path: parsed.pathname,
+        method: init.method || "GET",
+        headers: init.headers || {},
+        ca: caBundlePem,
+        rejectUnauthorized: true,
+      }, (response) => {
+        const chunks = [];
+        let total = 0;
+        response.on("data", (chunk) => {
+          total += chunk.length;
+          if (total > maxResponseBytes) {
+            response.destroy(new Error("response body exceeds limit"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("error", (err) => finish(reject, err));
+        response.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          finish(resolve, {
+            ok: response.statusCode >= 200 && response.statusCode < 300,
+            status: response.statusCode || 0,
+            headers: { get: (name) => response.headers[String(name).toLowerCase()] || null },
+            __readBoundedJson: () => parseJsonText(text),
+          });
+        });
+      });
+      request.on("error", (err) => finish(reject, err));
+      if (init.signal?.aborted) return onAbort();
+      init.signal?.addEventListener("abort", onAbort, { once: true });
+      if (init.body !== undefined && init.body !== null) request.write(init.body);
+      request.end();
+    });
+  };
+}
+
+function parseJsonText(text) {
+  if (text.length === 0) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function readBoundedResponseJson(response) {
+  const declaredLength = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new AgentProtocolError("control-plane response exceeds the size limit", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  if (typeof response.__readBoundedJson === "function") return response.__readBoundedJson();
+  if (response.body?.getReader) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw new AgentProtocolError("control-plane response exceeds the size limit", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock?.();
+    }
+    return parseJsonText(Buffer.concat(chunks).toString("utf8"));
+  }
+  // Test doubles without a body stream are intentionally supported; real
+  // Node fetch responses always take the bounded reader path above.
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function postJson(url, { token, envelope, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch }) {
+  const { envelope: safeEnvelope, serialized } = prepareOutboundEnvelope(envelope);
   const headers = { "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
-
   let response;
   try {
-    response = await fetch(url, {
+    response = await fetchImpl(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(envelope),
+      body: serialized,
+      signal: combinedAbortSignal(signal, requestTimeoutMs),
+      redirect: "error",
     });
   } catch (err) {
-    throw new AgentProtocolError(
-      `network error calling ${url}: ${err?.message || err}`,
-      AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
-      { cause: err },
-    );
+    throw new AgentProtocolError("network request to control plane failed", AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR, { cause: err });
   }
-
-  let json = null;
-  try {
-    json = await response.json();
-  } catch {
-    json = null;
+  if (response.status >= 300 && response.status < 400) {
+    throw new AgentProtocolError("control-plane redirect was refused", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
   }
-
-  return { status: response.status, ok: response.ok, json };
+  const json = await readBoundedResponseJson(response);
+  return { status: response.status, ok: response.ok, json, envelope: safeEnvelope };
 }
 
-/**
- * Resolves the current raw credential via the caller-supplied
- * `getCredential` accessor, which may be sync or async. This module never
- * reads/writes credential storage itself (per spec: config module owns
- * that); it only ever uses the returned string as a Bearer token.
- *
- * @param {(() => (string|null|Promise<string|null>))|undefined} getCredential
- * @returns {Promise<string|null>}
- */
+function validateRegistrationResponse(json, expectedProtocolVersion) {
+  if (!isPlainObject(json)) {
+    throw new AgentProtocolError("registration response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  const expectedKeys = new Set(["agentId", "credential", "protocolVersion"]);
+  const keys = Object.keys(json);
+  if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) {
+    throw new AgentProtocolError("registration response contains unknown or missing fields", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  if (typeof json.agentId !== "string" || !AGENT_ID_PATTERN.test(json.agentId)) {
+    throw new AgentProtocolError("registration response contains an invalid agentId", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  const credentialMatch = typeof json.credential === "string" ? CREDENTIAL_PATTERN.exec(json.credential) : null;
+  if (!credentialMatch || credentialMatch[1] !== json.agentId) {
+    throw new AgentProtocolError("registration response contains an invalid credential", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  if (typeof json.protocolVersion !== "string" || !PROTOCOL_VERSION_PATTERN.test(json.protocolVersion) || json.protocolVersion !== expectedProtocolVersion) {
+    throw new AgentProtocolError("registration response contains an unsupported protocolVersion", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+  }
+  return { agentId: json.agentId, credential: json.credential, protocolVersion: json.protocolVersion };
+}
+
 async function resolveCredential(getCredential) {
-  if (typeof getCredential !== "function") return null;
-  return await getCredential();
+  return typeof getCredential === "function" ? await getCredential() : null;
 }
 
-/**
- * Factory for the outbound-only protocol client. See module doc comment
- * for the overall design; this is agent bootstrap scope: real job execution
- * and Ed25519 signature verification are signed-dispatch runtime work (see
- * docs/adr/0003-certops-job-signing-and-replay-protection.md) and are only
- * stubbed/passed through here.
- *
- * @param {object} params
- * @param {string} params.serverUrl base URL of the control plane, no
- *   trailing slash required (a trailing slash is tolerated/stripped)
- * @param {string} params.agentId stable agent identifier; for a
- *   not-yet-registered agent this is the client-generated candidate id
- *   echoed back by the control plane on register (schema note)
- * @param {string} params.protocolVersion semver string this agent build
- *   speaks (version negotiation)
- * @param {() => (string|null|Promise<string|null>)} [params.getCredential]
- *   returns the current per-agent credential (raw `ttagent_<id>_<secret>`
- *   string) or null if not yet registered. Required for heartbeat/claim/
- *   result/evidence; unused by register itself (which uses bootstrapToken).
- * @param {(rawCredential: string) => (void|Promise<void>)} [params.onCredentialIssued]
- *   called with the raw credential string returned by a successful
- *   register() call, so the caller can persist it. This module never
- *   persists credentials itself.
- * @returns {object} client with register/heartbeat/claim/reportResult/reportEvidence
- */
-function createProtocolClient({
-  serverUrl,
-  agentId,
-  protocolVersion,
-  getCredential,
-  onCredentialIssued,
-}) {
-  if (!serverUrl || typeof serverUrl !== "string") {
-    throw new AgentProtocolError(
-      "createProtocolClient requires a serverUrl string",
-      AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
-    );
+function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false } = {}) {
+  const baseUrl = parseServerUrl(serverUrl, { allowInsecureLocalHttp });
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000) {
+    throw new AgentProtocolError("requestTimeoutMs must be an integer between 1 and 120000", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
   }
-  const baseUrl = serverUrl.replace(/\/+$/, "");
-  const routeUrl = (path) => `${baseUrl}${path}`;
+  const routeUrl = (route) => `${baseUrl}${route}`;
+  const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl });
 
-  /**
-   * @param {object} params
-   * @param {string} params.bootstrapToken raw bootstrap token, sent as
-   *   Authorization: Bearer <bootstrapToken> (never in the body)
-   * @param {string} params.bootstrapTokenId opaque non-secret reference to
-   *   the bootstrap token, used for correlation/audit only (distinct from
-   *   the token itself; the caller is responsible for having obtained this
-   *   id separately when the bootstrap token was issued -- see
-   *   registerBody in agent-protocol.schema.json)
-   * @param {string} params.agentVersion
-   * @param {string|null} [params.hostname]
-   * @param {("linux"|"darwin"|"win32"|null)} [params.platform]
-   * @param {string|null} [params.nodeVersion]
-   * @param {string[]} [params.declaredTargetSelectors]
-   * @param {string[]} [params.declaredCommandProfileNames]
-   * @returns {Promise<{ agentId: string, credential: string, protocolVersion: string }>}
-   */
-  async function register({
-    bootstrapToken,
-    bootstrapTokenId,
-    agentVersion,
-    hostname = null,
-    platform = null,
-    nodeVersion = null,
-    declaredTargetSelectors = [],
-    declaredCommandProfileNames = [],
-  }) {
-    if (!bootstrapToken) {
-      throw new AgentProtocolError(
-        "register requires a bootstrapToken",
-        AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
-      );
+  async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [] } = {}) {
+    if (typeof bootstrapToken !== "string" || bootstrapToken.length === 0) {
+      throw new AgentProtocolError("register requires a bootstrapToken", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
     }
-
-    const envelope = buildEnvelope({
+    const { status, ok, json } = await send(ROUTES.REGISTER, bootstrapToken, buildEnvelope({
       agentId,
       protocolVersion,
       messageType: MESSAGE_TYPES.REGISTER,
-      body: {
-        bootstrapTokenId,
-        agentVersion,
-        hostname,
-        platform,
-        nodeVersion,
-        declaredTargetSelectors,
-        declaredCommandProfileNames,
-      },
-    });
-
-    const { status, ok, json } = await postJson(routeUrl(ROUTES.REGISTER), {
-      token: bootstrapToken,
-      envelope,
-    });
-
-    if (!ok) {
-      throw new AgentProtocolError(
-        `agent registration failed with HTTP ${status}`,
-        AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
-        { status, body: json },
-      );
-    }
-
-    const assignedAgentId = json?.agentId;
-    const credential = json?.credential;
-    const assignedProtocolVersion = json?.protocolVersion || protocolVersion;
-
-    if (!assignedAgentId || !credential) {
-      throw new AgentProtocolError(
-        "agent registration response missing agentId/credential",
-        AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE,
-        { body: json },
-      );
-    }
-
-    if (typeof onCredentialIssued === "function") {
-      await onCredentialIssued(credential);
-    }
-
-    return {
-      agentId: assignedAgentId,
-      credential,
-      protocolVersion: assignedProtocolVersion,
-    };
+      body: { bootstrapTokenId, agentVersion, hostname, platform, nodeVersion, declaredTargetSelectors, declaredCommandProfileNames },
+    }));
+    if (!ok) throw new AgentProtocolError(`agent registration failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
+    return validateRegistrationResponse(json, protocolVersion);
   }
 
-  /**
-   * @param {object} params
-   * @param {string} params.agentVersion
-   * @param {boolean|null} [params.ntpSynced]
-   * @param {number|null} [params.uptimeSeconds]
-   * @param {string|null} [params.pinnedSigningKeyId] job-signing public
-   *   key id currently pinned locally; signature verification
-   *   itself is signed-dispatch runtime work, this module only reports the id.
-   * @param {number|null} [params.clockOffsetMs] agent-reported offset vs
-   *   control-plane time. The schema expects this on heartbeat and result
-   *   envelopes for clock-drift detection; measuring the offset is signed-dispatch
-   *   runtime work, so callers pass it through here when they have it.
-   * @returns {Promise<{ retired: true } | object>} `{ retired: true }` on
-   *   HTTP 410 (caller should exit cleanly, no respawn loop, per ADR-0002
-   *   ); otherwise the parsed response body.
-   */
-  async function heartbeat({
-    agentVersion,
-    ntpSynced = null,
-    uptimeSeconds = null,
-    pinnedSigningKeyId = null,
-    clockOffsetMs = null,
-  }) {
-    const token = await resolveCredential(getCredential);
-    const envelope = buildEnvelope({
-      agentId,
-      protocolVersion,
-      messageType: MESSAGE_TYPES.HEARTBEAT,
-      clockOffsetMs,
-      body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId },
-    });
-
-    const { status, ok, json } = await postJson(routeUrl(ROUTES.HEARTBEAT), {
-      token,
-      envelope,
-    });
-
-    if (status === 410) {
-      return { retired: true };
-    }
-
-    if (!ok) {
-      throw new AgentProtocolError(
-        `heartbeat failed with HTTP ${status}`,
-        AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
-        { status, body: json },
-      );
-    }
-
+  async function heartbeat({ agentVersion, ntpSynced = null, uptimeSeconds = null, pinnedSigningKeyId = null, clockOffsetMs = null } = {}) {
+    const { status, ok, json } = await send(ROUTES.HEARTBEAT, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.HEARTBEAT, clockOffsetMs, body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId } }));
+    if (status === 410) return { retired: true };
+    if (!ok) throw new AgentProtocolError(`heartbeat failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
-  /**
-   * @param {object} params
-   * @param {number} [params.maxJobs=1]
-   * @param {string[]} [params.supportedActions]
-   * @returns {Promise<Array<object>>} jobs array from the response's
-   *   `jobs` field (pass-through; server-side shape TBD, see job-payload
-   *   schema which lands with the control-plane agent backend)
-   */
   async function claim({ maxJobs = 1, supportedActions = [] } = {}) {
-    const token = await resolveCredential(getCredential);
-    const envelope = buildEnvelope({
-      agentId,
-      protocolVersion,
-      messageType: MESSAGE_TYPES.CLAIM,
-      body: { maxJobs, supportedActions },
-    });
-
-    const { status, ok, json } = await postJson(routeUrl(ROUTES.CLAIM), {
-      token,
-      envelope,
-    });
-
-    if (!ok) {
-      throw new AgentProtocolError(
-        `claim failed with HTTP ${status}`,
-        AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
-        { status, body: json },
-      );
-    }
-
-    return Array.isArray(json?.jobs) ? json.jobs : [];
+    const { status, ok, json } = await send(ROUTES.CLAIM, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.CLAIM, body: { maxJobs, supportedActions } }));
+    if (!ok) throw new AgentProtocolError(`claim failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
+    if (json !== null && !isPlainObject(json)) throw new AgentProtocolError("claim response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    if (json?.jobs !== undefined && !Array.isArray(json.jobs)) throw new AgentProtocolError("claim response jobs must be an array", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    if (Array.isArray(json?.jobs) && json.jobs.length > 16) throw new AgentProtocolError("claim response contains too many jobs", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
+    return json?.jobs ?? [];
   }
 
-  /**
-   * Reports the terminal outcome of a job attempt. Job execution itself
-   * (running the signed job, verifying its Ed25519 signature) is signed-dispatch
-   * runtime work; this is only the outbound reporting leg.
-   *
-   * @param {object} params
-   * @param {string} params.jobId
-   * @param {string} params.attemptId
-   * @param {("succeeded"|"failed"|"rejected"|"blocked")} params.status
-   * @param {string|null} [params.rejectionReason]
-   * @param {boolean|null} [params.keyRotated]
-   * @param {string|null} [params.errorMessage]
-   * @param {number|null} [params.clockOffsetMs] see heartbeat(); the schema
-   *   expects this on result envelopes too.
-   * @returns {Promise<object>} parsed response body
-   */
-  async function reportResult({
-    jobId,
-    attemptId,
-    status: jobStatus,
-    rejectionReason = null,
-    keyRotated = null,
-    errorMessage = null,
-    clockOffsetMs = null,
-  }) {
-    const token = await resolveCredential(getCredential);
-    const envelope = buildEnvelope({
-      agentId,
-      protocolVersion,
-      messageType: MESSAGE_TYPES.RESULT,
-      clockOffsetMs,
-      body: {
-        jobId,
-        attemptId,
-        status: jobStatus,
-        rejectionReason,
-        keyRotated,
-        errorMessage,
-      },
-    });
-
-    const { status: httpStatus, ok, json } = await postJson(routeUrl(ROUTES.RESULTS), {
-      token,
-      envelope,
-    });
-
-    if (!ok) {
-      throw new AgentProtocolError(
-        `reportResult failed with HTTP ${httpStatus}`,
-        AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
-        { status: httpStatus, body: json },
-      );
-    }
-
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, clockOffsetMs = null } = {}) {
+    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, body: { jobId, attemptId, status: jobStatus, rejectionReason, keyRotated, errorMessage } }));
+    if (!ok) throw new AgentProtocolError(`reportResult failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
-  /**
-   * @param {object} params
-   * @param {string|null} [params.jobId] null for agent-level evidence not
-   *   tied to a specific job
-   * @param {Array<object>} params.evidenceItems see evidenceBody in
-   *   agent-protocol.schema.json for the per-item shape
-   * @returns {Promise<object>} parsed response body
-   */
-  async function reportEvidence({ jobId = null, evidenceItems }) {
-    const token = await resolveCredential(getCredential);
-    const envelope = buildEnvelope({
-      agentId,
-      protocolVersion,
-      messageType: MESSAGE_TYPES.EVIDENCE,
-      body: { jobId, evidenceItems },
-    });
-
-    // NOTE: evidence and result share the same /jobs/results ingestion
-    // route per the frozen route namespace (packages/contracts/api/
-    // certops-route-compat.contract.json only lists one results route for
-    // agents); the messageType field on the envelope disambiguates
-    // server-side. Revisit if control-plane work splits this.
-    const { status: httpStatus, ok, json } = await postJson(routeUrl(ROUTES.RESULTS), {
-      token,
-      envelope,
-    });
-
-    if (!ok) {
-      throw new AgentProtocolError(
-        `reportEvidence failed with HTTP ${httpStatus}`,
-        AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
-        { status: httpStatus, body: json },
-      );
-    }
-
+  async function reportEvidence({ jobId = null, evidenceItems } = {}) {
+    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, body: { jobId, evidenceItems } }));
+    if (!ok) throw new AgentProtocolError(`reportEvidence failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
-  return {
-    register,
-    heartbeat,
-    claim,
-    reportResult,
-    reportEvidence,
-  };
+  return { register, heartbeat, claim, reportResult, reportEvidence };
 }
 
 module.exports = {
@@ -679,7 +583,14 @@ module.exports = {
   MESSAGE_TYPES,
   AGENT_PROTOCOL_ERROR_CODES,
   AgentProtocolError,
+  REQUEST_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+  MAX_OUTBOUND_ENVELOPE_BYTES,
   validateEnvelopeShape,
+  prepareOutboundEnvelope,
+  validateRegistrationResponse,
+  parseServerUrl,
+  createCaAwareFetch,
   jitteredDelay,
   withRetry,
   startPollLoop,
