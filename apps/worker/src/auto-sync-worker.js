@@ -23,8 +23,10 @@ import axios from "axios";
 import { isAutoSyncProviderAllowed } from "./auto-sync-providers.js";
 import {
   formatAutoSyncError,
+  formatImportErrorDetail,
   recordAutoSyncCompleted,
   recordAutoSyncFailure,
+  summarizeImportErrors,
 } from "./shared/autoSyncFailure.js";
 
 // Encryption helpers — must mirror systemSettings.js exactly
@@ -327,6 +329,7 @@ async function runAutoSync() {
           //    what a user gets when importing manually from the dashboard.
           let importedCount = 0;
           let importErrorCount = 0;
+          let importErrors = [];
           let deletedCount = 0;
           if (itemsCount > 0) {
             const importUrl = `${apiUrl}/api/v1/integrations/import?workspace_id=${workspace_id}`;
@@ -381,6 +384,7 @@ async function runAutoSync() {
             importedCount =
               (importResult.created_count || 0) + (importResult.updated_count || 0);
             importErrorCount = importResult.error_count || 0;
+            importErrors = summarizeImportErrors(importResult.errors);
             deletedCount = importResult.deleted_count || 0;
             if (deletedCount > 0) {
               logger.info(
@@ -401,9 +405,14 @@ async function runAutoSync() {
                 : "success";
           const syncError =
             syncStatus === "partial"
-              ? itemsCount > 0 && importedCount === 0
-                ? `Scan found ${itemsCount} item(s) but none were imported (all failed validation or were rejected).`
-                : `${importErrorCount} of ${itemsCount} scanned item(s) failed to import.`
+              ? [
+                  itemsCount > 0 && importedCount === 0
+                    ? `Scan found ${itemsCount} item(s) but none were imported (all failed validation or were rejected).`
+                    : `${importErrorCount} of ${itemsCount} scanned item(s) failed to import.`,
+                  formatImportErrorDetail(importErrors, importErrorCount),
+                ]
+                  .filter(Boolean)
+                  .join(" ")
               : null;
 
           // Update config: success/partial
@@ -427,6 +436,7 @@ async function runAutoSync() {
             itemsScanned: itemsCount,
             itemsImported: importedCount,
             error: syncError,
+            importErrors,
           });
 
           cAutoSync.inc({ provider, status: syncStatus });

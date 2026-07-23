@@ -50,6 +50,16 @@ function applyScanFilterRulesToResult(filterRules, result) {
   return result;
 }
 
+// Compact per-item error sample for audit metadata so validation failures
+// during import/sync are diagnosable from the audit log (bounded to avoid
+// oversized audit rows).
+function summarizeImportErrors(errors) {
+  return (Array.isArray(errors) ? errors : []).slice(0, 5).map((e) => ({
+    item: String(e?.item || "unknown").substring(0, 200),
+    error: String(e?.error || "unknown error").substring(0, 300),
+  }));
+}
+
 // --- Vault integration: scan mounts for inventory/expirations ---
 // Note: requireIntegrationQuota handles workspace validation, role check, and quota enforcement
 router.post(
@@ -413,7 +423,7 @@ router.post(
             `Imported from ${it?.source || "vault"}:${it?.mount || ""}${it?.path || ""}`;
           if (hasNoExpiration) {
             const sourceInfo = it?.source ? ` (${it.source})` : "";
-            notes = `Ã¢Å¡Â Ã¯Â¸Â This ${type} does not have an expiration date${sourceInfo}. Set to "Never expires" by default.\n${notes}`;
+            notes = `Warning: this ${type} does not have an expiration date${sourceInfo}. Set to "Never expires" by default.\n${notes}`;
           }
 
           // Build section value (robust split and flatten)
@@ -582,6 +592,9 @@ router.post(
             created_count: created.length,
             updated_count: updated.length,
             error_count: errors.length,
+            ...(errors.length > 0
+              ? { errors: summarizeImportErrors(errors) }
+              : {}),
             source: "vault",
           },
         });
@@ -763,9 +776,9 @@ router.post(
         // Connection timeout - likely firewall blocking or instance unreachable
         userMessage =
           "Connection timeout. The GitLab instance is not responding. This usually indicates:\n" +
-          "Ã¢â‚¬Â¢ Firewall blocking the connection\n" +
-          "Ã¢â‚¬Â¢ GitLab instance is unreachable or down\n" +
-          "Ã¢â‚¬Â¢ Network routing issues\n" +
+          "- Firewall blocking the connection\n" +
+          "- GitLab instance is unreachable or down\n" +
+          "- Network routing issues\n" +
           "Please verify the URL, check firewall rules, and ensure the instance is accessible from this server.";
       } else if (
         e?.code === "ENOTFOUND" ||
@@ -948,9 +961,9 @@ router.post(
         // Connection timeout - likely firewall blocking or instance unreachable
         userMessage =
           "Connection timeout. The GitHub instance is not responding. This usually indicates:\n" +
-          "Ã¢â‚¬Â¢ Firewall blocking the connection\n" +
-          "Ã¢â‚¬Â¢ GitHub instance is unreachable or down\n" +
-          "Ã¢â‚¬Â¢ Network routing issues\n" +
+          "- Firewall blocking the connection\n" +
+          "- GitHub instance is unreachable or down\n" +
+          "- Network routing issues\n" +
           "Please verify the URL, check firewall rules, and ensure the instance is accessible from this server.";
       } else if (
         e?.code === "ENOTFOUND" ||
@@ -1503,7 +1516,7 @@ router.post(
         e?.message?.includes("API_NOT_ACTIVATED")
       ) {
         userMessage =
-          'GCP Secret Manager API is not enabled. Enable it in Google Cloud Console: APIs & Services Ã¢â€ â€™ Enable "Secret Manager API".';
+          'GCP Secret Manager API is not enabled. Enable it in Google Cloud Console: APIs & Services -> Enable "Secret Manager API".';
       } else if (e?.code === "ENOTFOUND" || e?.code === "ECONNREFUSED") {
         userMessage = "Cannot connect to GCP. Check your network connectivity.";
       } else if (e?.message) {
@@ -2007,7 +2020,7 @@ router.post(
             it?.notes || `Imported from ${it?.source || "integration"}`;
           if (hasNoExpiration) {
             const sourceInfo = it?.source ? ` (${it.source})` : "";
-            notes = `Ã¢Å¡Â Ã¯Â¸Â This ${type} does not have an expiration date${sourceInfo}. Set to "Never expires" by default.\n${notes}`;
+            notes = `Warning: this ${type} does not have an expiration date${sourceInfo}. Set to "Never expires" by default.\n${notes}`;
           }
 
           // privileges from scopes or other source-specific fields
@@ -2238,6 +2251,9 @@ router.post(
             created_count: created.length,
             updated_count: updated.length,
             error_count: errors.length,
+            ...(errors.length > 0
+              ? { errors: summarizeImportErrors(errors) }
+              : {}),
             filtered_out_count: filteredOutCount,
             deleted_count: cleanupDeleted.length,
             source: "integration",

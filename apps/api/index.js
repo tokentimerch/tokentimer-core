@@ -491,7 +491,7 @@ app.post(
             (alert.error_message || "").toLowerCase().includes("webhooks") ||
             providerHint;
           const hint = isWebhookIssue
-            ? `Please put a valid ${providerHint || "webhook"} before retrying (Preferences Ã¢â€ â€™ Webhooks).`
+            ? `Please put a valid ${providerHint || "webhook"} before retrying (Preferences -> Webhooks).`
             : "No eligible channels to retry. Enable at least one channel in Preferences, then try again.";
           return res.status(400).json({
             error: hint,
