@@ -183,7 +183,7 @@ router.delete(
         "DELETE FROM workspace_memberships WHERE user_id = $1",
         [userId],
       );
-      // section_memberships legacy table removed Ã¢â‚¬â€œ no action needed
+      // section_memberships legacy table removed - no action needed
 
       // Delete alert artifacts owned by this user
       await client.query("DELETE FROM alert_delivery_log WHERE user_id = $1", [

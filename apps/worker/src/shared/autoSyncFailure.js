@@ -14,6 +14,33 @@ export function formatAutoSyncError(err) {
   return String(err?.message || err).substring(0, 1000);
 }
 
+/**
+ * Bounded per-item error sample from the import endpoint response, suitable
+ * for audit metadata (mirrors summarizeImportErrors in the API import route).
+ */
+export function summarizeImportErrors(errors) {
+  return (Array.isArray(errors) ? errors : []).slice(0, 5).map((e) => ({
+    item: String(e?.item || "unknown").substring(0, 200),
+    error: String(e?.error || "unknown error").substring(0, 300),
+  }));
+}
+
+/**
+ * Human-readable "Details: ..." suffix for last_sync_error so partial runs
+ * explain which items failed validation and why, not just how many.
+ */
+export function formatImportErrorDetail(importErrors, totalErrorCount = 0) {
+  const sample = Array.isArray(importErrors) ? importErrors : [];
+  if (sample.length === 0) return "";
+  const shown = sample
+    .slice(0, 3)
+    .map((e) => `${e.item}: ${e.error}`)
+    .join("; ");
+  const remaining = Math.max(totalErrorCount, sample.length) - Math.min(3, sample.length);
+  const more = remaining > 0 ? ` (+${remaining} more)` : "";
+  return `Details: ${shown}${more}`.substring(0, 800);
+}
+
 async function resolveAuditSubjectUserId(client, workspaceId, createdBy) {
   if (createdBy) return createdBy;
   const adminRes = await client.query(
@@ -61,6 +88,7 @@ export async function recordAutoSyncCompleted(
     itemsScanned = null,
     itemsImported = null,
     error = null,
+    importErrors = null,
   },
 ) {
   try {
@@ -79,6 +107,9 @@ export async function recordAutoSyncCompleted(
         items_scanned: itemsScanned,
         items_imported: itemsImported,
         ...(error ? { error } : {}),
+        ...(Array.isArray(importErrors) && importErrors.length > 0
+          ? { import_errors: importErrors }
+          : {}),
         config_id: configId,
       },
     });

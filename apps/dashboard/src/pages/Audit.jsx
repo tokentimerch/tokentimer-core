@@ -624,6 +624,15 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.contact_group_id)
         parts.push(`Contact group: ${md.contact_group_id}`);
       if (md.count) parts.push(`Count: ${md.count}`);
+      if (md.created_count != null) parts.push(`Created: ${md.created_count}`);
+      if (md.updated_count != null) parts.push(`Updated: ${md.updated_count}`);
+      if (md.error_count) parts.push(`Errors: ${md.error_count}`);
+      if (Array.isArray(md.errors) && md.errors.length > 0)
+        parts.push(
+          `Error details: ${md.errors
+            .map(e => `${e.item}: ${e.error}`)
+            .join('; ')}`
+        );
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
@@ -1090,6 +1099,12 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.items_imported != null)
         parts.push(`Imported: ${md.items_imported}`);
       if (md.error) parts.push(`Error: ${md.error}`);
+      if (Array.isArray(md.import_errors) && md.import_errors.length > 0)
+        parts.push(
+          `Import errors: ${md.import_errors
+            .map(e => `${e.item}: ${e.error}`)
+            .join('; ')}`
+        );
       if (md.http_status != null) parts.push(`HTTP status: ${md.http_status}`);
       if (md.config_id) parts.push(`Config ID: ${md.config_id}`);
       if (md.enabled != null)
