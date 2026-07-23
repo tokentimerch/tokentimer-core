@@ -5,7 +5,7 @@
 // the packages/agent modules (protocol client routes, policy rejection
 // reasons, evidence event types / metadata name pattern), the route-compat
 // contract, the OpenAPI document, and the executor schemas it is derived from.
-// Follows the conventions of certops-m2-contracts.test.js.
+// Follows the conventions of certops-contracts.test.js.
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");

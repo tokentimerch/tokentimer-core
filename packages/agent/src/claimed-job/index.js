@@ -3,12 +3,12 @@
 /**
  * Strict claimed-job validation for the bootstrap agent.
  *
- * Jobs are control-plane input, not a trusted instruction stream. M4 does
- * not execute any action, but it still validates the complete public job
- * shape and every policy dimension before handing it to the local policy
- * engine. Action dimensions are carried in the existing public metadata
- * array, keeping this boundary aligned with the frozen job-payload schema
- * without introducing signed-dispatch/PR #88 execution fields.
+ * Jobs are control-plane input, not a trusted instruction stream. The
+ * bootstrap agent does not execute any action, but it still validates the
+ * complete public job shape and every policy dimension before handing it to
+ * the local policy engine. Action dimensions are carried in the existing
+ * public metadata array, keeping this boundary aligned with the frozen
+ * job-payload schema without introducing signed-dispatch execution fields.
  */
 
 const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
