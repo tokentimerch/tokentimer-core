@@ -3705,6 +3705,74 @@ paths:
               example:
                 error: CertOps workspace state is unavailable
                 code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
+  /api/v1/workspaces/{id}/certops/jobs/bulk-renew:
+    post:
+      tags: [CertOps]
+      summary: Bulk-create CertOps renewal jobs
+      operationId: bulkRenewCertOpsCertificates
+      description: >-
+        Queues a renew job for up to 100 managed certificates in one request.
+        Each certificate goes through the same manual job-creation path as
+        POST /jobs (manager role, workspace kill switch, approval gate,
+        payload validation), and jobs are always recorded with source "api".
+        The response is a partial-failure envelope: per-certificate successes
+        and failures are reported item by item and never abort the batch, so
+        the request returns 200 even when some or all items fail. Only
+        whole-request shape problems (malformed body, more than 100 ids,
+        non-UUID or duplicate ids) fail with 400. Private key or secret
+        material in the request body is rejected.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsBulkRenewRequest"
+      responses:
+        "200":
+          description: Partial-failure envelope with per-certificate outcomes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsBulkRenewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Workspace CertOps is paused; no items are attempted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps is paused for this workspace
+                code: CERTOPS_WORKSPACE_PAUSED
+        "422":
+          description: The request contained private-key or forbidden secret material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps workspace state is unavailable
+                code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
   /api/v1/workspaces/{id}/certops/provision-intents:
     post:
       tags: [CertOps Controller]
@@ -5611,6 +5679,96 @@ components:
         idempotencyKey:
           type: string
           maxLength: 128
+    CertOpsBulkRenewRequest:
+      type: object
+      additionalProperties: false
+      required: [certificateIds]
+      description: >-
+        Bulk renewal request. Each certificate id becomes one renew job
+        created through the same manual creation path as POST /jobs; source
+        is always forced to "api" by the server.
+      properties:
+        certificateIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        dryRun:
+          type: boolean
+          default: false
+          description: >-
+            True validates each certificate and reports per-item outcomes
+            without creating any jobs.
+        requiresApproval:
+          type: boolean
+          default: false
+          description: >-
+            True makes every created job start at pending_approval, matching
+            the per-job approval gate of single manual job creation.
+        payload:
+          allOf:
+            - $ref: "#/components/schemas/CertOpsPublicObject"
+          description: >-
+            Optional shared public payload merged into every created renew
+            job, accepting the same optional execution fields as a single
+            renew job. The server sets certificateId per item.
+    CertOpsBulkRenewResultItem:
+      type: object
+      additionalProperties: false
+      required: [certificateId, ok]
+      properties:
+        certificateId:
+          type: string
+          format: uuid
+        ok:
+          type: boolean
+        jobId:
+          type: string
+          format: uuid
+          description: Present only when ok is true and the request was not a dry run.
+        errorCode:
+          type: string
+          description: >-
+            Present only when ok is false. Uses the existing CertOps error
+            vocabulary (for example CERTOPS_CERTIFICATE_NOT_FOUND,
+            CERTOPS_JOB_INVALID, CERTOPS_WORKSPACE_PAUSED).
+        message:
+          type: string
+          description: Present only when ok is false.
+    CertOpsBulkRenewResponse:
+      type: object
+      additionalProperties: false
+      required: [summary, results]
+      description: >-
+        Partial-failure envelope for bulk renewal. Returned with HTTP 200
+        even when some or all items fail; consumers must inspect per-item
+        results.
+      properties:
+        summary:
+          type: object
+          additionalProperties: false
+          required: [requested, succeeded, failed]
+          properties:
+            requested:
+              type: integer
+              minimum: 1
+              maximum: 100
+            succeeded:
+              type: integer
+              minimum: 0
+            failed:
+              type: integer
+              minimum: 0
+        dryRun:
+          type: boolean
+          description: Present and true only for dry-run requests.
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsBulkRenewResultItem"
     CertOpsWorkspacePauseUpdateRequest:
       type: object
       additionalProperties: false

@@ -1,6 +1,6 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "status": "agent-runtime-stable",
   "description": "Frozen CertOps route namespaces and stable routes. The controller lane added only narrow cert-manager observation, provisioning intent, cluster-bound command, and just-in-time mutation-authorization surfaces. The agent protocol is implemented server-side: the four /api/v1/certops/agent routes are now live control-plane endpoints (register, heartbeat, claim, results) with Ed25519-signed job dispatch, single-use result nonces, and claim-ownership re-proof.",
   "namespacePolicy": {
@@ -10,7 +10,8 @@
       "notes": [
         "Human/dashboard surface. Inherits global session + workspace membership + frozen-workspace guards.",
         "Subject to CSRF protection like other workspace mutations.",
-        "The workspace kill-switch settings GET and PUT routes require a human cookie/session user; internal worker bearer credentials are not accepted."
+        "The workspace kill-switch settings GET and PUT routes require a human cookie/session user; internal worker bearer credentials are not accepted.",
+        "POST /jobs/bulk-renew queues renewal jobs for up to 100 managed certificates in one request through the same manual job-creation path as POST /jobs (manager role, kill switch, approval gate, payload validation). It responds with a partial-failure envelope: per-certificate successes and failures are reported item by item and never abort the batch."
       ]
     },
     "executor": {
@@ -63,6 +64,7 @@
       { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "PUT" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/bulk-renew", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/provision-intents", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log", "method": "GET" },

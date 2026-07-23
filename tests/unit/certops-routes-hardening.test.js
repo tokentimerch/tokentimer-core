@@ -132,6 +132,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/jobs",
       "POST /api/v1/workspaces/:id/certops/jobs/:jobId/approve",
       "POST /api/v1/workspaces/:id/certops/jobs/:jobId/reject",
+      "POST /api/v1/workspaces/:id/certops/jobs/bulk-renew",
       "POST /api/v1/workspaces/:id/certops/provision-intents",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
@@ -158,6 +159,7 @@ describe("CertOps route hardening", () => {
       ["post", "/api/v1/workspaces/:id/certops/imports"],
       ["get", "/api/v1/workspaces/:id/certops/jobs"],
       ["post", "/api/v1/workspaces/:id/certops/jobs"],
+      ["post", "/api/v1/workspaces/:id/certops/jobs/bulk-renew"],
       ["post", "/api/v1/workspaces/:id/certops/provision-intents"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/log"],
       ["get", "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence"],
@@ -268,6 +270,7 @@ describe("CertOps route hardening", () => {
       ["post", "/api/v1/workspaces/:id/certops/imports"],
       ["put", "/api/v1/workspaces/:id/certops/settings"],
       ["post", "/api/v1/workspaces/:id/certops/jobs"],
+      ["post", "/api/v1/workspaces/:id/certops/jobs/bulk-renew"],
       ["post", "/api/v1/workspaces/:id/certops/tokens"],
       ["post", "/api/v1/workspaces/:id/certops/tokens/:tokenId/revoke"],
     ]) {
@@ -315,6 +318,18 @@ describe("CertOps route hardening", () => {
       createBlock.indexOf("requireCertOpsWriteRole") <
         createBlock.indexOf("requireWorkspaceCertOpsActive"),
       "role authorization must run before the pause gate",
+    );
+
+    const bulkRenewBlock = routeBlock(
+      "post",
+      "/api/v1/workspaces/:id/certops/jobs/bulk-renew",
+    );
+    assert.match(bulkRenewBlock, /requireWorkspaceCertOpsActive/);
+    assert.match(bulkRenewBlock, /bulkRenewCertificatesHandler/);
+    assert.ok(
+      bulkRenewBlock.indexOf("requireCertOpsWriteRole") <
+        bulkRenewBlock.indexOf("requireWorkspaceCertOpsActive"),
+      "bulk renew role authorization must run before the pause gate",
     );
 
     for (const [method, routePath] of [

@@ -485,6 +485,185 @@ function createManualCertificateJobHandler({
   };
 }
 
+const BULK_RENEW_MAX_CERTIFICATES = 100;
+const BULK_RENEW_ALLOWED_BODY_FIELDS = Object.freeze([
+  "certificateIds",
+  "dryRun",
+  "requiresApproval",
+  "payload",
+]);
+
+/**
+ * Validates the whole bulk-renew request shape. Shape problems (missing or
+ * oversized id list, non-UUID or duplicate ids, wrong field types, unknown
+ * fields) fail the entire request with 400; per-certificate problems are
+ * reported in the response envelope instead.
+ */
+function parseBulkRenewRequest(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "Request body must be a JSON object" };
+  }
+
+  const unknownField = Object.keys(body).find(
+    (key) => !BULK_RENEW_ALLOWED_BODY_FIELDS.includes(key),
+  );
+  if (unknownField) {
+    return { error: `Unknown field: ${unknownField}` };
+  }
+
+  const { certificateIds } = body;
+  if (!Array.isArray(certificateIds) || certificateIds.length < 1) {
+    return { error: "certificateIds must be a non-empty array" };
+  }
+  if (certificateIds.length > BULK_RENEW_MAX_CERTIFICATES) {
+    return {
+      error: `certificateIds accepts at most ${BULK_RENEW_MAX_CERTIFICATES} ids per request`,
+    };
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  for (const value of certificateIds) {
+    if (typeof value !== "string" || !UUID_PATTERN.test(value.trim())) {
+      return { error: "certificateIds must contain only UUID strings" };
+    }
+    const id = value.trim().toLowerCase();
+    if (seen.has(id)) {
+      return { error: "certificateIds must not contain duplicates" };
+    }
+    seen.add(id);
+    normalized.push(id);
+  }
+
+  if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+    return { error: "dryRun must be a boolean" };
+  }
+  if (
+    body.requiresApproval !== undefined &&
+    typeof body.requiresApproval !== "boolean"
+  ) {
+    return { error: "requiresApproval must be a boolean" };
+  }
+  if (
+    body.payload !== undefined &&
+    (body.payload === null ||
+      typeof body.payload !== "object" ||
+      Array.isArray(body.payload))
+  ) {
+    return { error: "payload must be an object" };
+  }
+
+  return {
+    certificateIds: normalized,
+    dryRun: body.dryRun === true,
+    requiresApproval: body.requiresApproval === true,
+    payload: body.payload || {},
+  };
+}
+
+/**
+ * Bulk renewal with a partial-failure envelope. Each certificate id goes
+ * through the same manual-creation service path as POST /jobs (kill switch,
+ * approval gate, payload validation), so per-certificate behavior matches a
+ * single renew job exactly. Item failures never abort the batch; the
+ * response is always 200 with per-item outcomes, except whole-request shape
+ * problems (400) and the disabled-rollout 404.
+ */
+function bulkRenewCertificatesHandler({
+  manualJobCreator = createManualCertificateJob,
+  certificateLoader = getManagedCertificate,
+} = {}) {
+  return async function bulkRenewCertificatesHandler(req, res) {
+    const parsed = parseBulkRenewRequest(req.body);
+    if (parsed.error) {
+      return res.status(400).json({
+        error: parsed.error,
+        code: CERTOPS_JOB_INVALID,
+      });
+    }
+
+    const results = [];
+    let succeeded = 0;
+
+    for (const certificateId of parsed.certificateIds) {
+      try {
+        const certificate = await certificateLoader({
+          workspaceId: req.workspace.id,
+          certId: certificateId,
+        });
+        if (!certificate) {
+          results.push({
+            certificateId,
+            ok: false,
+            errorCode: CERTOPS_CERTIFICATE_NOT_FOUND,
+            message: "Certificate not found",
+          });
+          continue;
+        }
+
+        if (parsed.dryRun) {
+          succeeded += 1;
+          results.push({ certificateId, ok: true });
+          continue;
+        }
+
+        const { job } = await manualJobCreator({
+          workspaceId: req.workspace.id,
+          operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: certificateId,
+          payload: { ...parsed.payload, certificateId },
+          requiresApproval: parsed.requiresApproval,
+          // Same session-write source posture as single manual job creation.
+          source: "api",
+          requestedByUserId: req.user?.id || null,
+          actorUserId: req.user?.id || null,
+          subjectUserId: req.user?.id || null,
+        });
+        succeeded += 1;
+        results.push({ certificateId, ok: true, jobId: job.id });
+      } catch (err) {
+        // A disabled rollout is a whole-surface condition, not a
+        // per-certificate one: keep the same 404 posture as the middleware.
+        if (err?.code === CERTOPS_DISABLED) {
+          return res.status(404).json(NOT_FOUND_RESPONSE);
+        }
+        if (typeof err?.code === "string" && err.code) {
+          results.push({
+            certificateId,
+            ok: false,
+            errorCode: err.code,
+            message: err.message || "CertOps job creation failed",
+          });
+          continue;
+        }
+        logger.error("CertOps bulk renew item failed", {
+          error: err?.message,
+          workspaceId: req.workspace?.id,
+          certificateId,
+          userId: req.user?.id,
+        });
+        results.push({
+          certificateId,
+          ok: false,
+          errorCode: "INTERNAL_ERROR",
+          message: "Failed to create CertOps job",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      summary: {
+        requested: parsed.certificateIds.length,
+        succeeded,
+        failed: parsed.certificateIds.length - succeeded,
+      },
+      ...(parsed.dryRun ? { dryRun: true } : {}),
+      results,
+    });
+  };
+}
+
 function jobApprovalDecisionHandler(decision, {
   approver = approveJob,
   rejecter = rejectJob,
@@ -1386,6 +1565,20 @@ router.post(
   createManualCertificateJobHandler(),
 );
 
+// Bulk renewal shares the exact middleware posture of single manual job
+// creation: each certificate id is queued through the same manual-creation
+// service path, and per-certificate outcomes are reported in a
+// partial-failure envelope instead of aborting the batch.
+router.post(
+  "/api/v1/workspaces/:id/certops/jobs/bulk-renew",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsWriteRole,
+  requireWorkspaceCertOpsActive,
+  bulkRenewCertificatesHandler(),
+);
+
 router.post(
   "/api/v1/workspaces/:id/certops/provision-intents",
   getApiLimiter(),
@@ -1760,6 +1953,8 @@ router.post(
 module.exports = router;
 module.exports._test = {
   createManualCertificateJobHandler,
+  bulkRenewCertificatesHandler,
+  parseBulkRenewRequest,
   createControllerProvisionIntentHandler,
   requireCertOpsSessionUser,
   handleCertOpsError,
