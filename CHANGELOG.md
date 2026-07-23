@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-07-23
+
+### Fixed
+
+- **Strange characters in imported token notes (mojibake)** — several source strings in the API (import warnings, autosync error notes, arrow separators) were double-encoded UTF-8 and ended up as sequences like `Å Ã` in token notes created by integration imports. All affected strings were repaired to ASCII-safe equivalents (`Warning:`, `-`, `->`), and a regression unit test now scans source files for double-encoded UTF-8 signatures so mojibake cannot silently reappear.
+- **Import validation errors had no detail in error messages or audit events** — when a sync/auto-sync import hit per-item validation errors, the UI and audit log only reported a count. The `TOKENS_IMPORTED` audit event now includes created/updated/error counts plus a bounded sample of per-item error details, the auto-sync worker appends the same detail to `last_sync_error` (visible in the auto-sync status banner), and the `AUTO_SYNC_COMPLETED` audit metadata carries an `import_errors` sample. The Audit page renders the new fields.
+
+### Changed
+
+- Version metadata bumped to 0.10.3 across all manifests, contracts, and Helm chart.
+
 ## [0.10.2] - 2026-07-23
 
 ### Added

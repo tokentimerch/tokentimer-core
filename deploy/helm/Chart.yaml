@@ -2,8 +2,8 @@ apiVersion: v2
 name: tokentimer
 description: Token, certificate, and secret expiration management for teams
 type: application
-version: 0.10.2
-appVersion: "0.10.2"
+version: 0.10.3
+appVersion: "0.10.3"
 kubeVersion: ">=1.29.0-0"
 keywords:
   - token

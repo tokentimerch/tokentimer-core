@@ -1,6 +1,6 @@
 {
   "name": "tokentimer-core",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "private": true,
   "description": "TokenTimer Core - Self-hosted token, certificate, and secret expiration management",
   "scripts": {
