@@ -22,12 +22,18 @@ Group=tokentimer-agent
 Environment=TOKENTIMER_AGENT_CONFIG_DIR=/opt/tokentimer-agent/state
 # Optional bootstrap env file written by install-agent.sh for first-run
 # registration (contains TOKENTIMER_AGENT_BOOTSTRAP_TOKEN, mode 0600).
-# The token is single-use; the agent never persists it. Delete the file
-# after the agent has registered.
+# The token is single-use; the agent never persists it, and deletes this
+# file itself right after a successful registration.
 EnvironmentFile=-/opt/tokentimer-agent/state/bootstrap.env
 ExecStart=/usr/bin/env node /opt/tokentimer-agent/app/bin/tokentimer-agent.js
 Restart=always
 RestartSec=5
+# The agent exits with this status when the control plane retires it
+# (heartbeat "retired" signal). A retired agent must NOT be respawned into
+# a permanent 410 loop; keep in sync with AGENT_RETIRED_EXIT_CODE in
+# packages/agent/src/index.js.
+RestartPreventExitStatus=86
+SuccessExitStatus=86
 
 # Hardening. ProtectSystem=strict makes the whole filesystem read-only for
 # the service except the explicit ReadWritePaths (its state dir).

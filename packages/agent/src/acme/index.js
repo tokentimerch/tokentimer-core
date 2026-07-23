@@ -70,6 +70,7 @@
  */
 
 const childProcess = require("node:child_process");
+const { buildMinimalSubprocessEnv } = require("../exec-env");
 
 /**
  * Mirrors the policy module's SHELL_METACHARACTER_PATTERN (duplicated, not
@@ -236,6 +237,10 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
         // the OS exec facility and are never interpreted by a shell.
         windowsHide: true,
         maxBuffer: 10 * 1024 * 1024,
+        // Explicit minimal environment: the agent's own env can hold the
+        // bootstrap token and other secrets that must never reach the ACME
+        // tool (or the hook children it spawns).
+        env: buildMinimalSubprocessEnv(),
       },
       (error, stdout, stderr) => {
         if (error) {

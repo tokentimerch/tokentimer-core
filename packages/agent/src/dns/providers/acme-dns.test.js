@@ -49,6 +49,46 @@ test("acme-dns: a non-URL baseUrl throws at construction", () => {
   );
 });
 
+test("acme-dns: a baseUrl with embedded credentials throws at construction", () => {
+  assert.throws(
+    () => validateCredentials({ ...CREDENTIALS, baseUrl: "https://user:pass@acmedns.example.net" }),
+    /embed credentials/,
+  );
+});
+
+test("acme-dns: a baseUrl with a hash fragment throws at construction", () => {
+  assert.throws(
+    () => validateCredentials({ ...CREDENTIALS, baseUrl: "https://acmedns.example.net#frag" }),
+    /hash fragment/,
+  );
+});
+
+test("acme-dns: a plain-http non-local baseUrl throws at construction", () => {
+  assert.throws(
+    () => validateCredentials({ ...CREDENTIALS, baseUrl: "http://acmedns.example.net" }),
+    /https/,
+  );
+  // Even with the escape hatch, a non-loopback http host is rejected.
+  assert.throws(
+    () =>
+      validateCredentials({
+        ...CREDENTIALS,
+        baseUrl: "http://acmedns.example.net",
+        allowInsecureLocalHttp: true,
+      }),
+    /loopback/,
+  );
+});
+
+test("acme-dns: http://127.0.0.1 is accepted with allowInsecureLocalHttp", () => {
+  const normalized = validateCredentials({
+    ...CREDENTIALS,
+    baseUrl: "http://127.0.0.1:8053",
+    allowInsecureLocalHttp: true,
+  });
+  assert.equal(normalized.baseUrl, "http://127.0.0.1:8053");
+});
+
 test("acme-dns: a trailing slash on baseUrl is normalized away", () => {
   const normalized = validateCredentials({
     ...CREDENTIALS,

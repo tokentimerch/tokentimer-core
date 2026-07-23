@@ -25,6 +25,8 @@ const AGENT_SAFE_SELECT_FIELDS = `
   status,
   last_seen_at,
   clock_offset_ms,
+  ntp_synced,
+  pinned_signing_key_id,
   created_at,
   retired_at,
   retire_reason
@@ -98,6 +100,8 @@ function agentMetadataFromRow(row) {
     status: row.status,
     lastSeenAt: dateToIso(row.last_seen_at),
     clockOffsetMs: row.clock_offset_ms === null ? null : Number(row.clock_offset_ms),
+    ntpSynced: typeof row.ntp_synced === "boolean" ? row.ntp_synced : null,
+    pinnedSigningKeyId: row.pinned_signing_key_id ?? null,
     createdAt: dateToIso(row.created_at),
     retiredAt: dateToIso(row.retired_at),
     retireReason: row.retire_reason ?? null,

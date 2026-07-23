@@ -8,6 +8,7 @@ const {
   DEFAULT_RENEWAL_PER_CA_CAP,
   DEFAULT_RENEWAL_THRESHOLD_DAYS,
   UNKNOWN_CA_BUCKET,
+  caCapKey,
   certificateCaBucket,
   countInFlightRenewalJobsByCaEndpoint,
   findCertificatesDueForRenewal,
@@ -91,6 +92,12 @@ function createSchedulerPool({
             normalized === "ROLLBACK"
           ) {
             return { rows: [] };
+          }
+          if (normalized.includes("pg_try_advisory_lock")) {
+            return { rows: [{ acquired: true }] };
+          }
+          if (normalized.includes("pg_advisory_unlock")) {
+            return { rows: [{ pg_advisory_unlock: true }] };
           }
           if (normalized.startsWith("SELECT id, certops_paused FROM workspaces")) {
             return {
@@ -205,8 +212,9 @@ describe("certops renewal scheduler", () => {
     assert.ok(!("keyRotation" in job.payload));
 
     // The job creation transaction acquires the workspace kill-switch lock
-    // (FOR SHARE) before the insert and commits afterwards.
-    const client = pool.clients[0];
+    // (FOR SHARE) before the insert and commits afterwards. clients[0] is
+    // the sweep's advisory-lock client; clients[1] is the job transaction.
+    const client = pool.clients[1];
     const sqls = client.queries.map((q) => q.sql);
     assert.strictEqual(sqls[0], "BEGIN");
     assert.ok(
@@ -278,7 +286,9 @@ describe("certops renewal scheduler", () => {
       ["cert-ok"],
     );
 
-    const pausedClient = pool.clients[0];
+    // clients[0] is the advisory-lock client; the paused cert's transaction
+    // is the first job client after it.
+    const pausedClient = pool.clients[1];
     const pausedSqls = pausedClient.queries.map((q) => q.sql);
     assert.ok(pausedSqls.includes("ROLLBACK"));
     assert.ok(!pausedSqls.includes("COMMIT"));
@@ -396,8 +406,18 @@ describe("certops renewal scheduler", () => {
   it("counts in-flight renew jobs per payload caEndpoint with an unknown bucket", async () => {
     const pool = createSchedulerPool({
       inFlightRows: [
-        { ca_bucket: "https://ca-a.example.com/acme", in_flight: 3 },
-        { ca_bucket: UNKNOWN_CA_BUCKET, in_flight: 2 },
+        {
+          workspace_id: "ws-1",
+          ca_endpoint: "https://ca-a.example.com/acme",
+          in_flight: 3,
+        },
+        { workspace_id: "ws-1", ca_endpoint: null, in_flight: 2 },
+        // Same CA, different representation: must merge into one bucket.
+        {
+          workspace_id: "ws-1",
+          ca_endpoint: "HTTPS://CA-A.example.com/acme/",
+          in_flight: 1,
+        },
       ],
     });
 
@@ -406,19 +426,22 @@ describe("certops renewal scheduler", () => {
       terminalStatuses: ["succeeded", "failed"],
     });
 
-    assert.strictEqual(counts.get("https://ca-a.example.com/acme"), 3);
-    assert.strictEqual(counts.get(UNKNOWN_CA_BUCKET), 2);
+    assert.strictEqual(
+      counts.get(caCapKey("ws-1", "https://ca-a.example.com/acme")),
+      4,
+    );
+    assert.strictEqual(counts.get(caCapKey("ws-1", UNKNOWN_CA_BUCKET)), 2);
 
     const countQuery = pool.scanQueries.find((entry) =>
       entry.sql.includes("COUNT(*)"),
     );
     assert.ok(countQuery, "in-flight count query must run");
     assert.match(countQuery.sql, /FROM certificate_jobs cj/);
+    assert.match(countQuery.sql, /cj\.workspace_id/);
     assert.match(countQuery.sql, /cj\.operation = 'renew'/);
     assert.match(countQuery.sql, /NOT \(cj\.status = ANY\(\$1::text\[\]\)\)/);
     assert.match(countQuery.sql, /payload->>'caEndpoint'/);
     assert.deepStrictEqual(countQuery.params[0], ["succeeded", "failed"]);
-    assert.strictEqual(countQuery.params[1], UNKNOWN_CA_BUCKET);
   });
 
   it("creates jobs while a CA is under its in-flight cap", async () => {
@@ -429,7 +452,11 @@ describe("certops renewal scheduler", () => {
         }),
       ],
       inFlightRows: [
-        { ca_bucket: "https://ca-a.example.com/acme", in_flight: 4 },
+        {
+          workspace_id: "ws-1",
+          ca_endpoint: "https://ca-a.example.com/acme",
+          in_flight: 4,
+        },
       ],
     });
     const createdJobs = [];
@@ -467,7 +494,11 @@ describe("certops renewal scheduler", () => {
         }),
       ],
       inFlightRows: [
-        { ca_bucket: "https://ca-a.example.com/acme", in_flight: 5 },
+        {
+          workspace_id: "ws-1",
+          ca_endpoint: "https://ca-a.example.com/acme",
+          in_flight: 5,
+        },
       ],
     });
     const createdJobs = [];
@@ -494,7 +525,9 @@ describe("certops renewal scheduler", () => {
   it("caps certificates without a resolvable caEndpoint in a shared unknown bucket", async () => {
     const pool = createSchedulerPool({
       dueRows: [dueCertificate({ id: "cert-no-ca" })],
-      inFlightRows: [{ ca_bucket: UNKNOWN_CA_BUCKET, in_flight: 5 }],
+      inFlightRows: [
+        { workspace_id: "ws-1", ca_endpoint: null, in_flight: 5 },
+      ],
     });
 
     const summary = await runRenewalSchedulerSweep({

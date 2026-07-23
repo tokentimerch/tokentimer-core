@@ -113,8 +113,9 @@ function dateToIso(value) {
 
 /**
  * Extracts a usable sequence value from an envelope. Envelopes without a
- * `sequence` field are legacy/backward-compatible traffic: enforcement is
- * skipped entirely and certops_agents.last_sequence is left untouched.
+ * `sequence` field are legacy traffic: they are tolerated only for agents
+ * that have never sent a sequenced message (last_sequence = 0). See the
+ * no-bypass rule in enforceAgentSequence.
  */
 function envelopeSequence(envelope) {
   const sequence = envelope?.sequence;
@@ -128,12 +129,18 @@ function envelopeSequence(envelope) {
  * row lock serializes them and the loser sees last_sequence >= its own).
  *
  * Runs after credential auth (the agent row is known to exist) and after
- * any nonce replay check, per the agent-route check ordering. A no-match is
- * therefore always a sequence regression within the current registered
- * generation and rejects the message with a 409-shaped error; the message
- * must not be processed.
+ * any nonce replay check, per the agent-route check ordering, and always on
+ * the caller's transaction client so a message that later fails rolls the
+ * counter back with everything else. A no-match is a sequence regression
+ * within the current registered generation and rejects the message with a
+ * 409-shaped error; the message must not be processed.
  *
- * No-op when the envelope carries no sequence (legacy agents).
+ * No-bypass rule: an envelope WITHOUT a sequence is accepted only while the
+ * agent has never sent one (last_sequence = 0, pre-sequencing agent
+ * builds). Once any sequenced message has been accepted, unsequenced
+ * traffic is rejected outright; otherwise dropping the field would defeat
+ * the whole regression check (a replayed captured message could simply
+ * omit it).
  *
  * @param {object} params
  * @param {object} [params.client] pg client or pool (injectable; defaults
@@ -144,7 +151,20 @@ function envelopeSequence(envelope) {
  */
 async function enforceAgentSequence({ client = pool, agentRowId, envelope }) {
   const sequence = envelopeSequence(envelope);
-  if (sequence === null) return;
+  if (sequence === null) {
+    const existing = await client.query(
+      `SELECT last_sequence FROM certops_agents WHERE id = $1 FOR UPDATE`,
+      [agentRowId],
+    );
+    const lastSequence = Number(existing.rows[0]?.last_sequence ?? 0);
+    if (lastSequence > 0) {
+      throw serviceError(
+        "Message carries no sequence but this agent already sends sequenced messages",
+        CERTOPS_AGENT_SEQUENCE_REGRESSION,
+      );
+    }
+    return;
+  }
 
   const result = await client.query(
     `UPDATE certops_agents
@@ -277,6 +297,9 @@ async function registerAgent({
  * Steady-state heartbeat write. The route has already rejected retired
  * agents (410, no last_seen_at update). An 'offline' agent that calls in is
  * alive again, so status flips back to 'active'.
+ *
+ * Runs in one transaction so the sequence bump and the heartbeat write
+ * commit or roll back together (a failed write must not burn the sequence).
  */
 async function recordHeartbeat({
   dbPool = pool,
@@ -288,11 +311,6 @@ async function recordHeartbeat({
   const getSigningKey =
     deps.getActiveSigningKeyPublicInfo || getActiveSigningKeyPublicInfo;
   const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
-
-  // Sequence enforcement runs after auth (route middleware) and before the
-  // heartbeat write; a regression rejects the message with no last_seen_at
-  // (or any other) update.
-  await enforceSequence({ client: dbPool, agentRowId: agent.id, envelope });
 
   const clockOffsetMs = Number.isInteger(envelope.clockOffsetMs)
     ? envelope.clockOffsetMs
@@ -307,43 +325,50 @@ async function recordHeartbeat({
       ? body.pinnedSigningKeyId
       : null;
 
-  const result = await dbPool.query(
-    `UPDATE certops_agents
-        SET last_seen_at = NOW(),
-            clock_offset_ms = $2,
-            ntp_synced = $3,
-            uptime_seconds = $4,
-            pinned_signing_key_id = COALESCE($5, pinned_signing_key_id),
-            agent_version = $6,
-            status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
-            updated_at = NOW()
-      WHERE id = $1
-        AND status <> 'retired'
-      RETURNING id, status, last_seen_at`,
-    [
-      agent.id,
-      clockOffsetMs,
-      ntpSynced,
-      uptimeSeconds,
-      pinnedSigningKeyId,
-      body.agentVersion || agent.agentVersion,
-    ],
-  );
+  return await withTransaction(dbPool, async (client) => {
+    // Sequence enforcement runs after auth (route middleware) and before
+    // the heartbeat write; a regression rejects the message with no
+    // last_seen_at (or any other) update.
+    await enforceSequence({ client, agentRowId: agent.id, envelope });
 
-  const row = result.rows[0];
-  if (!row) {
-    // Retired between auth and write: freeze, same as the route-level rule.
-    throw serviceError("Agent is retired", CERTOPS_AGENT_RETIRED);
-  }
+    const result = await client.query(
+      `UPDATE certops_agents
+          SET last_seen_at = NOW(),
+              clock_offset_ms = $2,
+              ntp_synced = $3,
+              uptime_seconds = $4,
+              pinned_signing_key_id = COALESCE($5, pinned_signing_key_id),
+              agent_version = $6,
+              status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
+              updated_at = NOW()
+        WHERE id = $1
+          AND status <> 'retired'
+        RETURNING id, status, last_seen_at`,
+      [
+        agent.id,
+        clockOffsetMs,
+        ntpSynced,
+        uptimeSeconds,
+        pinnedSigningKeyId,
+        body.agentVersion || agent.agentVersion,
+      ],
+    );
 
-  const signingKey = await getSigningKey({ client: dbPool });
-  return {
-    ok: true,
-    status: row.status,
-    lastSeenAt: dateToIso(row.last_seen_at),
-    signingKeyId: signingKey?.signingKeyId ?? null,
-    signingPublicKeyPem: signingKey?.publicKeyPem ?? null,
-  };
+    const row = result.rows[0];
+    if (!row) {
+      // Retired between auth and write: freeze, same as the route-level rule.
+      throw serviceError("Agent is retired", CERTOPS_AGENT_RETIRED);
+    }
+
+    const signingKey = await getSigningKey({ client });
+    return {
+      ok: true,
+      status: row.status,
+      lastSeenAt: dateToIso(row.last_seen_at),
+      signingKeyId: signingKey?.signingKeyId ?? null,
+      signingPublicKeyPem: signingKey?.publicKeyPem ?? null,
+    };
+  });
 }
 
 // --- Claim (7.3) ---

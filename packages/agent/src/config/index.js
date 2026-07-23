@@ -39,6 +39,13 @@ const PENDING_REGISTRATION_FILE_NAME = "registration.pending.json";
 // is not a secret; it still gets 0600 in the 0700 config dir purely as an
 // integrity measure (only the agent user may swap the pin).
 const SIGNING_KEY_PIN_FILE_NAME = "signing-key-pin.json";
+// Persisted outbound-message sequence state (crash-safe block reservation;
+// see createSequenceAllocator). Not a secret, but 0600 like everything else
+// in the state dir so only the agent user can tamper with it.
+const SEQUENCE_STATE_FILE_NAME = "sequence-state.json";
+// Bootstrap env file written by install-agent.sh for first-run registration;
+// the agent deletes it after a successful registration (single-use token).
+const BOOTSTRAP_ENV_FILE_NAME = "bootstrap.env";
 
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 // Same character/length policy as the protocol validator's key-id bound;
@@ -51,6 +58,8 @@ const CREDENTIAL_SHAPE_PATTERN =
   /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-]{16,1024})$/;
 const PEM_CERTIFICATE_PATTERN = /-----BEGIN CERTIFICATE-----/;
 const MAX_CA_BUNDLE_BYTES = 1024 * 1024;
+// DNS provider credential files are small JSON objects; 64 KiB is generous.
+const MAX_DNS_CREDENTIALS_BYTES = 64 * 1024;
 
 const DEFAULT_PROTOCOL_VERSION = "1.0.0";
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
@@ -283,7 +292,8 @@ function validatePolicyObject(policy) {
 
 /** Provider ids accepted in the dnsProviders config section. Must stay in
  * sync with src/dns listSupportedDnsProviders (duplicated, not imported,
- * to keep this module self-contained). */
+ * to keep this module self-contained; config.test.js fails if the two
+ * lists drift). */
 const KNOWN_DNS_PROVIDER_IDS = Object.freeze([
   "cloudflare",
   "route53",
@@ -410,10 +420,15 @@ function readDnsCredentialsFile(providerId, config) {
   if (process.platform !== "win32") {
     let stats;
     try {
-      stats = fs.statSync(credentialsPath);
+      stats = fs.lstatSync(credentialsPath);
     } catch (err) {
       throw new Error(
         `tokentimer-agent: failed to stat DNS credentials file ${credentialsPath}: ${err.message}`,
+      );
+    }
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      throw new Error(
+        `tokentimer-agent: DNS credentials file ${credentialsPath} must be a regular non-symlink file`,
       );
     }
     // Same permission posture as the agent credential file: secrets are
@@ -425,11 +440,28 @@ function readDnsCredentialsFile(providerId, config) {
           "it is readable by group/other (chmod 600 it)",
       );
     }
+    // Must be owned by the agent user (or root, so operators can provision
+    // credentials without a login shell for the service account).
+    if (typeof process.getuid === "function") {
+      const uid = process.getuid();
+      if (stats.uid !== uid && stats.uid !== 0) {
+        throw new Error(
+          `tokentimer-agent: refusing to read DNS credentials file ${credentialsPath}: ` +
+            "it is not owned by the agent user or root",
+        );
+      }
+    }
   }
 
   let raw;
   try {
-    raw = fs.readFileSync(credentialsPath, "utf8");
+    // Bounded, O_NOFOLLOW re-verified read (defense in depth on top of the
+    // lstat above against swap-to-symlink races and oversized files).
+    raw = readBoundedRegularFile(
+      credentialsPath,
+      MAX_DNS_CREDENTIALS_BYTES,
+      "DNS credentials file",
+    ).toString("utf8");
   } catch (err) {
     throw new Error(
       `tokentimer-agent: failed to read DNS credentials file ${credentialsPath}: ${err.message}`,
@@ -1070,6 +1102,113 @@ function redactCredentialForLogging(_value) {
   return REDACTED_CREDENTIAL_PLACEHOLDER;
 }
 
+// --- Persisted outbound-message sequence allocator ---
+
+/**
+ * How many sequence values one durable write reserves. Every allocation
+ * inside the reserved block is memory-only; crossing the block boundary
+ * persists a new `reservedThrough` BEFORE any value from the new block is
+ * handed out, so a crash can never lead to reuse: a restart resumes AFTER
+ * the highest value that was ever reserved on disk.
+ */
+const SEQUENCE_RESERVATION_BLOCK = 64;
+const MAX_SEQUENCE_STATE_BYTES = 4096;
+
+/**
+ * Creates the agent's single crash-safe, persisted sequence allocator.
+ *
+ * One allocator instance must be shared by every protocol client the
+ * process creates (registration + steady-state), so all outbound messages
+ * draw from one strictly increasing stream that survives restarts. The
+ * control plane hard-rejects sequence regressions; without persistence a
+ * restarted agent's counter would restart at 1 and lock the agent out.
+ *
+ * State file (sequence-state.json, 0600): { "reservedThrough": <int> }.
+ * Corrupted or missing state starts a fresh reservation from 0 -- safe for
+ * a missing file (first run); a corrupted file loses at most one block of
+ * already-reserved values... which only ever moves the counter FORWARD
+ * after re-reservation, never backward, because the fresh block is written
+ * before use. To be safe against a truncated-but-parseable low value, the
+ * reader treats any parse problem as "unknown" and the writer always
+ * persists max(current, disk) + block.
+ *
+ * @param {string} configDir
+ * @returns {{ next: () => number, peekReservedThrough: () => number }}
+ */
+function createSequenceAllocator(configDir) {
+  ensureConfigDir(configDir);
+  const statePath = path.join(configDir, SEQUENCE_STATE_FILE_NAME);
+
+  function readReservedThrough() {
+    if (!fs.existsSync(statePath)) return 0;
+    try {
+      const raw = readBoundedRegularFile(
+        statePath,
+        MAX_SEQUENCE_STATE_BYTES,
+        "sequence state file",
+      ).toString("utf8");
+      const parsed = JSON.parse(raw);
+      const value = parsed?.reservedThrough;
+      return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    } catch (_err) {
+      // Unreadable/corrupt state: treated as 0 here; reserveThrough()
+      // below still writes before any allocation, and the control plane
+      // rejecting a regression is the final backstop.
+      return 0;
+    }
+  }
+
+  function reserveThrough(target) {
+    writeFileAtomically(
+      statePath,
+      `${JSON.stringify({ reservedThrough: target })}\n`,
+      0o600,
+    );
+    return target;
+  }
+
+  let reservedThrough = readReservedThrough();
+  // Resume strictly after everything ever reserved on disk.
+  let lastAllocated = reservedThrough;
+
+  return {
+    next() {
+      const candidate = lastAllocated + 1;
+      if (candidate > reservedThrough) {
+        // Durable write FIRST, allocation second: a crash between the two
+        // wastes a block but can never reuse a value.
+        reservedThrough = reserveThrough(candidate + SEQUENCE_RESERVATION_BLOCK - 1);
+      }
+      lastAllocated = candidate;
+      return candidate;
+    },
+    peekReservedThrough() {
+      return reservedThrough;
+    },
+  };
+}
+
+/**
+ * Best-effort removal of the installer-written bootstrap env file after a
+ * successful registration. The bootstrap token is single-use; once the
+ * agent holds a credential, keeping the token on disk (where every later
+ * process start re-exports it into the agent environment via systemd
+ * EnvironmentFile) only widens exposure.
+ *
+ * @param {string} configDir
+ * @returns {boolean} true when a file was removed
+ */
+function deleteBootstrapEnvFile(configDir) {
+  const bootstrapEnvPath = path.join(configDir, BOOTSTRAP_ENV_FILE_NAME);
+  try {
+    fs.unlinkSync(bootstrapEnvPath);
+    fsyncParentDirectory(bootstrapEnvPath);
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
 module.exports = {
   resolveConfigDir,
   ensureConfigDir,
@@ -1088,6 +1227,9 @@ module.exports = {
   persistRegistration,
   recoverPendingRegistration,
   redactCredentialForLogging,
+  createSequenceAllocator,
+  deleteBootstrapEnvFile,
+  KNOWN_DNS_PROVIDER_IDS,
   CREDENTIAL_SHAPE_PATTERN,
   MAX_CA_BUNDLE_BYTES,
 };

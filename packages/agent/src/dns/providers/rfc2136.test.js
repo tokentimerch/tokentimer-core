@@ -9,6 +9,11 @@ const {
   buildUpdateMessage,
   encodeName,
   encodeTxtRdata,
+  buildTsigVariables,
+  buildTsigRecord,
+  computeResponseMac,
+  parseTsigFromMessage,
+  uint16,
 } = require("./rfc2136.js");
 
 const SECRET_BASE64 = Buffer.from("shared-secret").toString("base64"); // c2hhcmVkLXNlY3JldA==
@@ -36,20 +41,71 @@ const FIXED_MESSAGE_INPUTS = {
   fudge: 300,
 };
 
-/** A DNS response with the given RCODE (header-only is all the impl reads). */
-function makeResponse(rcode) {
-  const response = Buffer.alloc(12);
-  response.writeUInt16BE(0x1234, 0);
-  response[2] = 0xa8; // QR=1, opcode UPDATE
-  response[3] = rcode & 0x0f;
-  return response;
+/**
+ * Builds a properly TSIG-signed UPDATE response for a given signed request,
+ * using the same helpers the module itself exports. Options allow forging
+ * (wrong id), signing with the wrong key, or omitting the TSIG entirely.
+ */
+function makeSignedResponse(
+  requestMessage,
+  {
+    rcode = 0,
+    id,
+    secretBase64 = SECRET_BASE64,
+    keyName = "tsig-key",
+    keyAlgorithm = "hmac-sha256",
+    unsigned = false,
+  } = {},
+) {
+  const responseId = id !== undefined ? id : requestMessage.readUInt16BE(0);
+  const flags = 0x8000 | (5 << 11) | (rcode & 0x0f);
+  const headerWithoutTsig = Buffer.concat([
+    uint16(responseId),
+    uint16(flags),
+    uint16(0),
+    uint16(0),
+    uint16(0),
+    uint16(0),
+  ]);
+  if (unsigned) {
+    return headerWithoutTsig;
+  }
+
+  const requestTsig = parseTsigFromMessage(requestMessage);
+  const timeSigned = requestTsig.timeSigned;
+  const fudge = 300;
+  const mac = computeResponseMac({
+    requestMac: requestTsig.mac,
+    responseMessageWithoutTsig: headerWithoutTsig,
+    tsigVariables: buildTsigVariables({ keyName, keyAlgorithm, timeSigned, fudge }),
+    keyAlgorithm,
+    keySecretBase64: secretBase64,
+  });
+  const tsigRecord = buildTsigRecord({
+    keyName,
+    keyAlgorithm,
+    timeSigned,
+    fudge,
+    mac,
+    originalId: responseId,
+  });
+  const signedHeader = Buffer.concat([
+    uint16(responseId),
+    uint16(flags),
+    uint16(0),
+    uint16(0),
+    uint16(0),
+    uint16(1),
+  ]);
+  return Buffer.concat([signedHeader, tsigRecord]);
 }
 
-function makeDnsUpdateStub(response) {
+/** @param {(request: Buffer) => Buffer} respond */
+function makeDnsUpdateStub(respond) {
   const calls = [];
   async function dnsUpdateStub(options) {
     calls.push(options);
-    return response;
+    return respond(options.message);
   }
   dnsUpdateStub.calls = calls;
   return dnsUpdateStub;
@@ -135,19 +191,36 @@ test("rfc2136: the signed present UPDATE matches the fixed wire vector", () => {
   );
 });
 
-test("rfc2136: the signed cleanup UPDATE (RRset delete) matches the fixed wire vector", () => {
+test("rfc2136: the signed cleanup UPDATE deletes only the exact TXT RR (class NONE)", () => {
   const message = buildUpdateMessage({
     ...FIXED_MESSAGE_INPUTS,
     action: "cleanup",
+    txtValue: "test-token-value",
   });
 
-  assert.equal(
-    message.toString("hex"),
-    "123428000001000000010001076578616d706c6503636f6d00000600010f5f61636d" +
-      "652d6368616c6c656e6765076578616d706c6503636f6d00001000ff000000000000" +
-      "08747369672d6b65790000fa00ff00000000003d0b686d61632d7368613235360000" +
-      "006553f100012c0020b17269f6cc1f1780336507ce9da5a741e9b7bbefd0c537e79e" +
-      "d4f0e1aee1042d123400000000",
+  // The update RR follows the 12-byte header + zone section
+  // (encodeName("example.com") = 13 bytes + type(2) + class(2)).
+  const updateOffset = 12 + 13 + 4;
+  const nameLength = encodeName(FIXED_MESSAGE_INPUTS.recordName).length;
+  assert.equal(message.readUInt16BE(updateOffset + nameLength), 16); // TXT
+  assert.equal(message.readUInt16BE(updateOffset + nameLength + 2), 254); // NONE
+  assert.equal(message.readUInt32BE(updateOffset + nameLength + 4), 0); // TTL
+  const expectedRdata = encodeTxtRdata("test-token-value");
+  assert.equal(message.readUInt16BE(updateOffset + nameLength + 8), expectedRdata.length);
+  assert.ok(
+    message
+      .subarray(
+        updateOffset + nameLength + 10,
+        updateOffset + nameLength + 10 + expectedRdata.length,
+      )
+      .equals(expectedRdata),
+  );
+});
+
+test("rfc2136: cleanup without a txtValue throws (programmer error)", () => {
+  assert.throws(
+    () => buildUpdateMessage({ ...FIXED_MESSAGE_INPUTS, action: "cleanup" }),
+    /requires a txtValue/,
   );
 });
 
@@ -177,8 +250,8 @@ test("rfc2136: present without a txtValue throws (programmer error)", () => {
 // solver behavior with an injected socket layer (no sockets ever opened)
 // ---------------------------------------------------------------------------
 
-test("rfc2136: present sends one UPDATE to the configured server and succeeds on NOERROR", async () => {
-  const dnsUpdateStub = makeDnsUpdateStub(makeResponse(0));
+test("rfc2136: present sends one UPDATE and succeeds on a correctly signed NOERROR", async () => {
+  const dnsUpdateStub = makeDnsUpdateStub((request) => makeSignedResponse(request));
   const solver = createDnsSolver({
     provider: "rfc2136",
     credentials: CREDENTIALS,
@@ -197,8 +270,8 @@ test("rfc2136: present sends one UPDATE to the configured server and succeeds on
   assert.equal(call.message.readUInt16BE(2) >>> 11, 5);
 });
 
-test("rfc2136: a REFUSED response maps to ok:false with the rcode name", async () => {
-  const dnsUpdateStub = makeDnsUpdateStub(makeResponse(5));
+test("rfc2136: a signed REFUSED response maps to ok:false with the rcode name", async () => {
+  const dnsUpdateStub = makeDnsUpdateStub((request) => makeSignedResponse(request, { rcode: 5 }));
   const solver = createDnsSolver({
     provider: "rfc2136",
     credentials: CREDENTIALS,
@@ -211,8 +284,73 @@ test("rfc2136: a REFUSED response maps to ok:false with the rcode name", async (
   assert.match(result.detail, /RCODE 5 \(REFUSED\)/);
 });
 
+test("rfc2136: a forged response with the wrong transaction ID maps to ok:false", async () => {
+  const dnsUpdateStub = makeDnsUpdateStub((request) =>
+    makeSignedResponse(request, { id: (request.readUInt16BE(0) + 1) & 0xffff }),
+  );
+  const solver = createDnsSolver({
+    provider: "rfc2136",
+    credentials: CREDENTIALS,
+    dnsUpdateImpl: dnsUpdateStub,
+  });
+
+  const result = await solver.presentChallenge(CHALLENGE);
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /transaction ID/);
+});
+
+test("rfc2136: an unsigned response is rejected even with NOERROR", async () => {
+  const dnsUpdateStub = makeDnsUpdateStub((request) =>
+    makeSignedResponse(request, { unsigned: true }),
+  );
+  const solver = createDnsSolver({
+    provider: "rfc2136",
+    credentials: CREDENTIALS,
+    dnsUpdateImpl: dnsUpdateStub,
+  });
+
+  const result = await solver.presentChallenge(CHALLENGE);
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /unsigned/);
+});
+
+test("rfc2136: a response signed with the wrong key fails MAC verification", async () => {
+  const wrongSecret = Buffer.from("some-other-secret").toString("base64");
+  const dnsUpdateStub = makeDnsUpdateStub((request) =>
+    makeSignedResponse(request, { secretBase64: wrongSecret }),
+  );
+  const solver = createDnsSolver({
+    provider: "rfc2136",
+    credentials: CREDENTIALS,
+    dnsUpdateImpl: dnsUpdateStub,
+  });
+
+  const result = await solver.presentChallenge(CHALLENGE);
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /MAC verification failed/);
+});
+
+test("rfc2136: a response signed under a different key name is rejected", async () => {
+  const dnsUpdateStub = makeDnsUpdateStub((request) =>
+    makeSignedResponse(request, { keyName: "other-key" }),
+  );
+  const solver = createDnsSolver({
+    provider: "rfc2136",
+    credentials: CREDENTIALS,
+    dnsUpdateImpl: dnsUpdateStub,
+  });
+
+  const result = await solver.presentChallenge(CHALLENGE);
+
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /key name does not match/);
+});
+
 test("rfc2136: a short/malformed response maps to ok:false", async () => {
-  const dnsUpdateStub = makeDnsUpdateStub(Buffer.from([0x00, 0x01]));
+  const dnsUpdateStub = makeDnsUpdateStub(() => Buffer.from([0x00, 0x01]));
   const solver = createDnsSolver({
     provider: "rfc2136",
     credentials: CREDENTIALS,
@@ -240,8 +378,8 @@ test("rfc2136: a socket-layer rejection maps to ok:false, never a throw", async 
   assert.match(result.detail, /ECONNREFUSED/);
 });
 
-test("rfc2136: cleanup sends a class-ANY TXT RRset delete", async () => {
-  const dnsUpdateStub = makeDnsUpdateStub(makeResponse(0));
+test("rfc2136: cleanup sends a class-NONE exact-RR delete (siblings preserved)", async () => {
+  const dnsUpdateStub = makeDnsUpdateStub((request) => makeSignedResponse(request));
   const solver = createDnsSolver({
     provider: "rfc2136",
     credentials: CREDENTIALS,
@@ -253,13 +391,16 @@ test("rfc2136: cleanup sends a class-ANY TXT RRset delete", async () => {
   assert.equal(result.ok, true);
   const message = dnsUpdateStub.calls[0].message;
   // The update RR follows the 12-byte header + zone section; its class is
-  // ANY (255) and TTL 0 for an RRset delete. Zone section length:
+  // NONE (254) with TTL 0 and the exact TXT rdata (RFC 2136 s2.5.4), so
+  // only the challenge value is removed. Zone section length:
   // encodeName("example.com") = 13 bytes + type(2) + class(2).
   const updateOffset = 12 + 13 + 4;
   const nameLength = encodeName(CHALLENGE.recordName).length;
   assert.equal(message.readUInt16BE(updateOffset + nameLength), 16); // TXT
-  assert.equal(message.readUInt16BE(updateOffset + nameLength + 2), 255); // ANY
+  assert.equal(message.readUInt16BE(updateOffset + nameLength + 2), 254); // NONE
   assert.equal(message.readUInt32BE(updateOffset + nameLength + 4), 0); // TTL
+  const expectedRdata = encodeTxtRdata(CHALLENGE.txtValue);
+  assert.equal(message.readUInt16BE(updateOffset + nameLength + 8), expectedRdata.length);
 });
 
 test("rfc2136: an error detail echoing the TSIG secret is redacted wholesale", async () => {

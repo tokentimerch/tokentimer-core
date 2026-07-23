@@ -462,6 +462,7 @@ describe("Results handler", () => {
       },
       res,
       {
+        enforceAgentSequence: async () => {},
         ingestResult: async () => {
           ingestCalled = true;
           throw new Error("must not be called for evidence");
@@ -507,6 +508,7 @@ describe("Results handler", () => {
       },
       res,
       {
+        enforceAgentSequence: async () => {},
         assertEvidenceClaimOwnership: async () => {
           const error = new Error(
             "Evidence does not match the claim for this job",

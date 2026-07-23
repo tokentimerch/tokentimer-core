@@ -24,6 +24,7 @@ const {
   MAX_CA_BUNDLE_BYTES,
   validateDnsProvidersObject,
   readDnsCredentialsFile,
+  KNOWN_DNS_PROVIDER_IDS,
 } = require("./index.js");
 
 const IS_WIN32 = process.platform === "win32";
@@ -948,6 +949,16 @@ describe("validateDnsProvidersObject", () => {
           zoneProviderMap: { "example.com": "route53" },
         }),
       /not configured/,
+    );
+  });
+
+  it("keeps KNOWN_DNS_PROVIDER_IDS in sync with the dns module's supported provider list", () => {
+    // The list is deliberately duplicated (config stays self-contained);
+    // this guard fails the build when one side gains or loses a provider.
+    const { listSupportedDnsProviders } = require("../dns/index.js");
+    assert.deepEqual(
+      [...KNOWN_DNS_PROVIDER_IDS].sort(),
+      listSupportedDnsProviders().sort(),
     );
   });
 });

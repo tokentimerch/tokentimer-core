@@ -19,8 +19,16 @@
  *   }
  *
  * API surface used (management.azure.com, api-version 2018-05-01):
+ *   GET    .../dnsZones/<zone>/TXT/<relativeRecordName>   read TXT rrset
  *   PUT    .../dnsZones/<zone>/TXT/<relativeRecordName>   create/replace TXT
  *   DELETE .../dnsZones/<zone>/TXT/<relativeRecordName>   delete TXT
+ *
+ * PUT replaces the WHOLE record set, so present() first GETs the existing
+ * set (404 => empty) and PUTs the union of existing values plus the new
+ * one; cleanup() removes only the entries carrying the challenge value and
+ * PUTs the remainder back, DELETEing the set only when nothing remains.
+ * Parallel challenges at the same name (wildcard + apex orders) and
+ * third-party TXT values therefore never clobber each other.
  *
  * The record name sent to Azure is RELATIVE to the zone ("@" at the apex).
  * A fresh token is fetched per operation; challenge flows are far shorter
@@ -135,11 +143,74 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     );
   }
 
+  /**
+   * GETs the existing TXT record set at the name. Returns
+   * { ok:true, absent, txtRecords } where txtRecords is a normalized array
+   * of { value: string[] } entries (empty when the set does not exist), or
+   * an ok:false operational failure.
+   *
+   * @param {string} accessToken
+   * @param {string} zone
+   * @param {string} recordName
+   */
+  async function readExistingTxtRecords(accessToken, zone, recordName) {
+    const response = await fetchWithTimeout(
+      fetchImpl,
+      recordSetUrl(zone, recordName),
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+      timeoutMs,
+    );
+    if (response.status === 404) {
+      return { ok: true, absent: true, txtRecords: [] };
+    }
+    if (!response.ok) {
+      return httpFailure("record GET", response);
+    }
+
+    let txtRecords = [];
+    try {
+      const parsed = JSON.parse(response.bodyText);
+      const rawRecords =
+        parsed && parsed.properties && Array.isArray(parsed.properties.TXTRecords)
+          ? parsed.properties.TXTRecords
+          : [];
+      txtRecords = rawRecords
+        .filter((entry) => entry && Array.isArray(entry.value))
+        .map((entry) => ({
+          value: entry.value.filter((chunk) => typeof chunk === "string"),
+        }));
+    } catch {
+      // A 2xx with an unparseable body is treated as an empty set; the
+      // subsequent PUT surfaces any real API problem.
+    }
+    return { ok: true, absent: false, txtRecords };
+  }
+
   async function presentChallenge({ zone, recordName, txtValue }) {
     const tokenResult = await fetchAccessToken();
     if (!tokenResult.ok) {
       return tokenResult;
     }
+
+    const existing = await readExistingTxtRecords(
+      tokenResult.accessToken,
+      zone,
+      recordName,
+    );
+    if (!existing.ok) {
+      return existing;
+    }
+
+    // Merge: keep every pre-existing entry, add ours only when absent.
+    const alreadyPresent = existing.txtRecords.some(
+      (entry) => entry.value.length === 1 && entry.value[0] === txtValue,
+    );
+    const merged = alreadyPresent
+      ? existing.txtRecords
+      : [...existing.txtRecords, { value: [txtValue] }];
 
     const response = await fetchWithTimeout(
       fetchImpl,
@@ -153,7 +224,7 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
         body: JSON.stringify({
           properties: {
             TTL: TXT_TTL_SECONDS,
-            TXTRecords: [{ value: [txtValue] }],
+            TXTRecords: merged,
           },
         }),
       },
@@ -166,10 +237,54 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     return { ok: true };
   }
 
-  async function cleanupChallenge({ zone, recordName }) {
+  async function cleanupChallenge({ zone, recordName, txtValue }) {
     const tokenResult = await fetchAccessToken();
     if (!tokenResult.ok) {
       return tokenResult;
+    }
+
+    const existing = await readExistingTxtRecords(
+      tokenResult.accessToken,
+      zone,
+      recordName,
+    );
+    if (!existing.ok) {
+      return existing;
+    }
+    if (existing.absent) {
+      // Record set already gone: cleanup is idempotent success.
+      return { ok: true };
+    }
+
+    // Remove only entries carrying exactly the challenge value; every
+    // other TXT value at the name is preserved.
+    const remaining = existing.txtRecords.filter(
+      (entry) => !(entry.value.length === 1 && entry.value[0] === txtValue),
+    );
+
+    if (remaining.length > 0) {
+      const putResponse = await fetchWithTimeout(
+        fetchImpl,
+        recordSetUrl(zone, recordName),
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${tokenResult.accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            properties: {
+              TTL: TXT_TTL_SECONDS,
+              TXTRecords: remaining,
+            },
+          }),
+        },
+        timeoutMs,
+      );
+      if (!putResponse.ok) {
+        return httpFailure("record PUT", putResponse);
+      }
+      return { ok: true };
     }
 
     const response = await fetchWithTimeout(

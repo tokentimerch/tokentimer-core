@@ -36,14 +36,16 @@ import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 import {
   AGENT_BOOTSTRAP_TOKEN_NAME_MAX_LENGTH,
-  buildInstallCommand,
   createBootstrapToken,
   listAgents,
   revokeBootstrapToken,
 } from './certopsAgentsApi.js';
 import { formatDate } from './certopsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
-import { useCertOpsBootstrapTokens } from './useCertOpsAgents.js';
+import {
+  useCertOpsAgents,
+  useCertOpsBootstrapTokens,
+} from './useCertOpsAgents.js';
 
 const TOKEN_STATUS_SCHEME = {
   active: 'green',
@@ -88,6 +90,20 @@ function defaultExpiryLocalValue() {
   return localDatetimeValue(new Date(Date.now() + 24 * 60 * 60 * 1000));
 }
 
+/**
+ * Copy-paste install command without the bootstrap token: the installer reads
+ * the token from a hidden interactive prompt (or from the
+ * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable) when no
+ * --bootstrap-token flag is given, so the secret never lands in shell history.
+ */
+function buildTokenlessInstallCommand({ apiUrl, workspaceId }) {
+  return [
+    `sudo ./install-agent.sh \\`,
+    `  --api-url '${apiUrl}' \\`,
+    `  --workspace-id '${workspaceId}'`,
+  ].join('\n');
+}
+
 function createErrorMessage(err) {
   const code = err?.response?.data?.code;
   const status = err?.response?.status;
@@ -126,9 +142,11 @@ function revokeErrorMessage(err) {
 /**
  * Guided "Deploy an agent" flow:
  *  1. create a bootstrap token (show-once secret, ApiTokenPanel pattern),
- *  2. copy a pre-filled install command (CopyableCodeBlock),
- *  3. wait for the agent to register (polls GET /certops/agents and compares
- *     against the agent ids snapshotted when the wait started).
+ *  2. copy a pre-filled install command (CopyableCodeBlock); the installer
+ *     prompts for the token, which is never embedded in the command,
+ *  3. wait for the agent to register (polls GET /certops/agents and reports
+ *     an agent whose id was not known when the token was created, or whose
+ *     registration timestamp is at or after token creation).
  * Manager-gated: viewers see a read-only explainer, no token list or actions.
  */
 export default function DeployAgentPanel({ onAgentRegistered }) {
@@ -136,6 +154,7 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
   const canManage = useCertOpsCanManage();
   const { enabled, tokens, loading, error, refresh } =
     useCertOpsBootstrapTokens();
+  const { agents: fleetAgents } = useCertOpsAgents();
 
   const [name, setName] = useState('');
   const [expiresLocal, setExpiresLocal] = useState(defaultExpiryLocalValue());
@@ -147,7 +166,13 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
   // 'idle' | 'waiting' | 'registered'
   const [waitState, setWaitState] = useState('idle');
   const [registeredAgent, setRegisteredAgent] = useState(null);
+  // Baseline snapshot of agent row ids, captured when the bootstrap token is
+  // created (not on the first poll tick): an agent that registers between
+  // token creation and the first poll must still be detected as new.
   const knownAgentIdsRef = useRef(null);
+  // Token creation time; agents registered at or after it count as new even
+  // if the baseline list was stale and already contained their id.
+  const tokenCreatedAtRef = useRef(null);
   const revokeCancelRef = useRef(null);
 
   // Show-once secret and wait state are workspace-scoped: switching
@@ -161,10 +186,12 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
     setWaitState('idle');
     setRegisteredAgent(null);
     knownAgentIdsRef.current = null;
+    tokenCreatedAtRef.current = null;
   }, [workspaceId]);
 
-  // Poll the fleet while waiting; success when an agent id appears that was
-  // not in the snapshot taken when the wait started.
+  // Poll the fleet while waiting; success when an agent appears that was not
+  // in the token-creation baseline, or that registered after the token was
+  // created (timestamp check covers a stale baseline).
   useEffect(() => {
     if (waitState !== 'waiting' || !workspaceId) return undefined;
     let cancelled = false;
@@ -177,15 +204,30 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
           return;
         }
         const items = Array.isArray(data?.items) ? data.items : [];
-        if (knownAgentIdsRef.current === null) {
+        const baselineIds = knownAgentIdsRef.current;
+        const tokenCreatedAtMs = tokenCreatedAtRef.current;
+        if (baselineIds === null && tokenCreatedAtMs === null) {
+          // No token was created in this session; fall back to snapshotting
+          // the fleet on the first tick, as before.
           knownAgentIdsRef.current = new Set(items.map(agent => agent.id));
           return;
         }
-        const fresh = items.find(
-          agent =>
-            !knownAgentIdsRef.current.has(agent.id) &&
-            agent.status !== 'retired'
-        );
+        const fresh = items.find(agent => {
+          if (agent.status === 'retired') return false;
+          if (baselineIds !== null && !baselineIds.has(agent.id)) return true;
+          if (tokenCreatedAtMs !== null) {
+            const registeredAtMs = new Date(
+              agent.createdAt || agent.registeredAt || NaN
+            ).getTime();
+            if (
+              !Number.isNaN(registeredAtMs) &&
+              registeredAtMs >= tokenCreatedAtMs
+            ) {
+              return true;
+            }
+          }
+          return false;
+        });
         if (fresh) {
           setRegisteredAgent(fresh);
           setWaitState('registered');
@@ -231,14 +273,14 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
     typeof window !== 'undefined' && window.location
       ? window.location.origin
       : '';
-  const installCommand = buildInstallCommand({
+  const installCommand = buildTokenlessInstallCommand({
     apiUrl,
     workspaceId: workspaceId || '<workspace-id>',
-    bootstrapToken: plaintextToken || null,
   });
 
   const beginWaiting = () => {
-    knownAgentIdsRef.current = null;
+    // Keep the baseline captured at token creation; it must predate any
+    // agent registered by this token. Only clear the show-once secret.
     setRegisteredAgent(null);
     setPlaintextToken('');
     setWaitState('waiting');
@@ -247,6 +289,12 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
   const handleCreate = async () => {
     if (!canSubmit) return;
     const requestWorkspaceId = workspaceId;
+    // Snapshot the fleet and the creation time before the request: any agent
+    // registering from now on can only come from this (or a newer) token.
+    const baselineIds = new Set(
+      (Array.isArray(fleetAgents) ? fleetAgents : []).map(agent => agent.id)
+    );
+    const createdAtMs = Date.now();
     setCreating(true);
     try {
       const result = await createBootstrapToken(requestWorkspaceId, {
@@ -271,6 +319,8 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
       setName('');
       setExpiresLocal(defaultExpiryLocalValue());
       setPlaintextToken(plaintext);
+      knownAgentIdsRef.current = baselineIds;
+      tokenCreatedAtRef.current = createdAtMs;
       setShowOnceOpen(true);
       showSuccess('Bootstrap token created');
     } catch (err) {
@@ -281,8 +331,9 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
     }
   };
 
-  // Keeps the plaintext in memory for the step-2 install command; it is
-  // cleared when the wait starts, on workspace switch, and on unmount.
+  // The plaintext stays in memory only to drive the step-2 guidance; it is
+  // cleared when the wait starts, on workspace switch, and on unmount. It is
+  // never embedded in the install command.
   const handleShowOnceClose = () => {
     setShowOnceOpen(false);
     refresh();
@@ -420,13 +471,15 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
               />
               {!plaintextToken ? (
                 <Text fontSize='xs' color={muted}>
-                  Create a bootstrap token in step 1 to pre-fill the command;
-                  the secret is only available until you leave this step.
+                  Create a bootstrap token in step 1 first. The command never
+                  contains the token; the installer asks for it separately.
                 </Text>
               ) : (
                 <Text fontSize='xs' color={muted}>
-                  The command includes the one-time token. Run it now; the token
-                  is cleared from this page when you start waiting.
+                  The command does not include the token. The installer will
+                  prompt for it (hidden input); paste the token from step 1 at
+                  the prompt, or set the TOKENTIMER_AGENT_BOOTSTRAP_TOKEN
+                  environment variable before running.
                 </Text>
               )}
               <Button
@@ -616,8 +669,8 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
                 <AlertIcon />
                 <AlertDescription>
                   This token is shown only once and registers exactly one agent.
-                  Use it in the install command in step 2, or store it in your
-                  secret manager now.
+                  The installer will ask for it at a hidden prompt; copy it now,
+                  or store it in your secret manager.
                 </AlertDescription>
               </Alert>
               <CopyableCodeBlock
@@ -627,8 +680,8 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
                 monospace
               />
               <Text fontSize='xs' color={muted}>
-                Closing this dialog keeps the token pre-filled in the step 2
-                install command until you start waiting for the agent.
+                The install command in step 2 does not contain the token. Paste
+                the token at the installer prompt when asked.
               </Text>
             </VStack>
           </ModalBody>

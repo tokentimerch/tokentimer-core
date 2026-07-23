@@ -10,7 +10,11 @@ const {
   toCanonicalFqdn,
 } = require("./powerdns.js");
 
-const CREDENTIALS = { apiUrl: "http://127.0.0.1:8081", apiKey: "pdns-key" };
+const CREDENTIALS = {
+  apiUrl: "http://127.0.0.1:8081",
+  apiKey: "pdns-key",
+  allowInsecureLocalHttp: true,
+};
 
 const CHALLENGE = {
   zone: "example.com",
@@ -48,8 +52,44 @@ test("powerdns: apiUrl and apiKey are required", () => {
   assert.throws(() => validateCredentials({ apiUrl: "http://x" }), /apiKey/);
 });
 
+test("powerdns: apiUrl is validated (https only, no creds/fragments, loopback http opt-in)", () => {
+  assert.throws(
+    () => validateCredentials({ apiUrl: "https://u:p@pdns.example:8081", apiKey: "k" }),
+    /embed credentials/,
+  );
+  assert.throws(
+    () => validateCredentials({ apiUrl: "https://pdns.example:8081#frag", apiKey: "k" }),
+    /hash fragment/,
+  );
+  // Plain http without the loopback escape hatch is rejected...
+  assert.throws(
+    () => validateCredentials({ apiUrl: "http://127.0.0.1:8081", apiKey: "k" }),
+    /https/,
+  );
+  // ...and even with it, only loopback hosts qualify.
+  assert.throws(
+    () =>
+      validateCredentials({
+        apiUrl: "http://pdns.example:8081",
+        apiKey: "k",
+        allowInsecureLocalHttp: true,
+      }),
+    /loopback/,
+  );
+  // https always works; loopback http works with the flag.
+  assert.equal(
+    validateCredentials({ apiUrl: "https://pdns.example:8081", apiKey: "k" }).apiUrl,
+    "https://pdns.example:8081",
+  );
+  assert.equal(validateCredentials(CREDENTIALS).apiUrl, "http://127.0.0.1:8081");
+});
+
 test("powerdns: serverId defaults to localhost and trailing slashes are stripped", () => {
-  const normalized = validateCredentials({ apiUrl: "http://127.0.0.1:8081/", apiKey: "k" });
+  const normalized = validateCredentials({
+    apiUrl: "http://127.0.0.1:8081/",
+    apiKey: "k",
+    allowInsecureLocalHttp: true,
+  });
   assert.equal(normalized.serverId, "localhost");
   assert.equal(normalized.apiUrl, "http://127.0.0.1:8081");
 });

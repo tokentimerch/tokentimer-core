@@ -21,8 +21,17 @@
  *
  * API surface used (route53.amazonaws.com, XML API 2013-04-01):
  *   GET  /2013-04-01/hostedzonebyname?dnsname=<zone>&maxitems=1
+ *   GET  /2013-04-01/hostedzone/<id>/rrset?name=&type=TXT&maxitems=1
+ *        ListResourceRecordSets (read-modify-write basis)
  *   POST /2013-04-01/hostedzone/<id>/rrset   ChangeResourceRecordSets
- *        (UPSERT on present, DELETE on cleanup)
+ *        (UPSERT on present, UPSERT-remainder or DELETE on cleanup)
+ *
+ * UPSERT replaces the WHOLE record set and DELETE must match the live set
+ * exactly, so present() first lists the existing TXT values at the name
+ * and UPSERTs the union plus the new value; cleanup() removes only the
+ * challenge value, UPSERTing the remainder back and DELETEing the set
+ * only when nothing remains. Parallel challenges at the same name and
+ * third-party TXT values therefore never clobber each other.
  *
  * TXT values are wrapped in double quotes per Route 53 rules, with
  * backslash and double-quote characters escaped.
@@ -212,6 +221,14 @@ function xmlEscape(value) {
     .replace(/"/g, "&quot;");
 }
 
+function xmlUnescape(value) {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
 /** Route 53 TXT value quoting: wrap in double quotes, escape \ and ". */
 function quoteTxtValue(txtValue) {
   return `"${txtValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -220,11 +237,15 @@ function quoteTxtValue(txtValue) {
 /**
  * @param {"UPSERT"|"DELETE"} action
  * @param {string} recordName
- * @param {string} txtValue
+ * @param {string[]} quotedValues already-quoted TXT values (whole rrset)
+ * @param {number} [ttl]
  * @returns {string} ChangeResourceRecordSets XML body
  */
-function buildChangeBatchXml(action, recordName, txtValue) {
+function buildChangeBatchXml(action, recordName, quotedValues, ttl = TXT_TTL_SECONDS) {
   const fqdn = recordName.endsWith(".") ? recordName : `${recordName}.`;
+  const resourceRecordsXml = quotedValues
+    .map((value) => `<ResourceRecord><Value>${xmlEscape(value)}</Value></ResourceRecord>`)
+    .join("");
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
     `<ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/${API_VERSION}/">` +
@@ -233,10 +254,8 @@ function buildChangeBatchXml(action, recordName, txtValue) {
     "<ResourceRecordSet>" +
     `<Name>${xmlEscape(fqdn)}</Name>` +
     "<Type>TXT</Type>" +
-    `<TTL>${TXT_TTL_SECONDS}</TTL>` +
-    "<ResourceRecords><ResourceRecord>" +
-    `<Value>${xmlEscape(quoteTxtValue(txtValue))}</Value>` +
-    "</ResourceRecord></ResourceRecords>" +
+    `<TTL>${ttl}</TTL>` +
+    `<ResourceRecords>${resourceRecordsXml}</ResourceRecords>` +
     "</ResourceRecordSet>" +
     "</Change></Changes></ChangeBatch>" +
     "</ChangeResourceRecordSetsRequest>"
@@ -330,31 +349,150 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
   }
 
   /**
-   * @param {"UPSERT"|"DELETE"} action
-   * @param {{ zone: string, recordName: string, txtValue: string }} inputs
+   * ListResourceRecordSets for the exact name/TXT. Returns
+   * { ok:true, exists, values, ttl } where values are the (still-quoted)
+   * live TXT values, or an ok:false operational failure.
+   * @param {string} hostedZoneId
+   * @param {string} recordFqdn absolute name with trailing dot
    */
-  async function changeRecordSet(action, { zone, recordName, txtValue }) {
+  async function listExistingTxtValues(hostedZoneId, recordFqdn) {
+    const response = await signedFetch({
+      method: "GET",
+      path: `/${API_VERSION}/hostedzone/${hostedZoneId}/rrset`,
+      query: [
+        ["name", recordFqdn],
+        ["type", "TXT"],
+        ["maxitems", "1"],
+      ],
+    });
+    if (!response.ok) {
+      return httpFailure("ListResourceRecordSets", response);
+    }
+
+    // The list starts at-or-after the requested name, so the first record
+    // set must actually match name + type or the set does not exist.
+    const rrsetMatch = /<ResourceRecordSet>([\s\S]*?)<\/ResourceRecordSet>/.exec(
+      response.bodyText,
+    );
+    if (!rrsetMatch) {
+      return { ok: true, exists: false, values: [], ttl: null };
+    }
+    const block = rrsetMatch[1];
+    const nameMatch = /<Name>([^<]*)<\/Name>/.exec(block);
+    const typeMatch = /<Type>([^<]*)<\/Type>/.exec(block);
+    if (
+      !nameMatch ||
+      !typeMatch ||
+      typeMatch[1] !== "TXT" ||
+      xmlUnescape(nameMatch[1]).toLowerCase() !== recordFqdn.toLowerCase()
+    ) {
+      return { ok: true, exists: false, values: [], ttl: null };
+    }
+
+    const ttlMatch = /<TTL>(\d+)<\/TTL>/.exec(block);
+    const values = [];
+    const valuePattern = /<Value>([^<]*)<\/Value>/g;
+    let valueMatch;
+    while ((valueMatch = valuePattern.exec(block)) !== null) {
+      values.push(xmlUnescape(valueMatch[1]));
+    }
+    return {
+      ok: true,
+      exists: true,
+      values,
+      ttl: ttlMatch ? Number.parseInt(ttlMatch[1], 10) : null,
+    };
+  }
+
+  /**
+   * @param {"UPSERT"|"DELETE"} action
+   * @param {string} hostedZoneId
+   * @param {string} recordFqdn
+   * @param {string[]} quotedValues
+   * @param {number} ttl
+   */
+  async function postChangeBatch(action, hostedZoneId, recordFqdn, quotedValues, ttl) {
+    const response = await signedFetch({
+      method: "POST",
+      path: `/${API_VERSION}/hostedzone/${hostedZoneId}/rrset`,
+      body: buildChangeBatchXml(action, recordFqdn, quotedValues, ttl),
+    });
+    if (!response.ok) {
+      return httpFailure(`ChangeResourceRecordSets ${action}`, response);
+    }
+    return { ok: true };
+  }
+
+  async function presentChallenge({ zone, recordName, txtValue }) {
     const zoneResult = await resolveHostedZoneId(zone);
     if (!zoneResult.ok) {
       return zoneResult;
     }
 
-    const response = await signedFetch({
-      method: "POST",
-      path: `/${API_VERSION}/hostedzone/${zoneResult.hostedZoneId}/rrset`,
-      body: buildChangeBatchXml(action, recordName, txtValue),
-    });
-    if (!response.ok) {
-      return httpFailure(`ChangeResourceRecordSets ${action}`, response);
+    const recordFqdn = recordName.endsWith(".") ? recordName : `${recordName}.`;
+    const existing = await listExistingTxtValues(zoneResult.hostedZoneId, recordFqdn);
+    if (!existing.ok) {
+      return existing;
     }
 
-    return { ok: true };
+    // Merge with the live set so parallel challenges and third-party TXT
+    // values are preserved (UPSERT replaces the whole record set).
+    const quoted = quoteTxtValue(txtValue);
+    const merged = existing.values.includes(quoted)
+      ? existing.values
+      : [...existing.values, quoted];
+
+    return postChangeBatch(
+      "UPSERT",
+      zoneResult.hostedZoneId,
+      recordFqdn,
+      merged,
+      existing.ttl !== null ? existing.ttl : TXT_TTL_SECONDS,
+    );
   }
 
-  return {
-    presentChallenge: (inputs) => changeRecordSet("UPSERT", inputs),
-    cleanupChallenge: (inputs) => changeRecordSet("DELETE", inputs),
-  };
+  async function cleanupChallenge({ zone, recordName, txtValue }) {
+    const zoneResult = await resolveHostedZoneId(zone);
+    if (!zoneResult.ok) {
+      return zoneResult;
+    }
+
+    const recordFqdn = recordName.endsWith(".") ? recordName : `${recordName}.`;
+    const existing = await listExistingTxtValues(zoneResult.hostedZoneId, recordFqdn);
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const quoted = quoteTxtValue(txtValue);
+    if (!existing.exists || !existing.values.includes(quoted)) {
+      // Nothing to delete: cleanup is idempotent, an already-absent value
+      // is success, not failure.
+      return { ok: true };
+    }
+
+    const ttl = existing.ttl !== null ? existing.ttl : TXT_TTL_SECONDS;
+    const remaining = existing.values.filter((value) => value !== quoted);
+    if (remaining.length > 0) {
+      return postChangeBatch(
+        "UPSERT",
+        zoneResult.hostedZoneId,
+        recordFqdn,
+        remaining,
+        ttl,
+      );
+    }
+
+    // DELETE must carry the exact live record set.
+    return postChangeBatch(
+      "DELETE",
+      zoneResult.hostedZoneId,
+      recordFqdn,
+      existing.values,
+      ttl,
+    );
+  }
+
+  return { presentChallenge, cleanupChallenge };
 }
 
 module.exports = {
@@ -368,4 +506,5 @@ module.exports = {
   signRequest,
   buildChangeBatchXml,
   quoteTxtValue,
+  xmlUnescape,
 };

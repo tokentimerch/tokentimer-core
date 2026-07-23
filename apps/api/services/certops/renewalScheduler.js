@@ -33,6 +33,10 @@ const RENEWAL_PER_CA_CAP_ENV = "CERTOPS_RENEWAL_PER_CA_CAP";
 // of endpoint-less renewals is still capped instead of being unbounded.
 const UNKNOWN_CA_BUCKET = "__unknown-ca__";
 
+// Advisory lock key for the sweep (single-flight across workers). Any
+// constant bigint works; this one is arbitrary but must stay stable.
+const RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY = 7_384_211_257_001n;
+
 // Inventory statuses that never get automated renewal jobs.
 const NON_RENEWABLE_CERTIFICATE_STATUSES = Object.freeze([
   "revoked",
@@ -85,11 +89,53 @@ function isValidCaEndpointUrl(value) {
 }
 
 /**
+ * Canonical form of a CA endpoint for cap bucketing, so the same CA never
+ * lands in two buckets because of representation differences (case in the
+ * scheme/host, default ports, trailing slashes, query/fragment noise).
+ * Non-URL strings are lowercased+trimmed as-is; empty input maps to the
+ * unknown-CA bucket. Used for BOTH sides of the cap comparison (due
+ * certificates and in-flight job counts); the raw (un-normalized but valid)
+ * URL is still what gets stamped on job payloads.
+ */
+function normalizeCaBucket(value) {
+  if (typeof value !== "string") return UNKNOWN_CA_BUCKET;
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === UNKNOWN_CA_BUCKET) return UNKNOWN_CA_BUCKET;
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (_error) {
+    return trimmed.toLowerCase();
+  }
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  // URL already lowercases protocol/hostname and drops default ports.
+  return `${parsed.protocol}//${parsed.host}${pathname}`;
+}
+
+/**
  * CA bucket for a due certificate: the caEndpoint recorded in the
  * certificate's public metadata, falling back to its profile's public
- * metadata, else the shared unknown-CA bucket.
+ * metadata, else the shared unknown-CA bucket. Normalized for bucketing.
  */
 function certificateCaBucket(certificate) {
+  const candidates = [
+    certificate?.certificate_ca_endpoint,
+    certificate?.profile_ca_endpoint,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim() !== "") {
+      return normalizeCaBucket(candidate);
+    }
+  }
+  return UNKNOWN_CA_BUCKET;
+}
+
+/**
+ * Raw (un-normalized) caEndpoint candidate for stamping on job payloads.
+ * Kept separate from certificateCaBucket so payloads carry the operator's
+ * exact URL while cap accounting uses the canonical bucket.
+ */
+function certificateCaEndpointRaw(certificate) {
   const candidates = [
     certificate?.certificate_ca_endpoint,
     certificate?.profile_ca_endpoint,
@@ -99,33 +145,50 @@ function certificateCaBucket(certificate) {
       return candidate.trim();
     }
   }
-  return UNKNOWN_CA_BUCKET;
+  return null;
 }
 
 /**
- * Best-effort snapshot of in-flight renewal jobs grouped by the caEndpoint
- * recorded in the job payload. Jobs without one land in the unknown-CA
- * bucket. The sweep is single-flight from one worker, so a point-in-time
- * count (plus local increments for jobs the sweep itself creates) is
- * race-tolerant enough: a concurrent manual job at worst delays a renewal
- * by one sweep.
+ * Composite cap-accounting key: caps are per (workspace, CA), never global,
+ * so one tenant's renewal backlog can never starve another tenant sharing
+ * the same public CA.
+ */
+function caCapKey(workspaceId, caBucket) {
+  return `${workspaceId}::${caBucket}`;
+}
+
+/**
+ * Point-in-time snapshot of in-flight renewal jobs keyed by
+ * (workspace, normalized CA bucket). Jobs without a payload caEndpoint land
+ * in the unknown-CA bucket. Normalization happens here in JS with the SAME
+ * normalizeCaBucket used for due certificates, so both sides of the cap
+ * comparison agree. The sweep itself is single-flight (advisory lock in
+ * runRenewalSchedulerSweep) and locally increments this map for jobs it
+ * creates, so the snapshot stays consistent for the duration of a sweep; a
+ * concurrent manual job at worst delays a renewal by one sweep.
  */
 async function countInFlightRenewalJobsByCaEndpoint({
   db = pool,
   terminalStatuses,
 } = {}) {
   const result = await db.query(
-    `SELECT COALESCE(NULLIF(BTRIM(cj.payload->>'caEndpoint'), ''), $2) AS ca_bucket,
+    `SELECT cj.workspace_id,
+            NULLIF(BTRIM(cj.payload->>'caEndpoint'), '') AS ca_endpoint,
             COUNT(*)::int AS in_flight
        FROM certificate_jobs cj
       WHERE cj.operation = 'renew'
         AND NOT (cj.status = ANY($1::text[]))
-      GROUP BY 1`,
-    [terminalStatuses, UNKNOWN_CA_BUCKET],
+      GROUP BY 1, 2`,
+    [terminalStatuses],
   );
   const counts = new Map();
   for (const row of result.rows || []) {
-    counts.set(row.ca_bucket, Number(row.in_flight) || 0);
+    const bucket =
+      row.ca_endpoint == null
+        ? UNKNOWN_CA_BUCKET
+        : normalizeCaBucket(row.ca_endpoint);
+    const key = caCapKey(row.workspace_id, bucket);
+    counts.set(key, (counts.get(key) || 0) + (Number(row.in_flight) || 0));
   }
   return counts;
 }
@@ -217,9 +280,9 @@ async function createRenewalJobForCertificate({
     // Stamp the resolved caEndpoint on the payload when it is a valid
     // execution-field URL, so in-flight counts in later sweeps bucket this
     // job under the same CA the scheduler capped it against.
-    const caBucket = certificateCaBucket(certificate);
-    if (caBucket !== UNKNOWN_CA_BUCKET && isValidCaEndpointUrl(caBucket)) {
-      payload.caEndpoint = caBucket;
+    const rawCaEndpoint = certificateCaEndpointRaw(certificate);
+    if (rawCaEndpoint !== null && isValidCaEndpointUrl(rawCaEndpoint)) {
+      payload.caEndpoint = rawCaEndpoint;
     }
     // The inventory schema records no dedicated keyRotationPolicy column, so
     // the payload keyRotation execution field is only set when key_mode
@@ -268,14 +331,21 @@ async function createRenewalJobForCertificate({
 
 /**
  * One renewal-planning pass. Returns a summary:
- * { thresholdDays, perCaCap, scanned, created, replayed, skippedPaused,
- *   skippedByCaCap, errors }.
+ * { thresholdDays, perCaCap, lockAcquired, scanned, created, replayed,
+ *   skippedPaused, skippedByCaCap, errors }.
  *
- * Per-CA cap: before creating a job the sweep checks how many renew jobs are
- * already in flight for the certificate's CA bucket (point-in-time count
- * taken once per sweep, incremented locally for jobs this sweep creates).
- * Capped certificates are skipped, counted in skippedByCaCap, and picked up
- * by a later sweep once the CA's in-flight jobs drain.
+ * Single-flight: the whole sweep runs under a session advisory lock
+ * (pg_try_advisory_lock). A second worker starting a sweep while one is in
+ * progress returns immediately with lockAcquired: false and does nothing;
+ * without this, two concurrent sweeps would each take a point-in-time
+ * in-flight snapshot and could jointly exceed every per-CA cap.
+ *
+ * Per-CA cap: before creating a job the sweep checks how many renew jobs
+ * are already in flight for the certificate's (workspace, normalized CA)
+ * bucket (snapshot taken once per sweep, incremented locally for jobs this
+ * sweep creates). Capped certificates are skipped, counted in
+ * skippedByCaCap, and picked up by a later sweep once the CA's in-flight
+ * jobs drain.
  */
 async function runRenewalSchedulerSweep({
   dbPool = pool,
@@ -294,22 +364,11 @@ async function runRenewalSchedulerSweep({
     "cancelled",
   ].filter(isTerminalJobStatus);
 
-  const dueCertificates = await findCertificatesDueForRenewal({
-    db: dbPool,
-    thresholdDays,
-    batchSize,
-    terminalStatuses,
-  });
-
-  const inFlightByCa = await countInFlightRenewalJobsByCaEndpoint({
-    db: dbPool,
-    terminalStatuses,
-  });
-
   const summary = {
     thresholdDays,
     perCaCap,
-    scanned: dueCertificates.length,
+    lockAcquired: false,
+    scanned: 0,
     created: 0,
     replayed: 0,
     skippedPaused: 0,
@@ -317,59 +376,106 @@ async function runRenewalSchedulerSweep({
     errors: [],
   };
 
-  for (const certificate of dueCertificates) {
-    const caBucket = certificateCaBucket(certificate);
-    const inFlight = inFlightByCa.get(caBucket) || 0;
-    if (inFlight >= perCaCap) {
-      summary.skippedByCaCap += 1;
-      continue;
+  // Advisory locks are session-scoped: acquire and release on ONE dedicated
+  // connection held for the whole sweep.
+  const lockClient = await dbPool.connect();
+  try {
+    const lockResult = await lockClient.query(
+      "SELECT pg_try_advisory_lock($1) AS acquired",
+      [RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY.toString()],
+    );
+    if (lockResult.rows?.[0]?.acquired !== true) {
+      return summary;
     }
-    try {
-      const { created } = await createRenewalJobForCertificate({
-        dbPool,
-        certificate,
-        jobCreator,
-        env,
-      });
-      if (created) {
-        summary.created += 1;
-        inFlightByCa.set(caBucket, inFlight + 1);
-      } else {
-        summary.replayed += 1;
-      }
-    } catch (error) {
-      if (
-        error?.code === CERTOPS_WORKSPACE_PAUSED ||
-        error?.code === CERTOPS_DISABLED
-      ) {
-        summary.skippedPaused += 1;
+    summary.lockAcquired = true;
+
+    const dueCertificates = await findCertificatesDueForRenewal({
+      db: dbPool,
+      thresholdDays,
+      batchSize,
+      terminalStatuses,
+    });
+
+    const inFlightByCa = await countInFlightRenewalJobsByCaEndpoint({
+      db: dbPool,
+      terminalStatuses,
+    });
+
+    summary.scanned = dueCertificates.length;
+
+    for (const certificate of dueCertificates) {
+      const capKey = caCapKey(
+        certificate.workspace_id,
+        certificateCaBucket(certificate),
+      );
+      const inFlight = inFlightByCa.get(capKey) || 0;
+      if (inFlight >= perCaCap) {
+        summary.skippedByCaCap += 1;
         continue;
       }
-      summary.errors.push({
-        certificateId: String(certificate.id),
-        error: error?.message || String(error),
-      });
-      if (logger?.error) {
-        logger.error("certops-renewal-scheduler-cert-failure", {
-          certificateId: String(certificate.id),
-          error: error?.message,
+      try {
+        const { created } = await createRenewalJobForCertificate({
+          dbPool,
+          certificate,
+          jobCreator,
+          env,
         });
+        if (created) {
+          summary.created += 1;
+          inFlightByCa.set(capKey, inFlight + 1);
+        } else {
+          summary.replayed += 1;
+        }
+      } catch (error) {
+        if (
+          error?.code === CERTOPS_WORKSPACE_PAUSED ||
+          error?.code === CERTOPS_DISABLED
+        ) {
+          summary.skippedPaused += 1;
+          continue;
+        }
+        summary.errors.push({
+          certificateId: String(certificate.id),
+          error: error?.message || String(error),
+        });
+        if (logger?.error) {
+          logger.error("certops-renewal-scheduler-cert-failure", {
+            certificateId: String(certificate.id),
+            error: error?.message,
+          });
+        }
       }
     }
-  }
 
-  return summary;
+    return summary;
+  } finally {
+    if (summary.lockAcquired) {
+      try {
+        await lockClient.query("SELECT pg_advisory_unlock($1)", [
+          RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY.toString(),
+        ]);
+      } catch (_error) {
+        // The session release below frees the lock regardless.
+      }
+    }
+    lockClient.release();
+  }
 }
 
 module.exports = {
   DEFAULT_RENEWAL_PER_CA_CAP,
   DEFAULT_RENEWAL_THRESHOLD_DAYS,
+  NON_RENEWABLE_CERTIFICATE_STATUSES,
   RENEWAL_PER_CA_CAP_ENV,
+  RENEWAL_SCHEDULER_ADVISORY_LOCK_KEY,
   RENEWAL_THRESHOLD_ENV,
   UNKNOWN_CA_BUCKET,
+  caCapKey,
   certificateCaBucket,
+  certificateCaEndpointRaw,
   countInFlightRenewalJobsByCaEndpoint,
   findCertificatesDueForRenewal,
+  normalizeCaBucket,
   renewalIdempotencyKey,
   resolveRenewalPerCaCap,
   resolveRenewalThresholdDays,

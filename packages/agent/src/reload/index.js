@@ -38,6 +38,7 @@
  */
 
 const { execFile } = require("node:child_process");
+const { buildMinimalSubprocessEnv } = require("../exec-env");
 
 /**
  * Same set as the policy module's SHELL_METACHARACTER_PATTERN, duplicated
@@ -118,8 +119,10 @@ function runCommand(execFileImpl, argv, timeoutMs) {
       argv.slice(1),
       // shell: false is execFile's default, but it is set explicitly so
       // the no-shell invariant is visible at the call site and assertable
-      // in tests via execFileImpl stubs.
-      { shell: false, timeout: timeoutMs },
+      // in tests via execFileImpl stubs. env is the explicit minimal
+      // allowlist so agent secrets (e.g. the bootstrap token) never reach
+      // reload/validate commands.
+      { shell: false, timeout: timeoutMs, env: buildMinimalSubprocessEnv() },
       (error, stdout, stderr) => {
         if (!error) {
           resolve({

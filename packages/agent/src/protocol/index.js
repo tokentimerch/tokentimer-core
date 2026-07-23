@@ -575,50 +575,82 @@ async function resolveCredential(getCredential) {
   return typeof getCredential === "function" ? await getCredential() : null;
 }
 
-function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false, onServerDate = null } = {}) {
+function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredential, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, allowInsecureLocalHttp = false, onServerDate = null, sequenceAllocator = null } = {}) {
   const baseUrl = parseServerUrl(serverUrl, { allowInsecureLocalHttp });
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000) {
     throw new AgentProtocolError("requestTimeoutMs must be an integer between 1 and 120000", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
   }
+  if (sequenceAllocator !== null && typeof sequenceAllocator?.next !== "function") {
+    throw new AgentProtocolError("sequenceAllocator must expose a next() function when provided", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+  }
   const routeUrl = (route) => `${baseUrl}${route}`;
   const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl, onServerDate });
 
-  // Per-client monotonically increasing message counter, included as the
+  // Per-agent monotonically increasing message counter, included as the
   // envelope's `sequence` field on every outbound message (register,
-  // heartbeat, claim, result, evidence). Deliberately NOT persisted: a
-  // process restart restarts the counter at 1, which is safe because the
-  // control plane only rejects regressions within the current registered
-  // agent generation and a successful register begins a new generation.
-  let lastSequence = 0;
+  // heartbeat, claim, result, evidence). The runtime injects a shared,
+  // crash-safe persisted allocator (config.createSequenceAllocator) so
+  // registration and steady-state clients draw from ONE stream and a
+  // process restart NEVER reuses a value (the control plane hard-rejects
+  // regressions). The in-memory fallback exists only for isolated
+  // unit-test clients.
+  let inMemorySequence = 0;
   function nextSequence() {
-    lastSequence += 1;
-    return lastSequence;
+    if (sequenceAllocator) return sequenceAllocator.next();
+    inMemorySequence += 1;
+    return inMemorySequence;
+  }
+
+  // Sequence-bearing requests are strictly serialized: the sequence value
+  // is allocated inside the queue immediately before its request is sent,
+  // and the next request cannot allocate until the current one settled.
+  // Without this, concurrent heartbeat/claim/discovery loops could deliver
+  // a higher sequence before a lower one and get the lower one rejected as
+  // a regression.
+  let sendQueue = Promise.resolve();
+  function enqueueSequencedSend(performSend) {
+    const run = sendQueue.then(() => performSend(nextSequence()));
+    // Keep the chain alive whether the send succeeds or fails; failures
+    // propagate to the caller through `run` itself.
+    sendQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [] } = {}) {
     if (typeof bootstrapToken !== "string" || bootstrapToken.length === 0) {
       throw new AgentProtocolError("register requires a bootstrapToken", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
     }
-    const { status, ok, json } = await send(ROUTES.REGISTER, bootstrapToken, buildEnvelope({
-      agentId,
-      protocolVersion,
-      messageType: MESSAGE_TYPES.REGISTER,
-      sequence: nextSequence(),
-      body: { bootstrapTokenId, agentVersion, hostname, platform, nodeVersion, declaredTargetSelectors, declaredCommandProfileNames },
-    }));
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      send(ROUTES.REGISTER, bootstrapToken, buildEnvelope({
+        agentId,
+        protocolVersion,
+        messageType: MESSAGE_TYPES.REGISTER,
+        sequence,
+        body: { bootstrapTokenId, agentVersion, hostname, platform, nodeVersion, declaredTargetSelectors, declaredCommandProfileNames },
+      })),
+    );
     if (!ok) throw new AgentProtocolError(`agent registration failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return validateRegistrationResponse(json, protocolVersion);
   }
 
   async function heartbeat({ agentVersion, ntpSynced = null, uptimeSeconds = null, pinnedSigningKeyId = null, clockOffsetMs = null } = {}) {
-    const { status, ok, json } = await send(ROUTES.HEARTBEAT, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.HEARTBEAT, clockOffsetMs, sequence: nextSequence(), body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId } }));
+    const token = await resolveCredential(getCredential);
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      send(ROUTES.HEARTBEAT, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.HEARTBEAT, clockOffsetMs, sequence, body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId } })),
+    );
     if (status === 410) return { retired: true };
     if (!ok) throw new AgentProtocolError(`heartbeat failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
   async function claim({ maxJobs = 1, supportedActions = [] } = {}) {
-    const { status, ok, json } = await send(ROUTES.CLAIM, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.CLAIM, sequence: nextSequence(), body: { maxJobs, supportedActions } }));
+    const token = await resolveCredential(getCredential);
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      send(ROUTES.CLAIM, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.CLAIM, sequence, body: { maxJobs, supportedActions } })),
+    );
     if (!ok) throw new AgentProtocolError(`claim failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     if (json !== null && !isPlainObject(json)) throw new AgentProtocolError("claim response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     if (json?.jobs !== undefined && !Array.isArray(json.jobs)) throw new AgentProtocolError("claim response jobs must be an array", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
@@ -647,13 +679,19 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       ...(claimId !== null ? { claimId } : {}),
       ...(nonce !== null ? { nonce } : {}),
     };
-    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, sequence: nextSequence(), body }));
+    const token = await resolveCredential(getCredential);
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.RESULT, clockOffsetMs, sequence, body })),
+    );
     if (!ok) throw new AgentProtocolError(`reportResult failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }
 
   async function reportEvidence({ jobId = null, evidenceItems } = {}) {
-    const { status, ok, json } = await send(ROUTES.RESULTS, await resolveCredential(getCredential), buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence: nextSequence(), body: { jobId, evidenceItems } }));
+    const token = await resolveCredential(getCredential);
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence, body: { jobId, evidenceItems } })),
+    );
     if (!ok) throw new AgentProtocolError(`reportEvidence failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};
   }

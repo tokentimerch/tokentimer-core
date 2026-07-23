@@ -60,10 +60,16 @@ Required for install:
   --workspace-id ID      Workspace the agent belongs to (recorded in
                          config.json; the bootstrap token is already
                          workspace-scoped server-side).
-  Bootstrap token        Via TOKENTIMER_AGENT_BOOTSTRAP_TOKEN env var
-                         (preferred; keeps it out of shell history) or
-                         --bootstrap-token TOKEN. Single-use ttboot_ token
-                         created in the dashboard (CertOps > Deploy an agent).
+  Bootstrap token        Supplied interactively: when neither the
+                         TOKENTIMER_AGENT_BOOTSTRAP_TOKEN env var nor
+                         --bootstrap-token is given, the installer reads the
+                         token from a hidden prompt (recommended; nothing
+                         lands in shell history or process listings). The
+                         env var is the non-interactive alternative.
+                         --bootstrap-token TOKEN still works but is
+                         discouraged: argv is visible in process listings.
+                         Single-use ttboot_ token created in the dashboard
+                         (CertOps > Deploy an agent).
 
 Options:
   --ca-bundle PATH       PEM CA bundle for a private-CA control plane
@@ -81,7 +87,8 @@ Layout created:
   /opt/tokentimer-agent/state   config dir, mode 0700, owner tokentimer-agent:
                                 config.json (0600), credential (0600, written
                                 by the agent at registration), bootstrap.env
-                                (0600, delete after first successful start)
+                                (0600, deleted automatically by the agent
+                                after its first successful registration)
 
 After install:
   systemctl status tokentimer-agent
@@ -164,15 +171,46 @@ fi
 # ----------------------------------------------------------- validate input
 [ -n "$API_URL" ] || fail "--api-url is required (control plane base URL)"
 [ -n "$WORKSPACE_ID" ] || fail "--workspace-id is required"
-[ -n "$BOOTSTRAP_TOKEN" ] || fail "bootstrap token is required: set TOKENTIMER_AGENT_BOOTSTRAP_TOKEN or pass --bootstrap-token"
-case "$BOOTSTRAP_TOKEN" in
-  ttboot_*) : ;;
-  *) fail "bootstrap token does not look like a ttboot_ token (value not shown)" ;;
-esac
+
+# Hidden interactive prompt (preferred path): the dashboard's copyable
+# command carries no token; the operator pastes it here, with terminal echo
+# disabled, so it never touches shell history or process listings.
+if [ -z "$BOOTSTRAP_TOKEN" ] && [ "$DRY_RUN" -eq 0 ]; then
+  if [ -t 0 ]; then
+    printf '%s' "install-agent: paste the bootstrap token (input hidden): " >&2
+    stty -echo
+    # Restore echo even if the read is interrupted.
+    trap 'stty echo 2>/dev/null || true' EXIT INT TERM
+    IFS= read -r BOOTSTRAP_TOKEN
+    stty echo
+    trap - EXIT INT TERM
+    printf '\n' >&2
+  fi
+fi
+if [ -z "$BOOTSTRAP_TOKEN" ] && [ "$DRY_RUN" -eq 1 ]; then
+  log "dry-run: no bootstrap token supplied; a real install prompts for it interactively."
+else
+  [ -n "$BOOTSTRAP_TOKEN" ] || fail "bootstrap token is required: paste it at the interactive prompt, or set TOKENTIMER_AGENT_BOOTSTRAP_TOKEN"
+  case "$BOOTSTRAP_TOKEN" in
+    ttboot_*) : ;;
+    *) fail "bootstrap token does not look like a ttboot_ token (value not shown)" ;;
+  esac
+fi
 case "$API_URL" in
   http://*|https://*) : ;;
   *) fail "--api-url must start with http:// or https://" ;;
 esac
+# These values are interpolated into config.json below; refuse anything that
+# could break out of a JSON string instead of trying to escape it.
+case "$API_URL" in
+  *\"*|*\\*) fail "--api-url must not contain double quotes or backslashes" ;;
+esac
+case "$WORKSPACE_ID" in
+  *\"*|*\\*) fail "--workspace-id must not contain double quotes or backslashes" ;;
+esac
+if printf '%s%s' "$API_URL" "$WORKSPACE_ID" | LC_ALL=C tr -d '[:print:]' | grep -q .; then
+  fail "--api-url and --workspace-id must not contain control or non-printable characters"
+fi
 if [ -n "$CA_BUNDLE" ]; then
   [ -f "$CA_BUNDLE" ] || fail "--ca-bundle file not found: $CA_BUNDLE"
   grep -q "BEGIN CERTIFICATE" "$CA_BUNDLE" || fail "--ca-bundle contains no PEM certificate block"
@@ -217,15 +255,33 @@ if [ "$IS_DARWIN" -eq 0 ]; then
 fi
 
 # ------------------------------------------------------------ install files
+# Staged, atomic-swap install: extract into a fresh staging dir next to the
+# app dir, then swap it into place. A failed copy can never leave a
+# half-written app dir behind, and a running agent keeps its old files until
+# the swap (systemd restart picks up the new tree).
 log "Installing agent package from $PACKAGE_DIR to $APP_DIR"
-run mkdir -p "$APP_DIR"
-# Copy the package contents (src/, bin/, package.json, scripts/). The agent
-# is zero-dependency, so no npm/pnpm install step is needed.
+run mkdir -p "$INSTALL_ROOT"
 if [ "$DRY_RUN" -eq 1 ]; then
-  printf '%s\n' "[dry-run] cp -R $PACKAGE_DIR/. $APP_DIR/ (excluding node_modules)"
+  printf '%s\n' "[dry-run] stage $PACKAGE_DIR into $APP_DIR.staging.\$\$ (excluding node_modules), then atomically swap into $APP_DIR"
 else
+  APP_STAGING="$APP_DIR.staging.$$"
+  APP_PREVIOUS="$APP_DIR.previous.$$"
+  rm -rf "$APP_STAGING"
+  mkdir -p "$APP_STAGING"
   # tar pipe preserves layout and lets us exclude node_modules portably.
-  (cd "$PACKAGE_DIR" && tar -cf - --exclude=./node_modules .) | (cd "$APP_DIR" && tar -xf -)
+  if ! (cd "$PACKAGE_DIR" && tar -cf - --exclude=./node_modules .) | (cd "$APP_STAGING" && tar -xf -); then
+    rm -rf "$APP_STAGING"
+    fail "failed to stage the agent package; $APP_DIR was left untouched"
+  fi
+  if [ -d "$APP_DIR" ]; then
+    mv "$APP_DIR" "$APP_PREVIOUS"
+  fi
+  if ! mv "$APP_STAGING" "$APP_DIR"; then
+    [ -d "$APP_PREVIOUS" ] && mv "$APP_PREVIOUS" "$APP_DIR"
+    rm -rf "$APP_STAGING"
+    fail "failed to activate the staged agent package; the previous install was restored"
+  fi
+  rm -rf "$APP_PREVIOUS"
 fi
 
 run mkdir -p "$STATE_DIR"
@@ -250,6 +306,10 @@ if [ -f "$CONFIG_PATH" ] && [ "$DRY_RUN" -eq 0 ]; then
 elif [ "$DRY_RUN" -eq 1 ]; then
   printf '%s\n' "[dry-run] write $CONFIG_PATH (0600) with serverUrl=$API_URL workspaceId=$WORKSPACE_ID${CA_BUNDLE_DEST:+ caBundlePath=$CA_BUNDLE_DEST}"
 else
+  # Values were charset-validated above (no quotes/backslashes/control
+  # chars), so plain interpolation cannot produce malformed JSON. Written
+  # to a temp file first and renamed so a crash never leaves a torn file.
+  CONFIG_TMP="$CONFIG_PATH.tmp.$$"
   umask 177
   {
     printf '{\n'
@@ -259,23 +319,30 @@ else
       printf ',\n  "caBundlePath": "%s"' "$CA_BUNDLE_DEST"
     fi
     printf '\n}\n'
-  } > "$CONFIG_PATH"
+  } > "$CONFIG_TMP"
   umask 022
-  chmod 0600 "$CONFIG_PATH"
+  chmod 0600 "$CONFIG_TMP"
+  mv "$CONFIG_TMP" "$CONFIG_PATH"
+  # Sanity-parse the result with the node we already verified, so a bad
+  # value can never install an unreadable config.
+  node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$CONFIG_PATH" \
+    || fail "generated $CONFIG_PATH is not valid JSON (unexpected characters in --api-url/--workspace-id?)"
 fi
 
 # --------------------------------------- bootstrap token env file (0600)
 # The single-use ttboot_ token is stored only for the service's first-run
-# registration and is never printed by this script. Delete bootstrap.env
-# once the agent shows up as active in the dashboard.
+# registration and is never printed by this script. The agent deletes
+# bootstrap.env itself right after a successful registration.
 BOOTSTRAP_ENV="$STATE_DIR/bootstrap.env"
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s\n' "[dry-run] write $BOOTSTRAP_ENV (0600) with TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=<redacted>"
 else
+  BOOTSTRAP_ENV_TMP="$BOOTSTRAP_ENV.tmp.$$"
   umask 177
-  printf 'TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=%s\n' "$BOOTSTRAP_TOKEN" > "$BOOTSTRAP_ENV"
+  printf 'TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=%s\n' "$BOOTSTRAP_TOKEN" > "$BOOTSTRAP_ENV_TMP"
   umask 022
-  chmod 0600 "$BOOTSTRAP_ENV"
+  chmod 0600 "$BOOTSTRAP_ENV_TMP"
+  mv "$BOOTSTRAP_ENV_TMP" "$BOOTSTRAP_ENV"
 fi
 
 if [ "$IS_DARWIN" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
@@ -304,8 +371,8 @@ log "  1. Check the service:      systemctl status $UNIT_NAME"
 log "  2. Follow the logs:        journalctl -u $UNIT_NAME -f"
 log "  3. Confirm registration in the dashboard (CertOps > Agent fleet):"
 log "     the agent should appear as active within about a minute."
-log "  4. After it registers, remove the single-use bootstrap token file:"
-log "     rm $BOOTSTRAP_ENV"
-log "  5. Configure agent-local policy and discovery in $CONFIG_PATH"
+log "     (The agent deletes the single-use $BOOTSTRAP_ENV itself after"
+log "     registering; no manual cleanup is needed.)"
+log "  4. Configure agent-local policy and discovery in $CONFIG_PATH"
 log "     (allowlists are default-deny until you set them), then:"
 log "     systemctl restart $UNIT_NAME"

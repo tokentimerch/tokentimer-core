@@ -112,7 +112,14 @@ test("google-cloud-dns: the assertion JWT is RS256-signed and carries the SA cla
 // ---------------------------------------------------------------------------
 
 test("google-cloud-dns: present exchanges the JWT then POSTs an additions change", async () => {
-  const fetchStub = makeFetchStub(tokenResponder(() => ({ status: 200, body: "{}" })));
+  const fetchStub = makeFetchStub(
+    tokenResponder((url, options) => {
+      if (options.method === "GET") {
+        return { status: 200, body: '{"rrsets":[]}' };
+      }
+      return { status: 200, body: "{}" };
+    }),
+  );
   const solver = createDnsSolver({
     provider: "google-cloud-dns",
     credentials: CREDENTIALS,
@@ -122,14 +129,21 @@ test("google-cloud-dns: present exchanges the JWT then POSTs an additions change
   const result = await solver.presentChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
-  assert.equal(fetchStub.calls.length, 2);
+  assert.equal(fetchStub.calls.length, 3);
 
   const tokenCall = fetchStub.calls[0];
   assert.equal(tokenCall.url, TOKEN_URL);
   assert.match(tokenCall.options.body, /grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer/);
   assert.match(tokenCall.options.body, /assertion=/);
 
-  const changeCall = fetchStub.calls[1];
+  const rrsetCall = fetchStub.calls[1];
+  assert.match(
+    rrsetCall.url,
+    /\/managedZones\/example-zone\/rrsets\?name=_acme-challenge\.example\.com\.&type=TXT$/,
+  );
+  assert.equal(rrsetCall.options.method, "GET");
+
+  const changeCall = fetchStub.calls[2];
   assert.equal(
     changeCall.url,
     `${API_BASE_URL}/projects/project-1/managedZones/example-zone/changes`,
@@ -147,8 +161,58 @@ test("google-cloud-dns: present exchanges the JWT then POSTs an additions change
   });
 });
 
-test("google-cloud-dns: cleanup POSTs a deletions change for the same rrset", async () => {
-  const fetchStub = makeFetchStub(tokenResponder(() => ({ status: 200, body: "{}" })));
+test("google-cloud-dns: present merges with pre-existing rrdatas (deletions + additions)", async () => {
+  const existingRrset = {
+    name: "_acme-challenge.example.com.",
+    type: "TXT",
+    ttl: 120,
+    rrdatas: ['"sibling-value"'],
+  };
+  const fetchStub = makeFetchStub(
+    tokenResponder((url, options) => {
+      if (options.method === "GET") {
+        return { status: 200, body: JSON.stringify({ rrsets: [existingRrset] }) };
+      }
+      return { status: 200, body: "{}" };
+    }),
+  );
+  const solver = createDnsSolver({
+    provider: "google-cloud-dns",
+    credentials: CREDENTIALS,
+    fetchImpl: fetchStub,
+  });
+
+  const result = await solver.presentChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(JSON.parse(fetchStub.calls[2].options.body), {
+    deletions: [existingRrset],
+    additions: [
+      {
+        name: "_acme-challenge.example.com.",
+        type: "TXT",
+        ttl: 120,
+        rrdatas: ['"sibling-value"', '"token-value"'],
+      },
+    ],
+  });
+});
+
+test("google-cloud-dns: cleanup removes only the challenge value and keeps siblings", async () => {
+  const existingRrset = {
+    name: "_acme-challenge.example.com.",
+    type: "TXT",
+    ttl: 60,
+    rrdatas: ['"sibling-value"', '"token-value"'],
+  };
+  const fetchStub = makeFetchStub(
+    tokenResponder((url, options) => {
+      if (options.method === "GET") {
+        return { status: 200, body: JSON.stringify({ rrsets: [existingRrset] }) };
+      }
+      return { status: 200, body: "{}" };
+    }),
+  );
   const solver = createDnsSolver({
     provider: "google-cloud-dns",
     credentials: CREDENTIALS,
@@ -158,16 +222,76 @@ test("google-cloud-dns: cleanup POSTs a deletions change for the same rrset", as
   const result = await solver.cleanupChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
-  const body = JSON.parse(fetchStub.calls[1].options.body);
-  assert.ok(Array.isArray(body.deletions));
-  assert.equal(body.deletions[0].name, "_acme-challenge.example.com.");
+  assert.deepEqual(JSON.parse(fetchStub.calls[2].options.body), {
+    deletions: [existingRrset],
+    additions: [
+      {
+        name: "_acme-challenge.example.com.",
+        type: "TXT",
+        ttl: 60,
+        rrdatas: ['"sibling-value"'],
+      },
+    ],
+  });
+});
+
+test("google-cloud-dns: cleanup of the last value deletes the rrset outright", async () => {
+  const existingRrset = {
+    name: "_acme-challenge.example.com.",
+    type: "TXT",
+    ttl: 60,
+    rrdatas: ['"token-value"'],
+  };
+  const fetchStub = makeFetchStub(
+    tokenResponder((url, options) => {
+      if (options.method === "GET") {
+        return { status: 200, body: JSON.stringify({ rrsets: [existingRrset] }) };
+      }
+      return { status: 200, body: "{}" };
+    }),
+  );
+  const solver = createDnsSolver({
+    provider: "google-cloud-dns",
+    credentials: CREDENTIALS,
+    fetchImpl: fetchStub,
+  });
+
+  const result = await solver.cleanupChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  const body = JSON.parse(fetchStub.calls[2].options.body);
+  assert.deepEqual(body, { deletions: [existingRrset] });
+});
+
+test("google-cloud-dns: cleanup of an already-absent value is idempotent success", async () => {
+  const fetchStub = makeFetchStub(
+    tokenResponder((url, options) => {
+      if (options.method === "GET") {
+        return { status: 200, body: '{"rrsets":[]}' };
+      }
+      return { status: 500, body: "should never be called" };
+    }),
+  );
+  const solver = createDnsSolver({
+    provider: "google-cloud-dns",
+    credentials: CREDENTIALS,
+    fetchImpl: fetchStub,
+  });
+
+  const result = await solver.cleanupChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  assert.equal(fetchStub.calls.length, 2);
 });
 
 test("google-cloud-dns: the managed zone is looked up by dnsName when absent", async () => {
   const fetchStub = makeFetchStub(
-    tokenResponder((url) => {
+    tokenResponder((url, options) => {
       if (url.includes("/managedZones?dnsName=")) {
         return { status: 200, body: '{"managedZones":[{"name":"looked-up-zone"}]}' };
+      }
+      if (options.method === "GET") {
+        return { status: 200, body: '{"rrsets":[]}' };
       }
       return { status: 200, body: "{}" };
     }),
@@ -181,9 +305,10 @@ test("google-cloud-dns: the managed zone is looked up by dnsName when absent", a
   const result = await solver.presentChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
-  assert.equal(fetchStub.calls.length, 3);
+  assert.equal(fetchStub.calls.length, 4);
   assert.match(fetchStub.calls[1].url, /managedZones\?dnsName=example\.com\.$/);
-  assert.match(fetchStub.calls[2].url, /\/managedZones\/looked-up-zone\/changes$/);
+  assert.match(fetchStub.calls[2].url, /\/managedZones\/looked-up-zone\/rrsets\?/);
+  assert.match(fetchStub.calls[3].url, /\/managedZones\/looked-up-zone\/changes$/);
 });
 
 test("google-cloud-dns: an empty managed zone lookup maps to ok:false", async () => {

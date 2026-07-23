@@ -125,20 +125,42 @@ test("route53: TXT values are double-quoted with backslash/quote escaping", () =
   assert.equal(quoteTxtValue("has\\backslash"), '"has\\\\backslash"');
 });
 
-test("route53: change batch XML carries action, FQDN name, and quoted value", () => {
-  const xml = buildChangeBatchXml("UPSERT", "_acme-challenge.example.com", "abc");
+test("route53: change batch XML carries action, FQDN name, and the whole value set", async () => {
+  const xml = buildChangeBatchXml("UPSERT", "_acme-challenge.example.com", ['"abc"', '"def"'], 60);
   assert.match(xml, /<Action>UPSERT<\/Action>/);
   assert.match(xml, /<Name>_acme-challenge\.example\.com\.<\/Name>/);
   assert.match(xml, /<Type>TXT<\/Type>/);
   assert.match(xml, /<Value>&quot;abc&quot;<\/Value>/);
+  assert.match(xml, /<Value>&quot;def&quot;<\/Value>/);
 });
 
 // ---------------------------------------------------------------------------
 // present / cleanup dispatch
 // ---------------------------------------------------------------------------
 
-test("route53: present UPSERTs via ChangeResourceRecordSets on the configured zone", async () => {
-  const fetchStub = makeFetchStub(() => ({ status: 200 }));
+/** ListResourceRecordSets XML with one TXT record set (or none). */
+function listRrsetsBody(name, values, ttl = 60) {
+  if (!values) {
+    return "<ListResourceRecordSetsResponse><ResourceRecordSets></ResourceRecordSets></ListResourceRecordSetsResponse>";
+  }
+  const records = values
+    .map((value) => `<ResourceRecord><Value>${value.replace(/"/g, "&quot;")}</Value></ResourceRecord>`)
+    .join("");
+  return (
+    "<ListResourceRecordSetsResponse><ResourceRecordSets><ResourceRecordSet>" +
+    `<Name>${name}</Name><Type>TXT</Type><TTL>${ttl}</TTL>` +
+    `<ResourceRecords>${records}</ResourceRecords>` +
+    "</ResourceRecordSet></ResourceRecordSets></ListResourceRecordSetsResponse>"
+  );
+}
+
+test("route53: present lists the rrset then UPSERTs via ChangeResourceRecordSets", async () => {
+  const fetchStub = makeFetchStub((url, options) => {
+    if (options.method === "GET") {
+      return { status: 200, body: listRrsetsBody(null, null) };
+    }
+    return { status: 200 };
+  });
   const solver = createDnsSolver({
     provider: "route53",
     credentials: CREDENTIALS,
@@ -148,17 +170,59 @@ test("route53: present UPSERTs via ChangeResourceRecordSets on the configured zo
   const result = await solver.presentChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
-  assert.equal(fetchStub.calls.length, 1);
-  const call = fetchStub.calls[0];
-  assert.equal(call.url, `https://${API_HOST}/2013-04-01/hostedzone/Z123EXAMPLE/rrset`);
-  assert.equal(call.options.method, "POST");
-  assert.match(call.options.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//);
-  assert.match(call.options.body, /<Action>UPSERT<\/Action>/);
-  assert.match(call.options.body, /&quot;token-value&quot;/);
+  assert.equal(fetchStub.calls.length, 2);
+
+  const listCall = fetchStub.calls[0];
+  assert.match(
+    listCall.url,
+    /\/2013-04-01\/hostedzone\/Z123EXAMPLE\/rrset\?name=_acme-challenge\.example\.com\.&type=TXT&maxitems=1$/,
+  );
+  assert.equal(listCall.options.method, "GET");
+
+  const changeCall = fetchStub.calls[1];
+  assert.equal(changeCall.url, `https://${API_HOST}/2013-04-01/hostedzone/Z123EXAMPLE/rrset`);
+  assert.equal(changeCall.options.method, "POST");
+  assert.match(changeCall.options.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//);
+  assert.match(changeCall.options.body, /<Action>UPSERT<\/Action>/);
+  assert.match(changeCall.options.body, /&quot;token-value&quot;/);
 });
 
-test("route53: cleanup sends a DELETE change for the same rrset", async () => {
-  const fetchStub = makeFetchStub(() => ({ status: 200 }));
+test("route53: present preserves pre-existing TXT values in the UPSERT", async () => {
+  const fetchStub = makeFetchStub((url, options) => {
+    if (options.method === "GET") {
+      return {
+        status: 200,
+        body: listRrsetsBody("_acme-challenge.example.com.", ['"sibling-value"'], 120),
+      };
+    }
+    return { status: 200 };
+  });
+  const solver = createDnsSolver({
+    provider: "route53",
+    credentials: CREDENTIALS,
+    fetchImpl: fetchStub,
+  });
+
+  const result = await solver.presentChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  const body = fetchStub.calls[1].options.body;
+  assert.match(body, /<Action>UPSERT<\/Action>/);
+  assert.match(body, /&quot;sibling-value&quot;/);
+  assert.match(body, /&quot;token-value&quot;/);
+  assert.match(body, /<TTL>120<\/TTL>/);
+});
+
+test("route53: cleanup with remaining siblings UPSERTs only the leftovers", async () => {
+  const fetchStub = makeFetchStub((url, options) => {
+    if (options.method === "GET") {
+      return {
+        status: 200,
+        body: listRrsetsBody("_acme-challenge.example.com.", ['"sibling-value"', '"token-value"']),
+      };
+    }
+    return { status: 200 };
+  });
   const solver = createDnsSolver({
     provider: "route53",
     credentials: CREDENTIALS,
@@ -168,11 +232,62 @@ test("route53: cleanup sends a DELETE change for the same rrset", async () => {
   const result = await solver.cleanupChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
-  assert.match(fetchStub.calls[0].options.body, /<Action>DELETE<\/Action>/);
+  const body = fetchStub.calls[1].options.body;
+  assert.match(body, /<Action>UPSERT<\/Action>/);
+  assert.match(body, /&quot;sibling-value&quot;/);
+  assert.doesNotMatch(body, /&quot;token-value&quot;/);
+});
+
+test("route53: cleanup of the last value sends a DELETE with the exact live set", async () => {
+  const fetchStub = makeFetchStub((url, options) => {
+    if (options.method === "GET") {
+      return {
+        status: 200,
+        body: listRrsetsBody("_acme-challenge.example.com.", ['"token-value"']),
+      };
+    }
+    return { status: 200 };
+  });
+  const solver = createDnsSolver({
+    provider: "route53",
+    credentials: CREDENTIALS,
+    fetchImpl: fetchStub,
+  });
+
+  const result = await solver.cleanupChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  const body = fetchStub.calls[1].options.body;
+  assert.match(body, /<Action>DELETE<\/Action>/);
+  assert.match(body, /&quot;token-value&quot;/);
+});
+
+test("route53: cleanup of an already-absent value is idempotent success", async () => {
+  const fetchStub = makeFetchStub((url, options) => {
+    if (options.method === "GET") {
+      // The list API returns the lexicographically NEXT record set when
+      // there is no exact match; a non-matching name must not count.
+      return {
+        status: 200,
+        body: listRrsetsBody("zzz.example.com.", ['"unrelated"']),
+      };
+    }
+    return { status: 500, body: "should never be called" };
+  });
+  const solver = createDnsSolver({
+    provider: "route53",
+    credentials: CREDENTIALS,
+    fetchImpl: fetchStub,
+  });
+
+  const result = await solver.cleanupChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  assert.equal(fetchStub.calls.length, 1);
 });
 
 test("route53: hosted zone is looked up by name when hostedZoneId is absent", async () => {
-  const fetchStub = makeFetchStub((url) => {
+  const fetchStub = makeFetchStub((url, options) => {
     if (url.includes("/hostedzonebyname")) {
       return {
         status: 200,
@@ -181,6 +296,9 @@ test("route53: hosted zone is looked up by name when hostedZoneId is absent", as
           "<Id>/hostedzone/ZLOOKEDUP</Id><Name>example.com.</Name>" +
           "</HostedZone></HostedZones></ListHostedZonesByNameResponse>",
       };
+    }
+    if (options.method === "GET") {
+      return { status: 200, body: listRrsetsBody(null, null) };
     }
     return { status: 200 };
   });
@@ -193,9 +311,10 @@ test("route53: hosted zone is looked up by name when hostedZoneId is absent", as
   const result = await solver.presentChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
-  assert.equal(fetchStub.calls.length, 2);
+  assert.equal(fetchStub.calls.length, 3);
   assert.match(fetchStub.calls[0].url, /hostedzonebyname\?dnsname=example\.com&maxitems=1$/);
-  assert.match(fetchStub.calls[1].url, /\/hostedzone\/ZLOOKEDUP\/rrset$/);
+  assert.match(fetchStub.calls[1].url, /\/hostedzone\/ZLOOKEDUP\/rrset\?name=/);
+  assert.match(fetchStub.calls[2].url, /\/hostedzone\/ZLOOKEDUP\/rrset$/);
 });
 
 test("route53: a lookup returning a non-matching zone maps to ok:false", async () => {

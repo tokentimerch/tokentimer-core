@@ -56,6 +56,7 @@ const {
 } = require("../services/certops/agentDispatch");
 const {
   createCertificateEvidence,
+  createControllerObservationEvidence,
 } = require("../services/certops/evidence");
 const { CERTOPS_JOB_NOT_FOUND } = require("../services/certops/jobs");
 
@@ -558,9 +559,49 @@ async function resultsHandler(req, res, options = {}) {
       const envelope = validateEnvelope(req.body, "evidence");
       const body = validateEvidenceBody(envelope);
       if (!body.jobId) {
-        // The evidence store is job-scoped; agent-level evidence without
-        // a jobId has no persistence target yet.
-        throw messageError("jobId is required for agent evidence messages");
+        // Jobless evidence is the discovery path: agents report observed
+        // certificate inventory (certificate.observed) with jobId null.
+        // Only that event type has a jobless persistence target; anything
+        // else without a jobId stays invalid.
+        const onlyObservations = body.evidenceItems.every(
+          (item) => item.eventType === "certificate.observed",
+        );
+        if (!onlyObservations) {
+          throw messageError(
+            "jobId is required for agent evidence messages other than certificate.observed",
+          );
+        }
+        await (options.enforceAgentSequence || enforceAgentSequence)({
+          client: options.dbPool,
+          agentRowId: req.certopsAgent.id,
+          envelope,
+        });
+        const persistObservation =
+          options.createControllerObservationEvidence ||
+          createControllerObservationEvidence;
+        const observations = [];
+        for (const item of body.evidenceItems) {
+          const evidence = await persistObservation({
+            client: options.dbPool,
+            workspaceId: req.certopsAgent.workspaceId,
+            evidenceType: item.eventType,
+            metadata: {
+              summary: item.summary ?? null,
+              fingerprintSha256: item.fingerprintSha256 ?? null,
+              agentId: req.certopsAgent.agentId,
+              ...(Array.isArray(item.metadata)
+                ? Object.fromEntries(
+                    item.metadata.map((entry) => [entry.name, entry.value]),
+                  )
+                : {}),
+            },
+            observedAt: item.observedAt,
+          });
+          observations.push(evidence);
+        }
+        return res
+          .status(200)
+          .json({ ok: true, evidenceCount: observations.length });
       }
       // Sequence enforcement (post-auth; evidence carries no dispatch
       // nonce, so this is the only anti-replay/ordering gate here). Runs

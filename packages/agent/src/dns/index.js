@@ -69,6 +69,46 @@ const powerdns = require("./providers/powerdns.js");
  * the ACME tool's job, not this module's. */
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 
+/**
+ * In-process serialization of present/cleanup operations per
+ * `${provider}:${zone}:${recordName}`: a Map of promise chains so two
+ * concurrent operations on the same record within one process never
+ * interleave their read-modify-write sequences. Entries are deleted once
+ * a chain settles and is still the tail.
+ *
+ * Cross-process serialization is deliberately OUT OF SCOPE: each hook
+ * invocation is its own process, so no in-process lock can cover it. The
+ * providers' read-modify-write merging (GET existing values, merge, write
+ * back) is the primary protection against concurrent challenge writers;
+ * this mutex only removes the avoidable in-process race window.
+ */
+const recordOperationChains = new Map();
+
+/**
+ * Chains `task` behind any in-flight operation for `key`, returning the
+ * task's own promise (rejections propagate to the caller but never poison
+ * the stored chain).
+ *
+ * @param {string} key
+ * @param {() => Promise<object>} task
+ * @returns {Promise<object>}
+ */
+function withRecordLock(key, task) {
+  const previous = recordOperationChains.get(key) || Promise.resolve();
+  const result = previous.then(() => task());
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  recordOperationChains.set(key, tail);
+  tail.then(() => {
+    if (recordOperationChains.get(key) === tail) {
+      recordOperationChains.delete(key);
+    }
+  });
+  return result;
+}
+
 const PROVIDER_MODULES = Object.freeze({
   cloudflare,
   route53,
@@ -231,9 +271,18 @@ function createDnsSolver({
 
   return {
     provider,
-    presentChallenge: (inputs) => run("presentChallenge", inputs),
-    cleanupChallenge: (inputs) => run("cleanupChallenge", inputs),
+    presentChallenge: (inputs) =>
+      withRecordLock(recordLockKey(inputs), () => run("presentChallenge", inputs)),
+    cleanupChallenge: (inputs) =>
+      withRecordLock(recordLockKey(inputs), () => run("cleanupChallenge", inputs)),
   };
+
+  /** @param {{ zone?: unknown, recordName?: unknown }} [inputs] */
+  function recordLockKey(inputs) {
+    const zone = inputs && inputs.zone;
+    const recordName = inputs && inputs.recordName;
+    return `${provider}:${String(zone)}:${String(recordName)}`;
+  }
 }
 
 module.exports = {

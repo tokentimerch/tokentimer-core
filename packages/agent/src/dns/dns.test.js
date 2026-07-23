@@ -250,3 +250,173 @@ test("a credential echoed past the excerpt window still triggers redaction", asy
   const result = await solver.presentChallenge(CHALLENGE);
   assert.equal(result.detail, "[redacted]");
 });
+
+// ---------------------------------------------------------------------------
+// shared HTTP transport hardening (internal.js)
+// ---------------------------------------------------------------------------
+
+const {
+  fetchWithTimeout,
+  assertSafeProviderBaseUrl,
+  MAX_PROVIDER_RESPONSE_BYTES,
+} = require("./internal.js");
+
+/** Minimal WHATWG-ish body stream double built from Buffer chunks. */
+function fakeBodyStream(chunks) {
+  const state = { cancelled: false };
+  let index = 0;
+  const stream = {
+    getReader() {
+      return {
+        async read() {
+          if (state.cancelled || index >= chunks.length) {
+            return { done: true, value: undefined };
+          }
+          const value = chunks[index];
+          index += 1;
+          return { done: false, value };
+        },
+        async cancel() {
+          state.cancelled = true;
+        },
+        releaseLock() {},
+      };
+    },
+  };
+  return { stream, state };
+}
+
+test("fetchWithTimeout always passes redirect:\"error\" to the fetch impl", async () => {
+  let seenOptions;
+  const fetchImpl = async (url, options) => {
+    seenOptions = options;
+    return { status: 200, text: async () => "{}" };
+  };
+
+  await fetchWithTimeout(fetchImpl, "https://api.example", { method: "GET" }, 1000);
+  assert.equal(seenOptions.redirect, "error");
+
+  // A provider going through the solver layer gets the same treatment.
+  const fetchStub = makeFetchStub(() => ({ status: 200, body: "{}" }));
+  await cloudflareSolver(fetchStub).presentChallenge(CHALLENGE);
+  assert.equal(fetchStub.calls[0].options.redirect, "error");
+});
+
+test("fetchWithTimeout rejects an oversized text() body instead of truncating", async () => {
+  const huge = "z".repeat(MAX_PROVIDER_RESPONSE_BYTES + 1);
+  const fetchImpl = async () => ({ status: 200, text: async () => huge });
+
+  await assert.rejects(
+    fetchWithTimeout(fetchImpl, "https://api.example", { method: "GET" }, 1000),
+    /size limit/,
+  );
+});
+
+test("fetchWithTimeout reads streamed bodies and rejects past the bound (reader cancelled)", async () => {
+  const chunk = Buffer.alloc(64 * 1024, 0x61);
+  const { stream, state } = fakeBodyStream([chunk, chunk, chunk, chunk, chunk]);
+  const fetchImpl = async () => ({ status: 200, body: stream });
+
+  await assert.rejects(
+    fetchWithTimeout(fetchImpl, "https://api.example", { method: "GET" }, 1000),
+    /size limit/,
+  );
+  assert.equal(state.cancelled, true);
+});
+
+test("fetchWithTimeout resolves streamed bodies within the bound", async () => {
+  const { stream } = fakeBodyStream([Buffer.from("hello "), Buffer.from("world")]);
+  const fetchImpl = async () => ({ status: 200, body: stream });
+
+  const result = await fetchWithTimeout(fetchImpl, "https://api.example", { method: "GET" }, 1000);
+  assert.equal(result.ok, true);
+  assert.equal(result.bodyText, "hello world");
+});
+
+test("an oversized provider response maps to ok:false through the solver layer", async () => {
+  const huge = "z".repeat(MAX_PROVIDER_RESPONSE_BYTES + 1);
+  const fetchStub = makeFetchStub(() => ({ status: 200, body: huge }));
+  const solver = cloudflareSolver(fetchStub);
+
+  const result = await solver.presentChallenge(CHALLENGE);
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /size limit/);
+});
+
+test("assertSafeProviderBaseUrl accepts https and rejects unsafe URLs", () => {
+  assert.ok(assertSafeProviderBaseUrl("https://api.example/path"));
+  assert.throws(() => assertSafeProviderBaseUrl("not a url"), /not a valid URL/);
+  assert.throws(() => assertSafeProviderBaseUrl("https://u:p@api.example"), /embed credentials/);
+  assert.throws(() => assertSafeProviderBaseUrl("https://api.example#frag"), /hash fragment/);
+  assert.throws(() => assertSafeProviderBaseUrl("ftp://api.example"), /not allowed/);
+  assert.throws(() => assertSafeProviderBaseUrl("http://api.example"), /https/);
+});
+
+test("assertSafeProviderBaseUrl gates plain http behind allowInsecureLocalHttp + loopback", () => {
+  const opts = { allowInsecureLocalHttp: true };
+  assert.ok(assertSafeProviderBaseUrl("http://127.0.0.1:8081", opts));
+  assert.ok(assertSafeProviderBaseUrl("http://localhost:8081", opts));
+  assert.ok(assertSafeProviderBaseUrl("http://pdns.localhost", opts));
+  assert.ok(assertSafeProviderBaseUrl("http://[::1]:8081", opts));
+  assert.throws(() => assertSafeProviderBaseUrl("http://10.0.0.5:8081", opts), /loopback/);
+  assert.throws(() => assertSafeProviderBaseUrl("http://api.example", opts), /loopback/);
+});
+
+// ---------------------------------------------------------------------------
+// in-process per-record serialization
+// ---------------------------------------------------------------------------
+
+test("concurrent operations on the same record are serialized in-process", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const fetchImpl = async () => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    inFlight -= 1;
+    return { status: 200, text: async () => "{}" };
+  };
+  const solver = cloudflareSolver(fetchImpl);
+
+  const [first, second] = await Promise.all([
+    solver.presentChallenge(CHALLENGE),
+    solver.cleanupChallenge(CHALLENGE),
+  ]);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(maxInFlight, 1);
+});
+
+test("operations on different records are NOT serialized against each other", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const fetchImpl = async () => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    inFlight -= 1;
+    return { status: 200, text: async () => "{}" };
+  };
+  const solver = cloudflareSolver(fetchImpl);
+
+  await Promise.all([
+    solver.presentChallenge(CHALLENGE),
+    solver.presentChallenge({ ...CHALLENGE, recordName: "_acme-challenge.other.example.com" }),
+  ]);
+
+  assert.equal(maxInFlight, 2);
+});
+
+test("a rejected operation does not poison the per-record chain", async () => {
+  const solver = cloudflareSolver(makeFetchStub(() => ({ status: 200, body: "{}" })));
+
+  // Programmer error (missing txtValue) rejects...
+  await assert.rejects(
+    solver.presentChallenge({ zone: CHALLENGE.zone, recordName: CHALLENGE.recordName }),
+    /txtValue/,
+  );
+  // ...but the next operation on the same record still runs.
+  const result = await solver.presentChallenge(CHALLENGE);
+  assert.equal(result.ok, true);
+});

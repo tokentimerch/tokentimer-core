@@ -26,11 +26,16 @@
  *   }
  *
  * API surface used (dns.googleapis.com/dns/v1):
- *   GET  /projects/<p>/managedZones?dnsName=<zone>.      zone lookup
- *   POST /projects/<p>/managedZones/<mz>/changes         additions/deletions
+ *   GET  /projects/<p>/managedZones?dnsName=<zone>.       zone lookup
+ *   GET  /projects/<p>/managedZones/<mz>/rrsets?name=&type=TXT  rrset read
+ *   POST /projects/<p>/managedZones/<mz>/changes          additions/deletions
  *
  * Cloud DNS rrset TXT values are quoted strings and names are absolute
- * (trailing dot).
+ * (trailing dot). Changes REPLACE the whole rrset (deletions must match
+ * the live rrset exactly), so present() first reads the existing TXT
+ * rrset and submits deletions(old) + additions(old union new value);
+ * cleanup() removes only the quoted challenge value, adding the remainder
+ * back and deleting the rrset outright only when nothing remains.
  */
 
 const crypto = require("node:crypto");
@@ -202,6 +207,54 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
   }
 
   /**
+   * Reads the live TXT rrset at `recordFqdn` (absolute, trailing dot) via
+   * the rrsets list endpoint. Returns { ok:true, rrset } where rrset is
+   * { name, type, ttl, rrdatas } or null when it does not exist, or an
+   * ok:false operational failure. A 404 (older API surfaces) counts as
+   * "does not exist".
+   *
+   * @param {string} accessToken
+   * @param {string} managedZone
+   * @param {string} recordFqdn
+   */
+  async function readExistingTxtRrset(accessToken, managedZone, recordFqdn) {
+    const response = await fetchWithTimeout(
+      fetchImpl,
+      `${API_BASE_URL}/projects/${encodeURIComponent(credentials.project_id)}/managedZones/${encodeURIComponent(managedZone)}/rrsets?name=${encodeURIComponent(recordFqdn)}&type=TXT`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+      timeoutMs,
+    );
+    if (response.status === 404) {
+      return { ok: true, rrset: null };
+    }
+    if (!response.ok) {
+      return httpFailure("rrset read", response);
+    }
+
+    let rrset = null;
+    try {
+      const parsed = JSON.parse(response.bodyText);
+      const first =
+        parsed && Array.isArray(parsed.rrsets) ? parsed.rrsets[0] : null;
+      if (first && Array.isArray(first.rrdatas)) {
+        rrset = {
+          name: typeof first.name === "string" ? first.name : recordFqdn,
+          type: "TXT",
+          ttl: Number.isInteger(first.ttl) ? first.ttl : TXT_TTL_SECONDS,
+          rrdatas: first.rrdatas.filter((rrdata) => typeof rrdata === "string"),
+        };
+      }
+    } catch {
+      // A 2xx with an unparseable body is treated as "no rrset"; the
+      // subsequent change POST surfaces any real API problem.
+    }
+    return { ok: true, rrset };
+  }
+
+  /**
    * @param {"additions"|"deletions"} changeKind
    * @param {{ zone: string, recordName: string, txtValue: string }} inputs
    */
@@ -217,12 +270,50 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     }
 
     const recordFqdn = recordName.endsWith(".") ? recordName : `${recordName}.`;
-    const rrset = {
-      name: recordFqdn,
-      type: "TXT",
-      ttl: TXT_TTL_SECONDS,
-      rrdatas: [`"${txtValue}"`],
-    };
+    const existing = await readExistingTxtRrset(
+      tokenResult.accessToken,
+      zoneResult.managedZone,
+      recordFqdn,
+    );
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const quoted = `"${txtValue}"`;
+    const existingRrdatas = existing.rrset ? existing.rrset.rrdatas : [];
+
+    let newRrdatas;
+    if (changeKind === "additions") {
+      newRrdatas = existingRrdatas.includes(quoted)
+        ? existingRrdatas
+        : [...existingRrdatas, quoted];
+    } else {
+      if (!existing.rrset || !existingRrdatas.includes(quoted)) {
+        // Nothing to delete: cleanup is idempotent success.
+        return { ok: true };
+      }
+      newRrdatas = existingRrdatas.filter((rrdata) => rrdata !== quoted);
+    }
+
+    // Changes replace whole rrsets: deletions must mirror the live rrset
+    // exactly, additions carry the merged/remaining values.
+    const change = {};
+    if (existing.rrset) {
+      change.deletions = [existing.rrset];
+    }
+    if (newRrdatas.length > 0) {
+      change.additions = [
+        {
+          name: recordFqdn,
+          type: "TXT",
+          ttl: existing.rrset ? existing.rrset.ttl : TXT_TTL_SECONDS,
+          rrdatas: newRrdatas,
+        },
+      ];
+    }
+    if (!change.deletions && !change.additions) {
+      return { ok: true };
+    }
 
     const response = await fetchWithTimeout(
       fetchImpl,
@@ -233,7 +324,7 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
           Authorization: `Bearer ${tokenResult.accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ [changeKind]: [rrset] }),
+        body: JSON.stringify(change),
       },
       timeoutMs,
     );

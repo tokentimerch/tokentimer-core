@@ -182,6 +182,7 @@ describe("CertOps bulk-renew route", () => {
     const handler = bulkRenewCertificatesHandler({
       certificateLoader: async ({ certId }) =>
         certId === uuid(2) ? null : { id: certId },
+      activeJobFinder: async () => null,
       manualJobCreator: async () => {
         creatorCalls += 1;
         return { job: { id: "must-not-exist" } };

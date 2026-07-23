@@ -9,6 +9,7 @@ const {
   useWorkspaceMock,
   useCertOpsCanManageMock,
   useCertOpsBootstrapTokensMock,
+  useCertOpsAgentsMock,
   createBootstrapTokenMock,
   revokeBootstrapTokenMock,
   listAgentsMock,
@@ -16,6 +17,7 @@ const {
   useWorkspaceMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
   useCertOpsBootstrapTokensMock: vi.fn(),
+  useCertOpsAgentsMock: vi.fn(),
   createBootstrapTokenMock: vi.fn(),
   revokeBootstrapTokenMock: vi.fn(),
   listAgentsMock: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
   useCertOpsBootstrapTokens: useCertOpsBootstrapTokensMock,
+  useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
 vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
@@ -64,15 +67,40 @@ function tokensState(overrides = {}) {
   };
 }
 
+function agentsState(overrides = {}) {
+  return {
+    enabled: true,
+    agents: [],
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
+    ...overrides,
+  };
+}
+
+/** Runs the step-1 flow: fill the name, create the token, close the modal. */
+async function createTokenAndCloseModal() {
+  fireEvent.change(screen.getByLabelText(/^Name/), {
+    target: { value: 'dc1-edge' },
+  });
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Create bootstrap token' })
+  );
+  await screen.findByText(/shown only once and registers exactly one agent/);
+  fireEvent.click(screen.getByRole('button', { name: 'Continue to install' }));
+}
+
 describe('DeployAgentPanel', () => {
   beforeEach(() => {
     useWorkspaceMock.mockReset();
     useCertOpsCanManageMock.mockReset();
     useCertOpsBootstrapTokensMock.mockReset();
+    useCertOpsAgentsMock.mockReset();
     createBootstrapTokenMock.mockReset();
     revokeBootstrapTokenMock.mockReset();
     listAgentsMock.mockReset();
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
+    useCertOpsAgentsMock.mockReturnValue(agentsState());
     listAgentsMock.mockResolvedValue({ items: [] });
   });
 
@@ -121,7 +149,7 @@ describe('DeployAgentPanel', () => {
     expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
   });
 
-  it('creates a token and shows the one-time secret, then pre-fills the install command', async () => {
+  it('creates a token, shows the one-time secret, and keeps it out of the install command', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
     createBootstrapTokenMock.mockResolvedValue({
@@ -149,13 +177,103 @@ describe('DeployAgentPanel', () => {
     expect(
       await screen.findByText(/shown only once and registers exactly one agent/)
     ).toBeInTheDocument();
-    // Secret in show-once modal and pre-filled into the install command.
-    expect(screen.getAllByText(/ttboot_secret_value/).length).toBeGreaterThan(
-      0
+    // Secret appears only in the show-once display, never in the command.
+    expect(screen.getAllByText(/ttboot_secret_value/)).toHaveLength(1);
+
+    const commandBlock = screen.getByText(/install-agent\.sh/);
+    expect(commandBlock.textContent).toContain('--api-url');
+    expect(commandBlock.textContent).toContain("--workspace-id 'ws-1'");
+    expect(commandBlock.textContent).not.toContain('ttboot_secret_value');
+    expect(commandBlock.textContent).not.toContain('--bootstrap-token');
+    expect(commandBlock.textContent).not.toContain(
+      'TOKENTIMER_AGENT_BOOTSTRAP_TOKEN='
     );
+
+    // Helper text explains the installer's hidden token prompt.
+    expect(
+      screen.getByText(/installer will prompt for it \(hidden input\)/)
+    ).toBeInTheDocument();
   });
 
-  it('starts waiting after the installer step and reports a newly registered agent', async () => {
+  it('detects an agent that registered before the first poll via the token-creation baseline', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
+    // Fleet already loaded in the panel when the token is created.
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({
+        agents: [{ id: 'row-existing', agentId: 'agent-existing' }],
+      })
+    );
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+    // The new agent registered between token creation and the first poll:
+    // it must be reported on the very first tick, not treated as baseline.
+    listAgentsMock.mockResolvedValue({
+      items: [
+        {
+          id: 'row-existing',
+          agentId: 'agent-existing',
+          name: 'old-agent',
+          status: 'active',
+          createdAt: new Date(Date.now() - 3600000).toISOString(),
+        },
+        {
+          id: 'row-new',
+          agentId: 'agent-new',
+          name: 'dc1-edge',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    renderWithProviders(<DeployAgentPanel />);
+
+    await createTokenAndCloseModal();
+    fireEvent.click(screen.getByRole('button', { name: 'I ran the installer' }));
+
+    expect(await screen.findByText(/is now connected/)).toBeInTheDocument();
+    expect(listAgentsMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/dc1-edge/)).toBeInTheDocument();
+  });
+
+  it('detects a new agent by registration timestamp even when its id is in a stale baseline', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
+    // Baseline (stale) already contains the row id of the agent that will
+    // register; detection must fall through to the timestamp comparison.
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: [{ id: 'row-1', agentId: 'agent-1' }] })
+    );
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+    listAgentsMock.mockResolvedValue({
+      items: [
+        {
+          id: 'row-1',
+          agentId: 'agent-1',
+          name: 'dc1-edge',
+          status: 'active',
+          // Registered after token creation (clock-safe margin).
+          createdAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      ],
+    });
+
+    renderWithProviders(<DeployAgentPanel />);
+
+    await createTokenAndCloseModal();
+    fireEvent.click(screen.getByRole('button', { name: 'I ran the installer' }));
+
+    expect(await screen.findByText(/is now connected/)).toBeInTheDocument();
+    expect(screen.getByText(/dc1-edge/)).toBeInTheDocument();
+  });
+
+  it('falls back to a first-tick snapshot when waiting starts without a token created', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
     // First poll snapshots the fleet; second poll returns the new agent.

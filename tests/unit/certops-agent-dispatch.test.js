@@ -126,10 +126,11 @@ describe("agentDispatch.enforceAgentSequence", () => {
     );
   });
 
-  it("is a no-op for envelopes without a sequence (legacy agents)", async () => {
+  it("accepts a sequence-less envelope only while the agent has never sequenced", async () => {
     const client = {
-      query: async () => {
-        throw new Error("no query expected for a sequence-less envelope");
+      query: async (sql) => {
+        assert.match(sql, /SELECT last_sequence FROM certops_agents/);
+        return { rows: [{ last_sequence: 0 }] };
       },
     };
     await enforceAgentSequence({
@@ -142,6 +143,23 @@ describe("agentDispatch.enforceAgentSequence", () => {
       agentRowId: "agent-row-1",
       envelope: { sequence: 0 },
     });
+  });
+
+  it("rejects a sequence-less envelope once the agent has sent sequenced traffic (no-bypass)", async () => {
+    const client = {
+      query: async (sql) => {
+        assert.match(sql, /SELECT last_sequence FROM certops_agents/);
+        return { rows: [{ last_sequence: 12 }] };
+      },
+    };
+    await assert.rejects(
+      enforceAgentSequence({
+        client,
+        agentRowId: "agent-row-1",
+        envelope: {},
+      }),
+      (error) => error.code === CERTOPS_AGENT_SEQUENCE_REGRESSION,
+    );
   });
 });
 
@@ -277,8 +295,7 @@ describe("agentDispatch.registerAgent", () => {
 describe("agentDispatch.recordHeartbeat", () => {
   it("recovers an offline agent to active and reports the signing key", async () => {
     const updates = [];
-    const dbPool = createMockPool(() => ({ rows: [] }));
-    dbPool.query = async (sql, params) => {
+    const dbPool = createMockPool((sql, params) => {
       updates.push({ sql, params });
       return {
         rows: [
@@ -289,7 +306,7 @@ describe("agentDispatch.recordHeartbeat", () => {
           },
         ],
       };
-    };
+    });
 
     const result = await recordHeartbeat({
       dbPool,
@@ -308,22 +325,26 @@ describe("agentDispatch.recordHeartbeat", () => {
     assert.equal(result.status, "active");
     assert.equal(result.signingKeyId, "key-1");
     assert.equal(result.signingPublicKeyPem, "pem");
-    assert.equal(updates.length, 1);
-    const sql = updates[0].sql;
+    const heartbeatWrites = updates.filter(({ sql }) =>
+      sql.includes("last_seen_at = NOW()"),
+    );
+    assert.equal(heartbeatWrites.length, 1);
+    const sql = heartbeatWrites[0].sql;
     assert.match(sql, /status = CASE WHEN status = 'offline' THEN 'active'/);
     assert.match(sql, /status <> 'retired'/);
     assert.match(sql, /last_seen_at = NOW\(\)/);
+    // The sequence bump and heartbeat write share one transaction.
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
   it("rejects a sequence regression before any heartbeat write", async () => {
-    const dbPool = createMockPool(() => ({ rows: [] }));
-    dbPool.query = async (sql, params) => {
+    const dbPool = createMockPool((sql) => {
       if (sql.includes("SET last_sequence")) {
         // CAS matches zero rows: regression.
         return { rows: [] };
       }
       throw new Error(`no heartbeat write expected, got: ${sql}`);
-    };
+    });
 
     await assert.rejects(
       recordHeartbeat({
@@ -356,6 +377,10 @@ describe("agentDispatch.claimJobs", () => {
   it("claims pending jobs, sets lease fields, and returns signed payloads", async () => {
     let livenessUpdates = 0;
     const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        // Legacy (sequence-less) poll from an agent that never sequenced.
+        return { rows: [{ last_sequence: 0 }] };
+      }
       if (sql.includes("SET last_seen_at = NOW()")) {
         livenessUpdates += 1;
         assert.equal(params[0], "agent-row-1");
@@ -437,6 +462,9 @@ describe("agentDispatch.claimJobs", () => {
   it("honors CERTOPS_JOB_LEASE_SECONDS from env", async () => {
     let leaseParam = null;
     const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
       if (sql.includes("SET last_seen_at = NOW()")) {
         return { rows: [] };
       }
@@ -475,6 +503,9 @@ describe("agentDispatch.claimJobs", () => {
 
   it("propagates the workspace kill switch and claims nothing", async () => {
     const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
       throw new Error(`no job query expected, got: ${sql}`);
     });
     await assert.rejects(
@@ -499,6 +530,9 @@ describe("agentDispatch.claimJobs", () => {
 
   it("returns an empty set without selecting when supportedActions is empty", async () => {
     const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
       if (sql.includes("SET last_seen_at = NOW()")) {
         return { rows: [] };
       }

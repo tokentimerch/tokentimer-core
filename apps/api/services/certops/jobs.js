@@ -1060,6 +1060,64 @@ function getCertificateJobById(options) {
   );
 }
 
+/**
+ * Runs the exact payload normalization and per-operation execution-field
+ * validation that createCertificateJob applies, without touching the
+ * database. Dry-run preflight uses this so a dry run rejects the same
+ * payloads the real run would.
+ */
+function validateJobPayloadForOperation(payload, operation) {
+  const normalizedOperation = normalizeEnum(
+    operation,
+    JOB_OPERATION_SET,
+    CERTOPS_JOB_OPERATION_INVALID,
+    "operation",
+  );
+  const normalizedPayload = normalizePublicObject(payload, "payload");
+  validateExecutionFields(normalizedPayload, normalizedOperation);
+  return normalizedPayload;
+}
+
+/**
+ * Returns the newest non-terminal job for a subject (optionally scoped to
+ * one operation), or null. Lets preflight surface an in-flight renewal that
+ * a new job would race against.
+ */
+async function findActiveJobForSubject(options) {
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const { subjectType, subjectId } = normalizeSubject(options);
+  const params = [workspaceId, subjectType, subjectId, [...ACTIVE_JOB_STATUSES]];
+  const conditions = [
+    "workspace_id = $1",
+    "subject_type = $2",
+    "subject_id = $3",
+    "status = ANY($4)",
+  ];
+
+  if (options.operation !== undefined && options.operation !== null && options.operation !== "") {
+    const operation = normalizeEnum(
+      options.operation,
+      JOB_OPERATION_SET,
+      CERTOPS_JOB_OPERATION_INVALID,
+      "operation",
+    );
+    params.push(operation);
+    conditions.push(`operation = $${params.length}`);
+  }
+
+  const result = await db.query(
+    `SELECT ${SAFE_JOB_SELECT_FIELDS}
+       FROM certificate_jobs
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY created_at DESC, id ASC
+      LIMIT 1`,
+    params,
+  );
+
+  return result.rows[0] ? jobFromRow(result.rows[0]) : null;
+}
+
 async function listCertificateJobs(options) {
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
@@ -1338,6 +1396,7 @@ module.exports = {
   createCertificateJob,
   dateToIso,
   fieldNameLooksForbidden,
+  findActiveJobForSubject,
   getCertificateJobById,
   isTerminalJobStatus,
   jobCreationRequestFingerprint,
@@ -1352,6 +1411,7 @@ module.exports = {
   normalizeWorkspaceId,
   serviceError,
   updateCertificateJobStatus,
+  validateJobPayloadForOperation,
   _test: {
     assertSafePublicValue,
     fieldNameLooksForbidden,

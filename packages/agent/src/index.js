@@ -66,6 +66,8 @@ const {
   persistRegistration,
   recoverPendingRegistration,
   readCaBundle,
+  createSequenceAllocator,
+  deleteBootstrapEnvFile,
 } = require("./config");
 const { loadPolicyConfig, createPolicyEngine } = require("./policy");
 const {
@@ -171,6 +173,32 @@ const EXECUTION_ERROR_MESSAGE_MAX_CHARS = 512;
 
 /** ACME adapter kinds executeJob accepts from a job payload. */
 const SUPPORTED_ACME_KINDS = ["certbot", "acme.sh"];
+
+/**
+ * Actions this agent build can actually execute (executeJob): "revoke" is
+ * deliberately absent (always blocked in this build). Sent as the claim's
+ * supportedActions when execution is enabled so the control plane's claim
+ * query only leases jobs this agent can run.
+ */
+const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
+
+/**
+ * Claim scope in observe-only bootstrap mode (execution disabled): every
+ * action, including revoke, because this mode's documented contract is to
+ * claim jobs and report them back as explicit "blocked"/"rejected" terminal
+ * states rather than leaving them invisible. The control plane returns no
+ * jobs at all for an empty supportedActions list, which would silently
+ * disable that loop.
+ */
+const OBSERVE_ONLY_CLAIM_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload", "revoke"]);
+
+/**
+ * Exit code used when the control plane retires this agent. Paired with
+ * RestartPreventExitStatus in scripts/tokentimer-agent.service so systemd
+ * (Restart=on-failure/always) does not respawn a decommissioned agent into
+ * a heartbeat 410 loop (ADR-0002 clean retirement).
+ */
+const AGENT_RETIRED_EXIT_CODE = 86;
 
 /**
  * POSIX-or-Windows absolute path check (same rationale as the acme
@@ -1330,8 +1358,23 @@ async function runDiscoveryScan({ directories, client, log = null }) {
  * @returns {Promise<string>} the assigned agentId
  */
 async function registerIfNeeded({ client, config, configDir, env = process.env }) {
+  // Already-registered paths: an earlier run exchanged the bootstrap token,
+  // but systemd may still have re-exported it from a leftover bootstrap.env.
+  // Scrub it here too so a registered agent never keeps the (already spent)
+  // token in its environment or on disk.
+  const scrubBootstrapToken = () => {
+    if (env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN !== undefined) {
+      delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN;
+      delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID;
+    }
+    deleteBootstrapEnvFile(configDir);
+  };
+
   const recovered = recoverPendingRegistration(configDir);
-  if (recovered !== null) return recovered.agentId;
+  if (recovered !== null) {
+    scrubBootstrapToken();
+    return recovered.agentId;
+  }
 
   const existingCredential = readCredential(configDir);
   if (existingCredential !== null) {
@@ -1342,6 +1385,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
           "with a fresh bootstrap token or restore config.json.",
       );
     }
+    scrubBootstrapToken();
     return config.agentId;
   }
 
@@ -1369,6 +1413,14 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     agentId: registration.agentId,
     credential: registration.credential,
   });
+  // The bootstrap token is single-use and has now been exchanged for a
+  // stored per-agent credential. Scrub it from this process's environment
+  // (so it can never leak into child processes or diagnostics) and remove
+  // the installer-written bootstrap.env file (so systemd stops re-exporting
+  // it on every later start).
+  delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN;
+  delete env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID;
+  deleteBootstrapEnvFile(configDir);
   // Trust-on-first-use pinning (ADR-0003): when the register response
   // carries the control plane's job-signing key info, persist it so every
   // later run verifies jobs against the same key. Public material only.
@@ -1506,6 +1558,12 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         )
     : undefined;
 
+  // One persisted, crash-safe sequence stream shared by EVERY protocol
+  // client this process creates (candidate/registration client included):
+  // the control plane hard-rejects sequence regressions, so all outbound
+  // messages must draw from a single counter that survives restarts.
+  const sequenceAllocator = createSequenceAllocator(configDir);
+
   const clientForAgentId = (agentId) =>
     createProtocolClient({
       serverUrl: config.serverUrl,
@@ -1516,6 +1574,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       fetchImpl,
       allowInsecureLocalHttp: config.allowInsecureLocalHttp,
       onServerDate,
+      sequenceAllocator,
     });
 
   // For a not-yet-registered agent the envelope needs a client-generated
@@ -1567,6 +1626,9 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       });
       if (response && response.retired === true) {
         defaultAgentLogger.error("control plane retired this agent; exiting cleanly");
+        // Distinct exit status so systemd's RestartPreventExitStatus stops
+        // respawning a decommissioned agent into a heartbeat 410 loop.
+        process.exitCode = AGENT_RETIRED_EXIT_CODE;
         stop();
       }
     },
@@ -1577,7 +1639,12 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     signal: controller.signal,
     startImmediately: true,
     onTick: async () => {
-      const jobs = await client.claim({ maxJobs: 1 });
+      const jobs = await client.claim({
+        maxJobs: 1,
+        supportedActions: executionContext
+          ? EXECUTABLE_JOB_ACTIONS
+          : OBSERVE_ONLY_CLAIM_ACTIONS,
+      });
       for (const job of jobs) {
         if (controller.signal.aborted) break;
         await handleClaimedJob({ job, policyEngine, client, executionContext });
@@ -1624,4 +1691,7 @@ module.exports = {
   registerIfNeeded,
   createCandidateAgentId,
   AGENT_VERSION,
+  AGENT_RETIRED_EXIT_CODE,
+  EXECUTABLE_JOB_ACTIONS,
+  OBSERVE_ONLY_CLAIM_ACTIONS,
 };

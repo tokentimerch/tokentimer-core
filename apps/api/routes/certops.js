@@ -65,10 +65,15 @@ const {
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
+  findActiveJobForSubject,
   getCertificateJobById,
   listCertificateJobLog,
   listCertificateJobs,
+  validateJobPayloadForOperation,
 } = require("../services/certops/jobs");
+const {
+  NON_RENEWABLE_CERTIFICATE_STATUSES,
+} = require("../services/certops/renewalScheduler");
 const {
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_TYPE_INVALID,
@@ -105,6 +110,7 @@ const CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND =
   "CERTOPS_AGENT_BOOTSTRAP_TOKEN_NOT_FOUND";
 const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
 const CERTOPS_AGENT_RETIRE_BLOCKED = "CERTOPS_AGENT_RETIRE_BLOCKED";
+const CERTOPS_CERTIFICATE_NOT_RENEWABLE = "CERTOPS_CERTIFICATE_NOT_RENEWABLE";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -489,9 +495,19 @@ const BULK_RENEW_MAX_CERTIFICATES = 100;
 const BULK_RENEW_ALLOWED_BODY_FIELDS = Object.freeze([
   "certificateIds",
   "dryRun",
+  "idempotencyKey",
   "requiresApproval",
   "payload",
 ]);
+// Per-item keys are "bulk-renew:<client key>:<certificate uuid>". Bound the
+// client part so the composed key stays under the service's 128-char
+// short-text limit with room to spare.
+const BULK_RENEW_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+function bulkRenewItemIdempotencyKey(idempotencyKey, certificateId) {
+  if (!idempotencyKey) return undefined;
+  return `bulk-renew:${idempotencyKey}:${certificateId}`;
+}
 
 /**
  * Validates the whole bulk-renew request shape. Shape problems (missing or
@@ -538,6 +554,17 @@ function parseBulkRenewRequest(body) {
   if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
     return { error: "dryRun must be a boolean" };
   }
+  if (body.idempotencyKey !== undefined) {
+    if (
+      typeof body.idempotencyKey !== "string" ||
+      !BULK_RENEW_IDEMPOTENCY_KEY_PATTERN.test(body.idempotencyKey)
+    ) {
+      return {
+        error:
+          "idempotencyKey must be 1-64 characters of letters, digits, '.', '_' or '-'",
+      };
+    }
+  }
   if (
     body.requiresApproval !== undefined &&
     typeof body.requiresApproval !== "boolean"
@@ -556,6 +583,7 @@ function parseBulkRenewRequest(body) {
   return {
     certificateIds: normalized,
     dryRun: body.dryRun === true,
+    idempotencyKey: body.idempotencyKey || null,
     requiresApproval: body.requiresApproval === true,
     payload: body.payload || {},
   };
@@ -568,10 +596,21 @@ function parseBulkRenewRequest(body) {
  * single renew job exactly. Item failures never abort the batch; the
  * response is always 200 with per-item outcomes, except whole-request shape
  * problems (400) and the disabled-rollout 404.
+ *
+ * An optional request-level idempotencyKey makes retries safe: each item is
+ * created with a derived "bulk-renew:<key>:<certificateId>" job key, so a
+ * replayed batch returns the already-created jobs (marked replayed: true)
+ * instead of enqueueing duplicates.
+ *
+ * Dry run preflights each certificate without writing: existence, renewable
+ * inventory status, the same payload validation the real run applies, and
+ * whether a non-terminal renew job is already in flight (reported as
+ * activeJobId so callers can spot double-renewals before committing).
  */
 function bulkRenewCertificatesHandler({
   manualJobCreator = createManualCertificateJob,
   certificateLoader = getManagedCertificate,
+  activeJobFinder = findActiveJobForSubject,
 } = {}) {
   return async function bulkRenewCertificatesHandler(req, res) {
     const parsed = parseBulkRenewRequest(req.body);
@@ -580,6 +619,24 @@ function bulkRenewCertificatesHandler({
         error: parsed.error,
         code: CERTOPS_JOB_INVALID,
       });
+    }
+
+    // The payload is a whole-request field; validate it once up front (with
+    // a representative certificateId stamped in, as each item's payload
+    // will be) so a bad payload is a 400 instead of N identical item errors.
+    try {
+      validateJobPayloadForOperation(
+        { ...parsed.payload, certificateId: parsed.certificateIds[0] },
+        "renew",
+      );
+    } catch (err) {
+      if (typeof err?.code === "string" && err.code) {
+        return res.status(400).json({
+          error: err.message || "payload is invalid",
+          code: err.code,
+        });
+      }
+      throw err;
     }
 
     const results = [];
@@ -601,19 +658,43 @@ function bulkRenewCertificatesHandler({
           continue;
         }
 
-        if (parsed.dryRun) {
-          succeeded += 1;
-          results.push({ certificateId, ok: true });
+        if (NON_RENEWABLE_CERTIFICATE_STATUSES.includes(certificate.status)) {
+          results.push({
+            certificateId,
+            ok: false,
+            errorCode: CERTOPS_CERTIFICATE_NOT_RENEWABLE,
+            message: `Certificate status '${certificate.status}' is not renewable`,
+          });
           continue;
         }
 
-        const { job } = await manualJobCreator({
+        if (parsed.dryRun) {
+          const activeJob = await activeJobFinder({
+            workspaceId: req.workspace.id,
+            subjectType: "managed_certificate",
+            subjectId: certificateId,
+            operation: "renew",
+          });
+          succeeded += 1;
+          results.push({
+            certificateId,
+            ok: true,
+            ...(activeJob ? { activeJobId: activeJob.id } : {}),
+          });
+          continue;
+        }
+
+        const { job, created } = await manualJobCreator({
           workspaceId: req.workspace.id,
           operation: "renew",
           subjectType: "managed_certificate",
           subjectId: certificateId,
           payload: { ...parsed.payload, certificateId },
           requiresApproval: parsed.requiresApproval,
+          idempotencyKey: bulkRenewItemIdempotencyKey(
+            parsed.idempotencyKey,
+            certificateId,
+          ),
           // Same session-write source posture as single manual job creation.
           source: "api",
           requestedByUserId: req.user?.id || null,
@@ -621,7 +702,12 @@ function bulkRenewCertificatesHandler({
           subjectUserId: req.user?.id || null,
         });
         succeeded += 1;
-        results.push({ certificateId, ok: true, jobId: job.id });
+        results.push({
+          certificateId,
+          ok: true,
+          jobId: job.id,
+          ...(created === false ? { replayed: true } : {}),
+        });
       } catch (err) {
         // A disabled rollout is a whole-surface condition, not a
         // per-certificate one: keep the same 404 posture as the middleware.

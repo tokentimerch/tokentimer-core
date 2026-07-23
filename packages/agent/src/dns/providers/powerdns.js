@@ -9,9 +9,15 @@
  *
  * Credentials shape:
  *   {
- *     apiUrl: string,     // e.g. "http://127.0.0.1:8081" (no trailing /api)
+ *     apiUrl: string,     // e.g. "https://pdns.example:8081" (no trailing
+ *                         // /api). Must be https:; set
+ *                         // allowInsecureLocalHttp for a loopback-only
+ *                         // http endpoint (localhost, *.localhost,
+ *                         // 127.x.x.x, ::1). Embedded credentials and
+ *                         // hash fragments are always rejected.
  *     apiKey: string,
  *     serverId?: string,  // default "localhost"
+ *     allowInsecureLocalHttp?: boolean,  // default false
  *   }
  *
  * API surface used (/api/v1/servers/<serverId>):
@@ -29,7 +35,11 @@
  * remaining values, or sends changetype DELETE when none remain.
  */
 
-const { isNonEmptyString, fetchWithTimeout } = require("../internal.js");
+const {
+  isNonEmptyString,
+  fetchWithTimeout,
+  assertSafeProviderBaseUrl,
+} = require("../internal.js");
 
 const PROVIDER_ID = "powerdns";
 const DEFAULT_SERVER_ID = "localhost";
@@ -59,6 +69,17 @@ function validateCredentials(credentials) {
   if (credentials.serverId !== undefined && !isNonEmptyString(credentials.serverId)) {
     throw new Error("dns: powerdns serverId must be a non-empty string when provided");
   }
+  if (
+    credentials.allowInsecureLocalHttp !== undefined &&
+    typeof credentials.allowInsecureLocalHttp !== "boolean"
+  ) {
+    throw new Error("dns: powerdns allowInsecureLocalHttp must be a boolean when provided");
+  }
+
+  assertSafeProviderBaseUrl(credentials.apiUrl, {
+    allowInsecureLocalHttp: credentials.allowInsecureLocalHttp === true,
+  });
+
   return {
     apiUrl: credentials.apiUrl.replace(/\/+$/, ""),
     apiKey: credentials.apiKey,

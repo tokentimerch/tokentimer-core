@@ -310,9 +310,11 @@ async function createCertificateEvidence(options) {
 }
 
 // This is deliberately narrower than createCertificateEvidence(): controller
-// observations have no certificate job, but still need one bounded,
-// detector-scanned, transaction-owned evidence record. It is not exported to a
-// public route and cannot be used for arbitrary jobless evidence.
+// observations and agent discovery reports have no certificate job, but still
+// need one bounded, detector-scanned, transaction-owned evidence record. It
+// only accepts certificate.observed, so it cannot be used for arbitrary
+// jobless evidence; callers are the controller ingestion path and the
+// credential-authenticated agent evidence route (discovery scans).
 async function createControllerObservationEvidence(options) {
   assertNoPrivateKeyMaterial(options.evidenceType);
   assertNoPrivateKeyMaterial(options.subjectId);

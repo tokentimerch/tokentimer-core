@@ -75,6 +75,44 @@ function shortId(value) {
   return raw.length > 12 ? `${raw.slice(0, 12)}...` : raw;
 }
 
+/** Clock offsets beyond this are flagged as drifted in the fleet table. */
+const CLOCK_DRIFT_WARN_MS = 5000;
+
+/** Signed millisecond offset for display, e.g. "+120 ms"; '--' when unknown. */
+function formatClockOffset(value) {
+  if (value === null || value === undefined) return '--';
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) return '--';
+  return `${ms < 0 ? '-' : '+'}${Math.abs(ms)} ms`;
+}
+
+function isClockDrifted(value) {
+  const ms = Number(value);
+  return Number.isFinite(ms) && Math.abs(ms) > CLOCK_DRIFT_WARN_MS;
+}
+
+/** NTP sync state chip: green Synced, orange Not synced, muted when unknown. */
+function NtpBadge({ ntpSynced }) {
+  if (ntpSynced !== true && ntpSynced !== false) {
+    return (
+      <Text as='span' fontSize='sm'>
+        --
+      </Text>
+    );
+  }
+  return (
+    <Badge
+      colorScheme={ntpSynced ? 'green' : 'orange'}
+      variant='subtle'
+      textTransform='none'
+      fontWeight='medium'
+      fontSize='xs'
+    >
+      {ntpSynced ? 'Synced' : 'Not synced'}
+    </Badge>
+  );
+}
+
 /**
  * Confirm dialog for retiring an agent (RetireCertificateModal pattern).
  * A non-forced retire is refused server-side with 409
@@ -220,7 +258,8 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
 }
 
 /**
- * Agent fleet table: name/id, status, version, last heartbeat, and a
+ * Agent fleet table: name/id, status, version, protocol version, clock
+ * drift, NTP sync state, pinned job-signing key, last heartbeat, and a
  * manager-only Retire action. Empty state points to the Deploy an agent
  * panel on the same page.
  */
@@ -302,6 +341,10 @@ export default function AgentFleetPanel() {
                 <Th>Agent</Th>
                 <Th>Status</Th>
                 <Th>Version</Th>
+                <Th>Protocol</Th>
+                <Th>Clock drift</Th>
+                <Th>NTP</Th>
+                <Th>Signing key</Th>
                 <Th>Last heartbeat</Th>
                 {canManage ? <Th textAlign='right'>Actions</Th> : null}
               </Tr>
@@ -329,6 +372,46 @@ export default function AgentFleetPanel() {
                       <Text fontSize='sm' fontFamily='mono'>
                         {agent.agentVersion || '--'}
                       </Text>
+                    </Td>
+                    <Td>
+                      <Text fontSize='sm' fontFamily='mono'>
+                        {agent.protocolVersion === null ||
+                        agent.protocolVersion === undefined
+                          ? '--'
+                          : String(agent.protocolVersion)}
+                      </Text>
+                    </Td>
+                    <Td>
+                      <HStack spacing={2}>
+                        <Text fontSize='sm' fontFamily='mono'>
+                          {formatClockOffset(agent.clockOffsetMs)}
+                        </Text>
+                        {isClockDrifted(agent.clockOffsetMs) ? (
+                          <Badge
+                            colorScheme='orange'
+                            variant='subtle'
+                            textTransform='none'
+                            fontWeight='medium'
+                            fontSize='xs'
+                            title={`Clock offset exceeds ${CLOCK_DRIFT_WARN_MS / 1000}s`}
+                          >
+                            Drift
+                          </Badge>
+                        ) : null}
+                      </HStack>
+                    </Td>
+                    <Td>
+                      <NtpBadge ntpSynced={agent.ntpSynced} />
+                    </Td>
+                    <Td>
+                      {agent.pinnedSigningKeyId ? (
+                        <CopyableId
+                          id={agent.pinnedSigningKeyId}
+                          display={shortId(agent.pinnedSigningKeyId)}
+                        />
+                      ) : (
+                        <Text fontSize='sm'>--</Text>
+                      )}
                     </Td>
                     <Td>
                       <Text

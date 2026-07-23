@@ -11,9 +11,14 @@
  * wave-1 provider when the authoritative DNS host has no scoped API tokens.
  *
  * Credentials shape:
- *   { baseUrl: string, username: string, password: string, subdomain: string }
+ *   { baseUrl: string, username: string, password: string, subdomain: string,
+ *     allowInsecureLocalHttp?: boolean }
  *   (the fields returned by acme-dns /register; fulldomain is the CNAME
- *   target and is not needed here).
+ *   target and is not needed here). baseUrl must be https:; set
+ *   allowInsecureLocalHttp: true (default false) to permit a plain-http
+ *   baseUrl for loopback hosts only (localhost, *.localhost, 127.x.x.x,
+ *   ::1) in local test setups. Embedded credentials and hash fragments are
+ *   always rejected.
  *
  * API surface used: POST {baseUrl}/update with X-Api-User / X-Api-Key
  * headers and body { subdomain, txt }.
@@ -23,7 +28,11 @@
  * update, so there is nothing to delete and no delete endpoint exists.
  */
 
-const { isNonEmptyString, fetchWithTimeout } = require("../internal.js");
+const {
+  isNonEmptyString,
+  fetchWithTimeout,
+  assertSafeProviderBaseUrl,
+} = require("../internal.js");
 
 const PROVIDER_ID = "acme-dns";
 
@@ -37,18 +46,16 @@ function validateCredentials(credentials) {
       throw new Error(`dns: acme-dns credentials require a non-empty ${field} string`);
     }
   }
+  if (
+    credentials.allowInsecureLocalHttp !== undefined &&
+    typeof credentials.allowInsecureLocalHttp !== "boolean"
+  ) {
+    throw new Error("dns: acme-dns allowInsecureLocalHttp must be a boolean when provided");
+  }
 
-  let parsedBaseUrl;
-  try {
-    parsedBaseUrl = new URL(credentials.baseUrl);
-  } catch {
-    throw new Error(
-      `dns: acme-dns baseUrl is not a valid URL: ${JSON.stringify(credentials.baseUrl)}`,
-    );
-  }
-  if (parsedBaseUrl.protocol !== "https:" && parsedBaseUrl.protocol !== "http:") {
-    throw new Error("dns: acme-dns baseUrl must be an http(s) URL");
-  }
+  assertSafeProviderBaseUrl(credentials.baseUrl, {
+    allowInsecureLocalHttp: credentials.allowInsecureLocalHttp === true,
+  });
 
   return {
     baseUrl: credentials.baseUrl.endsWith("/")

@@ -67,6 +67,10 @@ function sampleAgents() {
       hostname: 'edge01',
       status: 'active',
       agentVersion: '1.2.3',
+      protocolVersion: 2,
+      clockOffsetMs: 120,
+      ntpSynced: true,
+      pinnedSigningKeyId: 'ttsk_0123456789abcdef',
       lastSeenAt: new Date(Date.now() - 60000).toISOString(),
     },
     {
@@ -76,6 +80,10 @@ function sampleAgents() {
       hostname: 'core01',
       status: 'offline',
       agentVersion: '1.2.0',
+      protocolVersion: 1,
+      clockOffsetMs: -8200,
+      ntpSynced: false,
+      pinnedSigningKeyId: null,
       lastSeenAt: new Date(Date.now() - 3600000).toISOString(),
     },
     {
@@ -85,6 +93,10 @@ function sampleAgents() {
       hostname: 'old01',
       status: 'retired',
       agentVersion: '1.0.0',
+      protocolVersion: null,
+      clockOffsetMs: null,
+      ntpSynced: null,
+      pinnedSigningKeyId: null,
       lastSeenAt: null,
       retiredAt: new Date().toISOString(),
     },
@@ -136,6 +148,57 @@ describe('AgentFleetPanel', () => {
     expect(screen.getByText('1.2.3')).toBeInTheDocument();
     // Active + offline are retirable, the retired agent is not.
     expect(screen.getAllByRole('button', { name: 'Retire' })).toHaveLength(2);
+  });
+
+  it('renders protocol version and clock drift columns, flagging large offsets', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(
+      screen.getByRole('columnheader', { name: 'Protocol' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: 'Clock drift' })
+    ).toBeInTheDocument();
+
+    // Protocol versions per row; the retired agent has none.
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
+
+    // Signed offsets; only the |offset| > 5000ms row is flagged.
+    expect(screen.getByText('+120 ms')).toBeInTheDocument();
+    expect(screen.getByText('-8200 ms')).toBeInTheDocument();
+    expect(screen.getAllByText('Drift')).toHaveLength(1);
+
+    // Unknown protocol/offset render as placeholders on the retired row.
+    expect(screen.getAllByText('--').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders NTP sync state and pinned signing key columns', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({ agents: sampleAgents() })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(
+      screen.getByRole('columnheader', { name: 'NTP' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: 'Signing key' })
+    ).toBeInTheDocument();
+
+    // One synced, one unsynced, and the retired row's unknown placeholder.
+    expect(screen.getByText('Synced')).toBeInTheDocument();
+    expect(screen.getByText('Not synced')).toBeInTheDocument();
+
+    // Signing key ids are shortened for display.
+    expect(screen.getByText('ttsk_0123456...')).toBeInTheDocument();
   });
 
   it('hides the actions column for a non-manager viewer', () => {
