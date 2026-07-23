@@ -9,6 +9,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-23
+
+### Added
+
+CertOps agent and cert-manager controller: the first end-to-end path for TokenTimer to observe certificates on remote infrastructure and, once explicitly authorized, renew and deploy them.
+
+- **Kubernetes cert-manager controller** (`apps/k8s-controller`) — a read-only-by-default controller that watches cert-manager `Certificate` resources and reports public-only observations (no secret or private-key material ever leaves the cluster) to `POST /api/v1/certops/executor/observations`. An opt-in provisioning mode lets the control plane request `Certificate` creation through narrow, cluster-bound, just-in-time authorized commands, re-authorized before every mutation and every retry. Helm chart support (RBAC, values, CI template verification) ships alongside it.
+- **Workspace CertOps kill switch** — a workspace-local pause that blocks new CertOps jobs and future dispatch/provision side effects without blocking inventory, status, audit, evidence, or executor event reporting for existing work. Composes with, and never replaces, the deployment-wide `certops.enabled` rollout flag.
+- **TokenTimer Agent** (`packages/agent`) — an outbound-only execution-plane process that registers against the control plane, polls for signed work, enforces agent-local policy, and reports schema-valid results and evidence:
+  - Ed25519 job-signature verification with trust-on-first-use key pinning, a persisted replay cache (consume-after-gates, reject-when-full, retention through the clock-tolerance tail), and Date-header clock-offset estimation feeding drift-compensated job validity checks.
+  - Execution modules: local keygen + PKCS#10 CSR, certbot/acme.sh no-shell exec adapters, atomic deploy with backup/rollback and realpath containment, validate-then-reload for nginx/apache/haproxy, and post-deploy fingerprint verification with an optional live TLS probe (destination bound to an agent-local allowlist, hard-denying metadata/link-local/loopback-without-allowlist targets).
+  - Agent-local policy engine (default deny; key export rejected unconditionally with no config override), credential storage (0700/0600, redaction-by-construction for logging), and observe-only filesystem certificate discovery (bounded walk, never reads key bytes).
+  - Native DNS-01 solvers for eleven providers (Cloudflare, Route53, Google Cloud DNS, DigitalOcean, Azure DNS, RFC 2136, OVHcloud, Hetzner, Infomaniak, Exoscale, PowerDNS) plus a guided onboarding surface.
+- **Control-plane agent backend** — the server-side counterpart: agent bootstrap-token registration, heartbeat/claim/result machine routes, Ed25519 job signing service (shared canonical JSON), per-agent monotonic sequence enforcement (defense in depth against replayed or out-of-order agent messages), approval gates (non-requester rule, canonical payload-hash binding, claim-side invalidation on payload edits), `cert_renewal_failed` alerting on terminal renewal failures, a maintenance worker (lease reaper, stale-agent and nonce sweeps, renewal scheduler), per-CA renewal caps, and a bulk-renewal endpoint.
+- Agent lifecycle admin routes (bootstrap-token issuance/revocation, agent list, retirement with pre-flight lease checks), private-CA bundle support for the agent's control-plane channel, and a repeatable end-to-end integration suite driving the real API and Postgres (register/claim/sign/replay/retire/kill-switch/reaper), self-skipping without a database.
+- `docs/certops/agent.md` operator reference covering configuration, protocol, security model, renewal chain, and troubleshooting.
+
+### Changed
+
+- `packages/contracts/api/certops-route-compat.contract.json` bumped to `0.15.0` (`agent-runtime-stable`): the four `/api/v1/certops/agent` routes are now live, Ed25519-signed control-plane endpoints, and the executor surface gained controller observation and provisioning transport.
+- Version metadata bumped to 0.11.0 across all manifests, contracts, and Helm chart.
+
 ## [0.10.3] - 2026-07-23
 
 ### Fixed

@@ -19,7 +19,7 @@ api:
   image:
     registry: ""
     repository: tokentimer-core-api
-    tag: "0.10.3"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""    # takes precedence over tag
     pullPolicy: IfNotPresent
 
@@ -105,7 +105,7 @@ dashboard:
   image:
     registry: ""
     repository: tokentimer-core-dashboard
-    tag: "0.10.3"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -152,7 +152,7 @@ worker:
   image:
     registry: ""
     repository: tokentimer-core-worker
-    tag: "0.10.3"  # align with Chart.appVersion; release workflow updates this per tag
+    tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -275,7 +275,7 @@ certops:
     image:
       registry: ""
       repository: tokentimer-core-k8s-controller
-      tag: "0.10.0"  # align with Chart.appVersion; release workflow updates this per tag
+      tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
       digest: ""
       pullPolicy: IfNotPresent
 

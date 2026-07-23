@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/worker",
-  "version": "0.10.3",
+  "version": "0.11.0",
   "private": true,
   "license": "BUSL-1.1",
   "packageManager": "pnpm@11.13.0",
