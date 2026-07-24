@@ -18,8 +18,10 @@ const {
 } = require("./agentCredentials");
 const {
   CERTOPS_NONCE_REPLAYED,
+  acknowledgeSigningKey,
   ensureActiveSigningKey,
   getActiveSigningKeyPublicInfo,
+  getSigningKeyRotationNotice,
   signJobForDispatch,
   consumeNonce,
 } = require("./jobSigning");
@@ -27,6 +29,7 @@ const {
   lockWorkspaceForCertOpsSideEffect,
 } = require("./workspaceKillSwitch");
 const {
+  computeCanonicalIntentHash,
   computeJobPayloadApprovalHash,
   invalidateApprovalForClaim,
 } = require("./jobApprovals");
@@ -310,6 +313,9 @@ async function recordHeartbeat({
 } = {}) {
   const getSigningKey =
     deps.getActiveSigningKeyPublicInfo || getActiveSigningKeyPublicInfo;
+  const getRotationNotice =
+    deps.getSigningKeyRotationNotice || getSigningKeyRotationNotice;
+  const ackSigningKey = deps.acknowledgeSigningKey || acknowledgeSigningKey;
   const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
 
   const clockOffsetMs = Number.isInteger(envelope.clockOffsetMs)
@@ -339,11 +345,12 @@ async function recordHeartbeat({
               uptime_seconds = $4,
               pinned_signing_key_id = COALESCE($5, pinned_signing_key_id),
               agent_version = $6,
+              protocol_version = COALESCE($7, protocol_version),
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
               updated_at = NOW()
         WHERE id = $1
           AND status <> 'retired'
-        RETURNING id, status, last_seen_at`,
+        RETURNING id, status, last_seen_at, pinned_signing_key_id`,
       [
         agent.id,
         clockOffsetMs,
@@ -351,6 +358,7 @@ async function recordHeartbeat({
         uptimeSeconds,
         pinnedSigningKeyId,
         body.agentVersion || agent.agentVersion,
+        envelope.protocolVersion || null,
       ],
     );
 
@@ -360,13 +368,31 @@ async function recordHeartbeat({
       throw serviceError("Agent is retired", CERTOPS_AGENT_RETIRED);
     }
 
+    if (pinnedSigningKeyId) {
+      await ackSigningKey({
+        client,
+        workspaceId: agent.workspaceId,
+        agentRowId: agent.id,
+        signingKeyId: pinnedSigningKeyId,
+      });
+    }
+
     const signingKey = await getSigningKey({ client });
+    const signingKeyRotation = await getRotationNotice({
+      client,
+      pinnedSigningKeyId:
+        pinnedSigningKeyId || row.pinned_signing_key_id || null,
+    });
     return {
       ok: true,
       status: row.status,
       lastSeenAt: dateToIso(row.last_seen_at),
       signingKeyId: signingKey?.signingKeyId ?? null,
       signingPublicKeyPem: signingKey?.publicKeyPem ?? null,
+      // H3: agents that have not yet pinned the replacement key receive this
+      // notice. Agent-side consumption is owned by another engineer; see
+      // COORDINATION-H3.md for the exact field contract.
+      signingKeyRotation,
     };
   });
 }
@@ -432,7 +458,11 @@ async function claimJobs({
 
     const selected = await client.query(
       `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
-              approved_payload_hash
+              approved_payload_hash,
+              approved_canonical_intent_hash,
+              operation,
+              subject_type,
+              subject_id
          FROM certificate_jobs
         WHERE workspace_id = $1
           AND status = 'pending'
@@ -448,17 +478,24 @@ async function claimJobs({
     const jobs = [];
     for (const row of selected.rows) {
       // Approval-gate re-verification: an approval is bound to a SHA256
-      // hash of the canonical payload at approval time. If the payload was
-      // edited afterwards, the approval is void: flip the job back to
-      // pending_approval instead of dispatching it. Jobs with no stored
-      // approval hash never required approval and pass through untouched.
+      // hash of the canonical payload and canonical execution intent at
+      // approval time. If either drifts, the approval is void.
       if (row.approved_payload_hash) {
         const rowPayload =
           row.payload && typeof row.payload === "object"
             ? row.payload
             : safeParseJson(row.payload);
         const currentHash = computeJobPayloadApprovalHash(rowPayload);
-        if (currentHash !== row.approved_payload_hash) {
+        const currentIntentHash = computeCanonicalIntentHash({
+          operation: row.operation,
+          subjectType: row.subject_type,
+          subjectId: row.subject_id,
+          payload: rowPayload,
+        });
+        const intentMismatch =
+          row.approved_canonical_intent_hash &&
+          currentIntentHash !== row.approved_canonical_intent_hash;
+        if (currentHash !== row.approved_payload_hash || intentMismatch) {
           await invalidateApproval({
             client,
             workspaceId: agent.workspaceId,
@@ -742,6 +779,7 @@ async function assertEvidenceClaimOwnership({
        FROM certificate_jobs
       WHERE id = $1
         AND workspace_id = $2
+      FOR UPDATE
       LIMIT 1`,
     [jobId, agent.workspaceId],
   );

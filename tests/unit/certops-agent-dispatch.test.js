@@ -318,6 +318,8 @@ describe("agentDispatch.recordHeartbeat", () => {
           signingKeyId: "key-1",
           publicKeyPem: "pem",
         }),
+        getSigningKeyRotationNotice: async () => null,
+        acknowledgeSigningKey: async () => ({ acknowledged: false }),
       },
     });
 
@@ -325,6 +327,7 @@ describe("agentDispatch.recordHeartbeat", () => {
     assert.equal(result.status, "active");
     assert.equal(result.signingKeyId, "key-1");
     assert.equal(result.signingPublicKeyPem, "pem");
+    assert.equal(result.signingKeyRotation, null);
     const heartbeatWrites = updates.filter(({ sql }) =>
       sql.includes("last_seen_at = NOW()"),
     );

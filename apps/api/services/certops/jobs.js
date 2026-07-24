@@ -37,6 +37,7 @@ const JOB_STATUSES = Object.freeze([
   "failed",
   "blocked",
   "cancelled",
+  "orphaned_unknown_effect",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
@@ -49,6 +50,7 @@ const TERMINAL_JOB_STATUSES = new Set([
   "failed",
   "blocked",
   "cancelled",
+  "orphaned_unknown_effect",
 ]);
 const ACTIVE_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
@@ -88,13 +90,22 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "rejected",
     "blocked",
     "cancelled",
+    "orphaned_unknown_effect",
   ]),
-  running: new Set(["succeeded", "failed", "rejected", "blocked", "cancelled"]),
+  running: new Set([
+    "succeeded",
+    "failed",
+    "rejected",
+    "blocked",
+    "cancelled",
+    "orphaned_unknown_effect",
+  ]),
   rejected: new Set(),
   succeeded: new Set(),
   failed: new Set(),
   blocked: new Set(),
   cancelled: new Set(),
+  orphaned_unknown_effect: new Set(),
 });
 
 const JOB_OPERATIONS = Object.freeze(["renew", "deploy", "reload", "revoke", "noop"]);
@@ -171,6 +182,9 @@ const SAFE_JOB_SELECT_FIELDS = `
   approved_by_user_id,
   approved_at,
   approved_payload_hash,
+  approved_canonical_intent_hash,
+  needs_operator_reconciliation,
+  reconciliation_reason,
   created_at,
   updated_at,
   queued_at,
@@ -709,6 +723,9 @@ function jobFromRow(row) {
     approvedByUserId: row.approved_by_user_id ?? null,
     approvedAt: dateToIso(row.approved_at),
     approvedPayloadHash: row.approved_payload_hash ?? null,
+    approvedCanonicalIntentHash: row.approved_canonical_intent_hash ?? null,
+    needsOperatorReconciliation: Boolean(row.needs_operator_reconciliation),
+    reconciliationReason: row.reconciliation_reason ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     queuedAt: dateToIso(row.queued_at),

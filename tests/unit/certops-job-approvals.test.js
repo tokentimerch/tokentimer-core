@@ -142,6 +142,7 @@ describe("jobApprovals.approveJob", () => {
               approved_by_user_id: params[2],
               approved_at: new Date("2026-07-22T12:00:00.000Z"),
               approved_payload_hash: params[3],
+              approved_canonical_intent_hash: params[4],
             },
           ],
         };
@@ -157,11 +158,15 @@ describe("jobApprovals.approveJob", () => {
               decision: params[2],
               approved_by_user_id: params[3],
               payload_hash: params[4],
-              reason: params[5],
+              canonical_intent_hash: params[5],
+              reason: params[6],
               created_at: new Date("2026-07-22T12:00:00.000Z"),
             },
           ],
         };
+      }
+      if (sql.includes("INSERT INTO audit_events")) {
+        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -260,6 +265,7 @@ describe("jobApprovals.approveJob", () => {
               approved_by_user_id: params[2],
               approved_at: new Date(),
               approved_payload_hash: params[3],
+              approved_canonical_intent_hash: params[4],
             },
           ],
         };
@@ -274,11 +280,15 @@ describe("jobApprovals.approveJob", () => {
               decision: params[2],
               approved_by_user_id: params[3],
               payload_hash: params[4],
-              reason: params[5],
+              canonical_intent_hash: params[5],
+              reason: params[6],
               created_at: new Date(),
             },
           ],
         };
+      }
+      if (sql.includes("INSERT INTO audit_events")) {
+        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -337,11 +347,15 @@ describe("jobApprovals.rejectJob", () => {
               decision: params[2],
               approved_by_user_id: params[3],
               payload_hash: params[4],
-              reason: params[5],
+              canonical_intent_hash: params[5],
+              reason: params[6],
               created_at: new Date(),
             },
           ],
         };
+      }
+      if (sql.includes("INSERT INTO audit_events")) {
+        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
