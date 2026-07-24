@@ -1,39 +1,44 @@
 "use strict";
 
 /**
- * Atomic certificate deployment.
+ * Atomic certificate (and optional private-key) deployment.
  *
- * Deploys PUBLIC certificate PEM material to a target filesystem path with:
+ * Deploys PUBLIC certificate PEM material -- and, when a matched private key
+ * is being rotated in, the key as well -- to target filesystem paths with:
  *   - target-config re-validation before EVERY deploy (validateTargetConfig)
  *   - fs.realpath containment re-check on the final destination immediately
  *     before write (the policy module's documented follow-up: policy does
  *     lexical checks only; symlink-aware realpath checks belong here)
  *   - idempotency: byte-identical content is never rewritten (recorded as
- *     an idempotent skip)
+ *     an idempotent skip) for cert-only deploys
  *   - timestamped backup of any existing file before overwrite
  *   - atomic write (temp file in the SAME directory + rename, so the rename
  *     never crosses devices), with fsync of the file and, where the
  *     platform allows, the containing directory
- *   - automatic rollback (restore backup) on any failure after backup
+ *   - for key+cert pair deploys (`deployCertificateAndKey`): both files are
+ *     staged then renamed, and ANY failure after backups triggers rollback
+ *     of BOTH files from those backups. Backups are retained until the
+ *     caller explicitly discards them via `discardDeployBackups` after
+ *     post-deploy verification / reload success.
  *   - a per-destination in-process async mutex serializing concurrent
  *     deploys to the same resolved path
  *   - per-target-type counters (attempts, succeeded, idempotentSkips,
  *     rollbacks, failures) exposed via getDeployMetrics() for evidence
  *     metadata (public, non-secret values only)
  *
- * Zero private-key custody (D5, ADR-0001): this module deploys public
- * certificates ONLY. This scope deploys public certs; cert and key
- * deploys are separate targets. As defense in depth, deployCertificate
- * THROWS if the payload contains a PEM private-key marker, regardless of
- * what the caller claims the payload is.
+ * Zero private-key custody (D5, ADR-0001): `deployCertificate` deploys
+ * public certificates ONLY and THROWS if the payload contains a PEM
+ * private-key marker. `deployCertificateAndKey` is the sole path that
+ * installs a private key, reading it from a caller-supplied staging path
+ * (never from the certificate payload) and never returning key bytes.
  *
  * Policy decoupling: this module never loads policy config itself. The
  * caller (dispatch layer) passes a `checkPath(filePath)` callback -- in
  * production, the policy engine's checkPath -- returning
  * { allowed, rejectionReason?, detail? }. This module calls it for every
- * path it is about to touch (destination, chain destination, backup dir),
- * including once more against the realpath-resolved destination so a
- * symlink cannot escape the allowlisted roots.
+ * path it is about to touch (destination, chain destination, key path,
+ * backup dir), including once more against the realpath-resolved
+ * destination so a symlink cannot escape the allowlisted roots.
  *
  * This module is self-contained: it accepts plain data as function
  * parameters and does not import sibling agent modules (config, policy,
@@ -197,13 +202,14 @@ function isExistingDirectory(fsImpl, dirPath) {
  *     type: "domain"|"endpoint"|"kubernetes"|"appliance"|"load-balancer"|"external",
  *     reference: string,           // non-secret target reference
  *     certPath: string,            // absolute destination for the cert PEM
+ *     keyPath?: string,            // optional absolute destination for the private key
  *     chainPath?: string,          // optional absolute destination for the chain PEM
  *     backupDir?: string,          // optional absolute dir for timestamped backups
  *   }
  *
  * Checks, in order: shape/type, absolute paths, parent directories exist,
  * and policy allowance via the injected `checkPath` callback for certPath,
- * chainPath, and backupDir (when present). `checkPath` must return
+ * keyPath, chainPath, and backupDir (when present). `checkPath` must return
  * { allowed: boolean, rejectionReason?: string, detail?: string } -- in
  * production this is the policy engine's checkPath, keeping this module
  * decoupled from the policy module.
@@ -234,6 +240,9 @@ function validateTargetConfig(target, { checkPath, _fsOverrides } = {}) {
   }
 
   const pathFields = [["certPath", target.certPath, true]];
+  if (target.keyPath !== undefined && target.keyPath !== null) {
+    pathFields.push(["keyPath", target.keyPath, false]);
+  }
   if (target.chainPath !== undefined && target.chainPath !== null) {
     pathFields.push(["chainPath", target.chainPath, false]);
   }
@@ -559,9 +568,315 @@ async function deployCertificate({
   });
 }
 
+/**
+ * Resolves the realpath of a destination file (deepest existing ancestor +
+ * basename), matching the cert-only deploy path's containment discipline.
+ * @param {typeof fsp} fspImpl
+ * @param {string} destination
+ * @returns {Promise<string>}
+ */
+async function resolveRealDestination(fspImpl, destination) {
+  const parentReal = await fspImpl.realpath(path.dirname(destination));
+  let realDestination = path.join(parentReal, path.basename(destination));
+  try {
+    realDestination = await fspImpl.realpath(realDestination);
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  return realDestination;
+}
+
+/**
+ * Atomically deploys a matched certificate + private-key pair.
+ *
+ * Reads the private key from `privateKeyPath` (typically a staging path from
+ * keys.generateKeyPairToFile) and installs it at `target.keyPath` together
+ * with `certificatePem` at `target.certPath`. Both existing files (when
+ * present) are backed up before any swap; on ANY failure after backups are
+ * taken, BOTH files are restored from those backups. Backups are NOT
+ * deleted on success -- call `discardDeployBackups` only after post-deploy
+ * verification (and reload) confirms the new pair is live.
+ *
+ * Pre-deploy X.509 / key-match validation belongs in the verify module and
+ * must be performed by the caller before invoking this function.
+ *
+ * @param {{
+ *   target: object,             // validateTargetConfig shape; keyPath REQUIRED
+ *   certificatePem: string,
+ *   privateKeyPath: string,     // staging path holding the new private key PEM
+ *   checkPath: (filePath: string) => { allowed: boolean, rejectionReason?: string, detail?: string },
+ *   now?: () => Date,
+ *   _fsOverrides?: object,
+ * }} params
+ * @returns {Promise<object>}
+ */
+async function deployCertificateAndKey({
+  target,
+  certificatePem,
+  privateKeyPath,
+  checkPath,
+  now = () => new Date(),
+  _fsOverrides,
+} = {}) {
+  if (typeof certificatePem !== "string" || certificatePem.length === 0) {
+    throw new Error("deploy: certificatePem must be a non-empty string");
+  }
+  if (PRIVATE_KEY_PEM_HEADER_PATTERN.test(certificatePem)) {
+    throw new Error(
+      "deploy: certificatePem contains a private-key PEM marker; pass the key via privateKeyPath only",
+    );
+  }
+  if (typeof privateKeyPath !== "string" || privateKeyPath.length === 0) {
+    throw new Error("deploy: privateKeyPath must be a non-empty string");
+  }
+  if (typeof checkPath !== "function") {
+    throw new Error("deploy: a checkPath callback is required");
+  }
+  if (!target || typeof target.keyPath !== "string" || target.keyPath.length === 0) {
+    throw new Error("deploy: target.keyPath is required for deployCertificateAndKey");
+  }
+
+  const fspImpl = { ...fsp, ..._fsOverrides };
+  const targetType =
+    target && typeof target.type === "string" ? target.type : "unknown";
+  const counters = metricsFor(targetType);
+  counters.attempts += 1;
+
+  function failure(stage, error, rolledBack) {
+    counters.failures += 1;
+    const result = { deployed: false, skipped: false, stage, error };
+    if (rolledBack !== undefined) {
+      result.rolledBack = rolledBack;
+      if (rolledBack) counters.rollbacks += 1;
+    }
+    return result;
+  }
+
+  const validation = validateTargetConfig(target, { checkPath });
+  if (!validation.valid) {
+    return failure("validate", validation.detail);
+  }
+
+  const certDestination = path.normalize(path.resolve(target.certPath));
+  const keyDestination = path.normalize(path.resolve(target.keyPath));
+  const lockKey = [certDestination, keyDestination].sort().join("\0");
+
+  return await withDestinationLock(lockKey, async () => {
+    let realCertDestination;
+    let realKeyDestination;
+    try {
+      realCertDestination = await resolveRealDestination(fspImpl, certDestination);
+      realKeyDestination = await resolveRealDestination(fspImpl, keyDestination);
+    } catch (err) {
+      return failure(
+        "realpath",
+        `deploy: could not resolve destination realpath: ${err?.message || err}`,
+      );
+    }
+
+    for (const [label, realPath] of [
+      ["certificate", realCertDestination],
+      ["key", realKeyDestination],
+    ]) {
+      const policyResult = checkPath(realPath);
+      if (!policyResult || policyResult.allowed !== true) {
+        return failure(
+          "realpath-policy",
+          `deploy: resolved ${label} destination ${JSON.stringify(realPath)} escapes the ` +
+            `allowlisted roots (${policyResult?.rejectionReason || "path_not_allowlisted"}): ` +
+            `${policyResult?.detail || "no detail provided"}`,
+        );
+      }
+    }
+
+    // Read the staged private key once; zeroize after writes complete.
+    let keyContent;
+    try {
+      keyContent = await fspImpl.readFile(privateKeyPath);
+    } catch (err) {
+      return failure(
+        "read-key",
+        `deploy: could not read privateKeyPath: ${err?.message || err}`,
+      );
+    }
+    if (!PRIVATE_KEY_PEM_HEADER_PATTERN.test(keyContent.toString("utf8"))) {
+      if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      return failure(
+        "read-key",
+        "deploy: privateKeyPath does not contain a private-key PEM block",
+      );
+    }
+
+    let existingCert = null;
+    let existingKey = null;
+    try {
+      existingCert = await fspImpl.readFile(realCertDestination);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+        return failure(
+          "read-existing",
+          `deploy: could not read existing certificate: ${err?.message || err}`,
+        );
+      }
+    }
+    try {
+      existingKey = await fspImpl.readFile(realKeyDestination);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+        return failure(
+          "read-existing",
+          `deploy: could not read existing key: ${err?.message || err}`,
+        );
+      }
+    }
+
+    const certBuf = Buffer.from(certificatePem, "utf8");
+    const certUnchanged =
+      existingCert !== null && existingCert.equals(certBuf);
+    const keyUnchanged =
+      existingKey !== null && existingKey.equals(keyContent);
+    if (certUnchanged && keyUnchanged) {
+      if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      counters.idempotentSkips += 1;
+      return {
+        deployed: false,
+        skipped: true,
+        reason: "idempotent",
+        destination: realCertDestination,
+        keyDestination: realKeyDestination,
+        backupPaths: { cert: null, key: null },
+      };
+    }
+
+    const stamp = now();
+    let certBackupPath = null;
+    let keyBackupPath = null;
+    try {
+      if (existingCert !== null) {
+        certBackupPath = backupPathFor(realCertDestination, target.backupDir, stamp);
+        await fspImpl.writeFile(certBackupPath, existingCert, {
+          mode: DEPLOYED_FILE_MODE,
+        });
+      }
+      if (existingKey !== null) {
+        keyBackupPath = backupPathFor(realKeyDestination, target.backupDir, stamp);
+        await fspImpl.writeFile(keyBackupPath, existingKey, {
+          mode: DEPLOYED_FILE_MODE,
+        });
+      }
+    } catch (err) {
+      if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      return failure("backup", `deploy: could not write backup: ${err?.message || err}`);
+    }
+
+    async function rollbackPair() {
+      let rolledBack = false;
+      try {
+        if (certBackupPath !== null && existingCert !== null) {
+          await fspImpl.writeFile(realCertDestination, existingCert, {
+            mode: DEPLOYED_FILE_MODE,
+          });
+          rolledBack = true;
+        }
+        if (keyBackupPath !== null && existingKey !== null) {
+          await fspImpl.writeFile(realKeyDestination, existingKey, {
+            mode: DEPLOYED_FILE_MODE,
+          });
+          rolledBack = true;
+        }
+      } catch (_rollbackErr) {
+        return false;
+      }
+      return rolledBack;
+    }
+
+    try {
+      await atomicWrite(fspImpl, realCertDestination, certificatePem);
+      await atomicWrite(fspImpl, realKeyDestination, keyContent);
+    } catch (err) {
+      const rolledBack = await rollbackPair();
+      if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+      return failure(
+        "write",
+        `deploy: atomic key+certificate write failed: ${err?.message || err}`,
+        rolledBack,
+      );
+    }
+
+    try {
+      await fspImpl.chmod(realCertDestination, DEPLOYED_FILE_MODE);
+      await fspImpl.chmod(realKeyDestination, DEPLOYED_FILE_MODE);
+    } catch (_err) {
+      // best-effort on win32
+    }
+
+    // Staging file is consumed once the live key is in place. Failures here
+    // do not roll back the deploy (the live pair is already correct); the
+    // staging leftover is best-effort cleaned.
+    const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
+    if (normalizedPrivateKeyPath !== realKeyDestination) {
+      try {
+        await fspImpl.unlink(normalizedPrivateKeyPath);
+      } catch (_err) {
+        // best-effort
+      }
+    }
+
+    if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+
+    counters.succeeded += 1;
+    return {
+      deployed: true,
+      skipped: false,
+      destination: realCertDestination,
+      keyDestination: realKeyDestination,
+      backupPath: certBackupPath,
+      backupPaths: { cert: certBackupPath, key: keyBackupPath },
+    };
+  });
+}
+
+/**
+ * Deletes deploy backups after post-deploy verification (and reload) has
+ * confirmed the new key+certificate pair is live. Safe to call with null
+ * paths. Never touches the live destination files.
+ *
+ * @param {{ backupPaths?: { cert?: string|null, key?: string|null }, backupPath?: string|null }} input
+ * @param {{ _fsOverrides?: object }} [options]
+ * @returns {Promise<{ discarded: string[] }>}
+ */
+async function discardDeployBackups(
+  { backupPaths, backupPath } = {},
+  { _fsOverrides } = {},
+) {
+  const fspImpl = { ...fsp, ..._fsOverrides };
+  const candidates = [];
+  if (backupPaths && typeof backupPaths === "object") {
+    if (typeof backupPaths.cert === "string") candidates.push(backupPaths.cert);
+    if (typeof backupPaths.key === "string") candidates.push(backupPaths.key);
+  }
+  if (typeof backupPath === "string") candidates.push(backupPath);
+
+  const discarded = [];
+  for (const candidate of candidates) {
+    try {
+      await fspImpl.unlink(candidate);
+      discarded.push(candidate);
+    } catch (err) {
+      if (err?.code === "ENOENT") continue;
+      throw err;
+    }
+  }
+  return { discarded };
+}
+
 module.exports = {
   validateTargetConfig,
   deployCertificate,
+  deployCertificateAndKey,
+  discardDeployBackups,
   getDeployMetrics,
   resetDeployMetrics,
   DEPLOYED_FILE_MODE,

@@ -128,26 +128,30 @@ function classifyExistingKeyPath(keyPath) {
 }
 
 /**
- * Generates a keypair, writes the private key PEM (PKCS#8) to keyPath with
- * mode 0600 (parent dir 0700), and returns ONLY public material.
+ * Generates a keypair and writes the private key PEM (PKCS#8) with mode
+ * 0600 (parent dir 0700), returning ONLY public material plus paths.
  *
- * Write discipline:
- *   - fresh key: exclusive create (flag "wx"), so a file (or symlink)
- *     racing into existence between the existence check and the write
- *     fails the write instead of being followed/clobbered;
- *   - rotation (overwrite: true): written to a 0600 temp file in the same
- *     directory and renamed over the destination, so a crash mid-rotation
- *     can never leave a truncated key file.
+ * Write discipline (crash-safe rotation):
+ *   - fresh key (path absent): exclusive create (flag "wx") at keyPath;
+ *   - rotation (overwrite: true, path already a regular file): the NEW key
+ *     is written to a staging path alongside the target
+ *     (`.${basename}.staging-<pid>-<random>`) and the LIVE keyPath is
+ *     NEVER overwritten. Callers must only promote the staged key into
+ *     keyPath together with a matching certificate (see
+ *     deploy.deployCertificateAndKey). If issuance/deploy fails, call
+ *     discardStagedKey to remove the staging file; the previous live key
+ *     remains intact.
  *
  * The private key PEM is exported into a Buffer, written from that Buffer,
  * and the Buffer is zeroized (fill(0)) immediately after the write. See the
  * module doc comment for the documented limits of zeroization in JS.
  *
  * @param {object} input
- * @param {string} input.keyPath absolute or relative path for the private key file
+ * @param {string} input.keyPath absolute or relative path for the live private key file
  * @param {"ec-p256"|"rsa-2048"|"rsa-3072"|"ed25519"} [input.algorithm]
- * @param {boolean} [input.overwrite] refuse to clobber an existing file unless true
- * @returns {{ keyPath: string, publicKeyPem: string, algorithm: string }}
+ * @param {boolean} [input.overwrite] refuse to clobber an existing file unless true;
+ *   when true and the file exists, writes to a staging path instead of keyPath
+ * @returns {{ keyPath: string, stagedKeyPath: string, publicKeyPem: string, algorithm: string }}
  */
 function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = false } = {}) {
   if (typeof keyPath !== "string" || keyPath.length === 0) {
@@ -175,6 +179,17 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
 
   ensureKeyDir(keyPath);
 
+  // Rotation must never replace the live key in place: write to a staging
+  // sibling so a failed issuance cannot leave a new key paired with an old
+  // (or missing) certificate. Fresh keys still land at keyPath.
+  const isRotation = existing === "regular";
+  const writePath = isRotation
+    ? path.join(
+        path.dirname(keyPath),
+        `.${path.basename(keyPath)}.staging-${process.pid}-${crypto.randomBytes(6).toString("hex")}`,
+      )
+    : keyPath;
+
   // Export into a Buffer (not a string) so the bytes can be zeroized after
   // the write. KeyObject.export returns a Buffer when no encoding is given
   // beyond format: "pem" -- force Buffer via Buffer.from to be explicit.
@@ -182,41 +197,11 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
     privateKey.export({ type: "pkcs8", format: "pem" }),
   );
   try {
-    if (existing === "regular") {
-      // Rotation: atomic replace via same-directory temp file + rename.
-      const tempPath = path.join(
-        path.dirname(keyPath),
-        `.${path.basename(keyPath)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`,
-      );
-      let fd;
-      try {
-        fd = fs.openSync(tempPath, "wx", 0o600);
-        fs.writeFileSync(fd, privatePemBuffer);
-        fs.fsyncSync(fd);
-        fs.closeSync(fd);
-        fd = undefined;
-        fs.renameSync(tempPath, keyPath);
-      } catch (err) {
-        if (fd !== undefined) {
-          try {
-            fs.closeSync(fd);
-          } catch (_err) {
-            // Best-effort close before cleanup.
-          }
-        }
-        try {
-          fs.unlinkSync(tempPath);
-        } catch (_err) {
-          // The temp file may already have been renamed or never created.
-        }
-        throw err;
-      }
-    } else {
-      // Fresh key: exclusive create; never follows a racing symlink.
-      fs.writeFileSync(keyPath, privatePemBuffer, { mode: 0o600, flag: "wx" });
-    }
+    // Exclusive create for both fresh and staging paths; never follows a
+    // racing symlink into existence between classify and write.
+    fs.writeFileSync(writePath, privatePemBuffer, { mode: 0o600, flag: "wx" });
     try {
-      fs.chmodSync(keyPath, 0o600);
+      fs.chmodSync(writePath, 0o600);
     } catch (_err) {
       // Best-effort on win32; see ensureKeyDir.
     }
@@ -229,7 +214,35 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
 
   const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
 
-  return guardReturnValue({ keyPath, publicKeyPem, algorithm });
+  return guardReturnValue({
+    keyPath,
+    stagedKeyPath: writePath,
+    publicKeyPem,
+    algorithm,
+  });
+}
+
+/**
+ * Removes a staged rotation key when issuance/deploy aborts. No-op when
+ * stagedKeyPath is absent or identical to the live keyPath (fresh install).
+ * Never deletes the live keyPath.
+ *
+ * @param {object} input
+ * @param {string} input.keyPath live key destination
+ * @param {string} input.stagedKeyPath staging path returned by generateKeyPairToFile
+ * @returns {void}
+ */
+function discardStagedKey({ keyPath, stagedKeyPath } = {}) {
+  if (typeof stagedKeyPath !== "string" || stagedKeyPath.length === 0) return;
+  if (typeof keyPath === "string" && stagedKeyPath === keyPath) return;
+  try {
+    fs.unlinkSync(stagedKeyPath);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return;
+    throw buildError(
+      `tokentimer-agent keys: could not discard staged key at ${stagedKeyPath}: ${err.message}`,
+    );
+  }
 }
 
 /**
@@ -605,6 +618,7 @@ function generateCsr({ keyPath, subject, altNames = [] } = {}) {
 module.exports = {
   SUPPORTED_ALGORITHM_NAMES,
   generateKeyPairToFile,
+  discardStagedKey,
   generateCsr,
   getPublicKeyFingerprint,
 };

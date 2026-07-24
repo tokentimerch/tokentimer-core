@@ -1,37 +1,49 @@
 "use strict";
 
 /**
- * Post-deploy certificate verification.
+ * Certificate verification for CertOps agent deploys.
  *
- * After the deploy module writes a renewed certificate and the target
- * service reloads, dispatch must confirm the endpoint is actually serving
- * the certificate that was deployed. This module does that by fingerprint
- * pinning: connect, take the peer certificate's DER bytes, sha256 them, and
- * compare against the expected fingerprint computed from the deployed PEM.
+ * Two complementary surfaces:
  *
- * Why rejectUnauthorized: false -- this is deliberate, not an oversight.
- * Chain validation against the local trust store is the wrong check here:
- * a freshly deployed certificate may carry a chain the agent host's local
- * store does not trust (yet), private CAs are a normal CertOps deployment
- * scenario, and staging/--dry-run CAs are untrusted by design. The
- * fingerprint comparison IS the verification: it proves byte-identity
- * between the certificate the endpoint serves and the certificate that was
- * deployed, which is strictly stronger evidence of "the deploy took" than
- * chain trust would be.
+ * 1. Pre-deploy validation (`validateCertificateForDeploy`): real X.509
+ *    parsing via node:crypto's X509Certificate. Confirms the leaf parses,
+ *    the private key matches (`checkPrivateKey`), every requested SAN is
+ *    present, the validity window covers "now" (with clock-skew tolerance),
+ *    and -- when intermediate PEMs are supplied -- the leaf-to-intermediate
+ *    signature chain verifies. Full chain-of-trust against a host root store
+ *    is deliberately out of scope (private/staging CAs are normal); callers
+ *    that need that check do it out of band.
  *
- * Error discipline: network problems (refused, timeout, reset, DNS) are
- * expected operational outcomes and yield { verified: false, ... } -- this
- * function never throws for those. It throws only on programmer error
- * (missing/malformed host, port, or expected fingerprint).
+ * 2. Post-deploy fingerprint pinning (`verifyDeployedCertificate`): after
+ *    deploy + reload, connect to the endpoint, take the peer certificate's
+ *    DER bytes, sha256 them, and compare against the expected fingerprint
+ *    computed from the deployed PEM.
+ *
+ * Why rejectUnauthorized: false on the TLS connect -- this is deliberate,
+ * not an oversight. Chain validation against the local trust store is the
+ * wrong check for post-deploy pinning: a freshly deployed certificate may
+ * carry a chain the agent host's local store does not trust (yet), private
+ * CAs are a normal CertOps deployment scenario, and staging/--dry-run CAs
+ * are untrusted by design. The fingerprint comparison IS the verification:
+ * it proves byte-identity between the certificate the endpoint serves and
+ * the certificate that was deployed.
+ *
+ * Error discipline:
+ *   - validateCertificateForDeploy returns { valid: false, code, detail }
+ *     for validation failures (never throws for bad certs/keys/SANs).
+ *   - verifyDeployedCertificate yields { verified: false, ... } for network
+ *     problems and throws only on programmer error (missing/malformed host,
+ *     port, or expected fingerprint).
  *
  * Fingerprint form: lowercase, no colons, 64 hex chars -- identical
  * semantics to the discovery module's normalizeFingerprint (which is
  * exported there but deliberately not imported here; modules in this
  * package are self-contained and accept plain data only).
  *
- * This module handles only public certificate material (DER/PEM of certs).
- * No private key is ever read, transmitted, or accepted by any function
- * here (D5 / ADR-0001 zero key custody).
+ * Private-key custody (D5 / ADR-0001): validateCertificateForDeploy accepts
+ * private key PEM / KeyObject transiently solely for `checkPrivateKey`. The
+ * key is never returned, logged, or retained. Post-deploy fingerprint
+ * pinning never touches private key material.
  */
 
 const crypto = require("node:crypto");
@@ -39,12 +51,17 @@ const tls = require("node:tls");
 
 const DEFAULT_TLS_PORT = 443;
 const DEFAULT_TIMEOUT_MS = 10000;
+/** Default clock-skew tolerance for validity-window checks (5 minutes). */
+const DEFAULT_CLOCK_SKEW_SECONDS = 300;
 
 /** Lowercase-hex sha256, optionally colon-separated, case-insensitive. */
 const FINGERPRINT_INPUT_PATTERN = /^(?:[0-9a-f]{2}:){31}[0-9a-f]{2}$|^[0-9a-f]{64}$/i;
 
 const PEM_CERTIFICATE_PATTERN =
   /-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]+)-----END CERTIFICATE-----/;
+
+const PEM_CERTIFICATE_BLOCK_PATTERN =
+  /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
 
 /**
  * Normalizes a sha256 fingerprint to the schema form: strip colons,
@@ -66,6 +83,300 @@ function normalizeFingerprint(fingerprint) {
  */
 function sha256HexOfDer(derBytes) {
   return crypto.createHash("sha256").update(derBytes).digest("hex");
+}
+
+/**
+ * Splits a PEM blob into individual CERTIFICATE blocks (leaf first when
+ * fullchain-ordered). Returns an empty array when none are present.
+ * @param {string} pem
+ * @returns {string[]}
+ */
+function splitCertificatePems(pem) {
+  if (typeof pem !== "string" || pem.length === 0) return [];
+  const matches = pem.match(PEM_CERTIFICATE_BLOCK_PATTERN);
+  return matches ? [...matches] : [];
+}
+
+/**
+ * Parses DNS names from an X509Certificate.subjectAltName string
+ * ("DNS:a.example, DNS:b.example, IP Address:...").
+ * @param {string|undefined} subjectAltName
+ * @returns {string[]} lowercase DNS names
+ */
+function parseDnsSans(subjectAltName) {
+  if (typeof subjectAltName !== "string" || subjectAltName.length === 0) {
+    return [];
+  }
+  const names = [];
+  for (const part of subjectAltName.split(",")) {
+    const trimmed = part.trim();
+    const match = /^DNS:(.+)$/i.exec(trimmed);
+    if (match) names.push(match[1].trim().toLowerCase());
+  }
+  return names;
+}
+
+/**
+ * @param {string} code
+ * @param {string} detail
+ * @returns {{ valid: false, code: string, detail: string }}
+ */
+function invalidCert(code, detail) {
+  return { valid: false, code, detail };
+}
+
+/**
+ * Parses a Date from X509Certificate.validFrom / validTo.
+ * @param {string} value
+ * @returns {Date|null}
+ */
+function parseCertDate(value) {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+/**
+ * Pre-deploy certificate validation using node:crypto X509Certificate.
+ *
+ * Checks, in order:
+ *   1. leaf PEM parses as X.509
+ *   2. private key parses and matches the leaf (`checkPrivateKey`)
+ *   3. every requested SAN/domain is present in subjectAltName (DNS)
+ *   4. validity window covers `now` within clockSkewSeconds
+ *   5. when intermediate PEMs are provided (via `chainPems` or additional
+ *      CERTIFICATE blocks after the leaf in `certificatePem`), each link's
+ *      signature verifies against the next cert's public key and each
+ *      intermediate's own validity window is acceptable
+ *
+ * Does NOT verify chain-of-trust to a host root store (private/staging CAs
+ * are in scope for CertOps; that check is out of band).
+ *
+ * @param {object} input
+ * @param {string} input.certificatePem leaf PEM, or leaf+intermediates fullchain
+ * @param {string|Buffer|crypto.KeyObject} input.privateKeyPem private key material
+ *   for the leaf (PEM string, DER Buffer, or KeyObject). Used only for
+ *   checkPrivateKey; never returned.
+ * @param {string[]} [input.requestedSans] domains that MUST appear as DNS SANs
+ * @param {string[]} [input.chainPems] optional intermediate certificate PEMs
+ *   (used when not already present after the leaf in certificatePem)
+ * @param {() => Date} [input.now] injectable clock
+ * @param {number} [input.clockSkewSeconds] validity-window skew, default 300
+ * @returns {
+ *   | { valid: true, fingerprintSha256: string, subjectAltNames: string[], validFrom: string, validTo: string }
+ *   | { valid: false, code: string, detail: string }
+ * }
+ */
+function validateCertificateForDeploy({
+  certificatePem,
+  privateKeyPem,
+  requestedSans = [],
+  chainPems = [],
+  now = () => new Date(),
+  clockSkewSeconds = DEFAULT_CLOCK_SKEW_SECONDS,
+} = {}) {
+  if (typeof certificatePem !== "string" || certificatePem.length === 0) {
+    return invalidCert(
+      "CERTIFICATE_PARSE_FAILED",
+      "verify: certificatePem must be a non-empty PEM string",
+    );
+  }
+  if (
+    privateKeyPem === undefined ||
+    privateKeyPem === null ||
+    (typeof privateKeyPem === "string" && privateKeyPem.length === 0)
+  ) {
+    return invalidCert(
+      "PRIVATE_KEY_PARSE_FAILED",
+      "verify: privateKeyPem is required for key/certificate matching",
+    );
+  }
+  if (!Array.isArray(requestedSans) || !requestedSans.every((s) => typeof s === "string")) {
+    return invalidCert(
+      "SAN_MISMATCH",
+      "verify: requestedSans must be an array of strings",
+    );
+  }
+  if (!Number.isFinite(clockSkewSeconds) || clockSkewSeconds < 0) {
+    return invalidCert(
+      "CERTIFICATE_PARSE_FAILED",
+      "verify: clockSkewSeconds must be a non-negative number",
+    );
+  }
+
+  const pemBlocks = splitCertificatePems(certificatePem);
+  if (pemBlocks.length === 0) {
+    return invalidCert(
+      "CERTIFICATE_PARSE_FAILED",
+      "verify: certificatePem contains no CERTIFICATE block",
+    );
+  }
+
+  let leaf;
+  try {
+    leaf = new crypto.X509Certificate(pemBlocks[0]);
+  } catch (err) {
+    return invalidCert(
+      "CERTIFICATE_PARSE_FAILED",
+      `verify: leaf certificate could not be parsed as X.509: ${err?.message || err}`,
+    );
+  }
+
+  let privateKey;
+  try {
+    privateKey =
+      typeof privateKeyPem === "object" &&
+      privateKeyPem !== null &&
+      typeof privateKeyPem.type === "string" &&
+      privateKeyPem.type === "private"
+        ? privateKeyPem
+        : crypto.createPrivateKey(privateKeyPem);
+  } catch (err) {
+    return invalidCert(
+      "PRIVATE_KEY_PARSE_FAILED",
+      `verify: private key could not be parsed: ${err?.message || err}`,
+    );
+  }
+
+  let keyMatches = false;
+  try {
+    keyMatches = leaf.checkPrivateKey(privateKey);
+  } catch (err) {
+    return invalidCert(
+      "PRIVATE_KEY_MISMATCH",
+      `verify: private key does not match certificate public key: ${err?.message || err}`,
+    );
+  }
+  if (!keyMatches) {
+    return invalidCert(
+      "PRIVATE_KEY_MISMATCH",
+      "verify: private key does not match the leaf certificate public key",
+    );
+  }
+
+  const presentSans = parseDnsSans(leaf.subjectAltName);
+  const missingSans = requestedSans
+    .map((name) => String(name).trim().toLowerCase())
+    .filter((name) => name.length > 0)
+    .filter((name) => !presentSans.includes(name));
+  if (missingSans.length > 0) {
+    return invalidCert(
+      "SAN_MISMATCH",
+      `verify: certificate subjectAltName is missing requested DNS name(s): ${missingSans.join(", ")} ` +
+        `(present: ${presentSans.length > 0 ? presentSans.join(", ") : "none"})`,
+    );
+  }
+
+  const skewMs = clockSkewSeconds * 1000;
+  const instant = now();
+  if (!(instant instanceof Date) || Number.isNaN(instant.getTime())) {
+    return invalidCert(
+      "CERTIFICATE_PARSE_FAILED",
+      "verify: now() must return a valid Date",
+    );
+  }
+
+  const validFrom = parseCertDate(leaf.validFrom);
+  const validTo = parseCertDate(leaf.validTo);
+  if (!validFrom || !validTo) {
+    return invalidCert(
+      "CERTIFICATE_PARSE_FAILED",
+      "verify: leaf certificate validity dates could not be parsed",
+    );
+  }
+  if (instant.getTime() + skewMs < validFrom.getTime()) {
+    return invalidCert(
+      "NOT_YET_VALID",
+      `verify: leaf certificate is not yet valid (validFrom=${leaf.validFrom}, now=${instant.toISOString()}, skew=${clockSkewSeconds}s)`,
+    );
+  }
+  if (instant.getTime() - skewMs > validTo.getTime()) {
+    return invalidCert(
+      "EXPIRED",
+      `verify: leaf certificate is expired (validTo=${leaf.validTo}, now=${instant.toISOString()}, skew=${clockSkewSeconds}s)`,
+    );
+  }
+
+  // Build the intermediate list: remaining blocks in certificatePem, then
+  // any explicitly supplied chainPems (dedupe by fingerprint).
+  const intermediatePems = [];
+  const seenFp = new Set([normalizeFingerprint(leaf.fingerprint256)]);
+  for (const block of pemBlocks.slice(1)) {
+    intermediatePems.push(block);
+  }
+  if (Array.isArray(chainPems)) {
+    for (const block of chainPems) {
+      if (typeof block !== "string" || block.length === 0) continue;
+      for (const part of splitCertificatePems(block)) {
+        intermediatePems.push(part);
+      }
+    }
+  }
+
+  if (intermediatePems.length > 0) {
+    let child = leaf;
+    for (let i = 0; i < intermediatePems.length; i += 1) {
+      let issuer;
+      try {
+        issuer = new crypto.X509Certificate(intermediatePems[i]);
+      } catch (err) {
+        return invalidCert(
+          "CHAIN_INVALID",
+          `verify: intermediate certificate at chain index ${i} could not be parsed: ${err?.message || err}`,
+        );
+      }
+      const fp = normalizeFingerprint(issuer.fingerprint256);
+      if (seenFp.has(fp)) continue;
+      seenFp.add(fp);
+
+      let signatureOk = false;
+      try {
+        signatureOk = child.verify(issuer.publicKey);
+      } catch (err) {
+        return invalidCert(
+          "CHAIN_INVALID",
+          `verify: chain signature check failed at link ${i}: ${err?.message || err}`,
+        );
+      }
+      if (!signatureOk) {
+        return invalidCert(
+          "CHAIN_INVALID",
+          `verify: certificate at chain link ${i} was not signed by the next intermediate`,
+        );
+      }
+
+      const issuerFrom = parseCertDate(issuer.validFrom);
+      const issuerTo = parseCertDate(issuer.validTo);
+      if (!issuerFrom || !issuerTo) {
+        return invalidCert(
+          "CHAIN_INVALID",
+          `verify: intermediate at chain index ${i} has unparseable validity dates`,
+        );
+      }
+      if (instant.getTime() + skewMs < issuerFrom.getTime()) {
+        return invalidCert(
+          "CHAIN_INVALID",
+          `verify: intermediate at chain index ${i} is not yet valid (validFrom=${issuer.validFrom})`,
+        );
+      }
+      if (instant.getTime() - skewMs > issuerTo.getTime()) {
+        return invalidCert(
+          "CHAIN_INVALID",
+          `verify: intermediate at chain index ${i} is expired (validTo=${issuer.validTo})`,
+        );
+      }
+
+      child = issuer;
+    }
+  }
+
+  return {
+    valid: true,
+    fingerprintSha256: normalizeFingerprint(leaf.fingerprint256),
+    subjectAltNames: presentSans,
+    validFrom: leaf.validFrom,
+    validTo: leaf.validTo,
+  };
 }
 
 /**
@@ -261,7 +572,11 @@ function verifyDeployedCertificate({
 }
 
 module.exports = {
+  validateCertificateForDeploy,
   verifyDeployedCertificate,
   computeCertificateFingerprint,
   normalizeFingerprint,
+  splitCertificatePems,
+  parseDnsSans,
+  DEFAULT_CLOCK_SKEW_SECONDS,
 };

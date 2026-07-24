@@ -56,6 +56,9 @@ temp/
 credentials.json
 secrets.yaml
 license.key
+# Exception: committed OpenSSL TEST-ONLY fixtures for X.509 validation tests.
+!packages/agent/src/verify/fixtures/*.pem
+!packages/agent/src/verify/fixtures/*.key.pem
 
 # Database
 *.sqlite

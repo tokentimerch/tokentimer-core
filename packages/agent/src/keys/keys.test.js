@@ -23,6 +23,7 @@ const path = require("node:path");
 const {
   SUPPORTED_ALGORITHM_NAMES,
   generateKeyPairToFile,
+  discardStagedKey,
   generateCsr,
   getPublicKeyFingerprint,
 } = require("./index.js");
@@ -139,8 +140,14 @@ describe("generateKeyPairToFile", () => {
       const keyPath = path.join(makeTempKeyDir(), `${algorithm}.key.pem`);
       const result = generateKeyPairToFile({ keyPath, algorithm });
 
-      assert.deepEqual(Object.keys(result).sort(), ["algorithm", "keyPath", "publicKeyPem"]);
+      assert.deepEqual(Object.keys(result).sort(), [
+        "algorithm",
+        "keyPath",
+        "publicKeyPem",
+        "stagedKeyPath",
+      ]);
       assert.equal(result.keyPath, keyPath);
+      assert.equal(result.stagedKeyPath, keyPath);
       assert.equal(result.algorithm, algorithm);
       assert.ok(result.publicKeyPem.includes("-----BEGIN PUBLIC KEY-----"));
       assert.ok(!JSON.stringify(result).includes("PRIVATE KEY"));
@@ -186,6 +193,14 @@ describe("generateKeyPairToFile", () => {
     );
     const second = generateKeyPairToFile({ keyPath, overwrite: true });
     assert.notEqual(second.publicKeyPem, first.publicKeyPem);
+    // Live key must remain the first key; rotation only stages the new one.
+    const livePublic = crypto
+      .createPublicKey(crypto.createPrivateKey(fs.readFileSync(keyPath, "utf8")))
+      .export({ type: "spki", format: "pem" })
+      .toString();
+    assert.equal(livePublic, first.publicKeyPem);
+    assert.notEqual(second.stagedKeyPath, keyPath);
+    assert.ok(fs.existsSync(second.stagedKeyPath));
   });
 
   it("refuses to write through a symlink at the key path", { skip: IS_WIN32 }, () => {
@@ -206,24 +221,43 @@ describe("generateKeyPairToFile", () => {
     assert.equal(fs.readFileSync(realTarget, "utf8"), "sentinel");
   });
 
-  it("rotation replaces the key atomically and leaves no temp files behind", () => {
+  it("rotation stages a new key without replacing the live key, and discardStagedKey cleans up", () => {
     const dir = makeTempKeyDir();
     const keyPath = path.join(dir, "rotate.key.pem");
     const first = generateKeyPairToFile({ keyPath });
+    const liveBefore = fs.readFileSync(keyPath, "utf8");
+
     const second = generateKeyPairToFile({ keyPath, overwrite: true });
     assert.notEqual(second.publicKeyPem, first.publicKeyPem);
+    assert.notEqual(second.stagedKeyPath, keyPath);
 
-    // The on-disk key is complete and matches the returned public half.
-    const derivedPublic = crypto
-      .createPublicKey(crypto.createPrivateKey(fs.readFileSync(keyPath, "utf8")))
+    // Live key unchanged.
+    assert.equal(fs.readFileSync(keyPath, "utf8"), liveBefore);
+
+    // Staged key matches the returned public half.
+    const stagedPublic = crypto
+      .createPublicKey(crypto.createPrivateKey(fs.readFileSync(second.stagedKeyPath, "utf8")))
       .export({ type: "spki", format: "pem" })
       .toString();
-    assert.equal(derivedPublic, second.publicKeyPem);
+    assert.equal(stagedPublic, second.publicKeyPem);
 
-    const leftovers = fs.readdirSync(dir).filter((name) => name.endsWith(".tmp"));
+    discardStagedKey({ keyPath, stagedKeyPath: second.stagedKeyPath });
+    assert.equal(fs.existsSync(second.stagedKeyPath), false);
+    assert.equal(fs.readFileSync(keyPath, "utf8"), liveBefore);
+
+    const leftovers = fs
+      .readdirSync(dir)
+      .filter((name) => name.includes(".staging-") || name.endsWith(".tmp"));
     assert.deepEqual(leftovers, []);
   });
 
+  it("discardStagedKey is a no-op when stagedKeyPath equals keyPath", () => {
+    const keyPath = path.join(makeTempKeyDir(), "fresh.key.pem");
+    const generated = generateKeyPairToFile({ keyPath });
+    assert.equal(generated.stagedKeyPath, keyPath);
+    discardStagedKey({ keyPath, stagedKeyPath: generated.stagedKeyPath });
+    assert.ok(fs.existsSync(keyPath));
+  });
   it("never includes 'PRIVATE KEY' in a thrown error message", () => {
     const keyPath = path.join(makeTempKeyDir(), "err.key.pem");
     generateKeyPairToFile({ keyPath });
