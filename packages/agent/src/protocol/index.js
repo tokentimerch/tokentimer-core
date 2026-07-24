@@ -14,7 +14,7 @@ const { URL } = require("node:url");
 const {
   assertNoPrivateKeyMaterial,
   redactGenericSecrets,
-} = require("../../../log-scrub/secret-material.js");
+} = require("../../vendor/log-scrub/secret-material.js");
 const { defaultAgentLogger } = require("../logging");
 
 const SCHEMA_VERSION = 1;

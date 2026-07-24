@@ -14,10 +14,24 @@
   "scripts": {
     "start": "node bin/tokentimer-agent.js",
     "build": "node scripts/check-shipped-sources.js",
+    "sync-vendor": "node scripts/sync-vendor.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node --test src/**/*.test.js"
+    "test": "node --test src/**/*.test.js scripts/**/*.test.js",
+    "pack:release": "npm pack"
   },
+  "files": [
+    "bin",
+    "src",
+    "vendor",
+    "scripts/install-agent.sh",
+    "scripts/tokentimer-agent.service",
+    "scripts/check-shipped-sources.js",
+    "scripts/sync-vendor.js",
+    "README.md",
+    "LICENSE*",
+    "package.json"
+  ],
   "dependencies": {},
   "devDependencies": {
     "eslint": "9.39.2"

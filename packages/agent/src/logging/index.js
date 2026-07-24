@@ -12,7 +12,7 @@ const {
   containsPrivateKeyMaterial,
   redactGenericSecrets,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
-} = require("../../../log-scrub/secret-material.js");
+} = require("../../vendor/log-scrub/secret-material.js");
 
 const AGENT_CREDENTIAL_PATTERN = /\bttagent_[^\s,;"']+/gi;
 const BOOTSTRAP_TOKEN_PATTERN = /\b(?:bootstrap|bearer)\s+token\s*[:=]\s*([^\s,;"']+)/gi;

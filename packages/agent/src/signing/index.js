@@ -28,12 +28,14 @@
 const crypto = require("node:crypto");
 
 // Shared canonical-JSON implementation (single source of truth for the
-// signed byte contract; the control plane requires the same file). See
-// packages/contracts/certops/canonical-json.cjs for the full algorithm doc.
+// signed byte contract; the control plane uses packages/contracts/certops/
+// canonical-json.cjs). The agent ships a vendored copy so install-agent.sh
+// remains self-contained outside the monorepo. Keep in sync via
+// scripts/sync-vendor.js.
 const {
   isPlainObject,
   canonicalizeJobPayload,
-} = require("../../../contracts/certops/canonical-json.cjs");
+} = require("../../vendor/contracts/canonical-json.cjs");
 
 /**
  * Rejection reasons owned by the signature/time-window runtime,
