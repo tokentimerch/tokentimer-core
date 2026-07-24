@@ -30,6 +30,7 @@ const {
   listManagedCertificates,
   retireManagedCertificate,
 } = require("../services/certops/inventory");
+const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
 const {
   CERTOPS_API_TOKEN_INVALID,
   CERTOPS_API_TOKEN_NAME_INVALID,
@@ -58,9 +59,11 @@ const {
   retireAgent,
 } = require("../services/certops/agentRegistry");
 const {
+  CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+  CERTOPS_JOB_METADATA_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
@@ -75,6 +78,10 @@ const {
 const {
   NON_RENEWABLE_CERTIFICATE_STATUSES,
 } = require("../services/certops/renewalScheduler");
+const {
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+} = require("../services/certops/renewalProfile");
 const {
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_TYPE_INVALID,
@@ -344,6 +351,8 @@ function handleCertOpsError(res, err) {
     CERTOPS_JOB_SOURCE_INVALID,
     CERTOPS_JOB_STATUS_INVALID,
     CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+    CERTOPS_JOB_METADATA_INVALID,
+    CERTOPS_JOB_EXECUTION_FIELD_INVALID,
     CERTOPS_EVIDENCE_INVALID,
     CERTOPS_EVIDENCE_TYPE_INVALID,
   ]);
@@ -351,6 +360,23 @@ function handleCertOpsError(res, err) {
     return res.status(400).json({
       error: "CertOps job request is invalid",
       code: err.code,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+    err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+  ) {
+    return res.status(400).json({
+      error: "Certificate renewal profile is missing or invalid",
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_TOO_LARGE) {
+    return res.status(400).json({
+      error: "Certificate input exceeds the public certificate size limit",
+      code: CERTOPS_CERTIFICATE_TOO_LARGE,
     });
   }
 

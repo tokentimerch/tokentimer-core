@@ -2165,6 +2165,23 @@ const migrations = [
         ALTER COLUMN credential_ciphertext SET NOT NULL;
     `,
   },
+  {
+    version: 31,
+    name: "certops_agents_agent_id_scoped_to_workspace",
+    sql: `
+      -- agent_id was globally unique across all workspaces, so two unrelated
+      -- tenants who both pick a common id (e.g. "prod-web-01") could not
+      -- both register: the second registration hard-fails with
+      -- CERTOPS_AGENT_REGISTRATION_CONFLICT, and one workspace's bootstrap
+      -- token holder could inadvertently (or deliberately) block agent
+      -- registration for another workspace. Every other certops query
+      -- scopes strictly by workspace_id; agent_id uniqueness now matches
+      -- that pattern instead of being a global namespace.
+      DROP INDEX IF EXISTS uq_certops_agents_agent_id;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_workspace_agent_id
+        ON certops_agents(workspace_id, agent_id);
+    `,
+  },
 ];
 
 async function runMigrations() {

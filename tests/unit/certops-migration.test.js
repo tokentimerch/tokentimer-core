@@ -694,6 +694,27 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("scopes certops_agents.agent_id uniqueness to the workspace instead of globally", () => {
+    // Regression: agent_id was globally unique, so two unrelated workspaces
+    // could not both register an agent using a common id (e.g.
+    // "prod-web-01"); the second registration hard-failed with
+    // CERTOPS_AGENT_REGISTRATION_CONFLICT, and a bootstrap-token holder in
+    // one workspace could inadvertently block registration in another.
+    const migration = migrations.find(
+      (entry) => entry.name === "certops_agents_agent_id_scoped_to_workspace",
+    );
+    assert.ok(
+      migration,
+      "expected certops_agents_agent_id_scoped_to_workspace migration",
+    );
+    assert.equal(migration.version, 31);
+    assert.match(migration.sql, /DROP INDEX IF EXISTS uq_certops_agents_agent_id/);
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_workspace_agent_id\s*\n\s*ON certops_agents\(workspace_id, agent_id\)/,
+    );
+  });
+
   it("keeps released migration 18 and the controller migration tail unique and ordered", () => {
     const expectedVersions = new Map([
       ["tokens_certops_api_token_link", 18],
@@ -709,6 +730,7 @@ describe("CertOps inventory migration", () => {
       ["certops_agent_inventory_evidence_integrity", 28],
       ["certops_agent_registration_idempotency", 29],
       ["certops_registration_replay_credential_encryption", 30],
+      ["certops_agents_agent_id_scoped_to_workspace", 31],
     ]);
     for (const [name, version] of expectedVersions) {
       assert.equal(

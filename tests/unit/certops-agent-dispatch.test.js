@@ -1847,4 +1847,51 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(parsed.needsOperatorReconciliation, true);
     assert.equal(parsed.reconciliationReason, "multi_target_rollback_uncertain");
   });
+
+  it("locks the agent row before the job row (matches claim/lease lock ordering, avoids AB-BA deadlock)", async () => {
+    // Regression: claimJobs/renewJobLease both lock certops_agents before
+    // any certificate_jobs row (via enforceAgentSequence's FOR UPDATE on
+    // the agent row, ahead of the job SELECT). ingestResult used to invert
+    // this by locking the job row first and the agent row only later
+    // inside enforceSequence, which could deadlock against a concurrent
+    // claim/lease-renew for the same agent. Assert the query order here so
+    // a future refactor cannot silently reintroduce the inversion.
+    const queryOrder = [];
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FROM certops_agents") && sql.includes("FOR UPDATE")) {
+        queryOrder.push("agent-lock");
+        return { rows: [{ id: "agent-row-1" }] };
+      }
+      if (sql.includes("FROM certificate_jobs") && sql.includes("FOR UPDATE")) {
+        queryOrder.push("job-lock");
+        return { rows: [lockedJobRow({ status: "running", mode: "real" })] };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        return {
+          rows: [
+            {
+              id: 42,
+              status: "succeeded",
+              error_code: null,
+              completed_at: new Date("2026-07-22T10:20:00.000Z"),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await ingestResult({
+      dbPool,
+      agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined }),
+      deps: {
+        consumeNonce: async () => ({ consumed: true }),
+        enforceAgentSequence: async () => {},
+      },
+    });
+
+    assert.equal(result.status, "succeeded");
+    assert.deepEqual(queryOrder, ["agent-lock", "job-lock"]);
+  });
 });

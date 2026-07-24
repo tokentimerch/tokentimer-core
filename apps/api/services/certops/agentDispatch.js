@@ -373,7 +373,7 @@ async function registerAgent({
          last_sequence
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, 'active', $13, $14)
-       ON CONFLICT (agent_id) DO NOTHING
+       ON CONFLICT (workspace_id, agent_id) DO NOTHING
        RETURNING id, agent_id, protocol_version`,
       [
         bootstrapToken.workspaceId,
@@ -1121,6 +1121,20 @@ async function ingestResult({
   }
 
   return await withTransaction(dbPool, async (client) => {
+    // Lock the agent row before the job row. claimJobs/renewJobLease both
+    // lock the agent row (inside enforceAgentSequence) before any job row;
+    // ingestResult used to lock the job row first and the agent row only
+    // later (inside enforceSequence below), an inverted order that could
+    // deadlock against a concurrent claim/lease-renew for the same agent.
+    // Postgres would resolve that by aborting one transaction rather than
+    // hanging, but acquiring the lock in the same order here removes the
+    // possibility entirely; enforceSequence's own lock on this row later
+    // in the transaction is then a no-op re-entrant lock.
+    await client.query(
+      `SELECT id FROM certops_agents WHERE id = $1 FOR UPDATE`,
+      [agent.id],
+    );
+
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode
