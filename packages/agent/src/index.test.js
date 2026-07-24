@@ -21,10 +21,15 @@ const {
   runDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
+  resolveClaimSupportedActions,
+  shouldPollForJobs,
   AGENT_VERSION,
+  EXECUTABLE_JOB_ACTIONS,
+  OBSERVE_ONLY_CLAIM_ACTIONS,
 } = require("./index.js");
+const { listOutboxEntries, drainOutbox } = require("./outbox");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
-const { ensureConfigDir, writeCredential, readCredential, loadAgentConfig } = require("./config");
+const { ensureConfigDir, writeCredential, readCredential, loadAgentConfig, readRegistrationId, ensureRegistrationId } = require("./config");
 const { generateSigningKeyPair, signJobPayload } = require("./signing");
 
 function makeTempConfigDir() {
@@ -403,12 +408,38 @@ describe("registerIfNeeded", () => {
     assert.equal(registerCall.agentVersion, AGENT_VERSION);
     assert.deepEqual(registerCall.declaredTargetSelectors, ["example.com"]);
     assert.deepEqual(registerCall.declaredCommandProfileNames, ["nginx-reload"]);
+    // H1: registrationId must be sent and must match the pre-persisted key.
+    assert.match(registerCall.registrationId, /^[0-9a-f-]{36}$/i);
+    assert.equal(readRegistrationId(dir), null); // cleared after successful persist
 
     // The validated registration record is persisted as one recoverable
     // identity + credential transaction by registerIfNeeded itself.
     const persisted = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
     assert.equal(persisted.agentId, "agent-assigned-1");
     assert.equal(readCredential(dir), "ttagent_agent-assigned-1_0123456789abcdef");
+  });
+
+  it("persists registrationId before register and reuses it on retry after a crash (H1)", async () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ serverUrl: "https://cp.example.com" }),
+      "utf8",
+    );
+
+    const prePersistedId = ensureRegistrationId(dir);
+    assert.equal(readRegistrationId(dir), prePersistedId);
+
+    const client = createRecordingClient();
+    await registerIfNeeded({
+      client,
+      config: loadConfigFrom(dir),
+      configDir: dir,
+      env: { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: "bootstrap-token" },
+    });
+
+    assert.equal(client.calls.register.length, 1);
+    assert.equal(client.calls.register[0].registrationId, prePersistedId);
+    assert.equal(readRegistrationId(dir), null);
   });
 
   it("does not persist any state when registration returns malformed identity data", async () => {
@@ -436,6 +467,8 @@ describe("registerIfNeeded", () => {
     );
     assert.equal(loadConfigFrom(dir).agentId, null);
     assert.equal(readCredential(dir), null);
+    // H1: registrationId remains so a retry can reuse the same idempotency key.
+    assert.match(readRegistrationId(dir), /^[0-9a-f-]{36}$/i);
   });
 });
 
@@ -445,6 +478,31 @@ describe("createCandidateAgentId", () => {
     assert.match(candidate, /^[A-Za-z0-9_.:-]{1,128}$/);
     assert.ok(candidate.length <= 128);
     assert.match(candidate, /^candidate-/);
+  });
+});
+
+describe("observe-only claim policy (B3)", () => {
+  it("advertises zero supported actions when execution is disabled", () => {
+    assert.deepEqual(OBSERVE_ONLY_CLAIM_ACTIONS, []);
+    assert.deepEqual(resolveClaimSupportedActions(null), []);
+    assert.deepEqual(resolveClaimSupportedActions(undefined), []);
+    assert.deepEqual(resolveClaimSupportedActions({ enabled: false }), []);
+  });
+
+  it("advertises executable actions only when execution is enabled", () => {
+    assert.deepEqual(
+      resolveClaimSupportedActions({ enabled: true }),
+      EXECUTABLE_JOB_ACTIONS,
+    );
+    assert.ok(EXECUTABLE_JOB_ACTIONS.includes("renew"));
+    assert.ok(EXECUTABLE_JOB_ACTIONS.includes("deploy"));
+  });
+
+  it("never polls the claim endpoint when observe-only", () => {
+    assert.equal(shouldPollForJobs(null), false);
+    assert.equal(shouldPollForJobs(undefined), false);
+    assert.equal(shouldPollForJobs({ enabled: false }), false);
+    assert.equal(shouldPollForJobs({ enabled: true }), true);
   });
 });
 
@@ -469,6 +527,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
         dryRun,
         keysDir,
         replayStorePath: path.join(workDir, "replay-store.json"),
+        outboxDir: path.join(workDir, "outbox"),
         clockDriftToleranceMs: 30000,
       },
       pinnedSigningKey: pinned
@@ -896,6 +955,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
               dryRun: true,
               keysDir: path.join(workDir, "keys"),
               replayStorePath: storePath,
+              outboxDir: path.join(workDir, "outbox"),
               clockDriftToleranceMs: 30000,
             },
             pinnedSigningKey: null,
@@ -911,5 +971,42 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(resolveJobCertPath({ certPath: abs, target: { reference: abs2 } }), abs);
     assert.equal(resolveJobCertPath({ target: { reference: abs2 } }), abs2);
     assert.equal(resolveJobCertPath({ target: { reference: "example.com" } }), null);
+  });
+
+  it("preserves a succeeded execution outcome in the outbox when reportResult fails (B8)", async () => {
+    let reportAttempts = 0;
+    const client = createRecordingClient();
+    client.reportResult = (params) => {
+      reportAttempts += 1;
+      client.calls.reportResult.push(params);
+      return Promise.reject(new Error("control plane unreachable"));
+    };
+
+    const outcome = await handleClaimedJob({
+      job: makeSignedJob({ jobId: "job-b8-tx-fail" }),
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    // Execution succeeded; transmission failure must not rewrite the outcome.
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(reportAttempts, 1);
+
+    const outboxDir = path.join(workDir, "outbox");
+    const pending = listOutboxEntries(outboxDir);
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].result.status, "succeeded");
+    assert.equal(pending[0].result.jobId, "job-b8-tx-fail");
+
+    // Retry from the durable outbox without re-executing.
+    const retryClient = createRecordingClient();
+    const drained = await drainOutbox(outboxDir, retryClient);
+    assert.equal(drained.transmitted, 1);
+    assert.equal(drained.remaining, 0);
+    assert.equal(retryClient.calls.reportResult.length, 1);
+    assert.equal(retryClient.calls.reportResult[0].status, "succeeded");
+    assert.equal(listOutboxEntries(outboxDir).length, 0);
   });
 });

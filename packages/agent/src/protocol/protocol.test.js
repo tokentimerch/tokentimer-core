@@ -75,6 +75,7 @@ test("register: validates and returns the full response before persistence", asy
     nodeVersion: "v22.0.0",
     declaredTargetSelectors: ["example.com"],
     declaredCommandProfileNames: ["nginx-reload"],
+    registrationId: "550e8400-e29b-41d4-a716-446655440000",
   });
 
   assert.equal(result.agentId, "agent-1");
@@ -87,6 +88,7 @@ test("register: validates and returns the full response before persistence", asy
   assert.equal(calls[0].parsedBody.messageType, "register");
   assert.equal(calls[0].parsedBody.body.bootstrapTokenId, "bst_abc123");
   assert.equal(calls[0].parsedBody.body.agentVersion, "0.1.0");
+  assert.equal(calls[0].parsedBody.body.registrationId, "550e8400-e29b-41d4-a716-446655440000");
   assert.equal(calls[0].parsedBody.schemaVersion, 1);
 });
 

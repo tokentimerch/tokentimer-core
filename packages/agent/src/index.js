@@ -28,12 +28,12 @@
  * src/acme, src/deploy, src/reload, src/verify.
  *
  * When execution is NOT enabled (config.execution absent or enabled:false),
- * the observe-only bootstrap behavior is preserved exactly: every policy-allowed job
- * is reported back as "blocked" with an explanatory error message, and
- * every policy-rejected job is reported as "rejected" with evidence. This
- * keeps the full outbound loop (register -> heartbeat -> claim ->
- * result/evidence) exercisable end to end without ever running an
- * unverified job.
+ * the agent runs observe-only: register, heartbeat, and filesystem discovery
+ * remain fully active, but the agent advertises zero executable/mutating
+ * actions and never polls the claim endpoint. Claiming production jobs while
+ * unable to execute them previously stranded leases (blocked reports lacked
+ * claimId/nonce). handleClaimedJob still treats an unexpected claim as
+ * "blocked"/"rejected" defense-in-depth if one ever arrives.
  *
  * Known base-payload deviations (job-payload.schema.json lacks signed-job execution
  * fields; documented for the control-plane backend contract):
@@ -65,6 +65,8 @@ const {
   readCredential,
   persistRegistration,
   recoverPendingRegistration,
+  ensureRegistrationId,
+  clearRegistrationId,
   readCaBundle,
   createSequenceAllocator,
   deleteBootstrapEnvFile,
@@ -99,6 +101,13 @@ const {
   verifyDeployedCertificate,
   computeCertificateFingerprint,
 } = require("./verify");
+const {
+  enqueueOutboxEntry,
+  transmitOutboxEntry,
+  acknowledgeOutboxEntry,
+  drainOutbox,
+  createEvidenceBuffer,
+} = require("./outbox");
 
 const { version: AGENT_VERSION } = require("../package.json");
 
@@ -183,14 +192,36 @@ const SUPPORTED_ACME_KINDS = ["certbot", "acme.sh"];
 const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
 
 /**
- * Claim scope in observe-only bootstrap mode (execution disabled): every
- * action, including revoke, because this mode's documented contract is to
- * claim jobs and report them back as explicit "blocked"/"rejected" terminal
- * states rather than leaving them invisible. The control plane returns no
- * jobs at all for an empty supportedActions list, which would silently
- * disable that loop.
+ * Claim scope in observe-only mode (execution disabled): empty. An
+ * observe-only agent must never advertise mutating/executable actions and
+ * must never poll claim; an empty list is the wire-level expression of
+ * "no executable actions" if a claim call is ever made in error.
  */
-const OBSERVE_ONLY_CLAIM_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload", "revoke"]);
+const OBSERVE_ONLY_CLAIM_ACTIONS = Object.freeze([]);
+
+/**
+ * Actions advertised on claim polls. Observe-only agents return [].
+ *
+ * @param {object|null|undefined} executionContext
+ * @returns {readonly string[]}
+ */
+function resolveClaimSupportedActions(executionContext) {
+  if (executionContext !== null && executionContext !== undefined && executionContext.enabled === true) {
+    return EXECUTABLE_JOB_ACTIONS;
+  }
+  return OBSERVE_ONLY_CLAIM_ACTIONS;
+}
+
+/**
+ * Whether this process should poll the jobs/claim endpoint. Observe-only
+ * agents must not claim (B3): discovery and heartbeat stay independent.
+ *
+ * @param {object|null|undefined} executionContext
+ * @returns {boolean}
+ */
+function shouldPollForJobs(executionContext) {
+  return executionContext !== null && executionContext !== undefined && executionContext.enabled === true;
+}
 
 /**
  * Exit code used when the control plane retires this agent. Paired with
@@ -241,10 +272,48 @@ function resolveJobCertPath(job) {
 }
 
 /**
+ * Persists a terminal job outcome (+ evidence) to the durable outbox, then
+ * attempts transmission. Transmission failures leave the entry on disk for
+ * retry and never rewrite a persisted success as a failure (B8).
+ *
+ * @param {object} params
+ * @param {string} params.outboxDir
+ * @param {object} params.client live protocol client (network)
+ * @param {object} params.result reportResult payload
+ * @param {object[]} [params.evidence] reportEvidence bodies, in order
+ * @param {(msg: string, details?: *) => void} [params.log]
+ * @returns {Promise<{ status: string, rejectionReason: string|null }>}
+ */
+async function persistAndTransmitOutcome({
+  outboxDir,
+  client,
+  result,
+  evidence = [],
+  log = null,
+}) {
+  const entry = enqueueOutboxEntry(outboxDir, { result, evidence });
+  try {
+    await transmitOutboxEntry(entry, client);
+    acknowledgeOutboxEntry(outboxDir, entry.id);
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: failed to transmit outbox entry for job ${result.jobId}; ` +
+        "persisted outcome retained for retry (execution result unchanged)",
+      err,
+    );
+  }
+  return {
+    status: result.status,
+    rejectionReason: result.rejectionReason ?? null,
+  };
+}
+
+/**
  * Reports a trust-layer or policy rejection uniformly: policy.checked
  * evidence built from the { allowed:false, rejectionReason, detail } shape
  * (shared by signing/replay/clock/policy modules), then a "rejected"
- * result. Evidence is deep-scanned for key material before every POST.
+ * result. Evidence is deep-scanned for key material before every persist.
  *
  * @param {object} params
  * @param {object} params.client
@@ -252,9 +321,19 @@ function resolveJobCertPath(job) {
  * @param {string} params.attemptId
  * @param {{ rejectionReason: string, detail: string }} params.verdict
  * @param {(msg: string) => void} params.log
+ * @param {string} params.outboxDir
  * @returns {Promise<{ status: "rejected", rejectionReason: string }>}
  */
-async function reportJobRejection({ client, jobId, attemptId, claimId = null, nonce = null, verdict, log }) {
+async function reportJobRejection({
+  client,
+  jobId,
+  attemptId,
+  claimId = null,
+  nonce = null,
+  verdict,
+  log,
+  outboxDir,
+}) {
   log(
     `tokentimer-agent: job ${jobId} rejected: ${verdict.rejectionReason}`,
   );
@@ -264,16 +343,20 @@ async function reportJobRejection({ client, jobId, attemptId, claimId = null, no
     jobId,
   });
   assertEvidencePayloadSafe(evidenceBody);
-  await client.reportEvidence(evidenceBody);
-  await client.reportResult({
-    jobId,
-    attemptId,
-    claimId,
-    nonce,
-    status: "rejected",
-    rejectionReason: verdict.rejectionReason,
+  return await persistAndTransmitOutcome({
+    outboxDir,
+    client,
+    result: {
+      jobId,
+      attemptId,
+      claimId,
+      nonce,
+      status: "rejected",
+      rejectionReason: verdict.rejectionReason,
+    },
+    evidence: [evidenceBody],
+    log,
   });
-  return { status: "rejected", rejectionReason: verdict.rejectionReason };
 }
 
 /**
@@ -448,7 +531,7 @@ async function handleSignedJob({
   executionContext,
   log,
 }) {
-  const { pinnedSigningKey, replayCache, clockEstimator, execution } =
+  const { pinnedSigningKey, replayCache, clockEstimator, execution, outboxDir } =
     executionContext;
   // Server-assigned claim id and single-use dispatch nonce: forwarded on
   // every result so the control plane can re-prove claim ownership and
@@ -460,22 +543,43 @@ async function handleSignedJob({
   const nonce =
     typeof job?.nonce === "string" && job.nonce.length > 0 ? job.nonce : null;
 
+  const resolvedOutboxDir = outboxDir || execution.outboxDir;
+  if (typeof resolvedOutboxDir !== "string" || resolvedOutboxDir.length === 0) {
+    throw new Error(
+      "tokentimer-agent: execution outboxDir is required when execution is enabled",
+    );
+  }
+
+  const rejectionArgs = {
+    client,
+    jobId,
+    attemptId,
+    claimId,
+    nonce,
+    log,
+    outboxDir: resolvedOutboxDir,
+  };
+
   // No pinned key => integrity of ANY job cannot be established. Blocked,
   // not rejected: this is an agent-side precondition failure, not a verdict
   // about the job itself.
   if (!pinnedSigningKey) {
-    await client.reportResult({
-      jobId,
-      attemptId,
-      claimId,
-      nonce,
-      status: "blocked",
-      errorMessage:
-        "execution is enabled but no control-plane signing key is pinned " +
-        "yet (the register response did not carry one); unsigned or " +
-        "unverifiable jobs are never executed",
+    return persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: {
+        jobId,
+        attemptId,
+        claimId,
+        nonce,
+        status: "blocked",
+        errorMessage:
+          "execution is enabled but no control-plane signing key is pinned " +
+          "yet (the register response did not carry one); unsigned or " +
+          "unverifiable jobs are never executed",
+      },
+      log,
     });
-    return { status: "blocked", rejectionReason: null };
   }
 
   // 1. Signature (covers the base-payload fallback: a job without signed
@@ -487,7 +591,7 @@ async function handleSignedJob({
     pinnedSigningKeyId: pinnedSigningKey.signingKeyId,
   });
   if (!signatureVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: signatureVerdict, log });
+    return reportJobRejection({ ...rejectionArgs, verdict: signatureVerdict });
   }
 
   // 2. Replay check (no consume yet).
@@ -497,7 +601,7 @@ async function handleSignedJob({
     expiresAt: job.expiresAt,
   });
   if (!replayVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: replayVerdict, log });
+    return reportJobRejection({ ...rejectionArgs, verdict: replayVerdict });
   }
 
   // 3. Clock window with drift compensation.
@@ -508,13 +612,13 @@ async function handleSignedJob({
     toleranceMs: execution.clockDriftToleranceMs,
   });
   if (!windowVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: windowVerdict, log });
+    return reportJobRejection({ ...rejectionArgs, verdict: windowVerdict });
   }
 
   // 4. Agent-local policy (default deny; ADR-0002 local policy wins).
   const policyVerdict = policyEngine.evaluateJob(buildSignedJobPolicyDescriptor(job));
   if (!policyVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: policyVerdict, log });
+    return reportJobRejection({ ...rejectionArgs, verdict: policyVerdict });
   }
 
   // 5. Consume the nonce before executing (see function doc comment).
@@ -524,22 +628,41 @@ async function handleSignedJob({
     expiresAt: job.expiresAt,
   });
   if (!consumeVerdict.allowed) {
-    return reportJobRejection({ client, jobId, attemptId, claimId, nonce, verdict: consumeVerdict, log });
+    return reportJobRejection({ ...rejectionArgs, verdict: consumeVerdict });
   }
 
-  // 6. Execute. executeJob owns per-step evidence and returns the terminal
-  // result fields; failures inside it are converted to a "failed" result
-  // here so a step crash never kills the claim loop.
+  // 6. Execute. Step evidence is buffered locally; the terminal outcome and
+  // evidence are persisted to the durable outbox BEFORE any network
+  // transmission so a reportResult failure cannot reclassify a real-world
+  // success as "failed" (B8).
+  const evidenceBuffer = createEvidenceBuffer();
+  let outcome;
   try {
-    const outcome = await executeJob({
+    outcome = await executeJob({
       job,
       jobId,
       policyEngine,
-      client,
+      client: evidenceBuffer,
       executionContext,
       log,
     });
-    await client.reportResult({
+  } catch (err) {
+    log(`tokentimer-agent: job ${jobId} execution error: ${err.message}`);
+    outcome = {
+      status: "failed",
+      errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
+    };
+  }
+
+  const evidenceBodies = evidenceBuffer.takeEvidence();
+  for (const body of evidenceBodies) {
+    assertEvidencePayloadSafe(body);
+  }
+
+  return persistAndTransmitOutcome({
+    outboxDir: resolvedOutboxDir,
+    client,
+    result: {
       jobId,
       attemptId,
       claimId,
@@ -549,21 +672,10 @@ async function handleSignedJob({
       keyRotated: outcome.keyRotated ?? null,
       errorMessage: outcome.errorMessage ?? null,
       clockOffsetMs: clockEstimator.getOffsetMs(),
-    });
-    return { status: outcome.status, rejectionReason: outcome.rejectionReason ?? null };
-  } catch (err) {
-    log(`tokentimer-agent: job ${jobId} execution error: ${err.message}`);
-    await client.reportResult({
-      jobId,
-      attemptId,
-      claimId,
-      nonce,
-      status: "failed",
-      errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
-      clockOffsetMs: clockEstimator.getOffsetMs(),
-    });
-    return { status: "failed", rejectionReason: null };
-  }
+    },
+    evidence: evidenceBodies,
+    log,
+  });
 }
 
 /**
@@ -1372,6 +1484,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
 
   const recovered = recoverPendingRegistration(configDir);
   if (recovered !== null) {
+    clearRegistrationId(configDir);
     scrubBootstrapToken();
     return recovered.agentId;
   }
@@ -1385,6 +1498,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
           "with a fresh bootstrap token or restore config.json.",
       );
     }
+    clearRegistrationId(configDir);
     scrubBootstrapToken();
     return config.agentId;
   }
@@ -1398,6 +1512,11 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     );
   }
 
+  // H1: persist a client-generated registrationId BEFORE the register
+  // request so a crash after the server consumes the bootstrap token can
+  // retry with the same id and accept an idempotent replayed response.
+  const registrationId = ensureRegistrationId(configDir);
+
   const registration = validateRegistrationResponse(await client.register({
     bootstrapToken,
     bootstrapTokenId: env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID || "unknown",
@@ -1407,12 +1526,14 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     nodeVersion: process.version,
     declaredTargetSelectors: config.declaredTargetSelectors,
     declaredCommandProfileNames: config.declaredCommandProfileNames,
+    registrationId,
   }), config.protocolVersion);
 
   persistRegistration(configDir, {
     agentId: registration.agentId,
     credential: registration.credential,
   });
+  clearRegistrationId(configDir);
   // The bootstrap token is single-use and has now been exchanged for a
   // stored per-agent credential. Scrub it from this process's environment
   // (so it can never leak into child processes or diagnostics) and remove
@@ -1468,6 +1589,7 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  * @returns {{
  *   enabled: true,
  *   execution: object,
+ *   outboxDir: string,
  *   replayCache: object,
  *   clockEstimator: object,
  *   pinnedSigningKey: {signingKeyId: string, publicKeyPem: string}|null,
@@ -1477,6 +1599,11 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
 function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
+  }
+  if (typeof config.execution.outboxDir !== "string" || config.execution.outboxDir.length === 0) {
+    throw new Error(
+      "tokentimer-agent: execution.outboxDir is required when execution is enabled",
+    );
   }
   const clockEstimator = createClockOffsetEstimator();
   let replayCache;
@@ -1502,6 +1629,7 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
   return {
     enabled: true,
     execution: config.execution,
+    outboxDir: config.execution.outboxDir,
     replayCache,
     clockEstimator,
     pinnedSigningKey: config.pinnedSigningKey,
@@ -1603,6 +1731,19 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     executionContext.pinnedSigningKey = readSigningKeyPin(configDir);
   }
 
+  // B8: drain any un-acknowledged outbox entries from a prior run before
+  // new job polling resumes, so a crash after successful execution but
+  // before transmission cannot leave a success stranded or re-executed.
+  if (executionContext) {
+    await drainOutbox(executionContext.outboxDir, client, {
+      onError: (err, entry) =>
+        defaultAgentLogger.error(
+          `tokentimer-agent: outbox drain failed for ${entry.id}; will retry`,
+          err,
+        ),
+    });
+  }
+
   const startedAtMs = Date.now();
 
   const heartbeatLoop = startPollLoop({
@@ -1634,28 +1775,42 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     },
   });
 
-  const claimLoop = startPollLoop({
-    intervalMs: config.pollIntervalMs,
-    signal: controller.signal,
-    startImmediately: true,
-    onTick: async () => {
-      const jobs = await client.claim({
-        maxJobs: 1,
-        supportedActions: executionContext
-          ? EXECUTABLE_JOB_ACTIONS
-          : OBSERVE_ONLY_CLAIM_ACTIONS,
-      });
-      for (const job of jobs) {
-        if (controller.signal.aborted) break;
-        await handleClaimedJob({ job, policyEngine, client, executionContext });
-      }
-    },
-  });
-
   // Observe-only discovery loop (filesystem certificate inventory).
   // Only started when config.json opts in with a discovery.directories list;
   // scans run immediately on start, then on the configured interval.
-  const loops = [heartbeatLoop, claimLoop];
+  const loops = [heartbeatLoop];
+
+  // B3: observe-only agents never poll claim (and advertise no actions).
+  // Heartbeat + discovery stay fully independent of the execution plane.
+  if (shouldPollForJobs(executionContext)) {
+    loops.push(
+      startPollLoop({
+        intervalMs: config.pollIntervalMs,
+        signal: controller.signal,
+        startImmediately: true,
+        onTick: async () => {
+          // Retry any outbox entries that failed to transmit before claiming
+          // more work (idempotent; never re-executes).
+          await drainOutbox(executionContext.outboxDir, client, {
+            onError: (err, entry) =>
+              defaultAgentLogger.error(
+                `tokentimer-agent: outbox drain failed for ${entry.id}; will retry`,
+                err,
+              ),
+          });
+          const jobs = await client.claim({
+            maxJobs: 1,
+            supportedActions: resolveClaimSupportedActions(executionContext),
+          });
+          for (const job of jobs) {
+            if (controller.signal.aborted) break;
+            await handleClaimedJob({ job, policyEngine, client, executionContext });
+          }
+        },
+      }),
+    );
+  }
+
   if (config.discovery && config.discovery.directories.length > 0) {
     loops.push(
       startPollLoop({
@@ -1690,6 +1845,9 @@ module.exports = {
   runDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
+  resolveClaimSupportedActions,
+  shouldPollForJobs,
+  persistAndTransmitOutcome,
   AGENT_VERSION,
   AGENT_RETIRED_EXIT_CODE,
   EXECUTABLE_JOB_ACTIONS,

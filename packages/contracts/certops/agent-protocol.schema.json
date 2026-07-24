@@ -144,6 +144,13 @@
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9_.:-]+$"
           }
+        },
+        "registrationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Client-generated registration idempotency key (H1). The agent persists this locally BEFORE the register request; a retry with the same registrationId after a crash must receive the same credential response rather than a hard rejection for a spent bootstrap token. See COORDINATION-H1.md."
         }
       }
     },

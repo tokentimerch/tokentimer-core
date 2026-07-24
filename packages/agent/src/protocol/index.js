@@ -189,7 +189,7 @@ function validateEnvelopeBody(messageType, body, problems) {
   }
 
   if (messageType === MESSAGE_TYPES.REGISTER) {
-    if (!checkExactObject(body, new Set(["bootstrapTokenId", "agentVersion", "hostname", "platform", "nodeVersion", "declaredTargetSelectors", "declaredCommandProfileNames"]), ["bootstrapTokenId", "agentVersion"], label, problems)) return;
+    if (!checkExactObject(body, new Set(["bootstrapTokenId", "agentVersion", "hostname", "platform", "nodeVersion", "declaredTargetSelectors", "declaredCommandProfileNames", "registrationId"]), ["bootstrapTokenId", "agentVersion"], label, problems)) return;
     checkString(body.bootstrapTokenId, "register body.bootstrapTokenId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
     checkString(body.agentVersion, "register body.agentVersion", problems, { min: 1, max: 32 });
     if (body.hostname !== undefined) checkNullableString(body.hostname, "register body.hostname", problems, { max: 255 });
@@ -197,6 +197,11 @@ function validateEnvelopeBody(messageType, body, problems) {
     if (body.nodeVersion !== undefined) checkNullableString(body.nodeVersion, "register body.nodeVersion", problems, { max: 32 });
     validateStringArray(body.declaredTargetSelectors, "register body.declaredTargetSelectors", problems, 64, 256);
     validateStringArray(body.declaredCommandProfileNames, "register body.declaredCommandProfileNames", problems, 64, 128, AGENT_ID_PATTERN);
+    // H1: client-generated idempotency key; persisted before send so a crash
+    // between token consumption and local credential write can retry safely.
+    if (body.registrationId !== undefined) {
+      checkString(body.registrationId, "register body.registrationId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
+    }
     return;
   }
 
@@ -639,7 +644,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return run;
   }
 
-  async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [] } = {}) {
+  async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [], registrationId = null } = {}) {
     if (typeof bootstrapToken !== "string" || bootstrapToken.length === 0) {
       throw new AgentProtocolError("register requires a bootstrapToken", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
     }
@@ -649,7 +654,18 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
         protocolVersion,
         messageType: MESSAGE_TYPES.REGISTER,
         sequence,
-        body: { bootstrapTokenId, agentVersion, hostname, platform, nodeVersion, declaredTargetSelectors, declaredCommandProfileNames },
+        body: {
+          bootstrapTokenId,
+          agentVersion,
+          hostname,
+          platform,
+          nodeVersion,
+          declaredTargetSelectors,
+          declaredCommandProfileNames,
+          ...(registrationId !== null && registrationId !== undefined
+            ? { registrationId }
+            : {}),
+        },
       })),
     );
     if (!ok) throw new AgentProtocolError(`agent registration failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });

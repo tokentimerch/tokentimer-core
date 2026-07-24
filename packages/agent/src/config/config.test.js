@@ -379,6 +379,7 @@ describe("loadAgentConfig", () => {
         dryRun: true,
         keysDir: path.join(dir, "keys"),
         replayStorePath: path.join(dir, "replay-store.json"),
+        outboxDir: path.join(dir, "outbox"),
         clockDriftToleranceMs: 30000,
       });
     });
@@ -396,6 +397,7 @@ describe("loadAgentConfig", () => {
           dryRun: false,
           keysDir: "/var/lib/tokentimer-agent/keys",
           replayStorePath: "/var/lib/tokentimer-agent/replay.json",
+          outboxDir: "/var/lib/tokentimer-agent/outbox",
           clockDriftToleranceMs: 5000,
         },
       }),
@@ -408,6 +410,7 @@ describe("loadAgentConfig", () => {
         dryRun: false,
         keysDir: "/var/lib/tokentimer-agent/keys",
         replayStorePath: "/var/lib/tokentimer-agent/replay.json",
+        outboxDir: "/var/lib/tokentimer-agent/outbox",
         clockDriftToleranceMs: 5000,
       });
     });
@@ -425,6 +428,10 @@ describe("loadAgentConfig", () => {
       {
         execution: { replayStorePath: 42 },
         pattern: /execution\.replayStorePath must be a non-empty string/,
+      },
+      {
+        execution: { outboxDir: "" },
+        pattern: /execution\.outboxDir must be a non-empty string/,
       },
       {
         execution: { clockDriftToleranceMs: -1 },
