@@ -40,7 +40,7 @@ const path = require("node:path");
 const { X509Certificate } = require("node:crypto");
 const {
   containsPrivateKeyMaterial,
-} = require("../../../log-scrub/secret-material.js");
+} = require("../../vendor/log-scrub/secret-material.js");
 
 // Maximum number of bytes read when peeking at a candidate key file. This is
 // an inspection bound, not a full read: even a multi-gigabyte file (or an

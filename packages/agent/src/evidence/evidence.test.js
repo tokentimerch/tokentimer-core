@@ -220,13 +220,16 @@ test("re-exported containsPrivateKeyMaterial / assertNoPrivateKeyMaterial / reda
   );
 });
 
-test("integration: the real apps/api/utils/secretMaterial.js module resolves via the relative require path used by this module", () => {
-  // Guards against path-relativity mistakes: fails loudly (module not found)
-  // if packages/agent/src/evidence/index.js's require path to the shared
-  // detector ever drifts from the real repo layout.
-  const shared = require("../../../../apps/api/utils/secretMaterial.js");
+test("integration: vendored log-scrub secret-material resolves and matches evidence re-exports", () => {
+  // The agent must stay self-contained: evidence imports the vendored copy,
+  // never apps/api/utils/secretMaterial.js (that file is an API-only seam).
+  const shared = require("../../vendor/log-scrub/secret-material.js");
   assert.equal(typeof shared.containsPrivateKeyMaterial, "function");
   assert.equal(typeof shared.assertNoPrivateKeyMaterial, "function");
   assert.equal(typeof shared.redactGenericSecrets, "function");
   assert.equal(shared.containsPrivateKeyMaterial(SYNTHETIC_PRIVATE_KEY_PEM), true);
+  assert.equal(
+    evidence.containsPrivateKeyMaterial(SYNTHETIC_PRIVATE_KEY_PEM),
+    shared.containsPrivateKeyMaterial(SYNTHETIC_PRIVATE_KEY_PEM),
+  );
 });

@@ -29,7 +29,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const {
   assertNoPrivateKeyMaterial,
-} = require("../../../log-scrub/secret-material.js");
+} = require("../../vendor/log-scrub/secret-material.js");
 
 const CONFIG_FILE_NAME = "config.json";
 const CREDENTIAL_FILE_NAME = "credential";

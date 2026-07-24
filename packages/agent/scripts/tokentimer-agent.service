@@ -5,9 +5,16 @@
 #   /opt/tokentimer-agent/state  config dir: config.json, credential,
 #                                signing-key-pin.json, replay-store.json, keys/
 #
-# The agent is outbound-only (no listening sockets), runs as the unprivileged
-# tokentimer-agent user, and only ever writes inside its state dir, so the
-# hardening below can be strict without breaking anything.
+# The agent is outbound-only (no listening sockets) and runs as the
+# unprivileged tokentimer-agent user. ProtectSystem=strict makes the whole
+# filesystem read-only except ReadWritePaths.
+#
+# Certificate/deploy directories and reload rights are NOT granted here.
+# install-agent.sh generates a drop-in override
+# (/etc/systemd/system/tokentimer-agent.service.d/override.conf) with the
+# operator-selected --write-path list, plus an optional polkit rule for
+# narrowly scoped `systemctl reload <unit>` authorization. Keeping those
+# paths out of this static unit prevents accidental blanket /etc writes.
 
 [Unit]
 Description=TokenTimer CertOps Agent (outbound-only execution plane)
@@ -36,7 +43,10 @@ RestartPreventExitStatus=86
 SuccessExitStatus=86
 
 # Hardening. ProtectSystem=strict makes the whole filesystem read-only for
-# the service except the explicit ReadWritePaths (its state dir).
+# the service except ReadWritePaths. The base unit only opens the state dir;
+# install-agent.sh appends operator-selected cert/deploy paths via a drop-in
+# override (tokentimer-agent.service.d/override.conf). Do not broaden this
+# default to /etc.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -56,6 +66,7 @@ LockPersonality=true
 MemoryDenyWriteExecute=false
 SystemCallArchitectures=native
 # Outbound HTTPS only; the agent accepts no inbound connections.
+# AF_UNIX is required for D-Bus (systemctl reload via polkit).
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 CapabilityBoundingSet=
 AmbientCapabilities=

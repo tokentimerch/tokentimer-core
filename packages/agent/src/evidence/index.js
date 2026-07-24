@@ -24,13 +24,13 @@
  */
 
 // Single source of truth for content-based private-key-material detection
-// and generic-secret redaction. Do not duplicate detection logic here; see
-// apps/api/utils/secretMaterial.js for the implementation and rationale.
+// and generic-secret redaction. Vendored from @tokentimer/log-scrub so the
+// installed agent never depends on the API app or sibling monorepo packages.
 const {
   containsPrivateKeyMaterial: sharedContainsPrivateKeyMaterial,
   assertNoPrivateKeyMaterial: sharedAssertNoPrivateKeyMaterial,
   redactGenericSecrets: sharedRedactGenericSecrets,
-} = require("../../../../apps/api/utils/secretMaterial.js");
+} = require("../../vendor/log-scrub/secret-material.js");
 
 /**
  * evidenceItems[].eventType enum, mirrored exactly from
@@ -77,8 +77,8 @@ function buildError(message, code) {
 }
 
 /**
- * Re-exported as-is from apps/api/utils/secretMaterial.js, which is the
- * source of truth for this check. Throws an Error with
+ * Re-exported as-is from the vendored @tokentimer/log-scrub detector
+ * (packages/agent/vendor/log-scrub/secret-material.js). Throws an Error with
  * `.code === "PRIVATE_KEY_MATERIAL_REJECTED"` when `value` contains private
  * key material anywhere (deep-scanned for strings/arrays/objects/buffers).
  * @param {*} value
@@ -89,7 +89,7 @@ function assertNoPrivateKeyMaterial(value) {
 }
 
 /**
- * Re-exported as-is from apps/api/utils/secretMaterial.js. Returns true if
+ * Re-exported as-is from the vendored log-scrub detector. Returns true if
  * private key material is detected anywhere in `value`.
  * @param {*} value
  * @returns {boolean}
@@ -99,7 +99,7 @@ function containsPrivateKeyMaterial(value) {
 }
 
 /**
- * Re-exported as-is from apps/api/utils/secretMaterial.js. Returns a copy of
+ * Re-exported as-is from the vendored log-scrub detector. Returns a copy of
  * `value` with generic secret patterns (password=, Authorization: Bearer,
  * cookies, API keys, etc) replaced with a redaction placeholder. Private key
  * material is rejected (throws) before any redaction is attempted.

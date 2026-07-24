@@ -1,0 +1,10 @@
+# Keep unit tests and local tooling out of the release tarball; install-agent.sh
+# and the self-contained runtime sources remain included via package.json "files".
+**/*.test.js
+scripts/proof-b9-fail-before.js
+scripts/installer-smoke.test.js
+scripts/vendor-sync.test.js
+scripts/host-sandbox.test.js
+scripts/validate-server-url.test.js
+scripts/pack-release.test.js
+dist/

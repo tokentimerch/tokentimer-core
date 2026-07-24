@@ -31,12 +31,12 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-// Single source of truth for content-based private-key-material detection,
-// required through the same compatibility seam ../evidence/index.js uses
-// (apps/api/utils/secretMaterial.js -> packages/log-scrub/secret-material).
+// Single source of truth for content-based private-key-material detection.
+// Vendored from @tokentimer/log-scrub so the installed agent never depends
+// on apps/api or sibling monorepo packages.
 const {
   assertNoPrivateKeyMaterial,
-} = require("../../../../apps/api/utils/secretMaterial.js");
+} = require("../../vendor/log-scrub/secret-material.js");
 
 /**
  * Supported key algorithms. Each entry maps the public algorithm name to
