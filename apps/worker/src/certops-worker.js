@@ -1,8 +1,17 @@
 /**
  * CertOps maintenance worker.
  *
- * One scheduled run executes three isolated sweeps plus the renewal
- * scheduler; a failure in one sweep never prevents the others:
+ * Architecture conformance (H7): each sweep is an independently configurable
+ * unit within this process. The plan calls for independently schedulable
+ * scheduler/reaper workers so one slow or failing sweep cannot block the
+ * others. Fully separate OS processes are not required by the existing worker
+ * runner, but each sweep here has:
+ *   - its own enable flag (env var, default enabled)
+ *   - its own timeout (env var)
+ *   - its own error isolation (failure never prevents other sweeps)
+ *   - its own metrics/logging labels
+ *
+ * Sweeps:
  *   1. Lease reaper: requeue or fail certificate_jobs whose agent lease
  *      expired (claimed/running + lease_expires_at < now()).
  *   2. Stale-agent sweep: mark active agents offline when last_seen_at is
@@ -52,6 +61,32 @@ export const DEFAULT_LEASE_HARD_GRACE_MS = 60 * 60 * 1000;
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 
+export const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
+
+/**
+ * Per-sweep enable + timeout configuration. Defaults keep all sweeps on so
+ * existing deployments behave as before; operators can disable or tighten
+ * one unit without touching the others.
+ */
+export const CERTOPS_SWEEP_CONFIG = Object.freeze({
+  "lease-reaper": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_LEASE_REAPER_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_LEASE_REAPER_TIMEOUT_MS",
+  }),
+  "stale-agents": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_STALE_AGENTS_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_STALE_AGENTS_TIMEOUT_MS",
+  }),
+  "nonce-sweep": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_NONCE_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_NONCE_TIMEOUT_MS",
+  }),
+  "renewal-scheduler": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_RENEWAL_SCHEDULER_TIMEOUT_MS",
+  }),
+});
+
 export function resolveAgentOfflineAfterMs(env = process.env) {
   const raw = env.CERTOPS_AGENT_OFFLINE_AFTER_MS;
   if (raw == null || String(raw).trim() === "") {
@@ -67,6 +102,33 @@ export function resolveAgentOfflineAfterMs(env = process.env) {
 export function computeBackoffMs(attemptCount) {
   const attempt = Math.max(1, attemptCount);
   return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (attempt - 1));
+}
+
+function parseBoolEnv(raw, defaultValue = true) {
+  if (raw == null || String(raw).trim() === "") return defaultValue;
+  const normalized = String(raw).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return defaultValue;
+}
+
+export function isSweepEnabled(sweepName, env = process.env) {
+  const config = CERTOPS_SWEEP_CONFIG[sweepName];
+  if (!config) return true;
+  return parseBoolEnv(env[config.enableEnv], true);
+}
+
+export function resolveSweepTimeoutMs(sweepName, env = process.env) {
+  const config = CERTOPS_SWEEP_CONFIG[sweepName];
+  const raw = config ? env[config.timeoutEnv] : undefined;
+  if (raw == null || String(raw).trim() === "") {
+    return DEFAULT_SWEEP_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(String(raw).trim(), 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    return DEFAULT_SWEEP_TIMEOUT_MS;
+  }
+  return parsed;
 }
 
 // appendCertificateJobLog (jobs.js) accepts a client, but it re-checks job
@@ -313,10 +375,43 @@ export async function sweepStaleAgents({
   return { staleCount: staleAgents.length, staleAgents };
 }
 
-async function runIsolated(name, log, fn) {
+async function withTimeout(promise, timeoutMs, sweepName) {
+  let timer;
   try {
-    const result = await fn();
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error(
+            `CertOps sweep ${sweepName} timed out after ${timeoutMs}ms`,
+          );
+          error.code = "CERTOPS_SWEEP_TIMEOUT";
+          reject(error);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function runIsolated(name, log, fn, { enabled = true, timeoutMs } = {}) {
+  if (!enabled) {
+    safeInc(cCertopsSweep, { sweep: name, status: "skipped" });
+    log.info?.("certops-sweep-skipped", { sweep: name, reason: "disabled" });
+    return { name, status: "skipped", result: null };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const result = await withTimeout(fn(), timeoutMs, name);
     safeInc(cCertopsSweep, { sweep: name, status: "success" });
+    log.info?.("certops-sweep-complete", {
+      sweep: name,
+      status: "success",
+      durationMs: Date.now() - startedAt,
+      timeoutMs,
+    });
     return { name, status: "success", result };
   } catch (error) {
     safeInc(cCertopsSweep, { sweep: name, status: "failure" });
@@ -324,6 +419,9 @@ async function runIsolated(name, log, fn) {
       sweep: name,
       error: error?.message,
       stack: error?.stack,
+      code: error?.code,
+      durationMs: Date.now() - startedAt,
+      timeoutMs,
     });
     return { name, status: "failed", error };
   }
@@ -352,8 +450,17 @@ export async function runCertOpsMaintenance({
 
   const results = {};
 
-  results.leaseReaper = await runIsolated("lease-reaper", log, () =>
-    withClientFn((client) => reapExpiredLeases({ client, offlineAfterMs, log })),
+  results.leaseReaper = await runIsolated(
+    "lease-reaper",
+    log,
+    () =>
+      withClientFn((client) =>
+        reapExpiredLeases({ client, offlineAfterMs, log }),
+      ),
+    {
+      enabled: isSweepEnabled("lease-reaper", env),
+      timeoutMs: resolveSweepTimeoutMs("lease-reaper", env),
+    },
   );
   if (results.leaseReaper.status === "success") {
     const { requeued, failed } = results.leaseReaper.result;
@@ -361,25 +468,46 @@ export async function runCertOpsMaintenance({
     safeGaugeSet(gCertopsLeaseReaped, { outcome: "failed" }, failed);
   }
 
-  results.staleAgents = await runIsolated("stale-agents", log, () =>
-    withClientFn((client) =>
-      sweepStaleAgents({ client, offlineAfterMs, log }),
-    ),
+  results.staleAgents = await runIsolated(
+    "stale-agents",
+    log,
+    () =>
+      withClientFn((client) =>
+        sweepStaleAgents({ client, offlineAfterMs, log }),
+      ),
+    {
+      enabled: isSweepEnabled("stale-agents", env),
+      timeoutMs: resolveSweepTimeoutMs("stale-agents", env),
+    },
   );
   if (results.staleAgents.status === "success") {
     safeGaugeSet(gCertopsStaleAgents, results.staleAgents.result.staleCount);
   }
 
-  results.nonceSweep = await runIsolated("nonce-sweep", log, async () => {
-    const deleted = await nonceSweeper({ client: dbPool });
-    return { deleted };
-  });
+  results.nonceSweep = await runIsolated(
+    "nonce-sweep",
+    log,
+    async () => {
+      const deleted = await nonceSweeper({ client: dbPool });
+      return { deleted };
+    },
+    {
+      enabled: isSweepEnabled("nonce-sweep", env),
+      timeoutMs: resolveSweepTimeoutMs("nonce-sweep", env),
+    },
+  );
   if (results.nonceSweep.status === "success") {
     safeGaugeSet(gCertopsNoncesSwept, results.nonceSweep.result.deleted);
   }
 
-  results.renewalScheduler = await runIsolated("renewal-scheduler", log, () =>
-    renewalSweeper({ dbPool, env, logger: log }),
+  results.renewalScheduler = await runIsolated(
+    "renewal-scheduler",
+    log,
+    () => renewalSweeper({ dbPool, env, logger: log }),
+    {
+      enabled: isSweepEnabled("renewal-scheduler", env),
+      timeoutMs: resolveSweepTimeoutMs("renewal-scheduler", env),
+    },
   );
   if (results.renewalScheduler.status === "success") {
     safeGaugeSet(
@@ -392,19 +520,19 @@ export async function runCertOpsMaintenance({
     leaseReaper:
       results.leaseReaper.status === "success"
         ? results.leaseReaper.result
-        : "failed",
+        : results.leaseReaper.status,
     staleAgents:
       results.staleAgents.status === "success"
         ? results.staleAgents.result.staleCount
-        : "failed",
+        : results.staleAgents.status,
     noncesSwept:
       results.nonceSweep.status === "success"
         ? results.nonceSweep.result.deleted
-        : "failed",
+        : results.nonceSweep.status,
     renewalScheduler:
       results.renewalScheduler.status === "success"
         ? results.renewalScheduler.result
-        : "failed",
+        : results.renewalScheduler.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>
