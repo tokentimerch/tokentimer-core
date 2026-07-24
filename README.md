@@ -32,7 +32,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 - **Unified expiration visibility:** Track certificates, tokens, secrets, licenses, subscriptions, and other expiring assets across providers and environments in one place.
 - **Flexible multi-channel alerting:** Notify teams through email, Slack, Microsoft Teams, Discord, PagerDuty, WhatsApp, and webhooks, with configurable delivery and escalation options.
 - **Native integrations, auto-sync, and automated discovery:** Connect TokenTimer to providers like HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, Azure AD, GCP Secret Manager, GitHub, and GitLab to automatically import and keep expiration metadata up to date, discover public subdomains for SSL certificate imports, and monitor HTTPS endpoints for SSL expiry and health.
-- **Certificate operations:** Maintain a managed-certificate inventory linked to your tokens, import public certificates, observe rotations from endpoint monitoring, and retire certificates without losing history. Public certificate metadata only, never private keys.
+- **Certificate operations (CertOps):** Maintain a managed-certificate inventory linked to your tokens, import public certificates, and retire certificates without losing history. Automate renewals end to end with the outbound-only TokenTimer Agent (ACME via certbot/acme.sh, DNS-01 across major providers, atomic deploy with rollback, service reload, and post-deploy verification), observe rotations via endpoint monitoring or a cert-manager controller integration, or report from your own executors and CI hooks with a machine API token. Approval gates, a workspace kill switch, and renewal-failure alerts keep humans in control. The control plane never receives or stores private key material.
 - **Built for teams and audits** ([demo](docs/assets/dashboard-overview.gif)): Organize assets with workspaces, control access with RBAC, and keep an audit trail of important actions and alert activity.
 - **Security-first by design:** TokenTimer stores expiration metadata, ownership, and status information without storing secret values or private keys. Integration scan credentials are discarded after one-off imports; if you enable auto-sync, they are encrypted at rest in the database for scheduled re-scans.
 
@@ -66,6 +66,8 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full environment variables reference |
 | [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and behavior |
+| [docs/certops/agent.md](docs/certops/agent.md) | TokenTimer Agent: install, config, policy, DNS-01 providers, ACME, deploy, and verification |
+| [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |
 | [apps/worker/queue-architecture.md](apps/worker/queue-architecture.md) | Alert queue and worker design |
