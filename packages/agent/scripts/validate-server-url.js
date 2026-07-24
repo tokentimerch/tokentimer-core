@@ -10,7 +10,6 @@
  * writing config.json.
  */
 
-const path = require("node:path");
 const { parseServerUrl } = require("../src/protocol");
 
 function main(argv = process.argv.slice(2)) {
