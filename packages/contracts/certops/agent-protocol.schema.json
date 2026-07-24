@@ -278,8 +278,15 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["eventType", "observedAt"],
+            "required": ["evidenceId", "eventType", "observedAt"],
             "properties": {
+              "evidenceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_.:-]+$",
+                "description": "Client-generated idempotency key for this evidence item. Exact duplicate submissions are safely no-op'd by the control plane."
+              },
               "eventType": {
                 "type": "string",
                 "enum": [

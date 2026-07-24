@@ -57,6 +57,8 @@ const SAFE_EVIDENCE_SELECT_FIELDS = `
   observed_at,
   created_by_user_id,
   created_by_api_token_id,
+  created_by_agent_id,
+  client_evidence_id,
   created_at
 `;
 
@@ -189,17 +191,37 @@ function normalizeSubject(options) {
   return { subjectType, subjectId };
 }
 
-function buildPersistedEvidenceMetadata(clientMetadata, output) {
+function buildPersistedEvidenceMetadata(clientMetadata, output, serverOwned = {}) {
+  // Security-relevant invariant (B18): assemble client metadata first, then
+  // overlay server-owned fields so a client can never spoof agentId, summary,
+  // fingerprint attribution, or other control-plane identity fields.
   const metadata = { ...clientMetadata };
-  // Server-owned output redaction marker. Never accept a client spoof.
   delete metadata.redaction;
+  delete metadata.agentId;
+  delete metadata.created_by_agent_id;
+  delete metadata.createdByAgentId;
   if (output.redactionApplied) {
     metadata.redaction = {
       applied: true,
       count: output.redactionCount,
     };
   }
+  for (const [key, value] of Object.entries(serverOwned || {})) {
+    if (value !== undefined) metadata[key] = value;
+  }
   return metadata;
+}
+
+function normalizeOptionalClientEvidenceId(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") {
+    throw serviceError("clientEvidenceId is invalid", CERTOPS_EVIDENCE_INVALID);
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 128 || !/^[A-Za-z0-9_.:-]+$/.test(trimmed)) {
+    throw serviceError("clientEvidenceId is invalid", CERTOPS_EVIDENCE_INVALID);
+  }
+  return trimmed;
 }
 
 function evidenceFromRow(row) {
@@ -220,6 +242,8 @@ function evidenceFromRow(row) {
     observedAt: dateToIso(row.observed_at),
     createdByUserId: row.created_by_user_id,
     createdByApiTokenId: row.created_by_api_token_id,
+    createdByAgentId: row.created_by_agent_id ?? null,
+    clientEvidenceId: row.client_evidence_id ?? null,
     createdAt: dateToIso(row.created_at),
   };
 
@@ -265,11 +289,18 @@ async function createCertificateEvidence(options) {
   );
   const { subjectType, subjectId } = normalizeSubject(options);
   const output = normalizeRedactedOutput(options.output);
-  const metadata = buildPersistedEvidenceMetadata(
-    normalizePublicObject(options.metadata, "metadata"),
-    output,
-  );
+  const clientMetadata = normalizePublicObject(options.metadata, "metadata");
+  const metadata = buildPersistedEvidenceMetadata(clientMetadata, output, {
+    // Server-owned overlays (B18). Options may supply authenticated agentId.
+    ...(options.serverOwnedMetadata &&
+    typeof options.serverOwnedMetadata === "object"
+      ? options.serverOwnedMetadata
+      : {}),
+  });
   const observedAt = normalizeOptionalDate(options.observedAt, "observedAt");
+  const clientEvidenceId = normalizeOptionalClientEvidenceId(
+    options.clientEvidenceId,
+  );
 
   const result = await db.query(
     `INSERT INTO certificate_evidence (
@@ -285,9 +316,14 @@ async function createCertificateEvidence(options) {
        output_size_bytes,
        observed_at,
        created_by_user_id,
-       created_by_api_token_id
+       created_by_api_token_id,
+       created_by_agent_id,
+       client_evidence_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     ON CONFLICT (workspace_id, created_by_agent_id, client_evidence_id)
+       WHERE created_by_agent_id IS NOT NULL AND client_evidence_id IS NOT NULL
+     DO NOTHING
      RETURNING ${SAFE_EVIDENCE_SELECT_FIELDS}`,
     [
       workspaceId,
@@ -303,8 +339,23 @@ async function createCertificateEvidence(options) {
       observedAt,
       options.createdByUserId || null,
       options.createdByApiTokenId || null,
+      options.createdByAgentId || null,
+      clientEvidenceId,
     ],
   );
+
+  if (!result.rows[0] && options.createdByAgentId && clientEvidenceId) {
+    const existing = await db.query(
+      `SELECT ${SAFE_EVIDENCE_SELECT_FIELDS}
+         FROM certificate_evidence
+        WHERE workspace_id = $1
+          AND created_by_agent_id = $2
+          AND client_evidence_id = $3
+        LIMIT 1`,
+      [workspaceId, options.createdByAgentId, clientEvidenceId],
+    );
+    return evidenceFromRow(existing.rows[0] || null);
+  }
 
   return evidenceFromRow(result.rows[0]);
 }
@@ -335,11 +386,17 @@ async function createControllerObservationEvidence(options) {
   }
   const { subjectType, subjectId } = normalizeSubject(options);
   const output = normalizeRedactedOutput(options.output);
-  const metadata = buildPersistedEvidenceMetadata(
-    normalizePublicObject(options.metadata, "metadata"),
-    output,
-  );
+  const clientMetadata = normalizePublicObject(options.metadata, "metadata");
+  const metadata = buildPersistedEvidenceMetadata(clientMetadata, output, {
+    ...(options.serverOwnedMetadata &&
+    typeof options.serverOwnedMetadata === "object"
+      ? options.serverOwnedMetadata
+      : {}),
+  });
   const observedAt = normalizeOptionalDate(options.observedAt, "observedAt");
+  const clientEvidenceId = normalizeOptionalClientEvidenceId(
+    options.clientEvidenceId,
+  );
 
   const result = await db.query(
     `INSERT INTO certificate_evidence (
@@ -355,9 +412,14 @@ async function createControllerObservationEvidence(options) {
        output_size_bytes,
        observed_at,
        created_by_user_id,
-       created_by_api_token_id
+       created_by_api_token_id,
+       created_by_agent_id,
+       client_evidence_id
      )
-     VALUES ($1, NULL, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, NULL, $11)
+     VALUES ($1, NULL, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, NULL, $11, $12, $13)
+     ON CONFLICT (workspace_id, created_by_agent_id, client_evidence_id)
+       WHERE created_by_agent_id IS NOT NULL AND client_evidence_id IS NOT NULL
+     DO NOTHING
      RETURNING ${SAFE_EVIDENCE_SELECT_FIELDS}`,
     [
       workspaceId,
@@ -371,8 +433,23 @@ async function createControllerObservationEvidence(options) {
       output.outputSizeBytes,
       observedAt,
       options.createdByApiTokenId || null,
+      options.createdByAgentId || null,
+      clientEvidenceId,
     ],
   );
+
+  if (!result.rows[0] && options.createdByAgentId && clientEvidenceId) {
+    const existing = await db.query(
+      `SELECT ${SAFE_EVIDENCE_SELECT_FIELDS}
+         FROM certificate_evidence
+        WHERE workspace_id = $1
+          AND created_by_agent_id = $2
+          AND client_evidence_id = $3
+        LIMIT 1`,
+      [workspaceId, options.createdByAgentId, clientEvidenceId],
+    );
+    return evidenceFromRow(existing.rows[0] || null);
+  }
 
   return evidenceFromRow(result.rows[0]);
 }

@@ -280,7 +280,7 @@ describe("CertOps inventory migration", () => {
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
     assert.deepEqual(
       migrations.slice(-15).map((migration) => migration.version),
-      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
+      [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,
@@ -656,6 +656,8 @@ describe("CertOps inventory migration", () => {
       ["certops_controller_provisioning", 22],
       ["certops_controller_provisioning_event_timestamps", 23],
       ["certops_agent_protocol_schema", 24],
+      ["certops_job_approvals", 25],
+      ["certops_agent_inventory_evidence_integrity", 26],
     ]);
     for (const [name, version] of expectedVersions) {
       assert.equal(

@@ -1797,6 +1797,165 @@ const migrations = [
         );
     `,
   },
+  {
+    version: 26,
+    name: "certops_agent_inventory_evidence_integrity",
+    sql: `
+      -- B17: agent filesystem discovery becomes inventory-visible.
+      -- Mirror cert_manager observer identity: source + source_ref uniqueness.
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_source_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem'
+          )
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_source_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem'
+          )
+        );
+      ALTER TABLE certificate_instances
+        DROP CONSTRAINT IF EXISTS certificate_instances_source_check;
+      ALTER TABLE certificate_instances
+        ADD CONSTRAINT certificate_instances_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem'
+          )
+        );
+
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+          );
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+          );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_targets_workspace_agent_filesystem_source_ref
+        ON certificate_targets(workspace_id, source, source_ref)
+        WHERE source = 'agent_filesystem' AND source_ref IS NOT NULL;
+
+      -- B18: server-owned agent attribution + client evidence idempotency keys.
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS created_by_agent_id UUID NULL;
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS client_evidence_id TEXT NULL
+          CHECK (
+            client_evidence_id IS NULL OR
+            (
+              char_length(btrim(client_evidence_id)) BETWEEN 1 AND 128 AND
+              client_evidence_id ~ '^[A-Za-z0-9_.:-]+$'
+            )
+          );
+      ALTER TABLE certificate_evidence
+        DROP CONSTRAINT IF EXISTS fk_certificate_evidence_created_by_agent;
+      ALTER TABLE certificate_evidence
+        ADD CONSTRAINT fk_certificate_evidence_created_by_agent
+        FOREIGN KEY (created_by_agent_id)
+        REFERENCES certops_agents(id)
+        ON DELETE SET NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_evidence_agent_client_evidence_id
+        ON certificate_evidence(workspace_id, created_by_agent_id, client_evidence_id)
+        WHERE created_by_agent_id IS NOT NULL AND client_evidence_id IS NOT NULL;
+
+      -- H2: bind approvals to a canonical execution intent hash (operation +
+      -- subject + target + profile snapshot + payload), not only mutable payload.
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_canonical_intent_hash CHAR(64) NULL
+          CHECK (
+            approved_canonical_intent_hash IS NULL OR
+            approved_canonical_intent_hash ~ '^[a-f0-9]{64}$'
+          );
+      ALTER TABLE certops_job_approvals
+        ADD COLUMN IF NOT EXISTS canonical_intent_hash CHAR(64) NULL
+          CHECK (
+            canonical_intent_hash IS NULL OR
+            canonical_intent_hash ~ '^[a-f0-9]{64}$'
+          );
+
+      -- H3: overlapping signing-key rotation acknowledgement tracking.
+      -- Existing certops_signing_keys statuses already include retiring for
+      -- the previous active key; agents acknowledge the new active key via
+      -- heartbeat pinned_signing_key_id.
+      CREATE TABLE IF NOT EXISTS certops_signing_key_acks (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        agent_id UUID NOT NULL REFERENCES certops_agents(id) ON DELETE CASCADE,
+        signing_key_id TEXT NOT NULL
+          CHECK (signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_signing_key_acks_agent_key
+          UNIQUE (agent_id, signing_key_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_signing_key_acks_workspace_key
+        ON certops_signing_key_acks(workspace_id, signing_key_id);
+
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS supersedes_signing_key_id TEXT NULL
+          CHECK (
+            supersedes_signing_key_id IS NULL OR
+            supersedes_signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'
+          );
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS rotation_started_at TIMESTAMPTZ NULL;
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS rotation_forced_at TIMESTAMPTZ NULL;
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS rotation_force_reason TEXT NULL
+          CHECK (
+            rotation_force_reason IS NULL OR
+            char_length(rotation_force_reason) <= 1024
+          );
+
+      -- H12: forced retirement fences in-flight work for operator reconciliation.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_status_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_status_check CHECK (
+          status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'orphaned_unknown_effect'
+          )
+        );
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_status_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_status_check CHECK (
+          status IS NULL OR status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'orphaned_unknown_effect'
+          )
+        );
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS needs_operator_reconciliation BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS reconciliation_reason TEXT NULL
+          CHECK (
+            reconciliation_reason IS NULL OR
+            char_length(reconciliation_reason) <= 1024
+          );
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_needs_reconciliation
+        ON certificate_jobs(workspace_id, needs_operator_reconciliation)
+        WHERE needs_operator_reconciliation = TRUE;
+    `,
+  },
 ];
 
 async function runMigrations() {
