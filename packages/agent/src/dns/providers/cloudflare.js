@@ -193,10 +193,44 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
   return { presentChallenge, cleanupChallenge };
 }
 
+/**
+ * Lists managed zone names (for longest-suffix discovery).
+ * @param {object} options
+ * @returns {Promise<string[]>}
+ */
+async function listManagedZones({ credentials, fetchImpl, timeoutMs }) {
+  const response = await fetchWithTimeout(
+    fetchImpl,
+    `${API_BASE_URL}/zones?per_page=50`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${credentials.apiToken}`,
+        "Content-Type": "application/json",
+      },
+    },
+    timeoutMs,
+  );
+  if (!response.ok) {
+    throw new Error(`cloudflare list zones failed (HTTP ${response.status})`);
+  }
+  let envelope;
+  try {
+    envelope = JSON.parse(response.bodyText);
+  } catch {
+    throw new Error("cloudflare list zones returned non-JSON");
+  }
+  const results = envelope && Array.isArray(envelope.result) ? envelope.result : [];
+  return results
+    .filter((zone) => zone && isNonEmptyString(zone.name))
+    .map((zone) => zone.name.replace(/\.$/, ""));
+}
+
 module.exports = {
   PROVIDER_ID,
   API_BASE_URL,
   validateCredentials,
   collectSecretStrings,
   createSolverImpl,
+  listManagedZones,
 };

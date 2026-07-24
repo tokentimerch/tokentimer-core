@@ -18,9 +18,16 @@
  *
  * Policy first (ADR-0002): checkDnsProvider AND checkDnsZone must both
  * pass against the agent-local policy engine BEFORE any credential file is
- * read or any network call is made. A rejection prints the policy
- * rejection JSON ({ allowed:false, rejectionReason, detail }) to stderr
- * and exits nonzero.
+ * read or any provider mutation. Zone discovery for unmapped domains uses
+ * DNS NS walking (no credentials) so the zone policy check can run first;
+ * after credentials load, a provider zone-list (when available) may refine
+ * to the longest managed suffix and re-check zone policy.
+ *
+ * After a successful present, this hook polls authoritative (and optional
+ * recursive) resolvers until the TXT value is visible before returning 0,
+ * so ACME validation does not race DNS propagation. After cleanup it
+ * verifies the value is gone. Both waits emit a single JSON evidence line
+ * on stdout (no secrets).
  *
  * Output hygiene: this hook never prints credentials or raw provider
  * responses. Solver results only ever carry bounded, redacted excerpts
@@ -32,8 +39,15 @@
  * implementations.
  */
 
+const { resolveChallengeZone, findLongestManagedZone } = require("./zone.js");
+const {
+  normalizePropagationConfig,
+  waitForTxtPresent,
+  waitForTxtAbsent,
+} = require("./propagate.js");
+
 const CHALLENGE_LABEL = "_acme-challenge";
-const USAGE = 'usage: certops-dns-hook <present|cleanup>';
+const USAGE = "usage: certops-dns-hook <present|cleanup>";
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
@@ -50,19 +64,13 @@ function isDomainWithinZone(domain, zone) {
 }
 
 /**
- * Resolves which provider (and which zone) serves `domain` from the
- * config's dnsProviders section.
- *
- * Resolution order:
- *   1. Longest zoneProviderMap zone covering the domain (dot boundary).
- *   2. Otherwise, when exactly one provider is configured, that provider
- *      (zone falls back to the domain itself; provider-side zone lookups
- *      and per-provider options like zoneId/hostedZoneId/managedZone
- *      handle nesting).
+ * Resolves which provider serves `domain` from the config's dnsProviders
+ * section. Does NOT treat the hostname as the zone: when zoneProviderMap
+ * has no covering entry, `zone` is null and the caller must discover it.
  *
  * @param {object} dnsProviders validated config section
  * @param {string} domain
- * @returns {{ provider: string, zone: string, options: object }}
+ * @returns {{ provider: string, zone: string|null, options: object }}
  */
 function resolveProviderForDomain(dnsProviders, domain) {
   const zoneProviderMap = dnsProviders.zoneProviderMap || {};
@@ -94,7 +102,7 @@ function resolveProviderForDomain(dnsProviders, domain) {
   if (providerIds.length === 1) {
     return {
       provider: providerIds[0],
-      zone: domain,
+      zone: null,
       options: dnsProviders[providerIds[0]],
     };
   }
@@ -111,19 +119,6 @@ function resolveProviderForDomain(dnsProviders, domain) {
  * nonzero failure); never throws.
  *
  * @param {object} options
- * @param {object} options.env environment (certbot/acme.sh variables).
- * @param {string[]} options.argv args after the script name; argv[0] is
- *   the mode ("present" or "cleanup").
- * @param {() => object} options.loadConfig returns the loaded agent config
- *   (src/config loadAgentConfig shape, incl. `policy` and `dnsProviders`).
- * @param {(providerId: string, config: object) => object} options.readCredentialsFile
- *   reads + parses the provider's agent-local credentials file
- *   (src/config readDnsCredentialsFile).
- * @param {Function} options.createSolver createDnsSolver-shaped factory.
- * @param {(rawPolicy: object) => { checkDnsProvider: Function, checkDnsZone: Function }} options.policyEngineFactory
- *   builds the agent-local policy engine from config.policy.
- * @param {{ write: Function }} options.stdout
- * @param {{ write: Function }} options.stderr
  * @returns {Promise<number>}
  */
 async function runDnsHook({
@@ -135,6 +130,8 @@ async function runDnsHook({
   policyEngineFactory,
   stdout,
   stderr,
+  propagationDeps,
+  zoneDeps,
 } = {}) {
   const mode = Array.isArray(argv) ? argv[0] : undefined;
   if (mode !== "present" && mode !== "cleanup") {
@@ -168,32 +165,67 @@ async function runDnsHook({
       return 1;
     }
 
-    const { provider, zone, options } = resolveProviderForDomain(dnsProviders, domain);
+    const { provider, zone: mappedZone, options } = resolveProviderForDomain(
+      dnsProviders,
+      domain,
+    );
 
-    // Policy gate: BOTH checks must pass before any credential read or
-    // network call. Local policy always wins over anything the caller
-    // (or the control plane behind it) intended.
     const policyEngine = policyEngineFactory(config.policy || {});
-    for (const rejection of [
-      policyEngine.checkDnsProvider(provider),
-      policyEngine.checkDnsZone(zone),
-    ]) {
-      if (!rejection || rejection.allowed !== true) {
-        stderr.write(`${JSON.stringify(rejection)}\n`);
-        return 1;
-      }
+    const providerVerdict = policyEngine.checkDnsProvider(provider);
+    if (!providerVerdict || providerVerdict.allowed !== true) {
+      stderr.write(`${JSON.stringify(providerVerdict)}\n`);
+      return 1;
+    }
+
+    // Zone discovery without credentials (NS walk / mapped zone) so the
+    // zone policy check can run before any credentials file is read.
+    let zone = await resolveChallengeZone({
+      domain,
+      mappedZone,
+      dnsDeps: zoneDeps,
+    });
+
+    const zoneVerdict = policyEngine.checkDnsZone(zone);
+    if (!zoneVerdict || zoneVerdict.allowed !== true) {
+      stderr.write(`${JSON.stringify(zoneVerdict)}\n`);
+      return 1;
     }
 
     const credentials = readCredentialsFile(provider, config);
-
-    // Non-secret per-provider options from config.json (zoneId,
-    // hostedZoneId, managedZone, ...) merge under the credentials file's
-    // own fields; the file wins on conflicts.
     const { credentialsFile: _credentialsFile, ...nonSecretOptions } = options;
     const solver = createSolver({
       provider,
       credentials: { ...nonSecretOptions, ...credentials },
     });
+
+    // Refine to the longest provider-managed zone when the API can list
+    // zones (avoids treating a delegated child NS cut as the managed zone).
+    if (typeof solver.listManagedZones === "function" && mappedZone === null) {
+      let managedZones;
+      try {
+        managedZones = await solver.listManagedZones();
+      } catch {
+        managedZones = null;
+      }
+      if (Array.isArray(managedZones) && managedZones.length > 0) {
+        const normalized = new Set(
+          managedZones
+            .filter((name) => typeof name === "string")
+            .map((name) => name.toLowerCase().replace(/\.$/, "")),
+        );
+        const refined = await findLongestManagedZone(domain, (candidate) =>
+          normalized.has(candidate.toLowerCase().replace(/\.$/, "")),
+        );
+        if (refined && refined !== zone) {
+          const refinedVerdict = policyEngine.checkDnsZone(refined);
+          if (!refinedVerdict || refinedVerdict.allowed !== true) {
+            stderr.write(`${JSON.stringify(refinedVerdict)}\n`);
+            return 1;
+          }
+          zone = refined;
+        }
+      }
+    }
 
     const recordName = `${CHALLENGE_LABEL}.${domain}`;
     const inputs = { zone, recordName, txtValue };
@@ -207,8 +239,40 @@ async function runDnsHook({
       return 1;
     }
 
+    const propagationConfig = normalizePropagationConfig(config.dnsPropagation);
+    const waitResult =
+      mode === "present"
+        ? await waitForTxtPresent(
+            { recordName, txtValue, config: propagationConfig },
+            propagationDeps,
+          )
+        : await waitForTxtAbsent(
+            { recordName, txtValue, config: propagationConfig },
+            propagationDeps,
+          );
+
     stdout.write(
-      `certops-dns-hook: ${mode} ok for ${recordName} via ${provider}\n`,
+      `${JSON.stringify({
+        event: "dns.propagation",
+        mode,
+        provider,
+        zone,
+        recordName,
+        ok: waitResult.ok === true,
+        attempts: waitResult.attempts,
+        elapsedMs: waitResult.elapsedMs,
+        servers: waitResult.servers,
+        phase: waitResult.phase,
+      })}\n`,
+    );
+
+    if (waitResult.ok !== true) {
+      stderr.write(`${JSON.stringify(waitResult)}\n`);
+      return 1;
+    }
+
+    stdout.write(
+      `certops-dns-hook: ${mode} ok for ${recordName} via ${provider} (zone ${zone})\n`,
     );
     return 0;
   } catch (err) {

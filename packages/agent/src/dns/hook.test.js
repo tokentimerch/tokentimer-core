@@ -71,6 +71,22 @@ function makeHarness(overrides = {}) {
       checkDnsProvider: allow,
       checkDnsZone: allow,
     }),
+    // Instant DNS evidence: skip real network during unit tests.
+    propagationDeps: {
+      discoverAuthoritativeResolverIps: async () => ["203.0.113.1"],
+      resolveTxt: async (_name, _servers) => {
+        // present waits for the value; cleanup waits for absence. The hook
+        // passes the mode indirectly via expectPresent inside wait helpers;
+        // return the challenge value for present-shaped polls and [] when
+        // the last solver call was cleanup.
+        const last = solverCalls[solverCalls.length - 1];
+        if (last && last.operation === "cleanup") {
+          return [];
+        }
+        return ["token-value"];
+      },
+      sleep: async () => {},
+    },
     stdout: makeStream(),
     stderr: makeStream(),
     ...overrides,
@@ -117,6 +133,11 @@ test("hook: missing CERTBOT_VALIDATION fails before any work", async () => {
 test("hook: ACME_DOMAIN / ACME_TXT_VALUE work as acme.sh-wrapper fallbacks", async () => {
   const harness = makeHarness({
     env: { ACME_DOMAIN: "www.example.com", ACME_TXT_VALUE: "acme-sh-token" },
+    propagationDeps: {
+      discoverAuthoritativeResolverIps: async () => ["203.0.113.1"],
+      resolveTxt: async () => ["acme-sh-token"],
+      sleep: async () => {},
+    },
   });
   const exitCode = await runDnsHook(harness);
   assert.equal(exitCode, 0);
@@ -182,10 +203,18 @@ test("hook: present dispatches presentChallenge with the derived record name", a
     },
   ]);
   assert.match(harness.stdout.output, /present ok .* via cloudflare/);
+  assert.match(harness.stdout.output, /"event":"dns.propagation"/);
 });
 
 test("hook: cleanup dispatches cleanupChallenge", async () => {
-  const harness = makeHarness({ argv: ["cleanup"] });
+  const harness = makeHarness({
+    argv: ["cleanup"],
+    propagationDeps: {
+      discoverAuthoritativeResolverIps: async () => ["203.0.113.1"],
+      resolveTxt: async () => [],
+      sleep: async () => {},
+    },
+  });
   const exitCode = await runDnsHook(harness);
 
   assert.equal(exitCode, 0);
@@ -285,11 +314,11 @@ test("resolveProviderForDomain: dot boundary prevents evil-suffix matches", () =
   assert.equal(resolved.provider, "route53");
 });
 
-test("resolveProviderForDomain: a single configured provider is the default", () => {
+test("resolveProviderForDomain: a single configured provider leaves zone null for discovery", () => {
   const dnsProviders = { cloudflare: { credentialsFile: "/a" } };
   const resolved = resolveProviderForDomain(dnsProviders, "anything.example.net");
   assert.equal(resolved.provider, "cloudflare");
-  assert.equal(resolved.zone, "anything.example.net");
+  assert.equal(resolved.zone, null);
 });
 
 test("resolveProviderForDomain: multiple providers without a map entry throw", () => {
