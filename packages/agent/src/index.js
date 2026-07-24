@@ -91,13 +91,19 @@ const { defaultAgentLogger } = require("./logging");
 const { verifyJobSignature, checkJobTimeWindow, DEFAULT_TIME_WINDOW_TOLERANCE_MS } = require("./signing");
 const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
-const { generateKeyPairToFile, generateCsr } = require("./keys");
+const { generateKeyPairToFile, discardStagedKey, generateCsr } = require("./keys");
 const { createAcmeAdapter } = require("./acme");
-const { deployCertificate, getDeployMetrics } = require("./deploy");
+const {
+  deployCertificate,
+  deployCertificateAndKey,
+  discardDeployBackups,
+  getDeployMetrics,
+} = require("./deploy");
 const { reloadService } = require("./reload");
 const {
   verifyDeployedCertificate,
   computeCertificateFingerprint,
+  validateCertificateForDeploy,
 } = require("./verify");
 
 const { version: AGENT_VERSION } = require("../package.json");
@@ -754,19 +760,24 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
   const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
 
   // Step 1: keys. Reuse-if-exists unless job.keyRotation is truthy
-  // (forward-compatible field, absent from the base schema).
+  // (forward-compatible field, absent from the base schema). Rotation
+  // stages the new key alongside the live path and never overwrites it
+  // until deployCertificateAndKey promotes the matched pair.
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
   const forceRotation = job.keyRotation === true;
   const keyExisted = fs.existsSync(keyPath);
   const keyRotated = forceRotation || !keyExisted;
+  let stagedKeyPath = keyPath;
   if (keyRotated) {
-    generateKeyPairToFile({ keyPath, overwrite: forceRotation });
+    const generated = generateKeyPairToFile({ keyPath, overwrite: forceRotation });
+    stagedKeyPath = generated.stagedKeyPath;
   }
 
   // Step 2: CSR, written to a job-scoped temp path under keysDir (0600).
+  // Always signed with the key that will be deployed (staged on rotation).
   const { csrPem } = generateCsr({
-    keyPath,
+    keyPath: stagedKeyPath,
     subject: { commonName },
     altNames: [commonName],
   });
@@ -792,6 +803,7 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
       checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
     });
     if (renewal.allowed === false) {
+      discardStagedKey({ keyPath, stagedKeyPath });
       return {
         status: "rejected",
         rejectionReason: renewal.rejectionReason,
@@ -799,6 +811,7 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
       };
     }
     if (renewal.renewed !== true) {
+      discardStagedKey({ keyPath, stagedKeyPath });
       await reportStepEvidence(client, jobId, [
         buildEvidenceItem({
           eventType: "validation.failed",
@@ -833,6 +846,7 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
   try {
     certificatePem = fs.readFileSync(stagedCertPath, "utf8");
   } catch (err) {
+    discardStagedKey({ keyPath, stagedKeyPath });
     return {
       status: "failed",
       keyRotated,
@@ -850,8 +864,15 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
     client,
     certificatePem,
     certPath,
+    keyPath,
+    stagedKeyPath,
+    keyRotated,
+    requestedSans: [commonName],
     log,
   });
+  if (tail.status !== "succeeded") {
+    discardStagedKey({ keyPath, stagedKeyPath });
+  }
   return { ...tail, keyRotated };
 }
 
@@ -902,15 +923,44 @@ async function rollbackAfterFailedTail({
     return { rolledBack: false, reason: "backup file could not be read" };
   }
 
-  const restore = await deployCertificate({
-    target: {
-      type: job?.target?.type ?? "endpoint",
-      reference: job?.target?.reference ?? deployResult.destination,
-      certPath: deployResult.destination,
-    },
-    certificatePem: previousPem,
-    checkPath: (candidate) => policyEngine.checkPath(candidate),
-  });
+  const keyBackupPath =
+    deployResult.backupPaths && typeof deployResult.backupPaths.key === "string"
+      ? deployResult.backupPaths.key
+      : null;
+  const liveKeyPath =
+    typeof deployResult.keyDestination === "string" ? deployResult.keyDestination : null;
+
+  let restore;
+  if (keyBackupPath && liveKeyPath) {
+    // Matched pair was deployed: restore cert+key together from backups.
+    const stagedRestoreKey = `${keyBackupPath}.restore-staging`;
+    try {
+      fs.copyFileSync(keyBackupPath, stagedRestoreKey);
+      restore = await deployCertificateAndKey({
+        target: {
+          type: job?.target?.type ?? "endpoint",
+          reference: job?.target?.reference ?? deployResult.destination,
+          certPath: deployResult.destination,
+          keyPath: liveKeyPath,
+        },
+        certificatePem: previousPem,
+        privateKeyPath: stagedRestoreKey,
+        checkPath: (candidate) => policyEngine.checkPath(candidate),
+      });
+    } finally {
+      fs.rmSync(stagedRestoreKey, { force: true });
+    }
+  } else {
+    restore = await deployCertificate({
+      target: {
+        type: job?.target?.type ?? "endpoint",
+        reference: job?.target?.reference ?? deployResult.destination,
+        certPath: deployResult.destination,
+      },
+      certificatePem: previousPem,
+      checkPath: (candidate) => policyEngine.checkPath(candidate),
+    });
+  }
   const restored = restore.deployed === true || restore.skipped === true;
   if (!restored) {
     emitLog(log, `tokentimer-agent: rollback restore failed for job ${jobId} at stage ${restore.stage}`);
@@ -997,20 +1047,94 @@ async function runDeployReloadVerify({
   client,
   certificatePem,
   certPath,
+  keyPath,
+  stagedKeyPath,
+  keyRotated = false,
+  requestedSans = [],
   log,
 }) {
-  // Deploy step (atomic install with backup/rollback; path re-checked
-  // against agent-local policy inside the module via checkPath). The
-  // target type/reference pass through from the job's schema-valid target.
-  const deployResult = await deployCertificate({
-    target: {
-      type: job?.target?.type ?? "endpoint",
-      reference: job?.target?.reference ?? certPath,
-      certPath,
-    },
-    certificatePem,
-    checkPath: (candidate) => policyEngine.checkPath(candidate),
-  });
+  // Pre-deploy X.509 validation: parse, key match, SANs, validity, chain.
+  const keyForValidation =
+    typeof stagedKeyPath === "string" && stagedKeyPath.length > 0
+      ? stagedKeyPath
+      : typeof keyPath === "string" && keyPath.length > 0
+        ? keyPath
+        : null;
+  if (keyForValidation) {
+    let privateKeyPem;
+    try {
+      privateKeyPem = fs.readFileSync(keyForValidation, "utf8");
+    } catch (err) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          `pre-deploy validation could not read private key: ${err.message}`,
+        ),
+      };
+    }
+    const sans =
+      Array.isArray(requestedSans) && requestedSans.length > 0
+        ? requestedSans
+        : typeof job?.target?.reference === "string" && job.target.reference.length > 0
+          ? [job.target.reference]
+          : [];
+    const preDeploy = validateCertificateForDeploy({
+      certificatePem,
+      privateKeyPem,
+      requestedSans: sans,
+    });
+    if (preDeploy.valid !== true) {
+      await reportStepEvidence(client, jobId, [
+        buildEvidenceItem({
+          eventType: "validation.failed",
+          observedAt: new Date().toISOString(),
+          summary: `Pre-deploy certificate validation failed for job ${jobId}: ${preDeploy.code}.`,
+          metadata: [
+            { name: "step", value: "pre-deploy-validate" },
+            { name: "code", value: String(preDeploy.code) },
+          ],
+        }),
+      ]);
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          `pre-deploy validation failed (${preDeploy.code}): ${preDeploy.detail}`,
+        ),
+      };
+    }
+  }
+
+  // Deploy step. When a key was rotated (or freshly generated), install the
+  // matched key+certificate pair atomically; otherwise cert-only deploy.
+  const checkPath = (candidate) => policyEngine.checkPath(candidate);
+  const usePairedDeploy =
+    keyRotated === true &&
+    typeof keyPath === "string" &&
+    keyPath.length > 0 &&
+    typeof stagedKeyPath === "string" &&
+    stagedKeyPath.length > 0;
+
+  const deployResult = usePairedDeploy
+    ? await deployCertificateAndKey({
+        target: {
+          type: job?.target?.type ?? "endpoint",
+          reference: job?.target?.reference ?? certPath,
+          certPath,
+          keyPath,
+        },
+        certificatePem,
+        privateKeyPath: stagedKeyPath,
+        checkPath,
+      })
+    : await deployCertificate({
+        target: {
+          type: job?.target?.type ?? "endpoint",
+          reference: job?.target?.reference ?? certPath,
+          certPath,
+        },
+        certificatePem,
+        checkPath,
+      });
 
   if (deployResult.deployed !== true && deployResult.skipped !== true) {
     await reportStepEvidence(client, jobId, [
@@ -1159,6 +1283,19 @@ async function runDeployReloadVerify({
       metadata: [{ name: "step", value: "verify" }],
     }),
   ]);
+
+  // Post-verify: only now is it safe to discard the previous key/cert backups.
+  try {
+    await discardDeployBackups({
+      backupPaths: deployResult.backupPaths,
+      backupPath: deployResult.backupPath,
+    });
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: could not discard deploy backups for job ${jobId}: ${err.message}`,
+    );
+  }
 
   return { status: "succeeded", errorMessage: null };
 }

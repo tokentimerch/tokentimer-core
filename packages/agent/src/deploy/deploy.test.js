@@ -9,14 +9,19 @@ const path = require("node:path");
 const {
   validateTargetConfig,
   deployCertificate,
+  deployCertificateAndKey,
+  discardDeployBackups,
   getDeployMetrics,
   resetDeployMetrics,
 } = require("./index.js");
 
-const CERT_PEM =
-  "-----BEGIN CERTIFICATE-----\nMIIBfake-cert-body-for-tests\n-----END CERTIFICATE-----\n";
-const OTHER_CERT_PEM =
-  "-----BEGIN CERTIFICATE-----\nMIIBdifferent-cert-body\n-----END CERTIFICATE-----\n";
+// Real X.509 fixtures (shared with verify/); fake PEM strings are rejected
+// by pre-deploy validation and must not be used here either.
+const FIXTURES_DIR = path.join(__dirname, "..", "verify", "fixtures");
+const CERT_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "selfsigned.crt.pem"), "utf8");
+const OTHER_CERT_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "wrong-san.crt.pem"), "utf8");
+const MATCHING_KEY_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "leaf.key.pem"), "utf8");
+const OTHER_KEY_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "wrong-san.key.pem"), "utf8");
 const PRIVATE_KEY_PEM =
   "-----BEGIN PRIVATE KEY-----\nMIIEfake-key-body\n-----END PRIVATE KEY-----\n";
 
@@ -514,5 +519,116 @@ describe("deploy metrics", () => {
     snapshot.endpoint.attempts = 999;
 
     assert.equal(getDeployMetrics().endpoint.attempts, 1);
+  });
+});
+
+describe("deployCertificateAndKey", () => {
+  it("atomically installs a matched key+certificate pair and retains backups until discarded", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "server.crt");
+    const keyPath = path.join(dir, "server.key");
+    const stagedKeyPath = path.join(dir, ".server.key.staging-test");
+    fs.writeFileSync(certPath, OTHER_CERT_PEM, { mode: 0o600 });
+    fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagedKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagedKeyPath,
+      checkPath: makeCheckPath(dir),
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(fs.readFileSync(certPath, "utf8"), CERT_PEM);
+    assert.equal(fs.readFileSync(keyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.ok(result.backupPaths.cert);
+    assert.ok(result.backupPaths.key);
+    assert.equal(fs.readFileSync(result.backupPaths.cert, "utf8"), OTHER_CERT_PEM);
+    assert.equal(fs.readFileSync(result.backupPaths.key, "utf8"), OTHER_KEY_PEM);
+    // Staging key consumed after successful promote.
+    assert.equal(fs.existsSync(stagedKeyPath), false);
+
+    // Backups survive until explicit discard (post-verify).
+    const discarded = await discardDeployBackups({ backupPaths: result.backupPaths });
+    assert.equal(discarded.discarded.length, 2);
+    assert.equal(fs.existsSync(result.backupPaths.cert), false);
+    assert.equal(fs.existsSync(result.backupPaths.key), false);
+    // Live pair untouched.
+    assert.equal(fs.readFileSync(certPath, "utf8"), CERT_PEM);
+    assert.equal(fs.readFileSync(keyPath, "utf8"), MATCHING_KEY_PEM);
+  });
+
+  it("rolls back BOTH key and cert when the key write fails after cert write", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "server.crt");
+    const keyPath = path.join(dir, "server.key");
+    const stagedKeyPath = path.join(dir, "staged.key");
+    fs.writeFileSync(certPath, OTHER_CERT_PEM, { mode: 0o600 });
+    fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagedKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    let renameCount = 0;
+    const realRename = require("node:fs/promises").rename;
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagedKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: (from, to) => {
+          renameCount += 1;
+          // First rename is the cert temp→live; second is the key. Fail the key.
+          if (renameCount >= 2) {
+            return Promise.reject(new Error("injected key rename failure"));
+          }
+          return realRename(from, to);
+        },
+      },
+    });
+
+    assert.equal(result.deployed, false);
+    assert.equal(result.rolledBack, true);
+    assert.equal(result.stage, "write");
+    assert.equal(fs.readFileSync(certPath, "utf8"), OTHER_CERT_PEM);
+    assert.equal(fs.readFileSync(keyPath, "utf8"), OTHER_KEY_PEM);
+  });
+
+  it("leaves the live key untouched when only a staged key exists and write fails before swap", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "server.crt");
+    const keyPath = path.join(dir, "server.key");
+    const stagedKeyPath = path.join(dir, "staged.key");
+    fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagedKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagedKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: () => Promise.reject(new Error("injected rename failure")),
+      },
+    });
+
+    assert.equal(result.deployed, false);
+    assert.equal(fs.readFileSync(keyPath, "utf8"), OTHER_KEY_PEM);
+    assert.equal(fs.existsSync(certPath), false);
   });
 });
