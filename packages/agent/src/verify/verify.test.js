@@ -2,53 +2,45 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const net = require("node:net");
 const { EventEmitter } = require("node:events");
 const { X509Certificate } = require("node:crypto");
 
 const {
+  validateCertificateForDeploy,
   verifyDeployedCertificate,
   computeCertificateFingerprint,
   normalizeFingerprint,
 } = require("./index.js");
 
 /**
- * Static PUBLIC certificate fixture (self-signed, CN
- * certops-verify-fixture.test, generated once for this test file). Public
- * material only -- per the zero key custody invariant, NO private key
- * fixture exists anywhere in the repo, so this cert can never be used to
- * serve traffic; it exists purely as parse/fingerprint input.
- *
- * Test-strategy note (documented choice): generating a fresh self-signed
- * certificate at runtime without dependencies is not possible with
- * node:crypto alone (it can create keypairs and parse X.509, but has no
- * certificate-signing API), and vendoring a private key fixture to run a
- * real tls.createServer is forbidden. The happy/mismatch handshake paths
- * are therefore exercised through a connectImpl stub that mimics
- * tls.connect, while the connection-error path uses a REAL socket against
- * a port with no listener (no certificate needed for that).
+ * Real OpenSSL-generated fixtures (see fixtures/generate-fixtures.sh).
+ * Keys are TEST-ONLY material committed solely so checkPrivateKey and
+ * negative cases exercise the real X509Certificate path end to end.
  */
-const FIXTURE_CERT_PEM = `-----BEGIN CERTIFICATE-----
-MIIDLTCCAhWgAwIBAgIUNNNJnkEUxHbRL7iDNJAUsL9ldbAwDQYJKoZIhvcNAQEL
-BQAwJjEkMCIGA1UEAwwbY2VydG9wcy12ZXJpZnktZml4dHVyZS50ZXN0MB4XDTI2
-MDcyMjA1MjUzNVoXDTM2MDcxOTA1MjUzNVowJjEkMCIGA1UEAwwbY2VydG9wcy12
-ZXJpZnktZml4dHVyZS50ZXN0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
-AQEA2ukFK8Np/lO9PUjkTZ0LUtHPH7SRyfJMgMks9XMlyIfn2vsMI4YpbLh1WD82
-A2b08wxlaxbilElqtuoPOWtUgk99SNLW170tAzKf3X/Yvf/sh8MJp7bJTjQY2o5x
-LgU1HoFb/HtcMvB6xjsJZppn9cwNk1qWRvBb8cL8VDiseg1h8RTUNCoDWTlDpiUf
-04+BFImTRNky8j/SmhlHmtrOoHwYu3bul+OuYmbFH+Sxm+/ZGK6LbdnqEAfugBHg
-UNtbiaFLFiceU2+CHF2+tMROqxj2wefVX9dQzyXLlTOPhgbEAk86jwe5UKJNREKT
-vkn3ibR5bxc992fLSGPQ3oziDQIDAQABo1MwUTAdBgNVHQ4EFgQU4YR1yo0mQmDa
-NCGg2i28Vace8UYwHwYDVR0jBBgwFoAU4YR1yo0mQmDaNCGg2i28Vace8UYwDwYD
-VR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAJcsjXHpAOzi4Fwi6wSWZ
-aacLB76johdLGTXK1FGbN8+2PVISXUJ/wsNhoYSu9qtYyuVdxsAiiUBT1xupD0ca
-MG85NmVqKVLN2WzT9OFSWSsA4HlIc37kUamApq7VZ2VMylCpQI1A9fhfb5ZbRYhM
-1Gfhfx1UaAnWcs0AAsGjxeCrNKizZfBRUsmap0V+yeXLIOBE/tJxwaHu14qLx+Ws
-Uw7sRZcMXBIEmaNAi4EEX6eJ0zUcKLUI0glUsEpNId3VaKR63L2IXOxxEXvlYrXs
-rDRLsqd2zwJUBZ5zeUp3Ji++P4IM/DBkbrbtr8PX9Rj2U5ZRxQQ4ZE+ifMJqDeKy
-Cw==
------END CERTIFICATE-----
-`;
+const FIXTURES_DIR = path.join(__dirname, "fixtures");
+
+function readFixture(name) {
+  return fs.readFileSync(path.join(FIXTURES_DIR, name), "utf8");
+}
+
+const FIXTURE_CERT_PEM = readFixture("selfsigned.crt.pem");
+const FIXTURE_KEY_PEM = readFixture("leaf.key.pem");
+const LEAF_CERT_PEM = readFixture("leaf.crt.pem");
+const LEAF_FULLCHAIN_PEM = readFixture("leaf-fullchain.crt.pem");
+const INTERMEDIATE_CERT_PEM = readFixture("intermediate.crt.pem");
+const CHAIN_LEAF_CERT_PEM = readFixture("chain-leaf.crt.pem");
+const CHAIN_LEAF_KEY_PEM = readFixture("chain-leaf.key.pem");
+const CHAIN_LEAF_FULLCHAIN_PEM = readFixture("chain-leaf-fullchain.crt.pem");
+const WRONG_SAN_CERT_PEM = readFixture("wrong-san.crt.pem");
+const WRONG_SAN_KEY_PEM = readFixture("wrong-san.key.pem");
+const MISMATCH_KEY_PEM = readFixture("mismatch.key.pem");
+const EXPIRED_CERT_PEM = readFixture("expired.crt.pem");
+const EXPIRED_KEY_PEM = readFixture("expired.key.pem");
+const FUTURE_CERT_PEM = readFixture("future.crt.pem");
+const FUTURE_KEY_PEM = readFixture("future.key.pem");
 
 const fixtureX509 = new X509Certificate(FIXTURE_CERT_PEM);
 const FIXTURE_DER = fixtureX509.raw;
@@ -316,4 +308,113 @@ test("invalid port throws", () => {
       }),
     /port/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// validateCertificateForDeploy (real X.509 fixtures)
+// ---------------------------------------------------------------------------
+
+test("validateCertificateForDeploy accepts a matching self-signed leaf + key + SANs", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: FIXTURE_CERT_PEM,
+    privateKeyPem: FIXTURE_KEY_PEM,
+    requestedSans: ["valid.example.com", "www.valid.example.com"],
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.fingerprintSha256, FIXTURE_FINGERPRINT);
+  assert.ok(result.subjectAltNames.includes("valid.example.com"));
+  assert.ok(result.subjectAltNames.includes("www.valid.example.com"));
+});
+
+test("validateCertificateForDeploy accepts a CA-signed leaf with fullchain intermediates", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: LEAF_FULLCHAIN_PEM,
+    privateKeyPem: FIXTURE_KEY_PEM,
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, true, result.detail);
+});
+
+test("validateCertificateForDeploy verifies leaf→intermediate chain via chainPems", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: CHAIN_LEAF_CERT_PEM,
+    privateKeyPem: CHAIN_LEAF_KEY_PEM,
+    requestedSans: ["chain.example.com"],
+    chainPems: [INTERMEDIATE_CERT_PEM],
+  });
+  assert.equal(result.valid, true, result.detail);
+
+  const fullchain = validateCertificateForDeploy({
+    certificatePem: CHAIN_LEAF_FULLCHAIN_PEM,
+    privateKeyPem: CHAIN_LEAF_KEY_PEM,
+    requestedSans: ["chain.example.com"],
+  });
+  assert.equal(fullchain.valid, true, fullchain.detail);
+});
+
+test("validateCertificateForDeploy rejects a mismatched private key", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: LEAF_CERT_PEM,
+    privateKeyPem: MISMATCH_KEY_PEM,
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "PRIVATE_KEY_MISMATCH");
+  assert.match(result.detail, /does not match/i);
+});
+
+test("validateCertificateForDeploy rejects missing requested SANs", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: WRONG_SAN_CERT_PEM,
+    privateKeyPem: WRONG_SAN_KEY_PEM,
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "SAN_MISMATCH");
+  assert.match(result.detail, /valid\.example\.com/);
+});
+
+test("validateCertificateForDeploy rejects an expired certificate", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: EXPIRED_CERT_PEM,
+    privateKeyPem: EXPIRED_KEY_PEM,
+    requestedSans: ["expired.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "EXPIRED");
+  assert.match(result.detail, /expired/i);
+});
+
+test("validateCertificateForDeploy rejects a not-yet-valid certificate", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: FUTURE_CERT_PEM,
+    privateKeyPem: FUTURE_KEY_PEM,
+    requestedSans: ["future.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "NOT_YET_VALID");
+  assert.match(result.detail, /not yet valid/i);
+});
+
+test("validateCertificateForDeploy rejects unparseable / fake PEM", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem:
+      "-----BEGIN CERTIFICATE-----\nMIIBfake-cert-body-for-tests\n-----END CERTIFICATE-----\n",
+    privateKeyPem: FIXTURE_KEY_PEM,
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "CERTIFICATE_PARSE_FAILED");
+});
+
+test("validateCertificateForDeploy rejects a broken chain signature link", () => {
+  // Present the wrong-SAN cert as if it were the issuer of the leaf.
+  const result = validateCertificateForDeploy({
+    certificatePem: LEAF_CERT_PEM,
+    privateKeyPem: FIXTURE_KEY_PEM,
+    requestedSans: ["valid.example.com"],
+    chainPems: [WRONG_SAN_CERT_PEM],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "CHAIN_INVALID");
 });
