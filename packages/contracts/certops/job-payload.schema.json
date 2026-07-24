@@ -16,6 +16,11 @@
     "requestedAt"
   ],
   "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["real", "dry_run"],
+      "description": "First-class immutable job execution mode set at creation. dry_run jobs must terminate as dry_run_complete, never succeeded. See COORDINATION-B4.md."
+    },
     "schemaVersion": {
       "type": "integer",
       "const": 1

@@ -418,6 +418,91 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(renewalCalls, 1);
   });
 
+  it("honors per-sweep enable flags independently", async () => {
+    const worker = await import(workerUrl);
+    let nonceCalls = 0;
+    let renewalCalls = 0;
+    let clientCalls = 0;
+
+    const results = await worker.runCertOpsMaintenance({
+      env: {
+        CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+        CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "0",
+        CERTOPS_SWEEP_NONCE_ENABLED: "true",
+        CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
+      },
+      log: silentLogger,
+      withClientFn: async (fn) => {
+        clientCalls += 1;
+        return fn({ async query() { return { rows: [] }; } });
+      },
+      dbPool: { marker: "pool" },
+      nonceSweeper: async () => {
+        nonceCalls += 1;
+        return 1;
+      },
+      renewalSweeper: async () => {
+        renewalCalls += 1;
+        return { scanned: 0, created: 0 };
+      },
+      pushMetricsFn: async () => {},
+    });
+
+    assert.strictEqual(results.leaseReaper.status, "skipped");
+    assert.strictEqual(results.staleAgents.status, "skipped");
+    assert.strictEqual(results.nonceSweep.status, "success");
+    assert.strictEqual(results.renewalScheduler.status, "skipped");
+    assert.strictEqual(nonceCalls, 1);
+    assert.strictEqual(renewalCalls, 0);
+    assert.strictEqual(clientCalls, 0);
+  });
+
+  it("isolates a timed-out sweep without blocking later sweeps", async () => {
+    const worker = await import(workerUrl);
+    let renewalCalls = 0;
+
+    const results = await worker.runCertOpsMaintenance({
+      env: {
+        CERTOPS_SWEEP_LEASE_REAPER_TIMEOUT_MS: "20",
+        CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
+        CERTOPS_SWEEP_NONCE_ENABLED: "false",
+      },
+      log: silentLogger,
+      withClientFn: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return { scanned: 0 };
+      },
+      renewalSweeper: async () => {
+        renewalCalls += 1;
+        return { scanned: 0, created: 0 };
+      },
+      pushMetricsFn: async () => {},
+    });
+
+    assert.strictEqual(results.leaseReaper.status, "failed");
+    assert.match(results.leaseReaper.error.message, /timed out/);
+    assert.strictEqual(results.renewalScheduler.status, "success");
+    assert.strictEqual(renewalCalls, 1);
+  });
+
+  it("resolves sweep enable and timeout helpers from env", async () => {
+    const worker = await import(workerUrl);
+    assert.strictEqual(worker.isSweepEnabled("lease-reaper", {}), true);
+    assert.strictEqual(
+      worker.isSweepEnabled("lease-reaper", {
+        CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+      }),
+      false,
+    );
+    assert.strictEqual(worker.resolveSweepTimeoutMs("nonce-sweep", {}), 120000);
+    assert.strictEqual(
+      worker.resolveSweepTimeoutMs("nonce-sweep", {
+        CERTOPS_SWEEP_NONCE_TIMEOUT_MS: "5000",
+      }),
+      5000,
+    );
+  });
+
   it("invokes the nonce sweeper against the worker pool", async () => {
     const worker = await import(workerUrl);
     const seenClients = [];

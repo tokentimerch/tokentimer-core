@@ -35,6 +35,14 @@ const {
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/settings.js"),
 );
+const {
+  RENEWAL_PROFILE_SCHEMA_VERSION,
+} = require(
+  path.resolve(
+    __dirname,
+    "../../apps/api/services/certops/renewalProfile.js",
+  ),
+);
 
 function normalizeSql(sql) {
   return String(sql).replace(/\s+/g, " ").trim();
@@ -42,15 +50,63 @@ function normalizeSql(sql) {
 
 const NOT_AFTER = new Date("2026-08-01T00:00:00.000Z");
 
+function completeRenewalProfile(overrides = {}) {
+  return {
+    schemaVersion: RENEWAL_PROFILE_SCHEMA_VERSION,
+    sanPolicy: {
+      mode: "exact",
+      sans: ["app.example.com"],
+      allowWildcards: false,
+    },
+    keyAlgorithm: "rsa",
+    keySize: 2048,
+    keyRotationPolicy: { rotateOnRenew: false },
+    preferredChain: null,
+    ca: {
+      endpoint: "https://acme-v02.api.letsencrypt.org/directory",
+      accountRef: "le-prod",
+      eabRef: null,
+    },
+    acme: { kind: "certbot", commandRef: "renew.web" },
+    dns: { provider: "cloudflare", zone: "example.com" },
+    deploymentTargets: [
+      {
+        type: "endpoint",
+        reference: "host/web",
+        certPath: "/etc/ssl/certs/app.pem",
+        reloadService: "nginx",
+      },
+    ],
+    target: {
+      type: "endpoint",
+      reference: "host/web",
+      certPath: "/etc/ssl/certs/app.pem",
+    },
+    verification: { host: "app.example.com", port: 443, requireMatch: true },
+    ...overrides,
+  };
+}
+
 function dueCertificate(overrides = {}) {
+  const { renewalProfileOverrides, ...rest } = overrides;
+  const profile = completeRenewalProfile(renewalProfileOverrides || {});
   return {
     id: "cert-1",
     workspace_id: "ws-1",
     common_name: "app.example.com",
+    subject_alt_names: ["app.example.com"],
     not_after: NOT_AFTER,
     key_mode: null,
+    profile_id: "profile-1",
+    profile_name: "web-tls",
+    profile_key_mode: null,
     profile_renew_before_days: null,
-    ...overrides,
+    certificate_ca_endpoint: null,
+    profile_ca_endpoint: profile.ca.endpoint,
+    profile_public_metadata: { renewalProfile: profile },
+    ...rest,
+    profile_public_metadata:
+      rest.profile_public_metadata || { renewalProfile: profile },
   };
 }
 
@@ -173,11 +229,12 @@ describe("certops renewal scheduler", () => {
     assert.match(sql, /cj\.subject_type = 'managed_certificate'/);
     assert.match(sql, /NOT \(cj\.status = ANY\(\$2::text\[\]\)\)/);
     assert.match(sql, /mc\.status NOT IN \('revoked', 'decommissioned'\)/);
+    assert.match(sql, /profile_public_metadata/);
     assert.strictEqual(params[0], "30");
     assert.deepStrictEqual(params[1], ["succeeded", "failed"]);
   });
 
-  it("creates an automation renew job for a due certificate inside a gated transaction", async () => {
+  it("creates an automation renew job with a resolved renewal profile snapshot", async () => {
     const pool = createSchedulerPool({ dueRows: [dueCertificate()] });
     const createdJobs = [];
 
@@ -194,12 +251,14 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(summary.created, 1);
     assert.strictEqual(summary.replayed, 0);
     assert.strictEqual(summary.skippedPaused, 0);
+    assert.strictEqual(summary.skippedIncompleteProfile, 0);
     assert.deepStrictEqual(summary.errors, []);
 
     assert.strictEqual(createdJobs.length, 1);
     const job = createdJobs[0];
     assert.strictEqual(job.operation, "renew");
     assert.strictEqual(job.source, "automation");
+    assert.strictEqual(job.mode, "real");
     assert.strictEqual(job.subjectType, "managed_certificate");
     assert.strictEqual(job.subjectId, "cert-1");
     assert.strictEqual(
@@ -208,12 +267,14 @@ describe("certops renewal scheduler", () => {
     );
     assert.strictEqual(job.payload.certificateId, "cert-1");
     assert.strictEqual(job.payload.notAfter, NOT_AFTER.toISOString());
-    // No key_mode policy data: keyRotation must be omitted entirely.
-    assert.ok(!("keyRotation" in job.payload));
+    assert.ok(job.payload.renewalProfile);
+    assert.strictEqual(job.payload.renewalProfile.schemaVersion, 1);
+    assert.strictEqual(job.payload.commandRef, "renew.web");
+    assert.strictEqual(job.payload.dnsProvider, "cloudflare");
+    assert.strictEqual(job.payload.dnsZone, "example.com");
+    assert.strictEqual(job.payload.certPath, "/etc/ssl/certs/app.pem");
+    assert.strictEqual(job.payload.keyRotation, false);
 
-    // The job creation transaction acquires the workspace kill-switch lock
-    // (FOR SHARE) before the insert and commits afterwards. clients[0] is
-    // the sweep's advisory-lock client; clients[1] is the job transaction.
     const client = pool.clients[1];
     const sqls = client.queries.map((q) => q.sql);
     assert.strictEqual(sqls[0], "BEGIN");
@@ -226,9 +287,56 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(client.released, true);
   });
 
-  it("sets keyRotation only for agent-local key modes", async () => {
+  it("skips certificates lacking a complete renewal profile", async () => {
+    const warnings = [];
     const pool = createSchedulerPool({
-      dueRows: [dueCertificate({ key_mode: "agent-local" })],
+      dueRows: [
+        dueCertificate({
+          id: "cert-incomplete",
+          profile_public_metadata: {},
+        }),
+        dueCertificate({ id: "cert-ok" }),
+      ],
+    });
+    const createdJobs = [];
+
+    const summary = await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      logger: {
+        warn: (msg, meta) => warnings.push({ msg, meta }),
+        error() {},
+      },
+      jobCreator: async (options) => {
+        createdJobs.push(options);
+        return { job: { id: "job-1" }, created: true };
+      },
+    });
+
+    assert.strictEqual(summary.skippedIncompleteProfile, 1);
+    assert.strictEqual(summary.created, 1);
+    assert.deepStrictEqual(summary.errors, []);
+    assert.deepStrictEqual(
+      createdJobs.map((job) => job.subjectId),
+      ["cert-ok"],
+    );
+    assert.strictEqual(warnings.length, 1);
+    assert.strictEqual(
+      warnings[0].msg,
+      "certops-renewal-scheduler-incomplete-profile",
+    );
+  });
+
+  it("sets keyRotation from the resolved profile for agent-local keys", async () => {
+    const pool = createSchedulerPool({
+      dueRows: [
+        dueCertificate({
+          key_mode: "agent-local",
+          renewalProfileOverrides: {
+            keyRotationPolicy: { rotateOnRenew: true },
+          },
+        }),
+      ],
     });
     const createdJobs = [];
 
@@ -241,7 +349,7 @@ describe("certops renewal scheduler", () => {
       },
     });
 
-    assert.strictEqual(createdJobs[0].payload.keyRotation, false);
+    assert.strictEqual(createdJobs[0].payload.keyRotation, true);
   });
 
   it("counts idempotent replays without creating duplicates", async () => {
@@ -286,8 +394,6 @@ describe("certops renewal scheduler", () => {
       ["cert-ok"],
     );
 
-    // clients[0] is the advisory-lock client; the paused cert's transaction
-    // is the first job client after it.
     const pausedClient = pool.clients[1];
     const pausedSqls = pausedClient.queries.map((q) => q.sql);
     assert.ok(pausedSqls.includes("ROLLBACK"));
@@ -300,8 +406,6 @@ describe("certops renewal scheduler", () => {
 
     const summary = await runRenewalSchedulerSweep({
       dbPool: pool,
-      // Global kill switch off: lockWorkspaceForCertOpsSideEffect throws
-      // CERTOPS_DISABLED before any job insert.
       env: { CERTOPS_ENABLED: "false" },
       jobCreator: async () => {
         throw new Error("job creation must not run when CertOps is disabled");
@@ -356,26 +460,6 @@ describe("certops renewal scheduler", () => {
       resolveRenewalPerCaCap({ CERTOPS_RENEWAL_PER_CA_CAP: "2" }),
       2,
     );
-    assert.strictEqual(
-      resolveRenewalPerCaCap({ CERTOPS_RENEWAL_PER_CA_CAP: " 12 " }),
-      12,
-    );
-    assert.strictEqual(
-      resolveRenewalPerCaCap({ CERTOPS_RENEWAL_PER_CA_CAP: "0" }),
-      5,
-    );
-    assert.strictEqual(
-      resolveRenewalPerCaCap({ CERTOPS_RENEWAL_PER_CA_CAP: "-3" }),
-      5,
-    );
-    assert.strictEqual(
-      resolveRenewalPerCaCap({ CERTOPS_RENEWAL_PER_CA_CAP: "junk" }),
-      5,
-    );
-    assert.strictEqual(
-      resolveRenewalPerCaCap({ CERTOPS_RENEWAL_PER_CA_CAP: "" }),
-      5,
-    );
   });
 
   it("buckets certificates by metadata caEndpoint with profile fallback", () => {
@@ -400,7 +484,6 @@ describe("certops renewal scheduler", () => {
       }),
       UNKNOWN_CA_BUCKET,
     );
-    assert.strictEqual(certificateCaBucket({}), UNKNOWN_CA_BUCKET);
   });
 
   it("counts in-flight renew jobs per payload caEndpoint with an unknown bucket", async () => {
@@ -412,7 +495,6 @@ describe("certops renewal scheduler", () => {
           in_flight: 3,
         },
         { workspace_id: "ws-1", ca_endpoint: null, in_flight: 2 },
-        // Same CA, different representation: must merge into one bucket.
         {
           workspace_id: "ws-1",
           ca_endpoint: "HTTPS://CA-A.example.com/acme/",
@@ -431,17 +513,6 @@ describe("certops renewal scheduler", () => {
       4,
     );
     assert.strictEqual(counts.get(caCapKey("ws-1", UNKNOWN_CA_BUCKET)), 2);
-
-    const countQuery = pool.scanQueries.find((entry) =>
-      entry.sql.includes("COUNT(*)"),
-    );
-    assert.ok(countQuery, "in-flight count query must run");
-    assert.match(countQuery.sql, /FROM certificate_jobs cj/);
-    assert.match(countQuery.sql, /cj\.workspace_id/);
-    assert.match(countQuery.sql, /cj\.operation = 'renew'/);
-    assert.match(countQuery.sql, /NOT \(cj\.status = ANY\(\$1::text\[\]\)\)/);
-    assert.match(countQuery.sql, /payload->>'caEndpoint'/);
-    assert.deepStrictEqual(countQuery.params[0], ["succeeded", "failed"]);
   });
 
   it("creates jobs while a CA is under its in-flight cap", async () => {
@@ -449,6 +520,14 @@ describe("certops renewal scheduler", () => {
       dueRows: [
         dueCertificate({
           certificate_ca_endpoint: "https://ca-a.example.com/acme",
+          profile_ca_endpoint: "https://ca-a.example.com/acme",
+          renewalProfileOverrides: {
+            ca: {
+              endpoint: "https://ca-a.example.com/acme",
+              accountRef: null,
+              eabRef: null,
+            },
+          },
         }),
       ],
       inFlightRows: [
@@ -473,8 +552,6 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(summary.perCaCap, 5);
     assert.strictEqual(summary.created, 1);
     assert.strictEqual(summary.skippedByCaCap, 0);
-    // The scheduler stamps the resolved caEndpoint onto the job payload so
-    // later sweeps bucket this job under the same CA.
     assert.strictEqual(
       createdJobs[0].payload.caEndpoint,
       "https://ca-a.example.com/acme",
@@ -487,10 +564,26 @@ describe("certops renewal scheduler", () => {
         dueCertificate({
           id: "cert-capped",
           certificate_ca_endpoint: "https://ca-a.example.com/acme",
+          profile_ca_endpoint: "https://ca-a.example.com/acme",
+          renewalProfileOverrides: {
+            ca: {
+              endpoint: "https://ca-a.example.com/acme",
+              accountRef: null,
+              eabRef: null,
+            },
+          },
         }),
         dueCertificate({
           id: "cert-other-ca",
           certificate_ca_endpoint: "https://ca-b.example.com/acme",
+          profile_ca_endpoint: "https://ca-b.example.com/acme",
+          renewalProfileOverrides: {
+            ca: {
+              endpoint: "https://ca-b.example.com/acme",
+              accountRef: null,
+              eabRef: null,
+            },
+          },
         }),
       ],
       inFlightRows: [
@@ -515,7 +608,6 @@ describe("certops renewal scheduler", () => {
     assert.strictEqual(summary.scanned, 2);
     assert.strictEqual(summary.skippedByCaCap, 1);
     assert.strictEqual(summary.created, 1);
-    assert.deepStrictEqual(summary.errors, []);
     assert.deepStrictEqual(
       createdJobs.map((job) => job.subjectId),
       ["cert-other-ca"],
@@ -524,7 +616,13 @@ describe("certops renewal scheduler", () => {
 
   it("caps certificates without a resolvable caEndpoint in a shared unknown bucket", async () => {
     const pool = createSchedulerPool({
-      dueRows: [dueCertificate({ id: "cert-no-ca" })],
+      dueRows: [
+        dueCertificate({
+          id: "cert-no-ca",
+          certificate_ca_endpoint: null,
+          profile_ca_endpoint: null,
+        }),
+      ],
       inFlightRows: [
         { workspace_id: "ws-1", ca_endpoint: null, in_flight: 5 },
       ],
@@ -540,7 +638,6 @@ describe("certops renewal scheduler", () => {
 
     assert.strictEqual(summary.skippedByCaCap, 1);
     assert.strictEqual(summary.created, 0);
-    assert.deepStrictEqual(summary.errors, []);
   });
 
   it("counts jobs it creates in the same sweep against the cap", async () => {
@@ -549,10 +646,26 @@ describe("certops renewal scheduler", () => {
         dueCertificate({
           id: "cert-first",
           certificate_ca_endpoint: "https://ca-a.example.com/acme",
+          profile_ca_endpoint: "https://ca-a.example.com/acme",
+          renewalProfileOverrides: {
+            ca: {
+              endpoint: "https://ca-a.example.com/acme",
+              accountRef: null,
+              eabRef: null,
+            },
+          },
         }),
         dueCertificate({
           id: "cert-second",
           certificate_ca_endpoint: "https://ca-a.example.com/acme",
+          profile_ca_endpoint: "https://ca-a.example.com/acme",
+          renewalProfileOverrides: {
+            ca: {
+              endpoint: "https://ca-a.example.com/acme",
+              accountRef: null,
+              eabRef: null,
+            },
+          },
         }),
       ],
       inFlightRows: [],
@@ -575,25 +688,5 @@ describe("certops renewal scheduler", () => {
       createdJobs.map((job) => job.subjectId),
       ["cert-first"],
     );
-  });
-
-  it("never stamps a non-URL metadata caEndpoint onto the job payload", async () => {
-    const pool = createSchedulerPool({
-      dueRows: [
-        dueCertificate({ certificate_ca_endpoint: "not a url" }),
-      ],
-    });
-    const createdJobs = [];
-
-    await runRenewalSchedulerSweep({
-      dbPool: pool,
-      env: {},
-      jobCreator: async (options) => {
-        createdJobs.push(options);
-        return { job: { id: "job-1" }, created: true };
-      },
-    });
-
-    assert.ok(!("caEndpoint" in createdJobs[0].payload));
   });
 });

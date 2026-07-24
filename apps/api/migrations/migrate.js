@@ -1797,6 +1797,50 @@ const migrations = [
         );
     `,
   },
+  {
+    version: 26,
+    name: "certops_job_mode_and_dry_run_complete",
+    sql: `
+      -- B4: first-class immutable job mode (real | dry_run) plus a distinct
+      -- terminal status for dry-run completion. Dry-run must never be reported
+      -- as succeeded. Mode is set at creation and never updated afterwards.
+      -- See COORDINATION-B4.md.
+
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'real';
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_mode_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_mode_check
+          CHECK (mode IN ('real', 'dry_run'));
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_status_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_status_check CHECK (
+          status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete'
+          )
+        );
+
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_status_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_status_check CHECK (
+          status IS NULL OR status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete'
+          )
+        );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_mode_status
+        ON certificate_jobs(workspace_id, mode, status);
+    `,
+  },
 ];
 
 async function runMigrations() {
