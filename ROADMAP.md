@@ -5,7 +5,7 @@ Engineering health and quality targets, tracked alongside the
 These items are worked on in parallel with feature development and may
 ship in any release -- version numbers below are targets, not hard gates.
 
-Last updated: 2026-07-18
+Last updated: 2026-07-24
 
 ---
 
@@ -64,18 +64,20 @@ rejects key material at every write surface (CI-enforced).
   `eventId`, owner-scoped delivery leases, secret redaction, evidence size caps,
   per-token rate limiting, `/certops/*` orchestration UI (jobs, timeline, audit
   deep links).
-- [ ] **cert-manager**: Kubernetes controller, observe + basic provision mode.
-- [ ] **Agent**: registration, heartbeat, job polling, replay protection,
+- [x] **cert-manager**: Kubernetes controller, observe + basic provision mode.
+- [x] **Agent**: registration, heartbeat, job polling, replay protection,
   agent-local command allowlists.
-- [ ] **Agent-side renewal**: ACME (RFC 8555), filesystem deploy, reload
+- [x] **Agent-side renewal**: ACME (RFC 8555), filesystem deploy, reload
   helpers, basic rollback. Key generation happens only on the agent, never on
   the control plane.
 - [ ] **Consolidation guards** (non-blocking, lands incrementally):
   shared SSRF egress module, versioned encryption envelopes, audit hash chain,
   enum/type-drift and control-plane-keygen CI guards.
 
-Later phases (approvals, issuer integrations, proxy-agents, appliance
-connectors, compliance reporting) are enterprise-led; see
+Approval gates, renewal-failure alerts, and DNS-01 wave 1/2 provider coverage
+shipped in core as part of the milestones above. Remaining later phases
+(issuer integrations, proxy-agents, appliance connectors, compliance
+reporting) are enterprise-led; see
 `tokentimer-enterprise/docs/ENTERPRISE_ROADMAP.md`.
 
 ---

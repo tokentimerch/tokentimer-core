@@ -124,7 +124,20 @@ inconsistent config directory and aborts startup.
 
 A lost register response can be replayed within a short window by presenting
 the same authenticated bootstrap token plus the original `registrationId`.
-The control plane stores that replay credential as an AES-256-GCM encrypted
+`registrationId` is a client-generated identifier (string, 1-128 chars,
+pattern `^[A-Za-z0-9_.:-]+$`; UUID v4 recommended) sent on every register
+attempt (`registerBody.registrationId`, agent-protocol envelope
+`messageType: "register"`). The agent persists it under the config dir
+(`registration-id.json`, 0600) before sending register and clears it only
+after the credential is durably written locally, so a crash between
+receiving the credential response and persisting it locally is recoverable:
+restart reuses the same `registrationId` and the server replays the
+identical `{ agentId, credential, protocolVersion, signingKeyId?,
+signingPublicKeyPem? }` response rather than rejecting the bootstrap token as
+already spent. A retry with a *different* `registrationId` against an
+already-spent token remains a hard rejection, so a single token can only
+ever mint one agent identity. The control plane stores that replay credential
+as an AES-256-GCM encrypted
 envelope in `certops_agent_registration_replays` (never plaintext). Decrypt
 happens only on that authenticated replay path
 (`apps/api/services/certops/registrationCredentialCrypto.js`). The API process
@@ -329,6 +342,63 @@ unpinned). If execution is enabled but no key is pinned yet, jobs are
 reported `blocked` (not rejected): an agent-side precondition failure, not a
 verdict about the job.
 
+### Signing-key rotation lifecycle
+
+The control plane supports an overlapping old/new signing-key rotation so a
+fleet does not lose the ability to accept jobs the moment a key is retired:
+
+1. `beginSigningKeyRotation()` creates a new Ed25519 key as `active` and
+   moves the previous key to `retiring` (still accepted for verification
+   until fully retired).
+2. Heartbeat responses include a `signingKeyRotation` field when the calling
+   agent's pinned key is not yet the new active key:
+
+   ```json
+   {
+     "signingKeyRotation": {
+       "pendingSigningKeyId": "ttsk_<new>",
+       "pendingPublicKeyPem": "-----BEGIN PUBLIC KEY-----\n...",
+       "supersedesSigningKeyId": "ttsk_<old>",
+       "status": "pending_ack"
+     }
+   }
+   ```
+
+   `signingKeyRotation` is `null` once the agent has already pinned the
+   active key.
+3. The agent adopts the pending key (TOFU update) and acknowledges on its
+   next heartbeat by echoing `pinnedSigningKeyId` equal to
+   `pendingSigningKeyId`. The server records the acknowledgement in
+   `certops_signing_key_acks`.
+4. `completeSigningKeyRotation()` retires the `retiring` key only once every
+   `active` agent has acknowledged, or when an operator forces incomplete
+   rotation (`force: true`, reason logged on the key row) to bound how long a
+   single unresponsive agent can block retirement of a compromised key.
+
+Rotation is deliberately operator-initiated, never automatic or
+time-based: nothing calls `beginSigningKeyRotation()` on its own. The
+operator entry point is the `certops-rotate-signing-key` CLI, run from the
+API image or a repo checkout with the same env as the API process:
+
+```bash
+pnpm certops:rotate-signing-key status
+pnpm certops:rotate-signing-key begin
+pnpm certops:rotate-signing-key complete
+pnpm certops:rotate-signing-key complete --force --reason "agent-07 decommissioned"
+```
+
+`status` reports the active key, any `retiring` key, and the
+acknowledgement count against the active-agent count, so an operator can see
+whether `complete` would succeed before running it. `--force` requires
+`--reason` (recorded on the key row and in the audit event). Both `begin` and
+`complete` write `CERTOPS_SIGNING_KEY_ROTATION_STARTED` /
+`CERTOPS_SIGNING_KEY_ROTATION_COMPLETED` audit events.
+
+There is deliberately **no HTTP route** for this: `certops_signing_keys` is
+deployment-global (no `workspace_id`, single active key per deployment), so a
+workspace-scoped route would be the wrong authorization boundary. On managed
+Cloud, rotation is an operator action, not a tenant action.
+
 ### Canonical payload
 
 The signature covers a deterministic canonical JSON serialization of the job
@@ -414,6 +484,37 @@ On HTTP `409` (ownership/lease conflict), `410` (agent retired), confirmed
 lease loss, or a mandatory confirmation failure, execution aborts. A lost
 mandatory start is reported as a terminal `blocked`/`failed` outcome rather
 than proceeding optimistically.
+
+#### Lease renew endpoint
+
+```
+POST /api/v1/certops/agent/jobs/:jobId/lease
+Authorization: Bearer <agent credential>
+Content-Type: application/json
+
+{ "claimId": "<uuid from the signed dispatch payload>", "sequence": 12 }
+```
+
+This route does not use the agent-protocol message envelope
+(`messageType`): the job id is in the path, auth is the agent credential,
+and ownership is `agent_id + claimId`. `sequence` is optional until the
+agent has sent any sequenced message, after which omitting it is rejected.
+Success (`200`) returns `{ ok, jobId, status, claimId, leaseExpiresAt,
+leaseRenewedAt, nonceExpiresAt }`; the first successful call transitions
+`claimed` → `running`, and every successful call extends both
+`lease_expires_at` (by `CERTOPS_JOB_LEASE_SECONDS`, default 900) and the
+still-open dispatch nonce.
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `CERTOPS_AGENT_MESSAGE_INVALID` | Malformed body / jobId |
+| 400 | `CERTOPS_AGENT_LEASE_INVALID` | Job not in claimed/running, or missing claimId |
+| 409 | `CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH` | claimId / agent does not own the job |
+| 409 | `CERTOPS_AGENT_SEQUENCE_REGRESSION` | Sequence not strictly increasing |
+| 410 | `CERTOPS_AGENT_RETIRED` | Agent is retired |
+| 404 | `CERTOPS_AGENT_JOB_NOT_FOUND` | Unknown job in this workspace |
+
+Do not renew after a terminal result has been submitted.
 
 ### Side-effect journal and crash recovery
 

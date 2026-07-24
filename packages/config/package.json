@@ -13,7 +13,7 @@
     "test": "node --test src/**/*.test.js"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0 <25.0.0"
   },
   "license": "BUSL-1.1"
 }
