@@ -10,6 +10,7 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
@@ -18,6 +19,77 @@ const packageRoot = path.resolve(__dirname, "..");
 const pkg = JSON.parse(
   fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
 );
+
+/** Any of these appearing anywhere in the shipped tarball is a release
+ * blocker: a production artifact must never contain private-key material,
+ * even test-only fixtures. Checked both by filename and by content marker
+ * (in case a key is embedded in a non "*.key.pem" file). */
+const FORBIDDEN_FILENAME_PATTERN = /\.key(\.pem)?$/i;
+// Requires a full PEM block (BEGIN...base64/whitespace...END), not just the
+// marker substring, so this module's own detection logic and legitimate
+// test/redaction code that merely *mentions* the marker do not self-match.
+const PRIVATE_KEY_PEM_BLOCK_PATTERN =
+  /-----BEGIN (?:RSA |EC |ENCRYPTED |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |ENCRYPTED |DSA )?PRIVATE KEY-----/;
+
+/**
+ * Extracts the tarball to a temp dir and scans every entry for private-key
+ * material. Throws with the offending path(s) if any are found.
+ * @param {string} tarballPath
+ */
+function assertNoPrivateKeyMaterial(tarballPath) {
+  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-pack-scan-"));
+  try {
+    const extract = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
+      encoding: "utf8",
+    });
+    if (extract.status !== 0) {
+      throw new Error(
+        `pack-release: could not inspect tarball contents for private-key material ` +
+          `(tar exited ${extract.status}): ${extract.stderr || extract.stdout || ""}`,
+      );
+    }
+
+    const offenders = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const entryPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(entryPath);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+
+        const relative = path.relative(extractDir, entryPath);
+        if (FORBIDDEN_FILENAME_PATTERN.test(entry.name)) {
+          offenders.push(`${relative} (forbidden filename pattern)`);
+          continue;
+        }
+
+        // Best-effort content scan: only meaningful for text files, but a
+        // private key embedded in a binary file would fail to load anyway.
+        let content;
+        try {
+          content = fs.readFileSync(entryPath, "utf8");
+        } catch {
+          continue;
+        }
+        if (PRIVATE_KEY_PEM_BLOCK_PATTERN.test(content)) {
+          offenders.push(`${relative} (contains a private-key PEM block)`);
+        }
+      }
+    };
+    walk(extractDir);
+
+    if (offenders.length > 0) {
+      throw new Error(
+        "pack-release: refusing to ship a tarball containing private-key material:\n" +
+          offenders.map((line) => `  - ${line}`).join("\n"),
+      );
+    }
+  } finally {
+    fs.rmSync(extractDir, { recursive: true, force: true });
+  }
+}
 
 function parseArgs(argv) {
   let outDir = path.join(packageRoot, "dist");
@@ -83,6 +155,8 @@ function main(argv = process.argv.slice(2)) {
     throw new Error(`packed tarball missing: ${tarballPath}`);
   }
 
+  assertNoPrivateKeyMaterial(tarballPath);
+
   const digest = sha256File(tarballPath);
   const checksumName = `${tarballName}.sha256`;
   const checksumPath = path.join(outDir, checksumName);
@@ -103,7 +177,7 @@ function main(argv = process.argv.slice(2)) {
   return { tarballPath, checksumPath, digest, version: pkg.version };
 }
 
-module.exports = { main, sha256File };
+module.exports = { main, sha256File, assertNoPrivateKeyMaterial };
 
 if (require.main === module) {
   try {

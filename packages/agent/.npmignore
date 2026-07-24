@@ -8,3 +8,8 @@ scripts/host-sandbox.test.js
 scripts/validate-server-url.test.js
 scripts/pack-release.test.js
 dist/
+
+# Test-only X.509 fixtures (including private-key PEMs) for
+# src/verify/verify.test.js. These must never ship in the production agent
+# tarball. Regenerate locally with src/verify/fixtures/generate-fixtures.sh.
+src/verify/fixtures/

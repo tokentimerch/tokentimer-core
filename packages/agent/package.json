@@ -23,6 +23,8 @@
   "files": [
     "bin",
     "src",
+    "!src/**/*.test.js",
+    "!src/verify/fixtures/**",
     "vendor",
     "scripts/install-agent.sh",
     "scripts/tokentimer-agent.service",
@@ -40,6 +42,6 @@
     "eslint": "9.39.2"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0 <25.0.0"
   }
 }

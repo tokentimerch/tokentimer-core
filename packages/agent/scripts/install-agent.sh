@@ -124,7 +124,11 @@ Layout created:
                                 config.json (0600), credential (0600, written
                                 by the agent at registration), bootstrap.env
                                 (0600, deleted automatically by the agent
-                                after its first successful registration)
+                                after its first successful registration),
+                                acme/certbot/{config,work,logs} (certbot
+                                --config-dir/--work-dir/--logs-dir),
+                                acme/acme.sh/ (acme.sh --home/--config-home)
+                                with dnsapi/dns_certops.sh -> app/bin symlink
   .../tokentimer-agent.service.d/override.conf
                                 generated ReadWritePaths (state + --write-path)
   /etc/polkit-1/rules.d/50-tokentimer-agent.rules
@@ -395,6 +399,29 @@ fi
 
 run mkdir -p "$STATE_DIR"
 run chmod 0700 "$STATE_DIR"
+
+# ACME tool writable state under the agent state dir (ProtectSystem=strict
+# + ProtectHome=true block /etc/letsencrypt and ~/.acme.sh). The ACME
+# adapter passes --config-dir/--work-dir/--logs-dir (certbot) and
+# --home/--config-home (acme.sh) pointed at these subdirectories.
+# dns_certops.sh is symlinked into acme.sh's dnsapi/ so `--dns dns_certops`
+# resolves (acme.sh sources the hook by name, never by absolute path).
+ACME_CERTBOT_DIR="$STATE_DIR/acme/certbot"
+ACME_SH_HOME="$STATE_DIR/acme/acme.sh"
+ACME_SH_DNSAPI_DIR="$ACME_SH_HOME/dnsapi"
+run mkdir -p "$ACME_CERTBOT_DIR/config" "$ACME_CERTBOT_DIR/work" "$ACME_CERTBOT_DIR/logs"
+run mkdir -p "$ACME_SH_DNSAPI_DIR"
+DNS_CERTOPS_SRC="$APP_DIR/bin/dns_certops.sh"
+DNS_CERTOPS_LINK="$ACME_SH_DNSAPI_DIR/dns_certops.sh"
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '%s\n' "[dry-run] ln -sfn $DNS_CERTOPS_SRC $DNS_CERTOPS_LINK"
+else
+  if [ -f "$DNS_CERTOPS_SRC" ]; then
+    ln -sfn "$DNS_CERTOPS_SRC" "$DNS_CERTOPS_LINK"
+  else
+    log "WARNING: $DNS_CERTOPS_SRC not found; acme.sh --dns dns_certops will fail until the package includes bin/dns_certops.sh"
+  fi
+fi
 
 # ------------------------------------------------------- config.json (0600)
 # Fields consumed by the agent's config loader (src/config/index.js):

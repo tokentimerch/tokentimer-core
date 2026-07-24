@@ -3,7 +3,13 @@
 # Layout assumed by this unit:
 #   /opt/tokentimer-agent/app    agent package (read-only at runtime)
 #   /opt/tokentimer-agent/state  config dir: config.json, credential,
-#                                signing-key-pin.json, replay-store.json, keys/
+#                                signing-key-pin.json, replay-store.json, keys/,
+#                                acme/certbot/{config,work,logs},
+#                                acme/acme.sh/ (+ dnsapi/dns_certops.sh)
+#
+# ACME tools must NOT use /etc/letsencrypt or ~/.acme.sh: ProtectSystem=strict
+# and ProtectHome=true make those unwritable. install-agent.sh creates the
+# acme/ subdirs under state; the ACME adapter redirects certbot/acme.sh there.
 #
 # The agent is outbound-only (no listening sockets) and runs as the
 # unprivileged tokentimer-agent user. ProtectSystem=strict makes the whole
@@ -43,10 +49,11 @@ RestartPreventExitStatus=86
 SuccessExitStatus=86
 
 # Hardening. ProtectSystem=strict makes the whole filesystem read-only for
-# the service except ReadWritePaths. The base unit only opens the state dir;
-# install-agent.sh appends operator-selected cert/deploy paths via a drop-in
-# override (tokentimer-agent.service.d/override.conf). Do not broaden this
-# default to /etc.
+# the service except ReadWritePaths. The base unit only opens the state dir
+# (which also covers ACME tool state under state/acme/); install-agent.sh
+# appends operator-selected cert/deploy paths via a drop-in override
+# (tokentimer-agent.service.d/override.conf). Do not broaden this default
+# to /etc or home directories.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
