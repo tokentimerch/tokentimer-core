@@ -52,6 +52,8 @@ WRITE_PATHS=""
 # Space-separated reload service names (nginx|apache|httpd|haproxy).
 RELOAD_SERVICES=""
 WRITE_PATHS_FILE=""
+ALLOW_INSECURE_LOCAL_HTTP=0
+VALIDATE_SERVER_URL_JS="$SCRIPT_DIR/validate-server-url.js"
 
 UNIT_DROPIN_DIR="/etc/systemd/system/${UNIT_NAME}.d"
 UNIT_DROPIN_FILE="$UNIT_DROPIN_DIR/override.conf"
@@ -70,6 +72,9 @@ hardened systemd service running as the tokentimer-agent system user.
 
 Required for install:
   --api-url URL          Control plane base URL (config.json serverUrl).
+                         Must be https:// unless --allow-insecure-local-http
+                         is set AND the host is loopback (localhost / 127/8 /
+                         ::1 / *.localhost), matching the agent runtime.
   --workspace-id ID      Workspace the agent belongs to (recorded in
                          config.json; the bootstrap token is already
                          workspace-scoped server-side).
@@ -99,6 +104,11 @@ Options:
                          nginx, apache/apache2, httpd, haproxy. Polkit is used
                          instead of sudoers because the unit keeps
                          NoNewPrivileges=true (sudo cannot escalate).
+  --allow-insecure-local-http
+                         Permit plain http:// ONLY for loopback hosts, matching
+                         the runtime allowInsecureLocalHttp gate. Required for
+                         local development; never use for production. Also
+                         writes allowInsecureLocalHttp=true into config.json.
   --dry-run              Print every action without executing anything.
   --uninstall            Stop/disable the service and remove the app dir,
                          unit file, drop-in override, and polkit rule. The
@@ -174,6 +184,7 @@ while [ $# -gt 0 ]; do
       RELOAD_SERVICES="$RELOAD_SERVICES ${1#--reload-service=}"
       shift
       ;;
+    --allow-insecure-local-http) ALLOW_INSECURE_LOCAL_HTTP=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -269,6 +280,18 @@ esac
 if printf '%s%s' "$API_URL" "$WORKSPACE_ID" | LC_ALL=C tr -d '[:print:]' | grep -q .; then
   fail "--api-url and --workspace-id must not contain control or non-printable characters"
 fi
+
+# Match the agent runtime serverUrl gate exactly (src/protocol parseServerUrl):
+# https always ok; plain http only for loopback when --allow-insecure-local-http.
+[ -f "$VALIDATE_SERVER_URL_JS" ] || fail "server URL validator not found: $VALIDATE_SERVER_URL_JS"
+VALIDATE_ARGS="$API_URL"
+if [ "$ALLOW_INSECURE_LOCAL_HTTP" -eq 1 ]; then
+  VALIDATE_ARGS="$VALIDATE_ARGS --allow-insecure-local-http"
+fi
+# shellcheck disable=SC2086
+NORMALIZED_API_URL=$(node "$VALIDATE_SERVER_URL_JS" $VALIDATE_ARGS) \
+  || fail "--api-url was rejected by the same rule the agent runtime uses (https required; http only for loopback with --allow-insecure-local-http)"
+API_URL="$NORMALIZED_API_URL"
 if [ -n "$CA_BUNDLE" ]; then
   [ -f "$CA_BUNDLE" ] || fail "--ca-bundle file not found: $CA_BUNDLE"
   grep -q "BEGIN CERTIFICATE" "$CA_BUNDLE" || fail "--ca-bundle contains no PEM certificate block"
@@ -403,6 +426,9 @@ else
     printf '  "workspaceId": "%s"' "$WORKSPACE_ID"
     if [ -n "$CA_BUNDLE_DEST" ]; then
       printf ',\n  "caBundlePath": "%s"' "$CA_BUNDLE_DEST"
+    fi
+    if [ "$ALLOW_INSECURE_LOCAL_HTTP" -eq 1 ]; then
+      printf ',\n  "allowInsecureLocalHttp": true'
     fi
     printf '\n}\n'
   } > "$CONFIG_TMP"

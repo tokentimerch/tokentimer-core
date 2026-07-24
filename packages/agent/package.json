@@ -27,6 +27,7 @@
     "scripts/install-agent.sh",
     "scripts/tokentimer-agent.service",
     "scripts/host-sandbox.js",
+    "scripts/validate-server-url.js",
     "scripts/check-shipped-sources.js",
     "scripts/sync-vendor.js",
     "README.md",
