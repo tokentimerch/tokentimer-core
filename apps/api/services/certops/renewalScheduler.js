@@ -11,6 +11,14 @@
  * timestamp, and certificates that already have a non-terminal renew job for
  * the same subject are skipped before any insert is attempted.
  *
+ * B1/H6: Before creating a job the scheduler resolves a complete, validated
+ * renewal-profile snapshot (target, cert path, SANs, ACME command/profile,
+ * DNS provider+zone, key/CA/verification settings) from
+ * certificate_profiles.public_metadata.renewalProfile. Certificates lacking
+ * a complete profile are refused (logged/alerted) and never produce a job
+ * an agent cannot execute. The snapshot is bound into the job payload so
+ * approval and dispatch hash an immutable contract.
+ *
  * Zero-custody: this module only reads public inventory metadata and writes
  * public job payload fields. It never touches private key material.
  */
@@ -22,6 +30,11 @@ const {
   lockWorkspaceForCertOpsSideEffect,
 } = require("./workspaceKillSwitch");
 const { CERTOPS_DISABLED } = require("./settings");
+const {
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+  buildRenewalJobPayload,
+} = require("./renewalProfile");
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
@@ -115,7 +128,8 @@ function normalizeCaBucket(value) {
 /**
  * CA bucket for a due certificate: the caEndpoint recorded in the
  * certificate's public metadata, falling back to its profile's public
- * metadata, else the shared unknown-CA bucket. Normalized for bucketing.
+ * metadata / renewalProfile.ca.endpoint, else the shared unknown-CA bucket.
+ * Normalized for bucketing.
  */
 function certificateCaBucket(certificate) {
   const candidates = [
@@ -208,6 +222,9 @@ function renewalIdempotencyKey(certificateId, notAfter) {
  * retired, and without an existing non-terminal renew job for the same
  * subject. terminalStatuses is derived from jobs.js isTerminalJobStatus so
  * the SQL dedupe stays aligned with the service's terminal set.
+ *
+ * Also loads the linked certificate_profiles row (including
+ * public_metadata.renewalProfile) needed to resolve an executable payload.
  */
 async function findCertificatesDueForRenewal({
   db = pool,
@@ -219,13 +236,25 @@ async function findCertificatesDueForRenewal({
     `SELECT mc.id,
             mc.workspace_id,
             mc.common_name,
+            mc.subject_alt_names,
             mc.not_after,
             mc.key_mode,
+            mc.profile_id,
+            cp.name AS profile_name,
+            cp.key_mode AS profile_key_mode,
+            cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days,
             NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
               AS certificate_ca_endpoint,
-            NULLIF(BTRIM(cp.public_metadata->>'caEndpoint'), '')
-              AS profile_ca_endpoint
+            NULLIF(
+              BTRIM(
+                COALESCE(
+                  cp.public_metadata->'renewalProfile'->'ca'->>'endpoint',
+                  cp.public_metadata->>'caEndpoint'
+                )
+              ),
+              ''
+            ) AS profile_ca_endpoint
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
@@ -256,7 +285,12 @@ async function createRenewalJobForCertificate({
   certificate,
   jobCreator,
   env,
+  mode = "real",
 }) {
+  // Resolve the immutable execution contract BEFORE opening the insert
+  // transaction. Incomplete profiles never create a job row.
+  const payload = buildRenewalJobPayload({ certificate });
+
   const client = await dbPool.connect();
   let transactionStarted = false;
   try {
@@ -272,35 +306,13 @@ async function createRenewalJobForCertificate({
       env,
     });
 
-    const payload = {
-      certificateId: String(certificate.id),
-      notAfter: new Date(certificate.not_after).toISOString(),
-      reason: "expiry-threshold",
-    };
-    // Stamp the resolved caEndpoint on the payload when it is a valid
-    // execution-field URL, so in-flight counts in later sweeps bucket this
-    // job under the same CA the scheduler capped it against.
-    const rawCaEndpoint = certificateCaEndpointRaw(certificate);
-    if (rawCaEndpoint !== null && isValidCaEndpointUrl(rawCaEndpoint)) {
-      payload.caEndpoint = rawCaEndpoint;
-    }
-    // The inventory schema records no dedicated keyRotationPolicy column, so
-    // the payload keyRotation execution field is only set when key_mode
-    // policy data exists and the agent holds the key locally (the only modes
-    // where the agent could rotate). Otherwise it is omitted entirely.
-    if (
-      certificate.key_mode === "agent-local" ||
-      certificate.key_mode === "proxy-agent-local"
-    ) {
-      payload.keyRotation = false;
-    }
-
     const outcome = await jobCreator({
       client,
       workspaceId: certificate.workspace_id,
       operation: "renew",
       source: "automation",
       status: "pending",
+      mode,
       subjectType: "managed_certificate",
       subjectId: String(certificate.id),
       idempotencyKey: renewalIdempotencyKey(
@@ -332,7 +344,7 @@ async function createRenewalJobForCertificate({
 /**
  * One renewal-planning pass. Returns a summary:
  * { thresholdDays, perCaCap, lockAcquired, scanned, created, replayed,
- *   skippedPaused, skippedByCaCap, errors }.
+ *   skippedPaused, skippedByCaCap, skippedIncompleteProfile, errors }.
  *
  * Single-flight: the whole sweep runs under a session advisory lock
  * (pg_try_advisory_lock). A second worker starting a sweep while one is in
@@ -346,6 +358,10 @@ async function createRenewalJobForCertificate({
  * sweep creates). Capped certificates are skipped, counted in
  * skippedByCaCap, and picked up by a later sweep once the CA's in-flight
  * jobs drain.
+ *
+ * Incomplete profiles: certificates whose linked renewal profile cannot be
+ * resolved into a complete executable snapshot are skipped (never insert a
+ * job), counted in skippedIncompleteProfile, and logged/alerted.
  */
 async function runRenewalSchedulerSweep({
   dbPool = pool,
@@ -353,6 +369,7 @@ async function runRenewalSchedulerSweep({
   jobCreator = createCertificateJob,
   batchSize = DEFAULT_BATCH_SIZE,
   logger = null,
+  mode = "real",
 } = {}) {
   const thresholdDays = resolveRenewalThresholdDays(env);
   const perCaCap = resolveRenewalPerCaCap(env);
@@ -362,6 +379,7 @@ async function runRenewalSchedulerSweep({
     "failed",
     "blocked",
     "cancelled",
+    "dry_run_complete",
   ].filter(isTerminalJobStatus);
 
   const summary = {
@@ -373,6 +391,7 @@ async function runRenewalSchedulerSweep({
     replayed: 0,
     skippedPaused: 0,
     skippedByCaCap: 0,
+    skippedIncompleteProfile: 0,
     errors: [],
   };
 
@@ -419,6 +438,7 @@ async function runRenewalSchedulerSweep({
           certificate,
           jobCreator,
           env,
+          mode,
         });
         if (created) {
           summary.created += 1;
@@ -432,6 +452,25 @@ async function runRenewalSchedulerSweep({
           error?.code === CERTOPS_DISABLED
         ) {
           summary.skippedPaused += 1;
+          continue;
+        }
+        if (
+          error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE ||
+          error?.code === CERTOPS_RENEWAL_PROFILE_INVALID
+        ) {
+          summary.skippedIncompleteProfile += 1;
+          if (logger?.warn || logger?.error) {
+            const logFn = logger.warn || logger.error;
+            logFn.call(logger, "certops-renewal-scheduler-incomplete-profile", {
+              certificateId: String(certificate.id),
+              workspaceId: certificate.workspace_id,
+              profileId: certificate.profile_id
+                ? String(certificate.profile_id)
+                : null,
+              error: error?.message,
+              code: error?.code,
+            });
+          }
           continue;
         }
         summary.errors.push({
@@ -475,6 +514,7 @@ module.exports = {
   certificateCaEndpointRaw,
   countInFlightRenewalJobsByCaEndpoint,
   findCertificatesDueForRenewal,
+  isValidCaEndpointUrl,
   normalizeCaBucket,
   renewalIdempotencyKey,
   resolveRenewalPerCaCap,

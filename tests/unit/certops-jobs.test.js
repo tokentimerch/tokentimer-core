@@ -51,7 +51,7 @@ function createMemoryClient() {
       const normalizedSql = sql.replace(/\s+/g, " ");
 
       if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
-        const idempotencyKey = params[6];
+        const idempotencyKey = params[7];
         if (
           idempotencyKey &&
           jobs.some(
@@ -72,23 +72,24 @@ function createMemoryClient() {
           workspace_id: params[0],
           operation: params[1],
           status: params[2],
-          source: params[3],
-          requested_by_user_id: params[4],
-          requested_by_api_token_id: params[5],
+          mode: params[3],
+          source: params[4],
+          requested_by_user_id: params[5],
+          requested_by_api_token_id: params[6],
           idempotency_key: idempotencyKey,
-          subject_type: params[7],
-          subject_id: params[8],
-          payload: json(params[9]),
-          result_metadata: json(params[10]),
-          error_code: params[11],
-          error_message: params[12],
+          subject_type: params[8],
+          subject_id: params[9],
+          payload: json(params[10]),
+          result_metadata: json(params[11]),
+          error_code: params[12],
+          error_message: params[13],
           created_at: createdAt,
           updated_at: createdAt,
-          queued_at: params[13],
-          started_at: params[14],
-          completed_at: params[15],
-          canceled_at: params[16],
-          creation_request_hash: params[17],
+          queued_at: params[14],
+          started_at: params[15],
+          completed_at: params[16],
+          canceled_at: params[17],
+          creation_request_hash: params[18],
         };
         jobs.push(row);
         return { rows: [row] };
@@ -149,7 +150,9 @@ function createMemoryClient() {
         }
         if (params[2] === "running") row.started_at = row.started_at || now();
         if (
-          ["succeeded", "failed", "blocked"].includes(params[2])
+          ["succeeded", "failed", "blocked", "dry_run_complete"].includes(
+            params[2],
+          )
         ) {
           row.completed_at = row.completed_at || now();
         }
@@ -1248,12 +1251,50 @@ describe("CertOps jobs service", () => {
         verifyPort: 443,
         dnsZone: "example.com",
         dnsProvider: "cloudflare",
+        renewalProfile: {
+          schemaVersion: 1,
+          sanPolicy: {
+            mode: "exact",
+            sans: ["example.com"],
+            allowWildcards: false,
+          },
+          keyAlgorithm: "rsa",
+          keySize: 2048,
+          keyRotationPolicy: { rotateOnRenew: true },
+          preferredChain: null,
+          ca: {
+            endpoint: "https://acme-v02.api.letsencrypt.org/directory",
+            accountRef: null,
+            eabRef: null,
+          },
+          acme: { kind: "certbot", commandRef: "acme-renew-default" },
+          dns: { provider: "cloudflare", zone: "example.com" },
+          deploymentTargets: [
+            {
+              type: "endpoint",
+              reference: "example.com",
+              certPath: "/etc/ssl/live/example.com/cert.pem",
+              reloadService: "nginx",
+            },
+          ],
+          target: {
+            type: "endpoint",
+            reference: "example.com",
+            certPath: "/etc/ssl/live/example.com/cert.pem",
+          },
+          verification: {
+            host: "example.com",
+            port: 443,
+            requireMatch: true,
+          },
+        },
       },
     });
 
     assert.equal(job.operation, "renew");
     assert.equal(job.payload.commandRef, "acme-renew-default");
     assert.equal(job.payload.verifyPort, 443);
+    assert.ok(job.payload.renewalProfile);
     assertNoCustodyKeys(job);
   });
 
@@ -1263,7 +1304,7 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
-      source: "automation",
+      source: "api",
       payload: { target: "example.com" },
     });
 
@@ -1373,6 +1414,74 @@ describe("CertOps jobs service", () => {
           },
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+  });
+
+  it("defaults mode to real and persists it on the row and payload", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      payload: { target: "host/web" },
+    });
+    assert.equal(job.mode, "real");
+    assert.equal(job.payload.mode, "real");
+    assert.equal(client.jobs[0].mode, "real");
+  });
+
+  it("accepts explicit dry_run mode and rejects succeeding it", async () => {
+    const { CERTOPS_JOB_MODE_TERMINAL_INVALID } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "noop",
+      mode: "dry_run",
+      payload: {},
+    });
+    assert.equal(job.mode, "dry_run");
+    assert.equal(job.payload.mode, "dry_run");
+
+    await assert.rejects(
+      () =>
+        updateCertificateJobStatus({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          status: "succeeded",
+        }),
+      (error) => error?.code === CERTOPS_JOB_MODE_TERMINAL_INVALID,
+    );
+
+    const completed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "dry_run_complete",
+    });
+    assert.equal(completed.status, "dry_run_complete");
+  });
+
+  it("requires a valid renewalProfile for automation renew jobs", async () => {
+    const {
+      CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "automation",
+          payload: { certificateId: "cert-1" },
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
     );
   });
 });

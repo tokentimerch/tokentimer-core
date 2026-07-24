@@ -8,6 +8,11 @@ const {
   fieldNameLooksGenericSecret,
   fieldNameLooksPrivateKeyMaterial,
 } = require("../../utils/secretMaterial");
+const {
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+  validateRenewalProfile,
+} = require("./renewalProfile");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -24,7 +29,18 @@ const CERTOPS_JOB_METADATA_INVALID = "CERTOPS_JOB_METADATA_INVALID";
 const CERTOPS_JOB_WORKSPACE_REQUIRED = "CERTOPS_JOB_WORKSPACE_REQUIRED";
 const CERTOPS_JOB_EXECUTION_FIELD_INVALID =
   "CERTOPS_JOB_EXECUTION_FIELD_INVALID";
+const CERTOPS_JOB_MODE_INVALID = "CERTOPS_JOB_MODE_INVALID";
+const CERTOPS_JOB_MODE_TERMINAL_INVALID =
+  "CERTOPS_JOB_MODE_TERMINAL_INVALID";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
+
+// Job execution mode. Persisted on certificate_jobs.mode and included in the
+// signed dispatch payload. Required at creation; immutable afterwards.
+// "dry_run" must NEVER terminate as "succeeded" — use "dry_run_complete".
+// See COORDINATION-B4.md at the worktree root.
+const JOB_MODES = Object.freeze(["real", "dry_run"]);
+const JOB_MODE_SET = new Set(JOB_MODES);
+const DEFAULT_JOB_MODE = "real";
 
 const JOB_STATUSES = Object.freeze([
   "pending_approval",
@@ -37,6 +53,9 @@ const JOB_STATUSES = Object.freeze([
   "failed",
   "blocked",
   "cancelled",
+  // Terminal outcome for mode === "dry_run" only. Never use "succeeded" for
+  // dry-run jobs (no keygen/renew/deploy/reload/verify actually ran).
+  "dry_run_complete",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
@@ -49,6 +68,7 @@ const TERMINAL_JOB_STATUSES = new Set([
   "failed",
   "blocked",
   "cancelled",
+  "dry_run_complete",
 ]);
 const ACTIVE_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
@@ -80,6 +100,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "rejected",
     "blocked",
     "cancelled",
+    "dry_run_complete",
   ]),
   claimed: new Set([
     "running",
@@ -88,13 +109,22 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "rejected",
     "blocked",
     "cancelled",
+    "dry_run_complete",
   ]),
-  running: new Set(["succeeded", "failed", "rejected", "blocked", "cancelled"]),
+  running: new Set([
+    "succeeded",
+    "failed",
+    "rejected",
+    "blocked",
+    "cancelled",
+    "dry_run_complete",
+  ]),
   rejected: new Set(),
   succeeded: new Set(),
   failed: new Set(),
   blocked: new Set(),
   cancelled: new Set(),
+  dry_run_complete: new Set(),
 });
 
 const JOB_OPERATIONS = Object.freeze(["renew", "deploy", "reload", "revoke", "noop"]);
@@ -150,6 +180,7 @@ const SAFE_JOB_SELECT_FIELDS = `
   workspace_id,
   operation,
   status,
+  mode,
   source,
   requested_by_user_id,
   requested_by_api_token_id,
@@ -567,6 +598,73 @@ function validateExecutionFields(payload, operation) {
   }
 }
 
+/**
+ * Renew jobs carry an immutable renewalProfile snapshot so approval and
+ * dispatch bind against a complete execution contract. Automation-created
+ * renew jobs (scheduler) always require it. Manual/API renew jobs may omit
+ * it at create time but approveJob will refuse to approve without one.
+ */
+function validateRenewalProfileOnPayload(
+  payload,
+  operation,
+  { required = false } = {},
+) {
+  if (operation !== "renew") {
+    if (
+      payload &&
+      Object.prototype.hasOwnProperty.call(payload, "renewalProfile")
+    ) {
+      throw serviceError(
+        "renewalProfile is only valid on renew jobs",
+        CERTOPS_RENEWAL_PROFILE_INVALID,
+      );
+    }
+    return null;
+  }
+  const hasProfile =
+    payload &&
+    Object.prototype.hasOwnProperty.call(payload, "renewalProfile");
+  if (!hasProfile && !required) return null;
+  try {
+    return validateRenewalProfile(payload?.renewalProfile);
+  } catch (error) {
+    if (
+      error?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+      error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+    ) {
+      throw error;
+    }
+    throw serviceError(
+      error?.message || "renewalProfile is invalid",
+      CERTOPS_RENEWAL_PROFILE_INVALID,
+    );
+  }
+}
+
+function normalizeJobMode(value) {
+  // Omitted mode defaults to "real". Dry-run is never an ambient default:
+  // callers must pass mode: "dry_run" explicitly at creation time.
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_JOB_MODE;
+  }
+  return normalizeEnum(value, JOB_MODE_SET, CERTOPS_JOB_MODE_INVALID, "mode");
+}
+
+function assertModeAllowsTerminalStatus(mode, status) {
+  if (mode === "dry_run" && status === "succeeded") {
+    throw serviceError(
+      'dry_run jobs must terminate as dry_run_complete, never succeeded',
+      CERTOPS_JOB_MODE_TERMINAL_INVALID,
+    );
+  }
+  if (mode === "real" && status === "dry_run_complete") {
+    throw serviceError(
+      "dry_run_complete is only valid for dry_run jobs",
+      CERTOPS_JOB_MODE_TERMINAL_INVALID,
+    );
+  }
+}
+
 function normalizeOptionalEnum(value, allowedSet, code, fieldName) {
   if (value === undefined || value === null || value === "") return null;
   return normalizeEnum(value, allowedSet, code, fieldName);
@@ -645,7 +743,9 @@ function initialLifecycleTimestamps(options, status) {
     (status === "running" ? now : null);
   const completedAt =
     options.completedAt ||
-    (["succeeded", "failed", "blocked"].includes(status) ? now : null);
+    (["succeeded", "failed", "blocked", "dry_run_complete"].includes(status)
+      ? now
+      : null);
   // The database column retains the American spelling for compatibility. The
   // public job state and service option use the plan's canonical "cancelled".
   const cancelledAt =
@@ -688,6 +788,8 @@ function jobFromRow(row) {
     workspaceId: row.workspace_id,
     operation: row.operation,
     status: row.status,
+    // Rows created before migration 26 have NULL mode; treat as real.
+    mode: row.mode || DEFAULT_JOB_MODE,
     source: row.source,
     requestedByUserId: row.requested_by_user_id,
     requestedByApiTokenId: row.requested_by_api_token_id,
@@ -733,6 +835,7 @@ function legacyJobCreationIdentity(value) {
     canonicalizeJson({
       operation: value.operation,
       source: value.source,
+      mode: value.mode || DEFAULT_JOB_MODE,
       requestedByUserId: normalizeRequesterIdentity(
         value.requestedByUserId,
         "requestedByUserId",
@@ -755,6 +858,7 @@ function jobCreationRequestFingerprint(value) {
   const canonicalRequest = canonicalizeJson({
     operation: value.operation,
     status: value.status,
+    mode: value.mode || DEFAULT_JOB_MODE,
     source: value.source,
     requestedByUserId: value.requestedByUserId ?? null,
     requestedByApiTokenId: value.requestedByApiTokenId ?? null,
@@ -862,6 +966,7 @@ async function createCertificateJob(options) {
     "status",
     requiresApproval ? "pending_approval" : "pending",
   );
+  const mode = normalizeJobMode(options.mode);
   const source = normalizeEnum(
     options.source,
     JOB_SOURCE_SET,
@@ -883,7 +988,17 @@ async function createCertificateJob(options) {
     "idempotencyKey",
   );
   const payload = normalizePublicObject(options.payload, "payload");
+  // Persist mode on the payload as well so signed dispatch (which spreads
+  // certificate_jobs.payload) always carries the immutable mode contract
+  // even when a caller forgets to select the column. The row column remains
+  // the source of truth and is never updated after insert.
+  payload.mode = mode;
   validateExecutionFields(payload, operation);
+  validateRenewalProfileOnPayload(payload, operation, {
+    required:
+      source === "automation" || options.requireRenewalProfile === true,
+  });
+  assertModeAllowsTerminalStatus(mode, status);
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -899,6 +1014,7 @@ async function createCertificateJob(options) {
   const creationRequestHash = jobCreationRequestFingerprint({
     operation,
     status,
+    mode,
     source,
     requestedByUserId,
     requestedByApiTokenId,
@@ -920,6 +1036,7 @@ async function createCertificateJob(options) {
          workspace_id,
          operation,
          status,
+         mode,
          source,
          requested_by_user_id,
          requested_by_api_token_id,
@@ -937,8 +1054,8 @@ async function createCertificateJob(options) {
         creation_request_hash
        )
        VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+         $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19
        )
        ON CONFLICT (workspace_id, idempotency_key)
          WHERE idempotency_key IS NOT NULL
@@ -948,6 +1065,7 @@ async function createCertificateJob(options) {
         workspaceId,
         operation,
         status,
+        mode,
         source,
         requestedByUserId,
         requestedByApiTokenId,
@@ -991,6 +1109,7 @@ async function createCertificateJob(options) {
             legacyJobCreationIdentity({
               operation,
               source,
+              mode,
               requestedByUserId,
               requestedByApiTokenId,
               subjectType,
@@ -1030,6 +1149,7 @@ async function createCertificateJob(options) {
             legacyJobCreationIdentity({
               operation,
               source,
+              mode,
               requestedByUserId,
               requestedByApiTokenId,
               subjectType,
@@ -1075,6 +1195,11 @@ function validateJobPayloadForOperation(payload, operation) {
   );
   const normalizedPayload = normalizePublicObject(payload, "payload");
   validateExecutionFields(normalizedPayload, normalizedOperation);
+  // Preflight validates a profile when one is supplied; incomplete profiles
+  // are rejected the same way a real create would reject them.
+  validateRenewalProfileOnPayload(normalizedPayload, normalizedOperation, {
+    required: false,
+  });
   return normalizedPayload;
 }
 
@@ -1233,6 +1358,7 @@ async function updateCertificateJobStatus(options) {
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    assertModeAllowsTerminalStatus(current.mode, status);
     const decision = jobStatusTransitionDecision(current.status, status);
     if (!decision.applied) {
       return withStatusTransitionOutcome(current, decision);
@@ -1255,7 +1381,8 @@ async function updateCertificateJobStatus(options) {
                 ELSE started_at
               END,
               completed_at = CASE
-                WHEN $3 IN ('succeeded', 'failed', 'blocked') THEN COALESCE(completed_at, NOW())
+                WHEN $3 IN ('succeeded', 'failed', 'blocked', 'dry_run_complete')
+                  THEN COALESCE(completed_at, NOW())
                 ELSE completed_at
               END,
               -- Keep the legacy column name only as storage compatibility for
@@ -1383,7 +1510,13 @@ module.exports = {
   CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   CERTOPS_JOB_WORKSPACE_REQUIRED,
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  CERTOPS_JOB_MODE_INVALID,
+  CERTOPS_JOB_MODE_TERMINAL_INVALID,
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
+  DEFAULT_JOB_MODE,
   JOB_LOG_EVENT_TYPES,
+  JOB_MODES,
   JOB_OPERATIONS,
   JOB_SOURCES,
   JOB_STATUSES,
@@ -1392,6 +1525,7 @@ module.exports = {
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
   appendCertificateJobLog,
+  assertModeAllowsTerminalStatus,
   assertSafePublicValue,
   createCertificateJob,
   dateToIso,
@@ -1404,6 +1538,7 @@ module.exports = {
   jobLogFromRow,
   listCertificateJobLog,
   listCertificateJobs,
+  normalizeJobMode,
   normalizeLimit,
   normalizeOffset,
   normalizePublicObject,
@@ -1412,6 +1547,7 @@ module.exports = {
   serviceError,
   updateCertificateJobStatus,
   validateJobPayloadForOperation,
+  validateRenewalProfileOnPayload,
   _test: {
     assertSafePublicValue,
     fieldNameLooksForbidden,

@@ -44,6 +44,7 @@ const {
   normalizeRequiredId,
   normalizeWorkspaceId,
   serviceError,
+  validateRenewalProfileOnPayload,
 } = require("./jobs");
 
 // --- Frozen error codes ---
@@ -202,9 +203,9 @@ function assertNonRequester(job, approverUserId) {
 
 async function loadJobForApproval(db, workspaceId, jobId) {
   const result = await db.query(
-    `SELECT id, workspace_id, status, payload, requested_by_user_id,
-            requested_by_api_token_id, approved_by_user_id, approved_at,
-            approved_payload_hash
+    `SELECT id, workspace_id, operation, status, mode, payload,
+            requested_by_user_id, requested_by_api_token_id,
+            approved_by_user_id, approved_at, approved_payload_hash
        FROM certificate_jobs
       WHERE workspace_id = $1
         AND id = $2
@@ -311,6 +312,12 @@ async function approveJob(options) {
     );
   }
   assertNonRequester(job, approverUserId);
+
+  // H6: approval binds against a fully resolved renewal profile snapshot in
+  // the job payload, not a mutable certificate_profiles row reference.
+  if (job.operation === "renew") {
+    validateRenewalProfileOnPayload(job.payload, "renew", { required: true });
+  }
 
   const payloadHash = computeJobPayloadApprovalHash(job.payload);
 
