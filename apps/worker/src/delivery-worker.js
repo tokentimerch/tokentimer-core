@@ -185,6 +185,53 @@ function buildEmailContent(alert, resolvedDays) {
   return { subject, text: templateText, html };
 }
 
+function buildCertRenewalFailedEmailContent(alert, job) {
+  const name = alert.name || `Certificate #${alert.token_id}`;
+  const jobId =
+    (job && job.id) ||
+    String(alert.alert_key || "").split(":")[1] ||
+    "unknown";
+  const errorCode = (job && job.error_code) || "unknown";
+  const frontendUrl = process.env.APP_URL || "http://localhost:5173";
+  const subject = `\u26A0\uFE0F Certificate renewal failed: ${name}`;
+
+  // Zero-custody: only job id, error code and certificate/token name.
+  const textLines = [
+    `Certificate renewal failed: ${name}`,
+    "",
+    `Certificate: ${name}`,
+    `Renewal job: ${jobId}`,
+    `Error code: ${errorCode}`,
+    "",
+    "The automated renewal job for this certificate reached a terminal failure. Review the job log and retry the renewal.",
+    "",
+    `View your dashboard: ${frontendUrl}`,
+  ];
+  const text = textLines.join("\n");
+
+  const htmlContent = `
+    <div style="background: #FFF5F5; border: 1px solid #FEB2B2; border-radius: 8px; padding: 16px 20px; margin: 16px 0;">
+      <span style="font-size: 18px; font-weight: 700; color: #e53e3e;">Renewal failed</span>
+      <br/>
+      <span style="font-size: 14px; color: #4A5568;">The automated renewal job for this certificate reached a terminal failure.</span>
+    </div>
+    <ul style="color: #4a5568; line-height: 1.8; padding-left: 20px; margin: 0;">
+      <li><strong>Certificate:</strong> ${name}</li>
+      <li><strong>Renewal job:</strong> ${jobId}</li>
+      <li><strong>Error code:</strong> ${errorCode}</li>
+    </ul>`;
+
+  const { html, text: templateText } = generateEmailTemplate({
+    title: subject,
+    content: htmlContent,
+    buttonText: "View Dashboard",
+    buttonUrl: frontendUrl,
+    plainTextContent: text,
+  });
+
+  return { subject, text: templateText, html };
+}
+
 function buildEndpointHealthEmailContent(alert, token) {
   const name = token.name || "Endpoint";
   const location = token.location || token.name || "Unknown";
@@ -1042,9 +1089,31 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
               const isEndpointAlert =
                 alert.alert_key &&
                 alert.alert_key.startsWith("endpoint_health:");
+              const isCertRenewalFailedAlert =
+                alert.alert_key &&
+                alert.alert_key.startsWith("cert_renewal_failed:");
+              let certRenewalJob = null;
+              if (isCertRenewalFailedAlert) {
+                // Best-effort job lookup for the error code (zero-custody:
+                // only id + error_code, never payloads).
+                try {
+                  const certJobId = alert.alert_key.split(":")[1];
+                  const jobRes = await client.query(
+                    "SELECT id, error_code FROM certificate_jobs WHERE id = $1",
+                    [certJobId],
+                  );
+                  certRenewalJob = jobRes.rows[0] || null;
+                } catch (_err) {
+                  logger.debug("Non-critical operation failed", {
+                    error: _err.message,
+                  });
+                }
+              }
               const { subject, text, html } = isEndpointAlert
                 ? buildEndpointHealthEmailContent(alert, alert)
-                : buildEmailContent(alert, daysLeft);
+                : isCertRenewalFailedAlert
+                  ? buildCertRenewalFailedEmailContent(alert, certRenewalJob)
+                  : buildEmailContent(alert, daysLeft);
               let allOk = true;
               for (const rcpt of trimmed) {
                 await assertStillOwnsDelivery(
@@ -1191,6 +1260,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                 const isEndpointHealthWebhook =
                   alert.alert_key &&
                   alert.alert_key.startsWith("endpoint_health:");
+                const isCertRenewalFailedWebhook =
+                  alert.alert_key &&
+                  alert.alert_key.startsWith("cert_renewal_failed:");
 
                 let text;
                 let tokenData;
@@ -1212,6 +1284,16 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                     location: alert.location,
                     status: ehStatus,
                     transition: ehTransition,
+                  };
+                } else if (isCertRenewalFailedWebhook) {
+                  // Zero-custody: only job id, error code, cert/token name.
+                  const certJobId = alert.alert_key.split(":")[1] || "unknown";
+                  text = `Certificate renewal failed: ${name} (job ${certJobId})`;
+                  tokenData = {
+                    type: "cert_renewal_failed",
+                    token_id: alert.token_id,
+                    name: alert.name,
+                    job_id: certJobId,
                   };
                 } else {
                   const expires = alert.expiration
@@ -1251,7 +1333,9 @@ export async function deliveryWorkerJob({ closePool = true } = {}) {
                       ? endpointTransition === "down"
                         ? "critical"
                         : "info"
-                      : computedSeverity;
+                      : isCertRenewalFailedWebhook
+                        ? "critical"
+                        : computedSeverity;
                 const templateTitle =
                   typeof wh?.template === "string" && wh.template
                     ? String(wh.template)

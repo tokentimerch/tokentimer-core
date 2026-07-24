@@ -15,6 +15,8 @@ const CERTOPS_API_TOKEN_SCOPE_REQUIRED = "CERTOPS_API_TOKEN_SCOPE_REQUIRED";
 const CERTOPS_API_TOKEN_WORKSPACE_REQUIRED =
   "CERTOPS_API_TOKEN_WORKSPACE_REQUIRED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
+const CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID =
+  "CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID";
 
 const TOKEN_PREFIX = "ttx_";
 const TOKEN_ID_HEX_LENGTH = 16;
@@ -33,12 +35,17 @@ const TOKEN_HASH_ASSIGNMENT_PATTERN =
   /\btoken[_-]?hash\s*[:=]\s*[a-f0-9]{64}\b/i;
 const BARE_BEARER_CREDENTIAL_PATTERN =
   /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}\b/i;
+const RFC1123_LABEL_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+const OBSERVATION_WRITE_SCOPE = "certops:observations:write";
+const PROVISION_EXECUTE_SCOPE = "certops:provision:execute";
 
 const ALLOWED_SCOPES = Object.freeze([
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
   "certops:evidence:write",
+  OBSERVATION_WRITE_SCOPE,
+  PROVISION_EXECUTE_SCOPE,
 ]);
 const ALLOWED_SCOPE_SET = new Set(ALLOWED_SCOPES);
 const IMPLIED_SCOPE_GRANTS = Object.freeze({
@@ -51,6 +58,7 @@ const SAFE_SELECT_FIELDS = `
   name,
   token_prefix,
   scopes,
+  controller_cluster_id,
   status,
   expires_at,
   last_used_at,
@@ -144,6 +152,40 @@ function normalizeScopes(scopes) {
     if (!normalized.includes(trimmed)) normalized.push(trimmed);
   }
 
+  return normalized;
+}
+
+function normalizeControllerClusterId(value, scopes) {
+  const requiresBinding = Array.isArray(scopes) && scopes.some(
+    (scope) => scope === OBSERVATION_WRITE_SCOPE || scope === PROVISION_EXECUTE_SCOPE,
+  );
+  if (value === undefined || value === null || value === "") {
+    if (requiresBinding) {
+      throw serviceError(
+        "Controller cluster ID is required for controller tokens",
+        CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
+      );
+    }
+    return null;
+  }
+
+  if (!requiresBinding || typeof value !== "string") {
+    throw serviceError(
+      "Controller cluster ID is only allowed for controller tokens",
+      CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
+    );
+  }
+  const normalized = value.trim();
+  if (
+    normalized.length < 1 ||
+    normalized.length > 63 ||
+    !RFC1123_LABEL_PATTERN.test(normalized)
+  ) {
+    throw serviceError(
+      "Controller cluster ID is invalid",
+      CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
+    );
+  }
   return normalized;
 }
 
@@ -325,6 +367,7 @@ function tokenMetadataFromRow(row) {
     name: row.name,
     tokenPrefix: row.token_prefix,
     scopes: scopesFromRow(row),
+    controllerClusterId: row.controller_cluster_id || null,
     status: tokenStatusFromRow(row),
     expiresAt: dateToIso(row.expires_at),
     lastUsedAt: dateToIso(row.last_used_at),
@@ -345,6 +388,10 @@ async function createApiToken(options) {
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const name = normalizeName(options.name);
   const scopes = normalizeScopes(options.scopes);
+  const controllerClusterId = normalizeControllerClusterId(
+    options.controllerClusterId,
+    scopes,
+  );
   const expiresAt = normalizeExpiresAt(options.expiresAt);
 
   for (let attempt = 1; attempt <= MAX_TOKEN_CREATE_ATTEMPTS; attempt += 1) {
@@ -360,11 +407,12 @@ async function createApiToken(options) {
            token_prefix,
            token_hash,
            scopes,
+           controller_cluster_id,
            status,
            expires_at,
            created_by
          )
-         VALUES ($1, $2, $3, $4, $5::text[], 'active', $6, $7)
+         VALUES ($1, $2, $3, $4, $5::text[], $6, 'active', $7, $8)
          RETURNING ${SAFE_SELECT_FIELDS}`,
         [
           workspaceId,
@@ -372,6 +420,7 @@ async function createApiToken(options) {
           tokenPrefix,
           tokenHash,
           scopes,
+          controllerClusterId,
           expiresAt,
           options.createdBy || null,
         ],
@@ -522,6 +571,7 @@ async function validateApiToken(options) {
             token_prefix,
             token_hash,
             scopes,
+            controller_cluster_id,
             status,
             expires_at,
             last_used_at,
@@ -585,9 +635,12 @@ module.exports = {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
   CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+  CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
   CERTOPS_API_TOKEN_WORKSPACE_REQUIRED,
   PRIVATE_KEY_MATERIAL_REJECTED,
   TOKEN_PREFIX,
+  OBSERVATION_WRITE_SCOPE,
+  PROVISION_EXECUTE_SCOPE,
   createApiToken,
   getApiTokenById,
   listApiTokens,
@@ -610,5 +663,6 @@ module.exports = {
     tokenStatusFromRow,
     tokenMetadataFromRow,
     tokenPrefixFor,
+    normalizeControllerClusterId,
   },
 };

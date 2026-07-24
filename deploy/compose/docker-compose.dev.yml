@@ -48,6 +48,12 @@ services:
       - API_URL=http://localhost:4000
       # CertOps rollout flag (env > DB > default). Enabled by default.
       - CERTOPS_ENABLED=${CERTOPS_ENABLED:-true}
+      # AES-256-GCM wrap keys required by CertOps job-signing and agent
+      # registration-replay credential encryption; both fail closed (500)
+      # when unset. Dev-only values, override via CERTOPS_*_ENCRYPTION_KEY
+      # in your shell/.env if you need to persist a stable dev keypair.
+      - CERTOPS_SIGNING_ENCRYPTION_KEY=${CERTOPS_SIGNING_ENCRYPTION_KEY:-0373fa8efa2f600e2aace83edf1a646ac60c1e494bb00c50507e50d3bb6cc2f0}
+      - CERTOPS_REGISTRATION_ENCRYPTION_KEY=${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-87b3ee9b4028ddc59ed8c506e0074f143b411144323faa10c6304f398ca4d267}
       - SESSION_SECRET=dev_session_secret_change_in_production
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!

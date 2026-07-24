@@ -5,12 +5,17 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHART="${REPO_ROOT}/deploy/helm"
 OUT="${REPO_ROOT}/.build/helm-template-verify"
 RELEASE_NAME="${HELM_RELEASE_NAME:-tokentimer}"
+HELM_VERSION="v3.20.1"
+HELM_SHA256="0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3"
 
 if ! command -v helm >/dev/null 2>&1; then
   HELM_DIR="$(mktemp -d)"
+  HELM_ARCHIVE="${HELM_DIR}/helm-${HELM_VERSION}-linux-amd64.tar.gz"
   trap 'rm -rf "${HELM_DIR}"' EXIT
-  curl -fsSL https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz \
-    | tar -xz -C "${HELM_DIR}"
+  curl -fsSLo "${HELM_ARCHIVE}" \
+    "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+  echo "${HELM_SHA256}  ${HELM_ARCHIVE}" | sha256sum -c -
+  tar -xzf "${HELM_ARCHIVE}" -C "${HELM_DIR}" linux-amd64/helm
   export PATH="${HELM_DIR}/linux-amd64:${PATH}"
 fi
 
@@ -74,5 +79,310 @@ for name in defaults minimal; do
     exit 1
   fi
 done
+
+fail() {
+  echo "helm-template-verify: FAIL $*" >&2
+  exit 1
+}
+
+assert_contains() {
+  local actual="$1"
+  local expected="$2"
+  local message="$3"
+  [[ "${actual}" == *"${expected}"* ]] || fail "${message}: missing ${expected}"
+}
+
+assert_not_contains() {
+  local actual="$1"
+  local unexpected="$2"
+  local message="$3"
+  [[ "${actual}" != *"${unexpected}"* ]] || fail "${message}: unexpectedly found ${unexpected}"
+}
+
+component_blocks() {
+  local rendered="$1"
+  local kind="$2"
+  awk -v RS='---' -v expected_kind="${kind}" '
+    {
+      is_expected_kind = 0
+      line_count = split($0, lines, "\n")
+      for (line = 1; line <= line_count; line++) {
+        if (lines[line] == "kind: " expected_kind) {
+          is_expected_kind = 1
+          break
+        }
+      }
+    }
+    is_expected_kind && index($0, "app.kubernetes.io/component: certops-controller") {
+      print "---" $0
+    }
+  ' "${rendered}"
+}
+
+assert_controller_rbac_hardening() {
+  local rendered="$1"
+  local fallback_enabled="$2"
+  local mode="${3:-observe}"
+  local blocks
+  local kind
+  local secret_verbs
+  local secret_verb
+
+  for kind in Role ClusterRole; do
+    blocks="$(component_blocks "${rendered}" "${kind}")"
+    [[ -z "${blocks}" ]] && continue
+
+    if printf '%s\n' "${blocks}" | grep -Eq "^[[:space:]]*-[[:space:]]*['\"]?\\*['\"]?[[:space:]]*$"; then
+      fail "${kind} controller RBAC contains a wildcard resource or verb"
+    fi
+
+    assert_contains "${blocks}" $'    resources:\n      - certificaterequests\n    verbs:\n      - get\n      - list\n      - watch' "${kind} CertificateRequest read-only rule"
+
+    if [[ "${mode}" == "observe" ]]; then
+      assert_not_contains "${blocks}" $'      - create' "${kind} observe controller RBAC"
+      assert_not_contains "${blocks}" $'      - patch' "${kind} observe controller RBAC"
+    else
+      assert_contains "${blocks}" $'    resources:\n      - certificates\n    verbs:\n      - get\n      - list\n      - watch\n      - create\n      - patch' "${kind} provision Certificate verbs"
+    fi
+    assert_not_contains "${blocks}" $'      - update' "${kind} controller RBAC"
+    assert_not_contains "${blocks}" $'      - delete' "${kind} controller RBAC"
+
+    if [[ "${fallback_enabled}" == "true" ]]; then
+      assert_contains "${blocks}" $'    resources:\n      - secrets\n    verbs:\n      - get' "${kind} secret fallback rule"
+      secret_verbs="$(printf '%s\n' "${blocks}" | awk '
+        /^[[:space:]]+resources:/ { secret_rule = 0; collecting_verbs = 0; next }
+        /^[[:space:]]+- secrets$/ { secret_rule = 1; next }
+        secret_rule && /^[[:space:]]+verbs:/ { collecting_verbs = 1; next }
+        collecting_verbs && /^[[:space:]]+- / { print $2; next }
+        collecting_verbs { secret_rule = 0; collecting_verbs = 0 }
+      ')"
+      [[ -n "${secret_verbs}" ]] || fail "${kind} missing secret fallback verbs"
+      while IFS= read -r secret_verb; do
+        [[ "${secret_verb}" == "get" ]] || fail "${kind} secret fallback verb must be get, found ${secret_verb}"
+      done <<< "${secret_verbs}"
+    else
+      assert_not_contains "${blocks}" 'secrets' "${kind} secret fallback disabled"
+    fi
+  done
+}
+
+render_controller() {
+  local name="$1"
+  shift
+  local dest="${OUT}/certops-controller-${name}.yaml"
+  echo "==> helm template ${RELEASE_NAME} [certops-controller:${name}] -> ${dest}" >&2
+  helm template "${RELEASE_NAME}" "${CHART}" \
+    "${controller_base_args[@]}" \
+    "$@" \
+    > "${dest}"
+  printf '%s' "${dest}"
+}
+
+expect_controller_failure() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+  local dest="${OUT}/certops-controller-invalid-${name}.log"
+  echo "==> helm template ${RELEASE_NAME} [certops-controller invalid:${name}]" >&2
+  if helm template "${RELEASE_NAME}" "${CHART}" \
+    "${controller_base_args[@]}" \
+    "$@" \
+    > "${dest}" 2>&1; then
+    fail "certops controller render unexpectedly succeeded: ${name}"
+  fi
+  if ! grep -Fq -- "${expected}" "${dest}"; then
+    fail "certops controller failure ${name} did not mention ${expected}"
+  fi
+}
+
+# Release validation retains an explicit, narrowly bounded controller
+# capability surface across every supported mode/scope/fallback combination.
+controller_base_args=(
+  --namespace certops-system
+  --set config.adminEmail=ci@example.com
+  --set certops.controller.enabled=true
+  --set certops.controller.api.url=https://api.tokentimer.example
+  --set certops.controller.api.workspaceId=00000000-0000-4000-8000-000000000001
+  --set certops.controller.api.clusterId=cluster-123
+  --set certops.controller.apiToken.existingSecret=controller-api-token
+  --set certops.controller.apiToken.key=token
+)
+
+echo "==> assert disabled CertOps controller emits no controller resources"
+controller_disabled="${OUT}/certops-controller-disabled.yaml"
+helm template "${RELEASE_NAME}" "${CHART}" \
+  --namespace certops-system \
+  --set config.adminEmail=ci@example.com \
+  > "${controller_disabled}"
+if grep -Fq 'app.kubernetes.io/component: certops-controller' "${controller_disabled}"; then
+  fail "disabled CertOps controller rendered controller resources"
+fi
+
+controller_default="$(render_controller namespace-default)"
+controller_default_roles="$(component_blocks "${controller_default}" Role)"
+controller_default_bindings="$(component_blocks "${controller_default}" RoleBinding)"
+assert_contains "${controller_default_roles}" 'namespace: "certops-system"' "default namespace Role"
+assert_contains "${controller_default_bindings}" 'namespace: "certops-system"' "default namespace RoleBinding"
+assert_contains "${controller_default_roles}" 'cert-manager.io' "controller cert-manager group"
+assert_contains "${controller_default_roles}" $'      - certificates' "controller Certificate resource"
+assert_contains "${controller_default_roles}" $'      - certificaterequests' "controller CertificateRequest resource"
+assert_contains "${controller_default_roles}" $'      - get\n      - list\n      - watch' "controller read verbs"
+assert_controller_rbac_hardening "${controller_default}" false
+if grep -Eq '^kind: ClusterRole(Binding)?$' "${controller_default}"; then
+  fail "namespace-scoped controller rendered cluster-wide RBAC"
+fi
+
+controller_deployment="$(component_blocks "${controller_default}" Deployment)"
+controller_service_accounts="$(component_blocks "${controller_default}" ServiceAccount)"
+shared_service_account="$(awk -v RS='---' '
+  index($0, "kind: ServiceAccount\n") &&
+  !index($0, "app.kubernetes.io/component: certops-controller") { print "---" $0 }
+' "${controller_default}")"
+assert_contains "${controller_deployment}" 'replicas: 1' "single controller replica"
+assert_contains "${controller_deployment}" 'automountServiceAccountToken: true' "controller deployment token mount"
+assert_contains "${controller_deployment}" 'path: /healthz' "controller liveness probe"
+assert_contains "${controller_deployment}" 'path: /readyz' "controller readiness probe"
+assert_contains "${controller_deployment}" 'name: TOKENTIMER_API_TOKEN_FILE' "controller token-file environment"
+assert_contains "${controller_deployment}" 'name: CERTOPS_WATCH_NAMESPACES' "controller default watch namespace"
+assert_contains "${controller_deployment}" 'value: "certops-system"' "controller release namespace watch"
+assert_contains "${controller_deployment}" 'secretName: "controller-api-token"' "controller existing token secret"
+assert_contains "${controller_service_accounts}" 'automountServiceAccountToken: true' "controller service account token mount"
+assert_contains "${shared_service_account}" 'automountServiceAccountToken: false' "shared service account token mount"
+
+controller_internal_api="$(render_controller internal-api-url --set-string certops.controller.api.url=http://tokentimer-api:4000)"
+controller_internal_deployment="$(component_blocks "${controller_internal_api}" Deployment)"
+assert_contains "${controller_internal_deployment}" 'value: "http://tokentimer-api:4000"' "valid internal controller API URL"
+
+controller_multiple="$(render_controller namespace-multiple \
+  --set certops.controller.watchNamespaces[0]=team-a \
+  --set certops.controller.watchNamespaces[1]=team-b)"
+controller_multiple_roles="$(component_blocks "${controller_multiple}" Role)"
+assert_contains "${controller_multiple_roles}" 'namespace: "team-a"' "explicit namespace Role"
+assert_contains "${controller_multiple_roles}" 'namespace: "team-b"' "explicit namespace Role"
+assert_not_contains "${controller_multiple_roles}" 'namespace: "certops-system"' "explicit namespace Role"
+assert_controller_rbac_hardening "${controller_multiple}" false
+
+controller_secret_fallback="$(render_controller secret-fallback --set certops.controller.secretFallbackEnabled=true)"
+assert_controller_rbac_hardening "${controller_secret_fallback}" true
+
+controller_cluster_wide="$(render_controller cluster-wide --set certops.controller.clusterWide=true)"
+controller_cluster_role="$(component_blocks "${controller_cluster_wide}" ClusterRole)"
+controller_cluster_binding="$(component_blocks "${controller_cluster_wide}" ClusterRoleBinding)"
+assert_contains "${controller_cluster_role}" 'kind: ClusterRole' "cluster-wide ClusterRole"
+assert_contains "${controller_cluster_binding}" 'kind: ClusterRoleBinding' "cluster-wide ClusterRoleBinding"
+assert_controller_rbac_hardening "${controller_cluster_wide}" false
+if grep -Eq '^kind: Role(Binding)?$' "${controller_cluster_wide}"; then
+  fail "cluster-wide controller rendered namespaced RBAC"
+fi
+
+controller_cluster_wide_secret_fallback="$(render_controller cluster-wide-secret-fallback \
+  --set certops.controller.clusterWide=true \
+  --set certops.controller.secretFallbackEnabled=true)"
+assert_controller_rbac_hardening "${controller_cluster_wide_secret_fallback}" true
+
+controller_numeric_strings="$(render_controller numeric-strings \
+  --namespace 123 \
+  --set-string certops.controller.watchNamespaces[0]=123 \
+  --set-string certops.controller.apiToken.existingSecret=123 \
+  --set-string certops.controller.apiToken.key=123)"
+controller_numeric_roles="$(component_blocks "${controller_numeric_strings}" Role)"
+controller_numeric_bindings="$(component_blocks "${controller_numeric_strings}" RoleBinding)"
+controller_numeric_deployment="$(component_blocks "${controller_numeric_strings}" Deployment)"
+assert_contains "${controller_numeric_roles}" 'namespace: "123"' "numeric namespace Role string"
+assert_contains "${controller_numeric_bindings}" 'namespace: "123"' "numeric namespace RoleBinding string"
+assert_contains "${controller_numeric_bindings}" $'    namespace: "123"' "numeric subject namespace string"
+assert_contains "${controller_numeric_deployment}" 'secretName: "123"' "numeric Secret name string"
+assert_contains "${controller_numeric_deployment}" '- key: "123"' "numeric Secret key string"
+
+expect_controller_failure missing-api-url 'api.url' --set certops.controller.api.url=
+expect_controller_failure missing-workspace-id 'api.workspaceId' --set certops.controller.api.workspaceId=
+expect_controller_failure invalid-workspace-id 'workspaceId' --set-string certops.controller.api.workspaceId=workspace-123
+expect_controller_failure missing-cluster-id 'api.clusterId' --set certops.controller.api.clusterId=
+expect_controller_failure missing-token-secret 'apiToken.existingSecret' --set certops.controller.apiToken.existingSecret=
+expect_controller_failure missing-token-key 'apiToken.key' --set certops.controller.apiToken.key=
+expect_controller_failure invalid-mode 'mode' --set certops.controller.mode=invalid
+controller_provision="$(render_controller provision-mode --set certops.controller.mode=provision)"
+controller_provision_roles="$(component_blocks "${controller_provision}" Role)"
+controller_provision_deployment="$(component_blocks "${controller_provision}" Deployment)"
+assert_controller_rbac_hardening "${controller_provision}" false provision
+assert_contains "${controller_provision_deployment}" $'strategy:\n    type: Recreate' "provision no-overlap strategy"
+assert_contains "${controller_provision_deployment}" $'name: CERTOPS_CONTROLLER_MODE\n              value: "provision"' "provision runtime mode"
+
+controller_provision_fallback="$(render_controller provision-fallback \
+  --set certops.controller.mode=provision \
+  --set certops.controller.secretFallbackEnabled=true)"
+assert_controller_rbac_hardening "${controller_provision_fallback}" true provision
+
+controller_provision_cluster_wide="$(render_controller provision-cluster-wide \
+  --set certops.controller.mode=provision \
+  --set certops.controller.clusterWide=true)"
+controller_provision_cluster_role="$(component_blocks "${controller_provision_cluster_wide}" ClusterRole)"
+controller_provision_cluster_deployment="$(component_blocks "${controller_provision_cluster_wide}" Deployment)"
+assert_contains "${controller_provision_cluster_role}" 'kind: ClusterRole' "provision cluster-wide ClusterRole"
+assert_contains "${controller_provision_cluster_deployment}" $'name: CERTOPS_CLUSTER_WIDE\n              value: "true"' "provision cluster-wide runtime policy"
+assert_controller_rbac_hardening "${controller_provision_cluster_wide}" false provision
+if grep -Eq '^kind: Role(Binding)?$' "${controller_provision_cluster_wide}"; then
+  fail "cluster-wide provision controller rendered namespaced RBAC"
+fi
+
+controller_provision_cluster_fallback="$(render_controller provision-cluster-wide-fallback \
+  --set certops.controller.mode=provision \
+  --set certops.controller.clusterWide=true \
+  --set certops.controller.secretFallbackEnabled=true)"
+assert_controller_rbac_hardening "${controller_provision_cluster_fallback}" true provision
+
+expect_controller_failure replica-count-two 'replicaCount' --set certops.controller.replicaCount=2
+expect_controller_failure cluster-wide-with-namespaces 'watchNamespaces' \
+  --set certops.controller.clusterWide=true \
+  --set certops.controller.watchNamespaces[0]=team-a
+expect_controller_failure invalid-watch-namespace 'watchNamespaces' \
+  --set-string certops.controller.watchNamespaces[0]=Not_Valid
+expect_controller_failure network-policy-without-kube-api-cidrs 'kubeApiServerCidrs' --set networkPolicy.enabled=true
+expect_controller_failure api-url-userinfo 'api.url' --set-string certops.controller.api.url=https://user:password@example.com
+expect_controller_failure api-url-no-host 'api.url' --set-string certops.controller.api.url=https://
+expect_controller_failure api-url-invalid-host 'api.url' --set-string certops.controller.api.url=http://?invalid
+expect_controller_failure api-url-invalid-port 'api.url' --set-string certops.controller.api.url=https://example.com:999999
+
+expect_controller_failure raw-token-value 'apiToken' --set-string certops.controller.apiToken.value=raw-controller-token
+if grep -Fq 'raw-controller-token' "${OUT}"/certops-controller-*.yaml; then
+  fail "raw controller token marker rendered into a manifest"
+fi
+
+controller_network_policy="$(render_controller network-policy \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32)"
+controller_policy="$(component_blocks "${controller_network_policy}" NetworkPolicy)"
+assert_contains "${controller_policy}" 'k8s-app: kube-dns' "controller DNS egress"
+assert_contains "${controller_policy}" 'app.kubernetes.io/component: api' "controller in-chart API egress"
+assert_contains "${controller_policy}" 'cidr: "10.96.0.1/32"' "controller Kubernetes API egress"
+assert_contains "${controller_policy}" 'port: 443' "controller Kubernetes API port"
+assert_not_contains "${controller_policy}" 'ingress:' "controller NetworkPolicy ingress"
+assert_not_contains "${controller_policy}" '0.0.0.0/0' "controller NetworkPolicy broad egress"
+assert_not_contains "${controller_policy}" 'port: 5432' "controller NetworkPolicy database egress"
+assert_not_contains "${controller_policy}" 'port: 25' "controller NetworkPolicy SMTP egress"
+assert_not_contains "${controller_policy}" 'port: 465' "controller NetworkPolicy SMTP egress"
+assert_not_contains "${controller_policy}" 'port: 587' "controller NetworkPolicy SMTP egress"
+assert_not_contains "${controller_policy}" 'port: 9091' "controller NetworkPolicy metrics egress"
+
+controller_network_custom_kube_port="$(render_controller network-policy-custom-kube-port \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32 \
+  --set networkPolicy.egress.kubeApiServerPort=6443)"
+controller_custom_kube_policy="$(component_blocks "${controller_network_custom_kube_port}" NetworkPolicy)"
+assert_contains "${controller_custom_kube_policy}" 'port: 6443' "custom Kubernetes API port"
+
+expect_controller_failure network-policy-disabled-api 'controllerApiCidrs' \
+  --set api.enabled=false \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32
+
+controller_network_cidrs="$(render_controller network-policy-cidrs \
+  --set api.enabled=false \
+  --set networkPolicy.enabled=true \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32 \
+  --set networkPolicy.egress.controllerApiCidrs[0]=198.51.100.0/24)"
+controller_cidr_policy="$(component_blocks "${controller_network_cidrs}" NetworkPolicy)"
+assert_contains "${controller_cidr_policy}" 'cidr: "198.51.100.0/24"' "controller explicit API CIDR egress"
+assert_not_contains "${controller_cidr_policy}" 'app.kubernetes.io/component: api' "controller external API CIDR egress"
 
 echo "helm-template-verify: ok -> ${OUT}"

@@ -1,0 +1,82 @@
+# TokenTimer Agent systemd unit (installed by install-agent.sh).
+#
+# Layout assumed by this unit:
+#   /opt/tokentimer-agent/app    agent package (read-only at runtime)
+#   /opt/tokentimer-agent/state  config dir: config.json, credential,
+#                                signing-key-pin.json, replay-store.json, keys/,
+#                                acme/certbot/{config,work,logs},
+#                                acme/acme.sh/ (+ dnsapi/dns_certops.sh)
+#
+# ACME tools must NOT use /etc/letsencrypt or ~/.acme.sh: ProtectSystem=strict
+# and ProtectHome=true make those unwritable. install-agent.sh creates the
+# acme/ subdirs under state; the ACME adapter redirects certbot/acme.sh there.
+#
+# The agent is outbound-only (no listening sockets) and runs as the
+# unprivileged tokentimer-agent user. ProtectSystem=strict makes the whole
+# filesystem read-only except ReadWritePaths.
+#
+# Certificate/deploy directories and reload rights are NOT granted here.
+# install-agent.sh generates a drop-in override
+# (/etc/systemd/system/tokentimer-agent.service.d/override.conf) with the
+# operator-selected --write-path list, plus an optional polkit rule for
+# narrowly scoped `systemctl reload <unit>` authorization. Keeping those
+# paths out of this static unit prevents accidental blanket /etc writes.
+
+[Unit]
+Description=TokenTimer CertOps Agent (outbound-only execution plane)
+Documentation=https://github.com/tokentimer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tokentimer-agent
+Group=tokentimer-agent
+Environment=TOKENTIMER_AGENT_CONFIG_DIR=/opt/tokentimer-agent/state
+# Optional bootstrap env file written by install-agent.sh for first-run
+# registration (contains TOKENTIMER_AGENT_BOOTSTRAP_TOKEN, mode 0600).
+# The token is single-use; the agent never persists it, and deletes this
+# file itself right after a successful registration.
+EnvironmentFile=-/opt/tokentimer-agent/state/bootstrap.env
+ExecStart=/usr/bin/env node /opt/tokentimer-agent/app/bin/tokentimer-agent.js
+Restart=always
+RestartSec=5
+# The agent exits with this status when the control plane retires it
+# (heartbeat "retired" signal). A retired agent must NOT be respawned into
+# a permanent 410 loop; keep in sync with AGENT_RETIRED_EXIT_CODE in
+# packages/agent/src/index.js.
+RestartPreventExitStatus=86
+SuccessExitStatus=86
+
+# Hardening. ProtectSystem=strict makes the whole filesystem read-only for
+# the service except ReadWritePaths. The base unit only opens the state dir
+# (which also covers ACME tool state under state/acme/); install-agent.sh
+# appends operator-selected cert/deploy paths via a drop-in override
+# (tokentimer-agent.service.d/override.conf). Do not broaden this default
+# to /etc or home directories.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tokentimer-agent/state
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+# Outbound HTTPS only; the agent accepts no inbound connections.
+# AF_UNIX is required for D-Bus (systemctl reload via polkit).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

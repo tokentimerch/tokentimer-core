@@ -106,6 +106,8 @@ function createMemoryClient() {
           observed_at: params[10],
           created_by_user_id: params[11],
           created_by_api_token_id: params[12],
+          created_by_agent_id: params[13] ?? null,
+          client_evidence_id: params[14] ?? null,
           created_at: now(),
         };
         evidence.push(row);
@@ -141,6 +143,29 @@ function createMemoryClient() {
         if (normalizedSql.includes("subject_id = $")) {
           rows = rows.filter((row) => row.subject_id === params[paramIndex]);
         }
+        return { rows };
+      }
+
+      if (normalizedSql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
+
+      if (
+        normalizedSql.includes("FROM certificate_jobs") &&
+        normalizedSql.includes("operation = 'renew'") &&
+        normalizedSql.includes("FOR UPDATE")
+      ) {
+        const [workspaceId, terminalStatuses] = params;
+        const rows = jobs
+          .filter(
+            (row) =>
+              row.workspace_id === workspaceId &&
+              row.operation === "renew" &&
+              !(terminalStatuses || []).includes(row.status),
+          )
+          .map((row) => ({
+            ca_endpoint: row.payload && row.payload.caEndpoint,
+          }));
         return { rows };
       }
 

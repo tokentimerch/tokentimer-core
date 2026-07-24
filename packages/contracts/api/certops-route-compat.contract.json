@@ -1,48 +1,56 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.10.3",
-  "status": "m2-runtime-stable",
-  "description": "Frozen CertOps route namespaces and stable routes for M1/M2. M1/M2 Core workspace, machine-token executor, job read, job manual-create, evidence, and token-management routes are runtime-stable where implemented and documented in OpenAPI. This contract freezes the namespace shape and auth model so cloud and enterprise overlays, the executor, and the agent can build in parallel without route churn.",
+  "version": "0.17.0",
+  "status": "agent-runtime-stable",
+  "description": "Frozen CertOps route namespaces and stable routes. The controller lane added only narrow cert-manager observation, provisioning intent, cluster-bound command, and just-in-time mutation-authorization surfaces. The agent protocol is implemented server-side: the /api/v1/certops/agent routes are live control-plane endpoints (register, heartbeat, claim, lease renew, results) with Ed25519-signed job dispatch, single-use result nonces, claim-ownership re-proof, executor_kind lane separation, and capability-matched claiming. 0.17.0 adds the workspace-scoped agent lifecycle admin routes (bootstrap-token issue/list/revoke, agent list/retire) and the approval-gate decision routes (approve, reject) to stableRoutes; all seven previously shipped without a corresponding contract entry.",
   "namespacePolicy": {
     "workspaceScoped": {
       "prefix": "/api/v1/workspaces/{id}/certops",
       "auth": "cookieAuth",
       "notes": [
         "Human/dashboard surface. Inherits global session + workspace membership + frozen-workspace guards.",
-        "Subject to CSRF protection like other workspace mutations."
+        "Subject to CSRF protection like other workspace mutations.",
+        "The workspace kill-switch settings GET and PUT routes require a human cookie/session user; internal worker bearer credentials are not accepted.",
+        "POST /jobs/bulk-renew queues renewal jobs for up to 100 managed certificates in one request through the same manual job-creation path as POST /jobs (manager role, kill switch, approval gate, payload validation). It responds with a partial-failure envelope: per-certificate successes and failures are reported item by item and never abort the batch."
       ]
     },
     "executor": {
       "prefix": "/api/v1/certops/executor",
       "auth": "certOpsTokenAuth",
       "notes": [
-        "Machine surface for M2 executor writes. Scoped API-token bearer auth only; machine routes never use cookies.",
-        "Allowed M2 scopes are certops:read, certops:events:write, certops:jobs:read, and certops:evidence:write. certops:read implies certops:jobs:read only, never a write scope; empty required-scope configuration is invalid.",
-        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
+        "Machine surface for executor writes plus narrow controller observation and provisioning transport. Scoped API-token bearer auth only; machine routes never use cookies.",
+        "Allowed scopes are certops:read, certops:events:write, certops:jobs:read, certops:evidence:write, certops:observations:write, and certops:provision:execute. certops:read implies certops:jobs:read only, never a write scope; neither controller scope is implied by another scope and either requires an immutable controllerClusterId binding. Empty required-scope configuration is invalid.",
+        "CSRF-exempt only for the exact planned POST machine routes (aggregate executor events, controller observations, provisioning command fetch and mutation authorization, and the two per-job aliases), including Express-compatible case and one trailing slash. Nearby paths remain CSRF-protected.",
         "Ingest payloads are scanned and rejected (422) if they contain private key material.",
-        "POST /api/v1/certops/executor/events is the aggregate M2 ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped M2 machine routes.",
-        "All three machine routes reuse the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior."
+        "POST /api/v1/certops/executor/events is the aggregate executor ingestion route. POST /api/v1/certops/jobs/{jobId}/events and POST /api/v1/certops/jobs/{jobId}/evidence are stable path-scoped executor machine routes.",
+        "The three executor routes retain the same idempotency, redaction, private-key rejection, dedicated pre-parser boundary, rate-limit, and audit behavior. POST /api/v1/certops/executor/observations is passive controller-specific transport. POST /api/v1/certops/executor/provisioning-commands/next is a cluster-bound provision-command transport that redelivers only server-owned controller_provisioning jobs safely. POST /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation is a narrow just-in-time rollout/workspace/job recheck immediately before each Certificate create or patch and every mutation retry. Neither provisioning route introduces agent claims, heartbeats, signatures, nonces, leases, or polling protocol. Both reject private material before scope or extension gates and deny mutation work while a workspace is paused."
       ]
     },
     "agent": {
       "prefix": "/api/v1/certops/agent",
       "auth": "split-by-route",
       "notes": [
-        "Outbound-only agent polling surface (M4). The control plane never connects to agents.",
+        "Outbound-only agent polling surface. The control plane never connects to agents.",
         "Enrollment and steady state use different credentials, by design.",
         "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
-        "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
-        "All routes CSRF-exempt (token-authenticated, non-cookie). Frozen in Phase 0 to reserve the namespace; bodies specified in M4."
+        "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/{jobId}/lease, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
+        "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen in Phase 0; request/response bodies for register/heartbeat/claim/result/evidence are specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType. POST /agent/jobs/{jobId}/lease is a lean claimId+sequence body that transitions claimed→running and renews the lease/nonce before side effects."
       ]
     }
   },
   "routeAuth": {
     "/api/v1/certops/executor/events": "certOpsTokenAuth",
+    "/api/v1/certops/executor/observations": "certOpsTokenAuth",
+    "/api/v1/certops/executor/provisioning-commands/next": "certOpsTokenAuth",
+    "/api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation": "certOpsTokenAuth",
+    "/api/v1/workspaces/{id}/certops/provision-intents": "cookieAuth",
     "/api/v1/certops/jobs/{jobId}/events": "certOpsTokenAuth",
     "/api/v1/certops/jobs/{jobId}/evidence": "certOpsTokenAuth",
+    "/api/v1/workspaces/{id}/certops/settings": "cookieAuth",
     "/api/v1/certops/agent/register": "agentBootstrapTokenAuth",
     "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
+    "/api/v1/certops/agent/jobs/{jobId}/lease": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/results": "agentCredentialAuth"
   },
   "guarantees": {
@@ -53,20 +61,35 @@
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/instances", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/certificates/{certId}/retire", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/imports", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "PUT" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/bulk-renew", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/provision-intents", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens/{tokenId}/revoke", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/agents", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/agents/{agentId}/retire", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/approve", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/reject", "method": "POST" },
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
+      { "path": "/api/v1/certops/executor/observations", "method": "POST" },
+      { "path": "/api/v1/certops/executor/provisioning-commands/next", "method": "POST" },
+      { "path": "/api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation", "method": "POST" },
       { "path": "/api/v1/certops/jobs/{jobId}/events", "method": "POST" },
       { "path": "/api/v1/certops/jobs/{jobId}/evidence", "method": "POST" },
       { "path": "/api/v1/certops/agent/register", "method": "POST" },
       { "path": "/api/v1/certops/agent/heartbeat", "method": "POST" },
       { "path": "/api/v1/certops/agent/jobs/claim", "method": "POST" },
+      { "path": "/api/v1/certops/agent/jobs/{jobId}/lease", "method": "POST" },
       { "path": "/api/v1/certops/agent/jobs/results", "method": "POST" }
     ],
     "rejectionPolicy": {
@@ -74,6 +97,11 @@
         "status": 422,
         "code": "PRIVATE_KEY_MATERIAL_REJECTED",
         "notes": "Any request body containing private key material is rejected at the boundary. The control plane never stores, generates, exports, transmits, or processes private key material."
+      },
+      "workspaceCertOpsPaused": {
+        "status": 409,
+        "code": "CERTOPS_WORKSPACE_PAUSED",
+        "notes": "The workspace-local kill switch blocks new CertOps jobs and future dispatch/provision side effects only. It does not block inventory, status, audit, evidence, or executor event reporting for existing work. It composes with, and never replaces, the deployment-wide certops.enabled rollout flag."
       }
     }
   }

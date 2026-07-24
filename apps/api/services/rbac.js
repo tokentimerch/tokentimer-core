@@ -41,6 +41,7 @@ const actionPolicy = {
   "audit.list": "viewer",
   "auto_sync.manage": "workspace_manager",
   "domain.manage": "workspace_manager",
+  "certops.kill_switch.manage": "admin",
 };
 
 /**
@@ -214,8 +215,12 @@ function requireWorkspaceMembership(req, res, next) {
     role = "admin";
     req.authz = { ...(req.authz || {}), workspaceRole: role };
   }
-  if (!role)
+  if (!role) {
+    if (req.workspaceAccessPolicy?.hideExistence === true) {
+      return res.status(404).json({ error: "Workspace not found" });
+    }
     return res.status(403).json({ error: "Forbidden: not a workspace member" });
+  }
   return next();
 }
 

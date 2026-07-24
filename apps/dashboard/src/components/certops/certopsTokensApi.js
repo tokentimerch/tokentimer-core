@@ -1,7 +1,7 @@
 import apiClient from '../../utils/apiClient';
 
 /**
- * CertOps API-token management helpers (session-authenticated M2 surface).
+ * CertOps API-token management helpers (session-authenticated surface).
  *
  * Additive module scoped to `/api/v1/workspaces/:id/certops/tokens/*`.
  * Create/revoke require workspace_manager (backend returns 403 INSUFFICIENT_ROLE).

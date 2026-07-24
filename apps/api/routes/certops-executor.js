@@ -15,12 +15,38 @@ const {
 } = require("../middleware/certops-executor-body-parser");
 const {
   requireCertOpsEnabled,
+  CERTOPS_DISABLED,
+  NOT_FOUND_RESPONSE,
 } = require("../middleware/require-certops-enabled");
 const { logger } = require("../utils/logger");
 const { writeAudit } = require("../services/audit");
 const {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
+  OBSERVATION_WRITE_SCOPE,
+  PROVISION_EXECUTE_SCOPE,
 } = require("../services/certops/apiTokens");
+const {
+  CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+  CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
+  CERTOPS_CONTROLLER_PROVISIONING_INVALID,
+  CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED,
+  CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  authorizeControllerProvisioningMutation,
+  canonicalizeControllerProvisioningTerminalOccurredAt,
+  recordControllerProvisioningEventTimestamp,
+  takeNextControllerProvisioningCommand,
+} = require("../services/certops/controllerProvisioning");
+const { CERTOPS_WORKSPACE_PAUSED } = require("../services/certops/workspaceKillSwitch");
+const {
+  CERTOPS_CONTROLLER_CLUSTER_BINDING_REQUIRED,
+  CERTOPS_CONTROLLER_OBSERVATION_CLUSTER_MISMATCH,
+  CERTOPS_CONTROLLER_OBSERVATION_CONFLICT,
+  CERTOPS_CONTROLLER_OBSERVATION_INVALID,
+  CERTOPS_CONTROLLER_OBSERVATION_WORKSPACE_MISMATCH,
+  normalizeControllerObservation,
+  persistControllerObservation,
+  validateAuthenticatedObservationBinding,
+} = require("../services/certops/controllerObservations");
 const {
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
@@ -66,6 +92,7 @@ const CERTOPS_SECURITY_AUDIT_UNAVAILABLE =
 
 const EXECUTOR_EVENT_SCOPE = "certops:events:write";
 const EXECUTOR_EVIDENCE_SCOPE = "certops:evidence:write";
+const CONTROLLER_OBSERVATION_SCOPE = OBSERVATION_WRITE_SCOPE;
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1544,12 +1571,38 @@ async function executorEventsHandler(req, res, options = {}) {
     rejectPrivateKeyMaterial(eventBody);
     assertRequiredEvidenceItems(eventBody, options.mode || null);
     requireEvidenceWriteScopeForEvidencePayload(req, eventBody);
-    const event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    let event = normalizeExecutorEventBody(eventBody, req.apiToken);
+    const prepareCanonicalRequest =
+      event.eventType === "job.completed" || event.eventType === "job.failed"
+        ? async (client) => {
+            const occurredAt =
+              await canonicalizeControllerProvisioningTerminalOccurredAt({
+                client,
+                workspaceId,
+                jobId: event.jobId,
+                eventType: event.eventType,
+                occurredAt: event.occurredAt,
+              });
+            if (occurredAt !== event.occurredAt) {
+              // Re-normalizing from the validated public body propagates the
+              // canonical parent time to log metadata and inherited evidence,
+              // while preserving an evidence item's explicit observedAt.
+              event = normalizeExecutorEventBody(
+                { ...eventBody, occurredAt },
+                req.apiToken,
+              );
+            }
+            return executorEventIdempotencyPayload(event);
+          }
+        : null;
     const result = await ingestExecutorEvent({
       workspaceId,
       jobId: event.jobId,
       eventId: event.eventId,
-      request: executorEventIdempotencyPayload(event),
+      request: prepareCanonicalRequest
+        ? null
+        : executorEventIdempotencyPayload(event),
+      prepareRequest: prepareCanonicalRequest,
       apiTokenId: req.apiToken.id,
       process: async (client, executorEventRecord) => {
         const job = await getCertificateJobById({
@@ -1573,6 +1626,14 @@ async function executorEventsHandler(req, res, options = {}) {
             status: event.jobStatus,
           });
         }
+
+        await recordControllerProvisioningEventTimestamp({
+          client,
+          workspaceId,
+          jobId: event.jobId,
+          eventType: event.eventType,
+          occurredAt: event.occurredAt,
+        });
 
         const log = await appendCertificateJobLog({
           client,
@@ -1752,6 +1813,240 @@ function requireExecutorRouteScope(req, res, next) {
   });
 }
 
+async function rejectControllerObservationPrivateMaterial(req, res, next) {
+  try {
+    // This scan intentionally sits after authentication but before rollout,
+    // commercial, or scope checks. The machine boundary must synchronously
+    // audit and reject key material even for an otherwise unauthorized token.
+    rejectPrivateKeyMaterial(req.body);
+    return next();
+  } catch (error) {
+    if (error?.code !== PRIVATE_KEY_MATERIAL_REJECTED) return next(error);
+    try {
+      await writeExecutorRejectionAudit({
+        action: "CERTOPS_KEY_MATERIAL_REJECTED",
+        workspaceId: req.apiToken?.workspaceId || null,
+        apiTokenId: req.apiToken?.id || null,
+        rejectionCode: PRIVATE_KEY_MATERIAL_REJECTED,
+        routeFamily: "controller-observations",
+      });
+    } catch (auditError) {
+      logger.error("CertOps controller observation rejection audit failed", {
+        code: auditError?.code || null,
+        routeFamily: "controller-observations",
+      });
+      return res.status(503).json({
+        error: "CertOps security audit is unavailable",
+        code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
+      });
+    }
+    return res.status(422).json({
+      error: "Private key material is not accepted in CertOps observations",
+      code: PRIVATE_KEY_MATERIAL_REJECTED,
+    });
+  }
+}
+
+async function rejectControllerProvisioningPrivateMaterial(req, res, next) {
+  try {
+    rejectPrivateKeyMaterial(req.body);
+    return next();
+  } catch (error) {
+    if (error?.code !== PRIVATE_KEY_MATERIAL_REJECTED) return next(error);
+    try {
+      await writeExecutorRejectionAudit({
+        action: "CERTOPS_KEY_MATERIAL_REJECTED",
+        workspaceId: req.apiToken?.workspaceId || null,
+        apiTokenId: req.apiToken?.id || null,
+        rejectionCode: PRIVATE_KEY_MATERIAL_REJECTED,
+        routeFamily: "controller-provisioning-commands",
+      });
+    } catch (auditError) {
+      logger.error("CertOps controller provisioning rejection audit failed", {
+        code: auditError?.code || null,
+        routeFamily: "controller-provisioning-commands",
+      });
+      return res.status(503).json({
+        error: "CertOps security audit is unavailable",
+        code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE,
+      });
+    }
+    return res.status(422).json({
+      error: "Private key material is not accepted in CertOps provisioning commands",
+      code: PRIVATE_KEY_MATERIAL_REJECTED,
+    });
+  }
+}
+
+function requireControllerObservationScope(req, res, next) {
+  if (req.apiTokenScopeDenied !== true) return next();
+  return res.status(403).json({
+    error: "CertOps API token scope denied",
+    code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+  });
+}
+
+function requireControllerProvisioningScope(req, res, next) {
+  if (req.apiTokenScopeDenied !== true) return next();
+  return res.status(403).json({
+    error: "CertOps API token scope denied",
+    code: CERTOPS_API_TOKEN_SCOPE_DENIED,
+  });
+}
+
+function controllerProvisioningCommandErrorResponse(res, error) {
+  if (error?.code === CERTOPS_DISABLED) return res.status(404).json(NOT_FOUND_RESPONSE);
+  if (error?.code === CERTOPS_WORKSPACE_PAUSED) {
+    return res.status(409).json({
+      error: "CertOps is paused for this workspace",
+      code: CERTOPS_WORKSPACE_PAUSED,
+    });
+  }
+  if (new Set([
+    CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED,
+    CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH,
+    CERTOPS_CONTROLLER_PROVISIONING_WORKSPACE_MISMATCH,
+  ]).has(error?.code)) {
+    return res.status(403).json({
+      error: "Controller provisioning token binding did not match",
+      code: error.code,
+    });
+  }
+  if (error?.code === CERTOPS_CONTROLLER_PROVISIONING_INVALID) {
+    return res.status(400).json({
+      error: "Controller provisioning command is invalid",
+      code: error.code,
+    });
+  }
+  if (error?.code === CERTOPS_CONTROLLER_PROVISIONING_MUTATION_NOT_AUTHORIZED) {
+    return res.status(409).json({
+      error: "Controller provisioning mutation is not authorized",
+      code: error.code,
+    });
+  }
+  return null;
+}
+
+async function controllerProvisioningCommandsHandler(req, res, options = {}) {
+  try {
+    const takeNext = options.takeNextControllerProvisioningCommand || takeNextControllerProvisioningCommand;
+    const delivery = await takeNext({ apiToken: req.apiToken });
+    if (!delivery) return res.status(204).end();
+    return res.status(200).json(delivery);
+  } catch (error) {
+    const response = controllerProvisioningCommandErrorResponse(res, error);
+    if (response) return response;
+    logger.error("CertOps controller provisioning command failed", {
+      code: error?.code || null,
+      workspaceId: req.apiToken?.workspaceId || null,
+      routeFamily: "controller-provisioning-commands",
+    });
+    return res.status(500).json({
+      error: "Failed to load controller provisioning command",
+      code: "CERTOPS_CONTROLLER_PROVISIONING_COMMAND_FAILED",
+    });
+  }
+}
+
+async function controllerProvisioningMutationAuthorizationHandler(
+  req,
+  res,
+  options = {},
+) {
+  try {
+    const authorize =
+      options.authorizeControllerProvisioningMutation ||
+      authorizeControllerProvisioningMutation;
+    await authorize({
+      apiToken: req.apiToken,
+      jobId: req.params.jobId,
+    });
+    return res.status(204).end();
+  } catch (error) {
+    const response = controllerProvisioningCommandErrorResponse(res, error);
+    if (response) return response;
+    logger.error("CertOps controller provisioning mutation authorization failed", {
+      code: error?.code || null,
+      workspaceId: req.apiToken?.workspaceId || null,
+      routeFamily: "controller-provisioning-commands",
+    });
+    return res.status(500).json({
+      error: "Failed to authorize controller provisioning mutation",
+      code: "CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_FAILED",
+    });
+  }
+}
+
+function controllerObservationErrorResponse(res, error) {
+  const invalidCodes = new Set([
+    CERTOPS_CONTROLLER_OBSERVATION_INVALID,
+    CERTOPS_CONTROLLER_OBSERVATION_WORKSPACE_MISMATCH,
+    CERTOPS_CONTROLLER_OBSERVATION_CLUSTER_MISMATCH,
+    CERTOPS_CONTROLLER_CLUSTER_BINDING_REQUIRED,
+  ]);
+  if (invalidCodes.has(error?.code)) {
+    return res.status(error.code === CERTOPS_CONTROLLER_OBSERVATION_INVALID ? 400 : 403).json({
+      error:
+        error.code === CERTOPS_CONTROLLER_OBSERVATION_INVALID
+          ? "Controller observation is invalid"
+          : "Controller observation token binding did not match",
+      code: error.code,
+    });
+  }
+  if (error?.code === CERTOPS_CONTROLLER_OBSERVATION_CONFLICT) {
+    return res.status(409).json({
+      error: "Controller observation conflicts with a previously accepted observation",
+      code: CERTOPS_CONTROLLER_OBSERVATION_CONFLICT,
+    });
+  }
+  return null;
+}
+
+async function controllerObservationsHandler(req, res, options = {}) {
+  try {
+    // The complete raw body was scanned before scope and gating middleware.
+    // Scan the normalized persistence model again before it reaches storage.
+    const normalized = normalizeControllerObservation(req.body);
+    const headerIdempotencyKey = typeof req.get === "function"
+      ? req.get("Idempotency-Key")
+      : req.headers?.["idempotency-key"];
+    if (
+      typeof headerIdempotencyKey !== "string" ||
+      headerIdempotencyKey !== normalized.observation.idempotencyKey
+    ) {
+      throw executorEventError(
+        "Controller observation idempotency key is invalid",
+        CERTOPS_CONTROLLER_OBSERVATION_INVALID,
+      );
+    }
+    validateAuthenticatedObservationBinding(req.apiToken, normalized.observation);
+    const persist = options.persistControllerObservation || persistControllerObservation;
+    const result = await persist({
+      apiTokenId: req.apiToken.id,
+      observation: normalized.observation,
+      redaction: normalized.redaction,
+    });
+    return res.status(result.duplicate ? 200 : 201).json({
+      managedCertificateId: result.managedCertificateId,
+      targetId: result.targetId,
+      certificateInstanceId: result.certificateInstanceId,
+      duplicate: Boolean(result.duplicate),
+    });
+  } catch (error) {
+    const response = controllerObservationErrorResponse(res, error);
+    if (response) return response;
+    logger.error("CertOps controller observation persistence failed", {
+      code: error?.code || null,
+      workspaceId: req.apiToken?.workspaceId || null,
+      routeFamily: "controller-observations",
+    });
+    return res.status(500).json({
+      error: "Failed to persist controller observation",
+      code: "CERTOPS_CONTROLLER_OBSERVATION_PERSIST_FAILED",
+    });
+  }
+}
+
 function createCertOpsExecutorRouter(options = {}) {
   const certOpsExecutorRouter = router();
   const preAuthRateLimitMiddleware =
@@ -1771,6 +2066,27 @@ function createCertOpsExecutorRouter(options = {}) {
     });
   const certOpsEnabledMiddleware =
     options.certOpsEnabledMiddleware || requireCertOpsEnabled;
+  const controllerObservationAuthMiddleware =
+    options.controllerObservationAuthMiddleware ||
+    createCertOpsApiTokenAuth({
+      scopes: [CONTROLLER_OBSERVATION_SCOPE],
+      // Token provenance, rather than the body workspace ID, is established
+      // during authentication. The body-to-token comparison follows the
+      // private-material boundary and route-scope decision.
+      allowTokenWorkspace: true,
+      deferScopeEnforcement: true,
+    });
+  const controllerObservationGateMiddleware =
+    options.controllerObservationGateMiddleware || ((_req, _res, next) => next());
+  const controllerProvisioningAuthMiddleware =
+    options.controllerProvisioningAuthMiddleware ||
+    createCertOpsApiTokenAuth({
+      scopes: [PROVISION_EXECUTE_SCOPE],
+      allowTokenWorkspace: true,
+      deferScopeEnforcement: true,
+    });
+  const controllerProvisioningGateMiddleware =
+    options.controllerProvisioningGateMiddleware || ((_req, _res, next) => next());
   const perJobEventAuthMiddleware =
     options.perJobEventAuthMiddleware ||
     createCertOpsApiTokenAuth({
@@ -1792,6 +2108,43 @@ function createCertOpsExecutorRouter(options = {}) {
     if (hasCertOpsExecutorPreAuthLimit(req)) return next();
     return preAuthRateLimitMiddleware(req, res, next);
   };
+
+  certOpsExecutorRouter.post(
+    "/api/v1/certops/executor/observations",
+    preAuthRateLimitFallback,
+    controllerObservationAuthMiddleware,
+    rateLimitMiddleware,
+    rejectControllerObservationPrivateMaterial,
+    certOpsEnabledMiddleware,
+    controllerObservationGateMiddleware,
+    requireControllerObservationScope,
+    (req, res) => controllerObservationsHandler(req, res, options),
+  );
+
+  certOpsExecutorRouter.post(
+    "/api/v1/certops/executor/provisioning-commands/next",
+    preAuthRateLimitFallback,
+    controllerProvisioningAuthMiddleware,
+    rateLimitMiddleware,
+    rejectControllerProvisioningPrivateMaterial,
+    certOpsEnabledMiddleware,
+    controllerProvisioningGateMiddleware,
+    requireControllerProvisioningScope,
+    (req, res) => controllerProvisioningCommandsHandler(req, res, options),
+  );
+
+  certOpsExecutorRouter.post(
+    "/api/v1/certops/executor/provisioning-commands/:jobId/authorize-mutation",
+    preAuthRateLimitFallback,
+    controllerProvisioningAuthMiddleware,
+    rateLimitMiddleware,
+    rejectControllerProvisioningPrivateMaterial,
+    certOpsEnabledMiddleware,
+    controllerProvisioningGateMiddleware,
+    requireControllerProvisioningScope,
+    (req, res) =>
+      controllerProvisioningMutationAuthorizationHandler(req, res, options),
+  );
 
   certOpsExecutorRouter.post(
     "/api/v1/certops/executor/events",
@@ -1844,6 +2197,7 @@ module.exports._test = {
   EXECUTOR_EVENT_TYPES,
   EXECUTOR_EVIDENCE_SCOPE,
   EXECUTOR_EVENT_SCOPE,
+  CONTROLLER_OBSERVATION_SCOPE,
   EVIDENCE_SOURCES,
   EVIDENCE_STATUSES,
   EVIDENCE_EVENT_TYPES,
@@ -1871,4 +2225,13 @@ module.exports._test = {
   assertRequiredEvidenceItems,
   requireEvidenceItems,
   requireExecutorEvidenceScope,
+  controllerObservationsHandler,
+  controllerObservationErrorResponse,
+  controllerProvisioningCommandsHandler,
+  controllerProvisioningMutationAuthorizationHandler,
+  controllerProvisioningCommandErrorResponse,
+  rejectControllerObservationPrivateMaterial,
+  rejectControllerProvisioningPrivateMaterial,
+  requireControllerObservationScope,
+  requireControllerProvisioningScope,
 };

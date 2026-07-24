@@ -30,6 +30,8 @@ import DashboardShell from '../../components/DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../../components/SEO.jsx';
 import ApiTokenPanel from '../../components/certops/ApiTokenPanel.jsx';
+import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
+import DeployAgentPanel from '../../components/certops/DeployAgentPanel.jsx';
 import EvidenceTimeline from '../../components/certops/EvidenceTimeline.jsx';
 import JobStatusBadge from '../../components/certops/JobStatusBadge.jsx';
 import {
@@ -79,8 +81,8 @@ function createJobErrorMessage(err) {
 }
 
 /**
- * Manual job creation modal (M2 amendment): the exception path for creating
- * a CertOps job before the certops-scheduler (M4) exists. Always posts with
+ * Manual job creation modal: the exception path for creating
+ * a CertOps job before the certops-scheduler exists. Always posts with
  * source "api"; the server never accepts a client-supplied source.
  */
 function CreateManualJobModal({ isOpen, onClose, onCreated }) {
@@ -215,7 +217,7 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
 /**
  * Executor-reported job list with expandable evidence timelines.
  * Read-only surface backed by the workspace job/log/evidence APIs, plus a
- * manager-only manual job creation entry point (M2 amendment exception path).
+ * manager-only manual job creation entry point (exception path).
  */
 function ExecutorJobsPanel() {
   const { muted, border } = useDashboardTheme();
@@ -431,6 +433,12 @@ export default function CertOpsOperations({
                 <ExecutorJobsPanel />
                 <DashboardPanel>
                   <ApiTokenPanel />
+                </DashboardPanel>
+                <DashboardPanel>
+                  <DeployAgentPanel />
+                </DashboardPanel>
+                <DashboardPanel>
+                  <AgentFleetPanel />
                 </DashboardPanel>
               </SimpleGrid>
             ) : (

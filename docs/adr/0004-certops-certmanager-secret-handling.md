@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; finalize in M0, detail in M8.
+Accepted (2026-07-21). Implemented and release-validated with the cert-manager
+controller.
 
 ## Context
 
@@ -25,19 +26,25 @@ path, or it would break the zero-custody invariant.
   minimizes Secret access; it cannot prove per-key denial.
 - Per-key non-access is therefore enforced by a strict read hierarchy (prefer
   Certificate/CertificateRequest status, then annotations, then `tls.crt` only),
-  by code-level enforcement that never reads/deserializes/logs/transmits
-  `tls.key`, by tests asserting that, and by the shared detector scanning
-  everything the controller reports upstream.
+  by a bounded streaming JSON reader that captures only `data["tls.crt"]` and
+  never object-deserializes or decodes other Secret data values, by tests
+  asserting that boundary, and by the shared detector scanning everything the
+  controller reports upstream. Kubernetes necessarily returns the complete
+  Secret HTTP representation for a `get`; no Kubernetes field projection API
+  exists for one data member.
 
 ## Alternatives considered
 
-- Read whole Secrets for convenience - rejected: that is private-key custody.
+- Deserialize whole Secrets for convenience - rejected: that would materialize
+  private-key data in controller application objects.
 - Mutate cert-manager Secrets - rejected: out of scope and custody-bearing.
 
 ## Consequences
 
 - RBAC narrows but cannot prove per-key denial; the load-bearing proof is the
-  test suite showing controller code never reads/deserializes/logs/transmits
-  `tls.key`, plus detector scanning of all upstream reports.
-- TODO (M8): exact RBAC verbs/resources, controller reconcile model, Helm chart
-  layout, and how status maps to CertOps evidence.
+  streaming-reader test suite showing only the public certificate member is
+  captured, plus detector scanning of all upstream reports.
+- The Helm chart now makes fallback conditional, keeps Secret access at
+  `get`-only, and proves the observe/provision RBAC matrix. Deterministic
+  controller and API integration tests cover status mapping, fallback parsing,
+  observation evidence, provisioning evidence, and non-access to `tls.key`.

@@ -9,10 +9,12 @@ const {
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
+  CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
   getCertificateJobById,
+  jobCreationRequestFingerprint,
   listCertificateJobLog,
   listCertificateJobs,
   updateCertificateJobStatus,
@@ -48,8 +50,36 @@ function createMemoryClient() {
     async query(sql, params = []) {
       const normalizedSql = sql.replace(/\s+/g, " ");
 
+      if (normalizedSql.includes("pg_advisory_xact_lock")) {
+        return { rows: [{ pg_advisory_xact_lock: "" }] };
+      }
+
+      if (
+        normalizedSql.includes("FROM certificate_jobs") &&
+        normalizedSql.includes("operation = 'renew'") &&
+        normalizedSql.includes("FOR UPDATE")
+      ) {
+        const terminal = new Set(params[1] || []);
+        return {
+          rows: jobs
+            .filter(
+              (row) =>
+                row.workspace_id === params[0] &&
+                row.operation === "renew" &&
+                !terminal.has(row.status),
+            )
+            .map((row) => ({
+              ca_endpoint:
+                typeof row.payload?.caEndpoint === "string" &&
+                row.payload.caEndpoint.trim() !== ""
+                  ? row.payload.caEndpoint.trim()
+                  : null,
+            })),
+        };
+      }
+
       if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
-        const idempotencyKey = params[6];
+        const idempotencyKey = params[8];
         if (
           idempotencyKey &&
           jobs.some(
@@ -70,22 +100,29 @@ function createMemoryClient() {
           workspace_id: params[0],
           operation: params[1],
           status: params[2],
-          source: params[3],
-          requested_by_user_id: params[4],
-          requested_by_api_token_id: params[5],
+          mode: params[3],
+          source: params[4],
+          executor_kind: params[5],
+          requested_by_user_id: params[6],
+          requested_by_api_token_id: params[7],
           idempotency_key: idempotencyKey,
-          subject_type: params[7],
-          subject_id: params[8],
-          payload: json(params[9]),
-          result_metadata: json(params[10]),
-          error_code: params[11],
-          error_message: params[12],
+          subject_type: params[9],
+          subject_id: params[10],
+          payload: json(params[11]),
+          result_metadata: json(params[12]),
+          error_code: params[13],
+          error_message: params[14],
+          assigned_agent_id: params[15],
+          required_target_selector: params[16],
+          required_dns_provider: params[17],
+          required_command_profile: params[18],
           created_at: createdAt,
           updated_at: createdAt,
-          queued_at: params[13],
-          started_at: params[14],
-          completed_at: params[15],
-          canceled_at: params[16],
+          queued_at: params[19],
+          started_at: params[20],
+          completed_at: params[21],
+          canceled_at: params[22],
+          creation_request_hash: params[23],
         };
         jobs.push(row);
         return { rows: [row] };
@@ -146,7 +183,13 @@ function createMemoryClient() {
         }
         if (params[2] === "running") row.started_at = row.started_at || now();
         if (
-          ["succeeded", "failed", "blocked"].includes(params[2])
+          [
+            "succeeded",
+            "failed",
+            "blocked",
+            "dry_run_complete",
+            "orphaned_unknown_effect",
+          ].includes(params[2])
         ) {
           row.completed_at = row.completed_at || now();
         }
@@ -774,6 +817,99 @@ describe("CertOps jobs service", () => {
     );
   });
 
+  it("canonicalizes the immutable job creation-request fingerprint", () => {
+    const first = jobCreationRequestFingerprint({
+      operation: "renew",
+      status: "pending",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { nested: { alpha: 1, beta: 2 }, labels: ["a", "b"] },
+      resultMetadata: { initial: { alpha: 1, beta: 2 } },
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: null,
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+    });
+    const reordered = jobCreationRequestFingerprint({
+      operation: "renew",
+      status: "pending",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { labels: ["a", "b"], nested: { beta: 2, alpha: 1 } },
+      resultMetadata: { initial: { beta: 2, alpha: 1 } },
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: null,
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+    });
+    const differentArrayOrder = jobCreationRequestFingerprint({
+      operation: "renew",
+      status: "pending",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { nested: { alpha: 1, beta: 2 }, labels: ["b", "a"] },
+      resultMetadata: { initial: { alpha: 1, beta: 2 } },
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: null,
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+    });
+    const nullPayload = jobCreationRequestFingerprint({
+      operation: "renew",
+      status: "pending",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { nested: null },
+      resultMetadata: {},
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: null,
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+    });
+    const omittedPayload = jobCreationRequestFingerprint({
+      operation: "renew",
+      status: "pending",
+      source: "api",
+      requestedByUserId: "user-1",
+      requestedByApiTokenId: null,
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: {},
+      resultMetadata: {},
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: null,
+      startedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+    });
+
+    assert.equal(reordered, first);
+    assert.notEqual(differentArrayOrder, first);
+    assert.notEqual(nullPayload, omittedPayload);
+    assert.match(first, /^[a-f0-9]{64}$/);
+  });
+
   it("applies idempotency per workspace", async () => {
     const client = createMemoryClient();
     const first = await createCertificateJob({
@@ -781,6 +917,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       idempotencyKey: "idem-1",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
     const second = await createCertificateJob({
@@ -788,6 +926,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       idempotencyKey: "idem-1",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
     const otherWorkspace = await createCertificateJob({
@@ -795,6 +935,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_B,
       operation: "renew",
       idempotencyKey: "idem-1",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
 
@@ -804,9 +946,15 @@ describe("CertOps jobs service", () => {
     for (const change of [
       { operation: "deploy" },
       { payload: { certificateId: "cert-2" } },
-      { subjectType: "managed_certificate", subjectId: "cert-2" },
+      { subjectType: "external" },
+      { subjectId: "cert-2" },
       { source: "external" },
+      { requestedByUserId: "33333333-3333-4333-8333-333333333333" },
+      { requestedByApiTokenId: "44444444-4444-4444-8444-444444444444" },
       { status: "approved" },
+      { resultMetadata: { initial: "different" } },
+      { errorCode: "DIFFERENT_ERROR" },
+      { errorMessage: "A different public error" },
     ]) {
       await assert.rejects(
         () =>
@@ -815,8 +963,149 @@ describe("CertOps jobs service", () => {
             workspaceId: WORKSPACE_A,
             operation: "renew",
             idempotencyKey: "idem-1",
+            subjectType: "managed_certificate",
+            subjectId: "cert-1",
             payload: { certificateId: "cert-1" },
             ...change,
+          }),
+        (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+      );
+    }
+  });
+
+  it("keeps idempotent replays valid after lifecycle updates", async () => {
+    const client = createMemoryClient();
+    const request = {
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      idempotencyKey: "idem-lifecycle",
+      subjectType: "managed_certificate",
+      subjectId: "cert-lifecycle",
+      payload: { certificateId: "cert-lifecycle", labels: { environment: "test" } },
+    };
+    const created = await createCertificateJob({ client, ...request });
+    assert.match(created.creationRequestHash, /^[a-f0-9]{64}$/);
+    const running = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: created.id,
+      status: "running",
+      resultMetadata: { phase: "validated" },
+    });
+    const replay = await createCertificateJob({ client, ...request });
+
+    assert.equal(replay.id, created.id);
+    assert.equal(replay.status, "running");
+    assert.deepEqual(replay.resultMetadata, { phase: "validated" });
+    assert.equal(running.id, replay.id);
+    assert.equal(replay.creationRequestHash, created.creationRequestHash);
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          ...request,
+          payload: { certificateId: "cert-lifecycle", labels: { environment: "prod" } },
+        }),
+      (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+    );
+  });
+
+  it("uses the immutable-subset fallback without backfilling legacy null fingerprints", async () => {
+    const client = createMemoryClient();
+    const request = {
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      source: "api",
+      idempotencyKey: "legacy-null-fingerprint",
+      subjectType: "managed_certificate",
+      subjectId: "legacy-cert",
+      payload: { certificateId: "legacy-cert" },
+    };
+    const created = await createCertificateJob({ client, ...request });
+    client.jobs[0].creation_request_hash = null;
+    await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: created.id,
+      status: "running",
+      resultMetadata: { phase: "current" },
+    });
+
+    const replay = await createCertificateJob({ client, ...request });
+    assert.equal(replay.id, created.id);
+    assert.equal(replay.status, "running");
+    assert.equal(client.jobs[0].creation_request_hash, null);
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          ...request,
+          payload: { certificateId: "different-legacy-cert" },
+        }),
+      (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+    );
+  });
+
+  it("conflicts on changed explicit original lifecycle timestamps", async () => {
+    const cases = [
+      {
+        name: "queuedAt",
+        request: {
+          status: "pending",
+          queuedAt: "2026-06-30T00:00:00.000Z",
+        },
+        changed: { queuedAt: "2026-06-30T00:01:00.000Z" },
+      },
+      {
+        name: "startedAt",
+        request: {
+          status: "running",
+          queuedAt: "2026-06-30T00:00:00.000Z",
+          startedAt: "2026-06-30T00:01:00.000Z",
+        },
+        changed: { startedAt: "2026-06-30T00:02:00.000Z" },
+      },
+      {
+        name: "completedAt",
+        request: {
+          status: "failed",
+          queuedAt: "2026-06-30T00:00:00.000Z",
+          startedAt: "2026-06-30T00:01:00.000Z",
+          completedAt: "2026-06-30T00:02:00.000Z",
+        },
+        changed: { completedAt: "2026-06-30T00:03:00.000Z" },
+      },
+      {
+        name: "cancelledAt",
+        request: {
+          status: "cancelled",
+          queuedAt: "2026-06-30T00:00:00.000Z",
+          cancelledAt: "2026-06-30T00:02:00.000Z",
+        },
+        changed: { cancelledAt: "2026-06-30T00:03:00.000Z" },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const client = createMemoryClient();
+      const request = {
+        workspaceId: WORKSPACE_A,
+        operation: "deploy",
+        source: "api",
+        idempotencyKey: `explicit-${testCase.name}`,
+        payload: { certificateId: `cert-${testCase.name}` },
+        ...testCase.request,
+      };
+      await createCertificateJob({ client, ...request });
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            ...request,
+            ...testCase.changed,
           }),
         (error) => error?.code === CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
       );
@@ -978,5 +1267,362 @@ describe("CertOps jobs service", () => {
         }),
       (error) => error?.code === CERTOPS_JOB_NOT_FOUND,
     );
+  });
+
+  it("accepts a fully loaded executable renew payload", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "automation",
+      payload: {
+        target: "example.com",
+        commandRef: "acme-renew-default",
+        caEndpoint: "https://acme-v02.api.letsencrypt.org/directory",
+        acmeKind: "certbot",
+        keyRotation: true,
+        certPath: "/etc/ssl/live/example.com/cert.pem",
+        reloadService: "nginx",
+        verifyHost: "example.com",
+        verifyPort: 443,
+        dnsZone: "example.com",
+        dnsProvider: "cloudflare",
+        renewalProfile: {
+          schemaVersion: 1,
+          sanPolicy: {
+            mode: "exact",
+            sans: ["example.com"],
+            allowWildcards: false,
+          },
+          keyAlgorithm: "rsa",
+          keySize: 2048,
+          keyRotationPolicy: { rotateOnRenew: true },
+          preferredChain: null,
+          ca: {
+            endpoint: "https://acme-v02.api.letsencrypt.org/directory",
+            accountRef: null,
+            eabRef: null,
+          },
+          acme: { kind: "certbot", commandRef: "acme-renew-default" },
+          dns: { provider: "cloudflare", zone: "example.com" },
+          deploymentTargets: [
+            {
+              type: "endpoint",
+              reference: "example.com",
+              certPath: "/etc/ssl/live/example.com/cert.pem",
+              reloadService: "nginx",
+            },
+          ],
+          target: {
+            type: "endpoint",
+            reference: "example.com",
+            certPath: "/etc/ssl/live/example.com/cert.pem",
+          },
+          verification: {
+            host: "example.com",
+            port: 443,
+            requireMatch: true,
+          },
+        },
+      },
+    });
+
+    assert.equal(job.operation, "renew");
+    assert.equal(job.payload.commandRef, "acme-renew-default");
+    assert.equal(job.payload.verifyPort, 443);
+    assert.ok(job.payload.renewalProfile);
+    assertNoCustodyKeys(job);
+  });
+
+  it("exposes the execution columns with safe defaults", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { target: "example.com" },
+    });
+
+    assert.equal(job.claimedByAgentId, null);
+    assert.equal(job.claimId, null);
+    assert.equal(job.leaseExpiresAt, null);
+    assert.equal(job.attemptCount, 0);
+    assert.equal(job.maxAttempts, 3);
+    assert.equal(job.nextAttemptAt, null);
+    assert.equal(job.scheduledFor, null);
+  });
+
+  it("rejects malformed execution field values", async () => {
+    const client = createMemoryClient();
+    const badPayloads = [
+      { commandRef: "not valid because of spaces" },
+      { caEndpoint: "ftp://example.com/dir" },
+      { caEndpoint: "not-a-url" },
+      { acmeKind: "lego" },
+      { keyRotation: "yes" },
+      { certPath: "" },
+      { reloadService: "bad service name" },
+      { verifyHost: "" },
+      { verifyPort: 0 },
+      { verifyPort: 70000 },
+      { verifyPort: 443.5 },
+      { dnsZone: "" },
+      { dnsProvider: "spaces are bad" },
+    ];
+
+    for (const fields of badPayloads) {
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation: "renew",
+            source: "automation",
+            payload: { target: "example.com", ...fields },
+          }),
+        (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+        `expected rejection for ${JSON.stringify(fields)}`,
+      );
+    }
+  });
+
+  it("rejects execution fields on operations that never execute them", async () => {
+    const client = createMemoryClient();
+
+    // noop and revoke never carry execution intent.
+    for (const operation of ["noop", "revoke"]) {
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation,
+            source: "api",
+            payload: { caEndpoint: "https://acme.example.com/directory" },
+          }),
+        (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+      );
+    }
+
+    // deploy carries deploy fields but not renewal-only fields.
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "deploy",
+          source: "api",
+          payload: { acmeKind: "certbot" },
+        }),
+      (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+
+    const deployJob = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      source: "api",
+      payload: {
+        certPath: "/etc/ssl/live/example.com/cert.pem",
+        reloadService: "nginx",
+        verifyHost: "example.com",
+        verifyPort: 443,
+      },
+    });
+    assert.equal(deployJob.operation, "deploy");
+  });
+
+  it("keeps rejecting pem-named payload fields for stored executable payloads", async () => {
+    const client = createMemoryClient();
+    // certificatePem is dispatch-time-only: the persistence boundary must
+    // reject it even though the wire schema allows it on dispatched jobs.
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "deploy",
+          source: "api",
+          payload: {
+            certificatePem:
+              "-----BEGIN CERTIFICATE-----\nRkFLRQ==\n-----END CERTIFICATE-----",
+          },
+        }),
+      (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
+    );
+  });
+
+  it("defaults mode to real and persists it on the row and payload", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      payload: { target: "host/web" },
+    });
+    assert.equal(job.mode, "real");
+    assert.equal(job.payload.mode, "real");
+    assert.equal(client.jobs[0].mode, "real");
+  });
+
+  it("accepts explicit dry_run mode and rejects succeeding it", async () => {
+    const { CERTOPS_JOB_MODE_TERMINAL_INVALID } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "noop",
+      mode: "dry_run",
+      payload: {},
+    });
+    assert.equal(job.mode, "dry_run");
+    assert.equal(job.payload.mode, "dry_run");
+
+    await assert.rejects(
+      () =>
+        updateCertificateJobStatus({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          status: "succeeded",
+        }),
+      (error) => error?.code === CERTOPS_JOB_MODE_TERMINAL_INVALID,
+    );
+
+    const completed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "dry_run_complete",
+    });
+    assert.equal(completed.status, "dry_run_complete");
+  });
+
+  it("sets completed_at when transitioning to orphaned_unknown_effect", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      payload: { target: "host/web" },
+    });
+    assert.equal(job.completedAt, null);
+
+    const claimed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "claimed",
+    });
+    assert.equal(claimed.completedAt, null);
+
+    const orphaned = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "orphaned_unknown_effect",
+    });
+    assert.equal(orphaned.status, "orphaned_unknown_effect");
+    assert.ok(orphaned.completedAt, "orphaned_unknown_effect must set completed_at");
+  });
+
+  it("requires a valid renewalProfile for automation renew jobs", async () => {
+    const {
+      CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createMemoryClient();
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "automation",
+          payload: { certificateId: "cert-1" },
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+  });
+
+  it("enforces per-CA renew capacity across sequential creators for the same CA", async () => {
+    const {
+      CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+    } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createMemoryClient();
+    const env = { CERTOPS_RENEWAL_PER_CA_CAP: "2" };
+    const caEndpoint = "https://acme.example.com/directory";
+
+    const first = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { certificateId: "cert-a", caEndpoint },
+      idempotencyKey: "manual-cert-a",
+      env,
+    });
+    const second = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { certificateId: "cert-b", caEndpoint },
+      idempotencyKey: "scheduler-cert-b",
+      env,
+    });
+    assert.ok(first.id);
+    assert.ok(second.id);
+    assert.notEqual(first.id, second.id);
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "api",
+          payload: { certificateId: "cert-c", caEndpoint },
+          idempotencyKey: "manual-cert-c",
+          env,
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+    );
+
+    // Idempotent replay of an existing job must still succeed at capacity.
+    const replay = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { certificateId: "cert-a", caEndpoint },
+      idempotencyKey: "manual-cert-a",
+      env,
+      returnOutcome: true,
+    });
+    assert.equal(replay.created, false);
+    assert.equal(replay.job.id, first.id);
+
+    // A different CA bucket remains independently capped.
+    const otherCa = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: {
+        certificateId: "cert-d",
+        caEndpoint: "https://other.example/directory",
+      },
+      idempotencyKey: "manual-cert-d",
+      env,
+    });
+    assert.ok(otherCa.id);
   });
 });

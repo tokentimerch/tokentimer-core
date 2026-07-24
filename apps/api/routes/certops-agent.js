@@ -1,0 +1,625 @@
+"use strict";
+
+/**
+ * CertOps agent machine routes (ADR-0002/0003):
+ *   POST /api/v1/certops/agent/register     (bootstrap-token auth)
+ *   POST /api/v1/certops/agent/heartbeat    (credential auth)
+ *   POST /api/v1/certops/agent/jobs/claim   (credential auth)
+ *   POST /api/v1/certops/agent/jobs/:jobId/lease (credential auth)
+ *   POST /api/v1/certops/agent/jobs/results (credential auth)
+ *
+ * Middleware order mirrors apps/api/routes/certops-executor.js:
+ * pre-auth rate limit -> auth -> post-auth rate limit -> private-material
+ * rejection (422 wins over auth-shaped errors) -> requireCertOpsEnabled ->
+ * handler. All transaction logic lives in services/certops/agentDispatch.js.
+ */
+
+const router = require("express").Router;
+const {
+  createAgentBootstrapTokenAuth,
+  createAgentCredentialAuth,
+} = require("../middleware/agent-auth");
+const {
+  createCertOpsMachineTokenPreAuthRateLimit,
+  createCertOpsMachineTokenRateLimit,
+} = require("../middleware/machine-token-rate-limit");
+const {
+  hasCertOpsExecutorPreAuthLimit,
+} = require("../middleware/certops-executor-body-parser");
+const {
+  requireCertOpsEnabled,
+} = require("../middleware/require-certops-enabled");
+const { logger } = require("../utils/logger");
+const { writeAudit } = require("../services/audit");
+const {
+  assertNoPrivateKeyMaterial,
+  PRIVATE_KEY_MATERIAL_REJECTED,
+} = require("../utils/secretMaterial");
+const {
+  CERTOPS_WORKSPACE_PAUSED,
+} = require("../services/certops/workspaceKillSwitch");
+const { CERTOPS_DISABLED } = require("../services/certops/settings");
+const {
+  CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
+  CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+  CERTOPS_AGENT_JOB_NOT_FOUND,
+  CERTOPS_AGENT_LEASE_INVALID,
+  CERTOPS_AGENT_REGISTRATION_CONFLICT,
+  CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
+  CERTOPS_AGENT_RESULT_NONCE_REJECTED,
+  CERTOPS_AGENT_RESULT_STATUS_INVALID,
+  CERTOPS_AGENT_RETIRED,
+  CERTOPS_AGENT_SEQUENCE_REGRESSION,
+  assertEvidenceClaimOwnership,
+  claimJobs,
+  enforceAgentSequence,
+  ingestResult,
+  recordHeartbeat,
+  registerAgent,
+  renewJobLease,
+} = require("../services/certops/agentDispatch");
+const {
+  createCertificateEvidence,
+} = require("../services/certops/evidence");
+const {
+  CERTOPS_AGENT_OBSERVATION_INVALID,
+  CERTOPS_AGENT_EVIDENCE_ID_REQUIRED,
+  persistAgentDiscoveryEvidenceBatch,
+  persistAgentJobEvidenceBatch,
+} = require("../services/certops/agentObservations");
+const { CERTOPS_JOB_NOT_FOUND } = require("../services/certops/jobs");
+const {
+  CERTOPS_AGENT_MESSAGE_INVALID,
+  assertValidAgentProtocolEnvelope,
+} = require("../services/certops/protocolSchemaValidation");
+
+// --- Frozen route paths (certops-route-compat.contract.json) ---
+const CERTOPS_AGENT_REGISTER_PATH = "/api/v1/certops/agent/register";
+const CERTOPS_AGENT_HEARTBEAT_PATH = "/api/v1/certops/agent/heartbeat";
+const CERTOPS_AGENT_JOBS_CLAIM_PATH = "/api/v1/certops/agent/jobs/claim";
+const CERTOPS_AGENT_JOBS_LEASE_PATH = "/api/v1/certops/agent/jobs/:jobId/lease";
+const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
+const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const CLAIM_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+
+// --- Frozen error codes ---
+const CERTOPS_AGENT_RETIRED_RESPONSE = Object.freeze({
+  error: "CertOps agent is retired",
+  code: CERTOPS_AGENT_RETIRED,
+});
+const AGENT_UNAUTHORIZED_RESPONSE = Object.freeze({
+  error: "CertOps agent bootstrap authentication required",
+  code: "CERTOPS_AGENT_BOOTSTRAP_UNAUTHORIZED",
+});
+
+function messageError(message) {
+  const error = new Error(message);
+  error.code = CERTOPS_AGENT_MESSAGE_INVALID;
+  return error;
+}
+
+/**
+ * Structural validation via AJV against agent-protocol.schema.json.
+ * Returns the validated envelope (claim may normalize a missing body to {}).
+ */
+function validateEnvelope(body, expectedMessageType) {
+  assertValidAgentProtocolEnvelope(body, expectedMessageType);
+  return body;
+}
+
+/**
+ * H1: registrationId is required at the HTTP boundary even though the
+ * schema still marks it optional for older agent builds. Keep this as a
+ * service-adjacent semantic gate, not a schema enum.
+ */
+function validateRegisterBody(envelope) {
+  const body = assertValidAgentProtocolEnvelope(envelope, "register");
+  if (
+    typeof body.registrationId !== "string" ||
+    body.registrationId.length < 1 ||
+    body.registrationId.length > 128 ||
+    !AGENT_ID_PATTERN.test(body.registrationId)
+  ) {
+    throw messageError("registrationId is invalid");
+  }
+  return body;
+}
+
+function validateHeartbeatBody(envelope) {
+  return assertValidAgentProtocolEnvelope(envelope, "heartbeat");
+}
+
+function validateClaimBody(envelope) {
+  return assertValidAgentProtocolEnvelope(envelope, "claim");
+}
+
+/**
+ * Lease renew body (B6). Not an agent-protocol envelope messageType: the
+ * job id is in the path and ownership is re-proven with claimId + the
+ * authenticated agent. Optional sequence keeps the same anti-regression
+ * gate as other credential routes.
+ */
+function validateLeaseBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw messageError("Lease body must be a JSON object");
+  }
+  if (
+    typeof body.claimId !== "string" ||
+    body.claimId.length < 1 ||
+    body.claimId.length > 128 ||
+    !CLAIM_ID_PATTERN.test(body.claimId)
+  ) {
+    throw messageError("claimId is invalid");
+  }
+  if (
+    body.sequence !== undefined &&
+    (!Number.isInteger(body.sequence) || body.sequence < 1)
+  ) {
+    throw messageError("sequence must be an integer >= 1 when present");
+  }
+  return body;
+}
+
+function validateResultBody(envelope) {
+  return assertValidAgentProtocolEnvelope(envelope, "result");
+}
+
+function validateEvidenceBody(envelope) {
+  return assertValidAgentProtocolEnvelope(envelope, "evidence");
+}
+
+// --- Private-material rejection (422 wins over auth-shaped errors) ---
+
+async function writeAgentRejectionAudit(req) {
+  await writeAudit({
+    actorUserId: null,
+    subjectUserId: null,
+    action: "CERTOPS_KEY_MATERIAL_REJECTED",
+    targetType: "certops_agent",
+    targetId: null,
+    workspaceId:
+      req.certopsAgent?.workspaceId ||
+      req.agentBootstrapToken?.workspaceId ||
+      null,
+    metadata: {
+      code: PRIVATE_KEY_MATERIAL_REJECTED,
+      method: req.method || null,
+      routeFamily: "agent-protocol",
+      agentId: req.certopsAgent?.agentId || null,
+    },
+  });
+}
+
+async function rejectAgentPrivateMaterial(req, res, next) {
+  try {
+    // Sits after authentication but before rollout or handler logic: the
+    // machine boundary must synchronously audit and reject key material
+    // even for an otherwise unauthorized caller (mirrors the executor
+    // route ordering).
+    assertNoPrivateKeyMaterial(req.body);
+    return next();
+  } catch (error) {
+    if (error?.code !== PRIVATE_KEY_MATERIAL_REJECTED) return next(error);
+    try {
+      await writeAgentRejectionAudit(req);
+    } catch (auditError) {
+      logger.error("CertOps agent key-material rejection audit failed", {
+        code: auditError?.code || null,
+        routeFamily: "agent-protocol",
+      });
+      return res.status(503).json({
+        error: "CertOps security audit is unavailable",
+        code: "CERTOPS_SECURITY_AUDIT_UNAVAILABLE",
+      });
+    }
+    return res.status(422).json({
+      error: "Private key material is not accepted on CertOps agent routes",
+      code: PRIVATE_KEY_MATERIAL_REJECTED,
+    });
+  }
+}
+
+// --- Shared route guards ---
+
+function requireNonRetiredAgent(req, res, next) {
+  // Frozen-retired rule (7.7 item 11): retired agents authenticate but get
+  // 410 with no last_seen_at (or any other) update.
+  if (req.certopsAgent?.status === "retired") {
+    return res.status(410).json(CERTOPS_AGENT_RETIRED_RESPONSE);
+  }
+  return next();
+}
+
+function agentRateLimitIdentity(req, _res, next) {
+  // Feed the shared post-auth machine-token limiter (its key resolver reads
+  // req.apiToken {workspaceId, tokenPrefix, agentId}).
+  const agent = req.certopsAgent || null;
+  const bootstrap = req.agentBootstrapToken || null;
+  req.apiToken = agent
+    ? {
+        workspaceId: agent.workspaceId,
+        tokenPrefix: `ttagent_${agent.agentId}`,
+        agentId: agent.id,
+      }
+    : {
+        workspaceId: bootstrap?.workspaceId || null,
+        tokenPrefix: bootstrap?.tokenPrefix || null,
+        agentId: null,
+      };
+  return next();
+}
+
+function handleAgentRouteError(res, error) {
+  switch (error?.code) {
+    case CERTOPS_AGENT_MESSAGE_INVALID:
+      return res.status(400).json({
+        error: error.message,
+        code: CERTOPS_AGENT_MESSAGE_INVALID,
+      });
+    case CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED:
+      // Lost single-use race: same generic body as a bad bootstrap token so
+      // callers cannot probe token state.
+      return res.status(401).json(AGENT_UNAUTHORIZED_RESPONSE);
+    case CERTOPS_AGENT_REGISTRATION_CONFLICT:
+      return res.status(409).json({
+        error: "An agent with this agentId already exists",
+        code: CERTOPS_AGENT_REGISTRATION_CONFLICT,
+      });
+    case CERTOPS_AGENT_COMPATIBILITY_BLOCKED:
+      return res.status(409).json({
+        error: error.message || "Agent is blocked by CertOps compatibility policy",
+        code: CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
+      });
+    case CERTOPS_AGENT_RETIRED:
+      return res.status(410).json(CERTOPS_AGENT_RETIRED_RESPONSE);
+    case CERTOPS_WORKSPACE_PAUSED:
+      // Kill switch blocks dispatch, never results.
+      return res.status(409).json({
+        error: "CertOps is paused for this workspace",
+        code: CERTOPS_WORKSPACE_PAUSED,
+      });
+    case CERTOPS_DISABLED:
+      return res.status(404).json({
+        error: "Endpoint not found",
+        code: "NOT_FOUND",
+      });
+    case CERTOPS_AGENT_JOB_NOT_FOUND:
+    case CERTOPS_JOB_NOT_FOUND:
+      return res.status(404).json({
+        error: "Certificate job not found",
+        code: CERTOPS_AGENT_JOB_NOT_FOUND,
+      });
+    case CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH:
+      return res.status(409).json({
+        error: "Result does not match the current claim for this job",
+        code: CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+      });
+    case CERTOPS_AGENT_LEASE_INVALID:
+      return res.status(400).json({
+        error: error.message || "Lease renew request is invalid",
+        code: CERTOPS_AGENT_LEASE_INVALID,
+      });
+    case CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE:
+      return res.status(409).json({
+        error: error.message || "Deploy public certificate is unavailable",
+        code: CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+      });
+    case CERTOPS_AGENT_RESULT_NONCE_REJECTED:
+      return res.status(409).json({
+        error: "Result nonce was rejected",
+        code: CERTOPS_AGENT_RESULT_NONCE_REJECTED,
+      });
+    case CERTOPS_AGENT_SEQUENCE_REGRESSION:
+      return res.status(409).json({
+        error:
+          "Message sequence is not greater than the last accepted sequence for this agent",
+        code: CERTOPS_AGENT_SEQUENCE_REGRESSION,
+      });
+    case CERTOPS_AGENT_RESULT_STATUS_INVALID:
+      return res.status(400).json({
+        error: "Result status is invalid",
+        code: CERTOPS_AGENT_RESULT_STATUS_INVALID,
+      });
+    case CERTOPS_AGENT_OBSERVATION_INVALID:
+    case CERTOPS_AGENT_EVIDENCE_ID_REQUIRED:
+      return res.status(400).json({
+        error: error.message,
+        code: error.code,
+      });
+    case PRIVATE_KEY_MATERIAL_REJECTED:
+      return res.status(422).json({
+        error: "Private key material is not accepted on CertOps agent routes",
+        code: PRIVATE_KEY_MATERIAL_REJECTED,
+      });
+    default:
+      logger.error("CertOps agent route failed", {
+        code: error?.code || null,
+        message: error?.message,
+      });
+      return res.status(500).json({
+        error: "CertOps agent request failed",
+        code: "CERTOPS_AGENT_REQUEST_FAILED",
+      });
+  }
+}
+
+// --- Handlers ---
+
+async function registerHandler(req, res, options = {}) {
+  try {
+    const envelope = validateEnvelope(req.body, "register");
+    const body = validateRegisterBody(envelope);
+    const result = await (options.registerAgent || registerAgent)({
+      dbPool: options.dbPool,
+      bootstrapToken: req.agentBootstrapToken,
+      envelope,
+      body,
+      deps: options.registerDeps,
+    });
+    // Shape consumed by packages/agent register(): agentId, credential
+    // (raw ttagent_, shown exactly once), protocolVersion, signingKeyId,
+    // signingPublicKeyPem (PUBLIC key material only).
+    return res.status(201).json(result);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
+}
+
+async function heartbeatHandler(req, res, options = {}) {
+  try {
+    const envelope = validateEnvelope(req.body, "heartbeat");
+    const body = validateHeartbeatBody(envelope);
+    const result = await (options.recordHeartbeat || recordHeartbeat)({
+      dbPool: options.dbPool,
+      agent: req.certopsAgent,
+      envelope,
+      body,
+      deps: options.heartbeatDeps,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
+}
+
+async function claimHandler(req, res, options = {}) {
+  try {
+    const envelope = validateEnvelope(req.body, "claim");
+    const body = validateClaimBody(envelope);
+    const result = await (options.claimJobs || claimJobs)({
+      dbPool: options.dbPool,
+      agent: req.certopsAgent,
+      envelope,
+      body,
+      env: options.env,
+      deps: options.claimDeps,
+    });
+    // { jobs: [...] } where each job is the signed dispatch payload the
+    // agent client passes to verifyJobSignature (job fields + nonce,
+    // issuedAt, expiresAt, signingKeyId, signature).
+    return res.status(200).json(result);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
+}
+
+async function leaseHandler(req, res, options = {}) {
+  try {
+    const jobId = req.params?.jobId;
+    if (
+      typeof jobId !== "string" ||
+      jobId.length < 1 ||
+      jobId.length > 128 ||
+      !JOB_ID_PATTERN.test(jobId)
+    ) {
+      throw messageError("jobId is invalid");
+    }
+    const body = validateLeaseBody(req.body);
+    const result = await (options.renewJobLease || renewJobLease)({
+      dbPool: options.dbPool,
+      agent: req.certopsAgent,
+      jobId,
+      claimId: body.claimId,
+      envelope: { sequence: body.sequence },
+      env: options.env,
+      deps: options.leaseDeps,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
+}
+
+async function resultsHandler(req, res, options = {}) {
+  try {
+    const messageType = req.body?.messageType;
+    if (messageType === "evidence") {
+      const envelope = validateEnvelope(req.body, "evidence");
+      const body = validateEvidenceBody(envelope);
+      if (!body.jobId) {
+        // Jobless evidence is the discovery path: agents report observed
+        // certificate inventory (certificate.observed) with jobId null.
+        // Only that event type has a jobless persistence target; anything
+        // else without a jobId stays invalid.
+        const onlyObservations = body.evidenceItems.every(
+          (item) => item.eventType === "certificate.observed",
+        );
+        if (!onlyObservations) {
+          throw messageError(
+            "jobId is required for agent evidence messages other than certificate.observed",
+          );
+        }
+        const result = await (
+          options.persistAgentDiscoveryEvidenceBatch ||
+          persistAgentDiscoveryEvidenceBatch
+        )({
+          dbPool: options.dbPool,
+          agent: req.certopsAgent,
+          envelope,
+          evidenceItems: body.evidenceItems,
+          deps: {
+            enforceAgentSequence:
+              options.enforceAgentSequence || enforceAgentSequence,
+          },
+        });
+        return res.status(200).json({
+          ok: true,
+          evidenceCount: result.evidenceCount,
+          duplicateCount: result.duplicateCount || 0,
+        });
+      }
+      const result = await (
+        options.persistAgentJobEvidenceBatch || persistAgentJobEvidenceBatch
+      )({
+        dbPool: options.dbPool,
+        agent: req.certopsAgent,
+        envelope,
+        jobId: body.jobId,
+        evidenceItems: body.evidenceItems,
+        deps: {
+          enforceAgentSequence:
+            options.enforceAgentSequence || enforceAgentSequence,
+          assertEvidenceClaimOwnership:
+            options.assertEvidenceClaimOwnership ||
+            assertEvidenceClaimOwnership,
+          createCertificateEvidence:
+            options.createCertificateEvidence || createCertificateEvidence,
+        },
+      });
+      return res.status(200).json({ ok: true, evidenceCount: result.evidenceCount });
+    }
+
+    const envelope = validateEnvelope(req.body, "result");
+    const body = validateResultBody(envelope);
+    const result = await (options.ingestResult || ingestResult)({
+      dbPool: options.dbPool,
+      agent: req.certopsAgent,
+      envelope,
+      body: { ...body, claimId: body.claimId ?? body.attemptId },
+      deps: options.resultDeps,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
+}
+
+// --- Router factory ---
+
+function createCertOpsAgentRouter(options = {}) {
+  const certOpsAgentRouter = router();
+  const preAuthRateLimitMiddleware =
+    options.preAuthRateLimitMiddleware ||
+    createCertOpsMachineTokenPreAuthRateLimit(
+      options.preAuthRateLimitOptions || options.rateLimitOptions || {},
+    );
+  const bootstrapAuthMiddleware =
+    options.bootstrapAuthMiddleware || createAgentBootstrapTokenAuth();
+  const credentialAuthMiddleware =
+    options.credentialAuthMiddleware || createAgentCredentialAuth();
+  const rateLimitMiddleware =
+    options.rateLimitMiddleware ||
+    createCertOpsMachineTokenRateLimit(options.rateLimitOptions || {});
+  const certOpsEnabledMiddleware =
+    options.certOpsEnabledMiddleware || requireCertOpsEnabled;
+  const rejectPrivateMaterialMiddleware =
+    options.rejectPrivateMaterialMiddleware || rejectAgentPrivateMaterial;
+  // The production pre-parser boundary (certops-executor-body-parser)
+  // already rate limited and parsed exact agent-route POSTs; apply our own
+  // pre-auth limiter only when mounted standalone (tests, direct mounts).
+  const preAuthRateLimitFallback = (req, res, next) => {
+    if (hasCertOpsExecutorPreAuthLimit(req)) return next();
+    return preAuthRateLimitMiddleware(req, res, next);
+  };
+
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_REGISTER_PATH,
+    preAuthRateLimitFallback,
+    bootstrapAuthMiddleware,
+    agentRateLimitIdentity,
+    rateLimitMiddleware,
+    rejectPrivateMaterialMiddleware,
+    certOpsEnabledMiddleware,
+    (req, res) => registerHandler(req, res, options),
+  );
+
+  const credentialChain = [
+    preAuthRateLimitFallback,
+    credentialAuthMiddleware,
+    agentRateLimitIdentity,
+    rateLimitMiddleware,
+    rejectPrivateMaterialMiddleware,
+    certOpsEnabledMiddleware,
+  ];
+
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_HEARTBEAT_PATH,
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => heartbeatHandler(req, res, options),
+  );
+
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_JOBS_CLAIM_PATH,
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => claimHandler(req, res, options),
+  );
+
+  // B6: claimed→running + lease/nonce renew, keyed on agent + claimId.
+  // See COORDINATION-B6.md for the agent-runtime contract.
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_JOBS_LEASE_PATH,
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => leaseHandler(req, res, options),
+  );
+
+  // Results keep the retired 410 consistent with heartbeat/claim: the agent
+  // client's postJson treats any non-2xx as terminal for the request, and
+  // only heartbeat special-cases 410 into { retired: true } -- a retired
+  // agent reporting results gets the same unambiguous "stop" signal.
+  // Kill switch is NOT checked here: results are always accepted.
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_JOBS_RESULTS_PATH,
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => resultsHandler(req, res, options),
+  );
+
+  return certOpsAgentRouter;
+}
+
+const defaultRouter = createCertOpsAgentRouter();
+
+module.exports = defaultRouter;
+module.exports.createCertOpsAgentRouter = createCertOpsAgentRouter;
+module.exports._test = {
+  AGENT_UNAUTHORIZED_RESPONSE,
+  CERTOPS_AGENT_HEARTBEAT_PATH,
+  CERTOPS_AGENT_JOBS_CLAIM_PATH,
+  CERTOPS_AGENT_JOBS_LEASE_PATH,
+  CERTOPS_AGENT_JOBS_RESULTS_PATH,
+  CERTOPS_AGENT_MESSAGE_INVALID,
+  CERTOPS_AGENT_REGISTER_PATH,
+  CERTOPS_AGENT_RETIRED_RESPONSE,
+  agentRateLimitIdentity,
+  claimHandler,
+  handleAgentRouteError,
+  heartbeatHandler,
+  leaseHandler,
+  registerHandler,
+  rejectAgentPrivateMaterial,
+  requireNonRetiredAgent,
+  resultsHandler,
+  validateClaimBody,
+  validateEnvelope,
+  validateEvidenceBody,
+  validateHeartbeatBody,
+  validateLeaseBody,
+  validateRegisterBody,
+  validateResultBody,
+};
+

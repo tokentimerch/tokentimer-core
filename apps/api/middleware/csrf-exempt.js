@@ -5,6 +5,8 @@ const {
 
 // Keep the CSRF decision aligned with the pre-parser boundary. The mounted
 // /api middleware sees /v1/... while direct test/router use sees /api/v1/....
+// Covers the executor/controller/per-job machine writes and the
+// agent-protocol routes (register/heartbeat/jobs/claim/jobs/results).
 function isCertOpsMachineTokenCsrfExemptPath(requestPath, req = null) {
   if (req && String(req.method || "").toUpperCase() !== "POST") return false;
   return Boolean(

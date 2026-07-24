@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; finalize in M0, detail in M4.
+Proposed (2026-06-25). Phase 0 skeleton; details land with the agent protocol
+phase.
 
 ## Context
 
@@ -16,7 +17,7 @@ make an agent do arbitrary things.
   The control plane never connects to agents.
 - **Message envelope** frozen in `packages/contracts/certops/agent-protocol.schema.json`
   (stub): `register`, `heartbeat`, `claim`, `result`, `evidence`. Bodies defined
-  in M4.
+  with the agent protocol phase.
 - **Agent-local policy wins**: the agent executes only preconfigured/allowlisted
   command profiles, paths, CA endpoints, and DNS zones/providers. When
   control-plane intent exceeds local policy, the agent refuses and reports the
@@ -36,5 +37,5 @@ make an agent do arbitrary things.
 ## Consequences
 
 - The agent is testable in isolation against the frozen envelope.
-- TODO (M4): per-message body schemas, registration/enrollment trust, agent
+- TODO (agent protocol phase): per-message body schemas, registration/enrollment trust, agent
   credential storage (0700/0600, rotation), supply-chain integrity.

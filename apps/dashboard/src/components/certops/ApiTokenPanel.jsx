@@ -136,7 +136,7 @@ function revokeErrorMessage(err) {
 }
 
 /**
- * Machine API-token management for CertOps M2: create (show once), list,
+ * Machine API-token management for CertOps executors: create (show once), list,
  * revoke, scopes, last used, and handling warnings.
  */
 export default function ApiTokenPanel() {

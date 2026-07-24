@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/evidence.schema.json",
   "title": "CertOps Evidence Metadata",
-  "description": "Strict standalone M2 normalized/persisted public evidence metadata reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. M2-A10 separately stores bounded executor output after private-key rejection and generic-secret redaction. Private key material, key-bearing bundles, credentials, and raw output are never part of this metadata schema.",
+  "description": "Strict standalone normalized/persisted public evidence metadata. The runtime separately stores bounded executor output after private-key rejection and generic-secret redaction. Private key material, key-bearing bundles, credentials, and raw output are never part of this metadata schema.",
   "type": "object",
   "additionalProperties": false,
   "required": [

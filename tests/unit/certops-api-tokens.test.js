@@ -11,6 +11,7 @@ const {
   CERTOPS_API_TOKEN_SCOPE_DENIED,
   CERTOPS_API_TOKEN_SCOPE_INVALID,
   CERTOPS_API_TOKEN_SCOPE_REQUIRED,
+  CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID,
   PRIVATE_KEY_MATERIAL_REJECTED,
   TOKEN_PREFIX,
   createApiToken,
@@ -26,11 +27,13 @@ const {
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_B = "22222222-2222-4222-8222-222222222222";
-const CANONICAL_M2_SCOPES = [
+const CANONICAL_TOKEN_SCOPES = [
   "certops:read",
   "certops:events:write",
   "certops:jobs:read",
   "certops:evidence:write",
+  "certops:observations:write",
+  "certops:provision:execute",
 ];
 
 function date(offsetMs) {
@@ -58,12 +61,13 @@ function createMemoryClient() {
           token_prefix: params[2],
           token_hash: params[3],
           scopes: params[4],
+          controller_cluster_id: params[5],
           status: "active",
-          expires_at: params[5],
+          expires_at: params[6],
           last_used_at: null,
           revoked_at: null,
           revoked_by: null,
-          created_by: params[6],
+          created_by: params[7],
           created_at: new Date("2026-06-30T00:00:00.000Z"),
           updated_at: new Date("2026-06-30T00:00:00.000Z"),
         };
@@ -258,8 +262,8 @@ describe("CertOps API token service", () => {
     }
   });
 
-  it("uses canonical M2 scopes and keeps jobs claim deferred to M4", async () => {
-    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_M2_SCOPES);
+  it("uses canonical scopes and keeps jobs claim deferred to the agent protocol phase", async () => {
+    assert.deepEqual(ALLOWED_SCOPES, CANONICAL_TOKEN_SCOPES);
 
     const client = createMemoryClient();
     const created = await createApiToken({
@@ -288,6 +292,8 @@ describe("CertOps API token service", () => {
     for (const requiredScope of [
       "certops:events:write",
       "certops:evidence:write",
+      "certops:observations:write",
+      "certops:provision:execute",
     ]) {
       const result = await validateApiToken({
         client,
@@ -315,6 +321,46 @@ describe("CertOps API token service", () => {
         (error) => error?.code === CERTOPS_API_TOKEN_SCOPE_INVALID,
       );
     }
+  });
+
+  it("requires an immutable RFC 1123 cluster binding for either controller token scope", async () => {
+    const client = createMemoryClient();
+    await assert.rejects(
+      () => createApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: "Controller",
+        scopes: ["certops:observations:write"],
+      }),
+      { code: CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID },
+    );
+    await assert.rejects(
+      () => createApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: "Executor",
+        scopes: ["certops:events:write"],
+        controllerClusterId: "controller-a",
+      }),
+      { code: CERTOPS_API_TOKEN_CONTROLLER_CLUSTER_INVALID },
+    );
+    const created = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Controller",
+      scopes: ["certops:observations:write"],
+      controllerClusterId: "controller-a",
+    });
+    assert.equal(created.token.controllerClusterId, "controller-a");
+    assert.equal(client.rows[0].controller_cluster_id, "controller-a");
+    const provision = await createApiToken({
+      client,
+      workspaceId: WORKSPACE_A,
+      name: "Provision controller",
+      scopes: ["certops:provision:execute"],
+      controllerClusterId: "controller-a",
+    });
+    assert.equal(provision.token.controllerClusterId, "controller-a");
   });
 
   it("rejects private key material in persisted token metadata", async () => {

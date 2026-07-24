@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "repo": "tokentimer-core",
   "contractsPackage": "@tokentimer/contracts",
-  "version": "0.10.3",
+  "version": "0.11.0",
   "namespaces": [
     {
       "name": "queue",
@@ -188,9 +188,27 @@
           "status": "existing"
         },
         {
+          "id": "certops-controller-observation-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/controller-observation.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-controller-provisioning-schema",
+          "kind": "schema",
+          "path": "packages/contracts/certops/controller-provisioning.schema.json",
+          "status": "existing"
+        },
+        {
           "id": "certops-agent-protocol-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/agent-protocol.schema.json",
+          "status": "existing"
+        },
+        {
+          "id": "certops-canonical-json-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/canonical-json.cjs",
           "status": "existing"
         },
         {

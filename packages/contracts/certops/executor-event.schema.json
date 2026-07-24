@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/executor-event.schema.json",
   "title": "CertOps Executor Event",
-  "description": "M2 external executor reporting envelope reconciled with TOKENTIMER_CERTOPS_PLAN v1.7. It carries normalized public job/evidence events only; runtime enforces machine-token auth, rate limiting, idempotency, private-key rejection, generic-secret redaction, and safe persistence. Richer agent-executed protocol and job signing are deferred to M4.",
+  "description": "External executor reporting envelope. It carries normalized public job/evidence events only; runtime enforces machine-token auth, rate limiting, idempotency, private-key rejection, generic-secret redaction, and safe persistence. Richer agent-executed protocol and job signing are deferred to the agent protocol phase.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -111,7 +111,7 @@
     "embeddedEvidenceItem": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Relaxed embedded evidence item accepted inside the M2 executor envelope. Context such as jobId, workspaceId, source, and observedAt may be derived or soft-filled by later runtime from the envelope/path. Standalone normalized/persisted evidence remains strict in evidence.schema.json.",
+      "description": "Relaxed embedded evidence item accepted inside the executor envelope. Context such as jobId, workspaceId, source, and observedAt may be derived or soft-filled by later runtime from the envelope/path. Standalone normalized/persisted evidence remains strict in evidence.schema.json.",
       "required": ["eventType"],
       "properties": {
         "schemaVersion": {

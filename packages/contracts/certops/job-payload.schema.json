@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/job-payload.schema.json",
-  "title": "CertOps M2 Job Payload",
-  "description": "M2-A1 public, unsigned planning/reporting skeleton for future certificate lifecycle jobs under TOKENTIMER_CERTOPS_PLAN v1.7. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. The action field is the M2 lifecycle action vocabulary, not the future M4 signed job dispatch protocol. Agent execution, job signing, attemptId, agentId/selector, nonce replay cache, signingKeyId, signature, signed dispatch, and related replay enforcement are M4 additions and are not required for M2 validation. Customer private key material and key-bearing bundles are outside this contract.",
+  "title": "CertOps Job Payload",
+  "description": "Public certificate lifecycle job payload. The unsigned planning/reporting skeleton came first; the execution fields the agent consumes for renew/deploy/reload (commandRef, caEndpoint, acmeKind, keyRotation, certPath, reloadService, verifyHost/verifyPort, certificatePem, dnsZone/dnsProvider) are now blessed as part of the executable job contract. This contract carries only public certificate references, target references, lifecycle action intent, and non-secret metadata. certificatePem is public leaf-plus-chain certificate material only, is attached by the control plane at signed dispatch time (never stored in the certificate_jobs payload column, whose persistence boundary rejects pem-named fields), and must never contain private key material. Customer private key material and key-bearing bundles are outside this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,6 +16,11 @@
     "requestedAt"
   ],
   "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["real", "dry_run"],
+      "description": "First-class immutable job execution mode set at creation. dry_run jobs must terminate as dry_run_complete, never succeeded. See COORDINATION-B4.md."
+    },
     "schemaVersion": {
       "type": "integer",
       "const": 1
@@ -25,7 +30,7 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "Unique public job identifier. M4 signed dispatch adds replay-protection semantics."
+      "description": "Unique public job identifier. Future signed agent dispatch adds replay-protection semantics."
     },
     "workspaceId": {
       "type": "string",
@@ -120,6 +125,221 @@
       "maxLength": 512,
       "description": "Opaque non-secret reference to external execution-plane key custody."
     },
+    "commandRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Reference into the agent-local command allowlist naming the ACME command profile. Never a raw command line; the agent resolves it against its own policy and rejects unknown refs."
+    },
+    "caEndpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "format": "uri",
+      "description": "ACME directory endpoint the renewal runs against. The agent-local policy engine may further restrict allowed endpoints."
+    },
+    "acmeKind": {
+      "type": "string",
+      "enum": ["certbot", "acme.sh"],
+      "description": "ACME client adapter the agent should use. Defaults to certbot when absent."
+    },
+    "keyRotation": {
+      "type": "boolean",
+      "description": "When true the agent generates a fresh private key for the renewal instead of reusing the existing one. The key never leaves the agent."
+    },
+    "certPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Absolute filesystem destination for the deployed certificate. When absent, an absolute-path target.reference is used instead. The agent-local path policy re-checks it."
+    },
+    "reloadService": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:@-]+$",
+      "description": "Service to validate-then-reload after deploy, resolved through the agent-local reload command allowlist. Absent means the reload step is skipped."
+    },
+    "verifyHost": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Optional live endpoint host to probe after deploy to confirm the served certificate matches the deployed fingerprint."
+    },
+    "verifyPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Optional port for the verifyHost probe (defaults to 443 agent-side)."
+    },
+    "certificatePem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 262144,
+      "pattern": "^-----BEGIN CERTIFICATE-----",
+      "description": "Public leaf (optionally followed by chain) certificate PEM for deploy jobs. Attached by the control plane at signed dispatch time, never persisted in the stored job payload. Must never contain private key material; both sides content-scan and reject."
+    },
+    "certificatePemSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 (hex) of the UTF-8 certificatePem bytes. Bound into the signed dispatch payload so the agent can verify integrity of the attached public certificate before deploying it."
+    },
+    "dnsZone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Forward-compatible: DNS zone for DNS-01 challenges, checked against the agent-local zone allowlist. Credentials always stay agent-side."
+    },
+    "dnsProvider": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Forward-compatible: DNS provider identifier for DNS-01 challenges. Names an agent-local provider config; never carries credentials."
+    },
+    "sans": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "description": "Approved subjectAltName DNS names for renew jobs (from the immutable renewal profile). When absent, the agent falls back to target.reference as the sole SAN.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    },
+    "preferredChain": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Preferred issuer chain name passed to the ACME client (e.g. ISRG Root X1)."
+    },
+    "keyAlgorithm": {
+      "type": "string",
+      "enum": ["rsa", "ecdsa"],
+      "description": "Approved private-key algorithm from the renewal profile. Agent maps this with keySize onto a local generateKeyPair algorithm id."
+    },
+    "keySize": {
+      "type": "integer",
+      "description": "RSA bit length (2048/3072/4096) or ECDSA curve bit size (256/384), paired with keyAlgorithm."
+    },
+    "eabRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque agent-local EAB credential reference. Never the HMAC secret; the agent resolves eabKid/eabHmacKey from a local 0600 credentials file."
+    },
+    "accountRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque agent-local ACME account reference name. When eabRef is absent, may resolve the same local acmeAccounts credentials map."
+    },
+    "deploymentTargets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "description": "Approved multi-destination deploy list from the renewal profile. When absent, the agent deploys to the single resolved certPath.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "reference"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "domain",
+              "endpoint",
+              "kubernetes",
+              "appliance",
+              "load-balancer",
+              "external"
+            ]
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "certPath": {
+            "type": ["string", "null"],
+            "maxLength": 512
+          },
+          "keyPath": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "pattern": "^/",
+            "description": "Absolute POSIX destination for the matching private key PEM. Path/mode metadata only — never key content."
+          },
+          "reloadService": {
+            "type": ["string", "null"],
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:@-]{1,128}$"
+          },
+          "chainPath": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "description": "Optional absolute destination for the intermediate chain PEM (agent-local / forward-compatible)."
+          },
+          "certMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for certPath (octal string like \"0644\" or integer). World-writable modes are rejected at runtime."
+          },
+          "keyMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for keyPath (octal string like \"0600\" or integer). World-writable modes are rejected at runtime."
+          },
+          "chainMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for chainPath (octal string like \"0644\" or integer). World-writable modes are rejected at runtime."
+          },
+          "owner": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
+            "description": "Optional POSIX username for deployed cert/key/chain ownership."
+          },
+          "group": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
+            "description": "Optional POSIX group name for deployed cert/key/chain ownership."
+          },
+          "backupDir": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "pattern": "^/",
+            "description": "Optional absolute directory for timestamped backups of replaced files."
+          },
+          "backupRetentionCount": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 64,
+            "description": "Optional bounded count of retained backups per destination basename."
+          }
+        }
+      }
+    },
+    "keyPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^/",
+      "description": "Optional absolute filesystem destination for the matching private key PEM (job-level fallback when a target omits keyPath). Path only — never key content."
+    },
+    "chainPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Optional absolute filesystem destination for the intermediate chain PEM, distinct from certPath."
+    },
+    "renewalProfile": {
+      "type": "object",
+      "description": "Immutable renewal-profile snapshot bound at schedule/approval time. Full shape is packages/contracts/certops/renewal-profile.schema.json. Nested on signed dispatch; agent prefers flattened execution fields when present."
+    },
     "metadata": {
       "type": "array",
       "maxItems": 32,
@@ -131,32 +351,32 @@
     "issuedAt": {
       "type": "string",
       "format": "date-time",
-      "description": "M4-reserved signed job dispatch timestamp. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: job dispatch timestamp. Optional and not required for validation today."
     },
     "expiresAt": {
       "type": "string",
       "format": "date-time",
-      "description": "M4-reserved signed job validity bound. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: signed job validity bound. Optional and not required for validation today."
     },
     "nonce": {
       "type": "string",
       "minLength": 16,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "M4-reserved single-use nonce for signed job replay protection. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: single-use nonce for signed job replay protection. Optional and not required for validation today."
     },
     "signingKeyId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[A-Za-z0-9_.:-]+$",
-      "description": "M4-reserved identifier of the control-plane operational signing key. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: identifier of the control-plane operational signing key. Optional and not required for validation today."
     },
     "signature": {
       "type": "string",
       "minLength": 64,
       "maxLength": 1024,
-      "description": "M4-reserved signature over the canonical job payload. Optional in M2-A1 and not required for M2 validation."
+      "description": "Reserved for signed agent dispatch: signature over the canonical job payload. Optional and not required for validation today."
     }
   },
   "definitions": {

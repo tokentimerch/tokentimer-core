@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/controller-provisioning.schema.json",
+  "title": "CertOps Controller Provisioning",
+  "description": "Narrow public desired Certificate command. It is not an agent protocol and contains no Kubernetes manifest, Secret data, CSR, credential, or private material.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workspaceId", "clusterId", "jobId", "managedCertificateId", "namespace", "certificateName", "secretName", "issuerRef", "dnsNames"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "workspaceId": { "type": "string", "format": "uuid" },
+    "clusterId": { "$ref": "#/definitions/label" },
+    "jobId": { "type": "string", "format": "uuid" },
+    "managedCertificateId": { "type": "string", "format": "uuid" },
+    "namespace": { "$ref": "#/definitions/label" },
+    "certificateName": { "$ref": "#/definitions/name" },
+    "secretName": { "$ref": "#/definitions/name" },
+    "issuerRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "kind", "name"],
+      "properties": {
+        "group": { "$ref": "#/definitions/name" },
+        "kind": { "type": "string", "enum": ["Issuer", "ClusterIssuer"] },
+        "name": { "$ref": "#/definitions/name" }
+      }
+    },
+    "dnsNames": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^(\\*\\.)?[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+    }
+  },
+  "definitions": {
+    "label": { "type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*$" }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@tokentimer/log-scrub",
+  "version": "0.10.1",
+  "private": true,
+  "license": "BUSL-1.1",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.0.0 <25.0.0"
+  }
+}

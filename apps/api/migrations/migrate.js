@@ -1322,6 +1322,866 @@ const migrations = [
         WHERE certops_api_token_id IS NOT NULL;
     `,
   },
+  {
+    version: 19,
+    name: "certops_workspace_kill_switch",
+    sql: `
+      -- Workspace-scoped CertOps incident control. This is deliberately
+      -- separate from system_settings.certops_settings.enabled: the latter is
+      -- the deployment-wide rollout flag, while this column stops new work for
+      -- exactly one workspace. Existing rows receive the safe unpaused default.
+      ALTER TABLE workspaces
+        ADD COLUMN IF NOT EXISTS certops_paused BOOLEAN NOT NULL DEFAULT FALSE;
+    `,
+  },
+  {
+    version: 20,
+    name: "certops_job_creation_request_fingerprint",
+    sql: `
+      -- A new job stores a SHA-256 fingerprint of its normalized original
+      -- creation request. It is immutable so idempotent replays can be
+      -- distinguished from changed original requests even after lifecycle
+      -- status, result metadata, errors, or generated timestamps change.
+      -- Existing rows remain NULL: their complete original request cannot be
+      -- reconstructed safely from mutable lifecycle state.
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS creation_request_hash CHAR(64) NULL
+          CHECK (
+            creation_request_hash IS NULL OR
+            creation_request_hash ~ '^[a-f0-9]{64}$'
+          );
+    `,
+  },
+  {
+    version: 21,
+    name: "certops_controller_observation_reporting",
+    sql: `
+      -- Binds the narrow controller-observation scope to one immutable
+      -- workspace-local cluster label. Existing executor tokens remain valid with
+      -- a NULL binding; the binding is only meaningful for this new write scope.
+      ALTER TABLE api_tokens
+        ADD COLUMN IF NOT EXISTS controller_cluster_id TEXT NULL;
+      ALTER TABLE api_tokens
+        DROP CONSTRAINT IF EXISTS api_tokens_scopes_check;
+      ALTER TABLE api_tokens
+        ADD CONSTRAINT api_tokens_scopes_check CHECK (
+          COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+          scopes <@ ARRAY[
+            'certops:read',
+            'certops:events:write',
+            'certops:jobs:read',
+            'certops:evidence:write',
+            'certops:observations:write'
+          ]::text[] AND
+          ((scopes @> ARRAY['certops:observations:write']::text[]) =
+            (controller_cluster_id IS NOT NULL)) AND
+          (controller_cluster_id IS NULL OR
+            controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') AND
+          (controller_cluster_id IS NULL OR char_length(controller_cluster_id) BETWEEN 1 AND 63)
+        );
+
+      -- Stable controller identity is source based, not fingerprint based. A
+      -- cert-manager observation must never merge a different cluster or
+      -- namespace merely because it reports the same public certificate.
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_source_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_source_check CHECK (
+          source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync', 'cert_manager')
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_source_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_source_check CHECK (
+          source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync', 'cert_manager')
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_cert_manager_observation_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_cert_manager_observation_check CHECK (
+          source <> 'cert_manager' OR
+          (target_type = 'kubernetes-secret' AND source_ref IS NOT NULL)
+        );
+      ALTER TABLE certificate_instances
+        DROP CONSTRAINT IF EXISTS certificate_instances_source_check;
+      ALTER TABLE certificate_instances
+        ADD CONSTRAINT certificate_instances_source_check CHECK (
+          source IN ('manual', 'api', 'import', 'domain_checker', 'endpoint_monitor', 'integration', 'auto_sync', 'cert_manager')
+        );
+
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN ('endpoint_monitor', 'domain_checker', 'cert_manager');
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN ('endpoint_monitor', 'domain_checker', 'cert_manager');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_targets_workspace_cert_manager_source_ref
+        ON certificate_targets(workspace_id, source, source_ref)
+        WHERE source = 'cert_manager' AND source_ref IS NOT NULL;
+
+      -- Controller observation idempotency never stores a raw request,
+      -- authorization header, public PEM, Kubernetes object, or token. The
+      -- semantic request hash excludes retry diagnostics at the service layer.
+      CREATE TABLE IF NOT EXISTS certificate_controller_observations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        controller_cluster_id TEXT NOT NULL
+          CHECK (controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+          CHECK (char_length(controller_cluster_id) BETWEEN 1 AND 63),
+        idempotency_key CHAR(64) NOT NULL
+          CHECK (idempotency_key ~ '^[a-f0-9]{64}$'),
+        request_hash CHAR(64) NOT NULL
+          CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+        managed_certificate_id UUID NULL,
+        target_id UUID NULL,
+        certificate_instance_id UUID NULL,
+        status TEXT NOT NULL CHECK (status IN ('accepted', 'redacted')),
+        created_by_api_token_id UUID NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_controller_observations_workspace_cluster_key
+          UNIQUE (workspace_id, controller_cluster_id, idempotency_key),
+        CONSTRAINT fk_certificate_controller_observations_managed_certificate
+          FOREIGN KEY (workspace_id, managed_certificate_id)
+          REFERENCES managed_certificates(workspace_id, id)
+          ON DELETE SET NULL (managed_certificate_id),
+        CONSTRAINT fk_certificate_controller_observations_target
+          FOREIGN KEY (workspace_id, target_id)
+          REFERENCES certificate_targets(workspace_id, id)
+          ON DELETE SET NULL (target_id),
+        CONSTRAINT fk_certificate_controller_observations_instance
+          FOREIGN KEY (certificate_instance_id)
+          REFERENCES certificate_instances(id)
+          ON DELETE SET NULL,
+        CONSTRAINT fk_certificate_controller_observations_api_token
+          FOREIGN KEY (workspace_id, created_by_api_token_id)
+          REFERENCES api_tokens(workspace_id, id)
+          ON DELETE SET NULL (created_by_api_token_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_controller_observations_workspace_created
+        ON certificate_controller_observations(workspace_id, created_at DESC);
+    `,
+  },
+  {
+    version: 22,
+    name: "certops_controller_provisioning",
+    sql: `
+      -- Adds a second narrow controller scope. A cluster binding is
+      -- required exactly for either controller-owned scope; legacy executor
+      -- tokens remain valid with no binding.
+      ALTER TABLE api_tokens
+        DROP CONSTRAINT IF EXISTS api_tokens_scopes_check;
+      ALTER TABLE api_tokens
+        ADD CONSTRAINT api_tokens_scopes_check CHECK (
+          COALESCE(array_length(scopes, 1), 0) BETWEEN 1 AND 8 AND
+          scopes <@ ARRAY[
+            'certops:read',
+            'certops:events:write',
+            'certops:jobs:read',
+            'certops:evidence:write',
+            'certops:observations:write',
+            'certops:provision:execute'
+          ]::text[] AND
+          ((scopes && ARRAY[
+              'certops:observations:write',
+              'certops:provision:execute'
+            ]::text[]) = (controller_cluster_id IS NOT NULL)) AND
+          (controller_cluster_id IS NULL OR
+            controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') AND
+          (controller_cluster_id IS NULL OR char_length(controller_cluster_id) BETWEEN 1 AND 63)
+        );
+
+      -- This is intentionally only a bounded redelivery throttle for the
+      -- narrow controller command endpoint. It has no agent identity,
+      -- attempt, lease, heartbeat, or general job-claim semantics.
+      CREATE TABLE IF NOT EXISTS certificate_controller_provision_deliveries (
+        job_id UUID PRIMARY KEY REFERENCES certificate_jobs(id) ON DELETE CASCADE,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        controller_cluster_id TEXT NOT NULL
+          CHECK (controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+          CHECK (char_length(controller_cluster_id) BETWEEN 1 AND 63),
+        delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_certificate_controller_provision_deliveries_lookup
+        ON certificate_controller_provision_deliveries(workspace_id, controller_cluster_id, delivered_at);
+    `,
+  },
+  {
+    version: 23,
+    name: "certops_controller_provisioning_event_timestamps",
+    sql: `
+      -- First accepted controller-event times make deterministic event
+      -- retries truthful without adding agent attempts, claims, or leases.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_source_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_source_check CHECK (
+          source IN (
+            'api', 'executor', 'system', 'automation', 'domain-monitor',
+            'endpoint-monitor', 'control-plane', 'external',
+            'controller_provisioning'
+          )
+        );
+      ALTER TABLE certificate_controller_provision_deliveries
+        ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_controller_provision_deliveries
+        ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_controller_provision_deliveries
+        ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ NULL;
+    `,
+  },
+  {
+    version: 24,
+    name: "certops_agent_protocol_schema",
+    sql: `
+      -- Agent control plane (ADR-0002/0003). Zero private-key
+      -- custody for certificates is preserved: agents keep certificate keys
+      -- locally and only hashed credentials are stored here. The one deliberate
+      -- exception below is the control-plane-owned Ed25519 JOB-SIGNING key
+      -- (never a certificate key), stored encrypted at rest following the
+      -- system_settings *_encrypted envelope pattern.
+
+      -- 7.2 agent identity lifecycle. credential_hash is sha256 hex of the
+      -- ttagent_ per-agent credential; the raw credential is returned once at
+      -- registration and never persisted.
+      CREATE TABLE IF NOT EXISTS certops_agents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL
+          CHECK (agent_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        name TEXT NULL
+          CHECK (name IS NULL OR char_length(btrim(name)) BETWEEN 1 AND 128),
+        hostname TEXT NULL
+          CHECK (hostname IS NULL OR char_length(hostname) <= 255),
+        platform TEXT NULL
+          CHECK (platform IS NULL OR platform IN ('linux', 'darwin', 'win32')),
+        node_version TEXT NULL
+          CHECK (node_version IS NULL OR char_length(node_version) <= 32),
+        agent_version TEXT NOT NULL
+          CHECK (char_length(btrim(agent_version)) BETWEEN 1 AND 32),
+        protocol_version TEXT NOT NULL
+          CHECK (protocol_version ~ '^[0-9]+\\.[0-9]+\\.[0-9]+$'),
+        credential_prefix TEXT NOT NULL
+          CHECK (credential_prefix ~ '^ttagent_[a-f0-9]{16}$'),
+        credential_hash TEXT NOT NULL
+          CHECK (credential_hash ~ '^[a-f0-9]{64}$'),
+        declared_target_selectors JSONB NOT NULL DEFAULT '[]'::jsonb,
+        declared_command_profile_names JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'offline', 'retired')),
+        last_seen_at TIMESTAMPTZ NULL,
+        clock_offset_ms BIGINT NULL,
+        ntp_synced BOOLEAN NULL,
+        uptime_seconds BIGINT NULL
+          CHECK (uptime_seconds IS NULL OR uptime_seconds >= 0),
+        pinned_signing_key_id TEXT NULL
+          CHECK (pinned_signing_key_id IS NULL OR pinned_signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        last_sequence BIGINT NOT NULL DEFAULT 0
+          CHECK (last_sequence >= 0),
+        bootstrap_token_id UUID NULL,
+        retired_at TIMESTAMPTZ NULL,
+        retired_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        retire_reason TEXT NULL
+          CHECK (retire_reason IS NULL OR char_length(retire_reason) <= 1024),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_agents_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT certops_agents_retired_consistency_check CHECK (
+          (status = 'retired' AND retired_at IS NOT NULL) OR
+          (status <> 'retired' AND retired_at IS NULL)
+        )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_agent_id
+        ON certops_agents(agent_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_credential_prefix
+        ON certops_agents(credential_prefix);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_credential_hash
+        ON certops_agents(credential_hash);
+      CREATE INDEX IF NOT EXISTS idx_certops_agents_workspace_status
+        ON certops_agents(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certops_agents_status_last_seen
+        ON certops_agents(status, last_seen_at)
+        WHERE status = 'active';
+
+      -- 7.2 single-use hashed expiring bootstrap tokens. The raw ttboot_
+      -- token is shown once at creation and never persisted.
+      CREATE TABLE IF NOT EXISTS certops_agent_bootstrap_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name TEXT NOT NULL
+          CHECK (char_length(btrim(name)) BETWEEN 1 AND 128),
+        token_prefix TEXT NOT NULL
+          CHECK (token_prefix ~ '^ttboot_[a-f0-9]{16}$'),
+        token_hash TEXT NOT NULL
+          CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'used', 'revoked', 'expired')),
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ NULL,
+        used_by_agent_id UUID NULL REFERENCES certops_agents(id) ON DELETE SET NULL,
+        revoked_at TIMESTAMPTZ NULL,
+        revoked_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_agent_bootstrap_tokens_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT certops_agent_bootstrap_tokens_used_consistency_check CHECK (
+          (status = 'used' AND used_at IS NOT NULL) OR
+          (status <> 'used' AND used_at IS NULL)
+        )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agent_bootstrap_tokens_prefix
+        ON certops_agent_bootstrap_tokens(token_prefix);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agent_bootstrap_tokens_hash
+        ON certops_agent_bootstrap_tokens(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_bootstrap_tokens_workspace_status
+        ON certops_agent_bootstrap_tokens(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_bootstrap_tokens_status_expires
+        ON certops_agent_bootstrap_tokens(status, expires_at)
+        WHERE status = 'active';
+
+      ALTER TABLE certops_agents
+        DROP CONSTRAINT IF EXISTS fk_certops_agents_bootstrap_token;
+      ALTER TABLE certops_agents
+        ADD CONSTRAINT fk_certops_agents_bootstrap_token
+        FOREIGN KEY (bootstrap_token_id)
+        REFERENCES certops_agent_bootstrap_tokens(id)
+        ON DELETE SET NULL;
+
+      -- ADR-0003 Ed25519 JOB-SIGNING keys (control-plane owned; NOT certificate
+      -- keys, so the zero-custody invariant for certificates is untouched).
+      -- private_key_encrypted is a versioned AES-256-GCM envelope; the service
+      -- fails closed when the wrap key is unset while dispatch is enabled.
+      CREATE TABLE IF NOT EXISTS certops_signing_keys (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        signing_key_id TEXT NOT NULL
+          CHECK (signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        public_key_pem TEXT NOT NULL
+          CHECK (public_key_pem LIKE '-----BEGIN PUBLIC KEY-----%'),
+        private_key_encrypted TEXT NOT NULL,
+        encryption_version SMALLINT NOT NULL DEFAULT 1
+          CHECK (encryption_version >= 1),
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active', 'retiring', 'retired')),
+        retired_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_signing_keys_signing_key_id
+        ON certops_signing_keys(signing_key_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_signing_keys_single_active
+        ON certops_signing_keys(status)
+        WHERE status = 'active';
+
+      -- ADR-0003 server-side replay ledger: nonces issued at dispatch are
+      -- recorded here; a nonce is single-use per job and swept after expiry.
+      CREATE TABLE IF NOT EXISTS certops_consumed_nonces (
+        nonce TEXT NOT NULL
+          CHECK (nonce ~ '^[A-Za-z0-9_-]{16,128}$'),
+        job_id UUID NOT NULL,
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        issued_to_agent_id UUID NULL REFERENCES certops_agents(id) ON DELETE SET NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (nonce, job_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certops_consumed_nonces_expires
+        ON certops_consumed_nonces(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_certops_consumed_nonces_workspace_job
+        ON certops_consumed_nonces(workspace_id, job_id);
+
+      -- 7.3 claim/lease execution columns on certificate_jobs (additive).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS claimed_by_agent_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS claim_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0
+          CHECK (attempt_count >= 0);
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3
+          CHECK (max_attempts BETWEEN 1 AND 10);
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_payload_hash CHAR(64) NULL
+          CHECK (approved_payload_hash IS NULL OR approved_payload_hash ~ '^[a-f0-9]{64}$');
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS fk_certificate_jobs_claimed_by_agent;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT fk_certificate_jobs_claimed_by_agent
+        FOREIGN KEY (claimed_by_agent_id)
+        REFERENCES certops_agents(id)
+        ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimable
+        ON certificate_jobs(workspace_id, status, next_attempt_at, scheduled_for)
+        WHERE status = 'pending';
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_lease_expiry
+        ON certificate_jobs(lease_expires_at)
+        WHERE status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimed_by_agent
+        ON certificate_jobs(claimed_by_agent_id)
+        WHERE claimed_by_agent_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 25,
+    name: "certops_job_approvals",
+    sql: `
+      -- Approval gates (control-plane orchestration). A job created
+      -- with requiresApproval starts at pending_approval and may only reach
+      -- 'pending' (claimable) through a human approval. The approval is bound
+      -- to a SHA256 hash of the canonical job payload (the same
+      -- packages/contracts/certops/canonical-json.cjs serialization the job
+      -- signer uses), so any later payload edit voids it and the claim path
+      -- flips the job back to pending_approval. No key material is involved:
+      -- only hashes, user ids, decisions, and bounded public reasons.
+
+      -- Dedicated append-only decision ledger for auditability. The current
+      -- binding also lives on certificate_jobs (approved_by_user_id,
+      -- approved_at, approved_payload_hash from migration 24); this table
+      -- keeps the full decision history including invalidations.
+      CREATE TABLE IF NOT EXISTS certops_job_approvals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        job_id UUID NOT NULL,
+        decision TEXT NOT NULL
+          CHECK (decision IN ('approved', 'rejected', 'invalidated')),
+        approved_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+        payload_hash CHAR(64) NULL
+          CHECK (payload_hash IS NULL OR payload_hash ~ '^[a-f0-9]{64}$'),
+        reason TEXT NULL
+          CHECK (reason IS NULL OR char_length(reason) <= 1024),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT fk_certops_job_approvals_job
+          FOREIGN KEY (workspace_id, job_id)
+          REFERENCES certificate_jobs(workspace_id, id)
+          ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certops_job_approvals_workspace_job_created
+        ON certops_job_approvals(workspace_id, job_id, created_at DESC);
+
+      -- Approval lifecycle events join the bounded job-log event vocabulary
+      -- (kept in sync with JOB_LOG_EVENT_TYPES in services/certops/jobs.js).
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_event_type_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_event_type_check CHECK (
+          event_type IN (
+            'job.created', 'job.accepted', 'job.started', 'job.progress',
+            'job.completed', 'job.failed', 'job.rejected', 'job.cancelled',
+            'job.status_updated', 'evidence.attached',
+            'approval.granted', 'approval.rejected', 'approval.invalidated'
+          )
+        );
+    `,
+  },
+  {
+    version: 26,
+    name: "certops_job_mode_and_dry_run_complete",
+    sql: `
+      -- B4: first-class immutable job mode (real | dry_run) plus a distinct
+      -- terminal status for dry-run completion. Dry-run must never be reported
+      -- as succeeded. Mode is set at creation and never updated afterwards.
+      -- See COORDINATION-B4.md.
+
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'real';
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_mode_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_mode_check
+          CHECK (mode IN ('real', 'dry_run'));
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_status_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_status_check CHECK (
+          status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete'
+          )
+        );
+
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_status_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_status_check CHECK (
+          status IS NULL OR status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete'
+          )
+        );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_workspace_mode_status
+        ON certificate_jobs(workspace_id, mode, status);
+    `,
+  },
+  {
+    version: 27,
+    name: "certops_dispatch_executor_lanes_and_routing",
+    sql: `
+      -- B2: immutable executor lane separating agent jobs from controller
+      -- provisioning jobs so an agent that supports 'deploy' can never claim
+      -- a controller_provisioning command (and vice versa).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS executor_kind TEXT NOT NULL DEFAULT 'agent';
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_executor_kind_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_executor_kind_check
+          CHECK (executor_kind IN ('agent', 'controller'));
+
+      -- Existing controller_provisioning rows must be lane-locked; the
+      -- column is otherwise immutable after insert (enforced in services).
+      UPDATE certificate_jobs
+         SET executor_kind = 'controller'
+       WHERE source = 'controller_provisioning'
+         AND executor_kind <> 'controller';
+
+      -- Controller claim binding: which authenticated cluster holds the
+      -- lease (distinct from claimed_by_agent_id on the agent lane).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS claimed_by_controller_cluster_id TEXT NULL
+          CHECK (
+            claimed_by_controller_cluster_id IS NULL OR
+            (
+              char_length(claimed_by_controller_cluster_id) BETWEEN 1 AND 63 AND
+              claimed_by_controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+            )
+          );
+
+      -- B6: first successful lease renew stamps this; the reaper treats a
+      -- NULL value as "no side effects proven" (safe requeue) and a non-NULL
+      -- value as effects-unknown (manual reconciliation, no silent retry).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS lease_renewed_at TIMESTAMPTZ NULL;
+
+      -- B5: job routing selectors set at creation time. NULL means "any
+      -- capable agent in the workspace may claim this job".
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS assigned_agent_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS required_target_selector TEXT NULL
+          CHECK (
+            required_target_selector IS NULL OR
+            char_length(required_target_selector) BETWEEN 1 AND 512
+          );
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS required_dns_provider TEXT NULL
+          CHECK (
+            required_dns_provider IS NULL OR
+            required_dns_provider ~ '^[A-Za-z0-9_.:-]{1,64}$'
+          );
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS required_command_profile TEXT NULL
+          CHECK (
+            required_command_profile IS NULL OR
+            required_command_profile ~ '^[A-Za-z0-9_.:-]{1,128}$'
+          );
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS fk_certificate_jobs_assigned_agent;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT fk_certificate_jobs_assigned_agent
+        FOREIGN KEY (assigned_agent_id)
+        REFERENCES certops_agents(id)
+        ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimable_agent_lane
+        ON certificate_jobs(workspace_id, status, executor_kind, next_attempt_at, scheduled_for)
+        WHERE status = 'pending' AND executor_kind = 'agent';
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimable_controller_lane
+        ON certificate_jobs(workspace_id, status, executor_kind, created_at)
+        WHERE status = 'pending' AND executor_kind = 'controller';
+
+      -- B5: persisted agent capabilities used by the claim matcher.
+      -- declared_target_selectors / declared_command_profile_names already
+      -- exist from migration 24; these two cover operations + DNS providers
+      -- refreshed on heartbeat/claim.
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS supported_operations JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS supported_dns_providers JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `,
+  },
+  {
+    version: 28,
+    name: "certops_agent_inventory_evidence_integrity",
+    sql: `
+      -- B17: agent filesystem discovery becomes inventory-visible.
+      -- Mirror cert_manager observer identity: source + source_ref uniqueness.
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_source_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem'
+          )
+        );
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_source_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem'
+          )
+        );
+      ALTER TABLE certificate_instances
+        DROP CONSTRAINT IF EXISTS certificate_instances_source_check;
+      ALTER TABLE certificate_instances
+        ADD CONSTRAINT certificate_instances_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem'
+          )
+        );
+
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+          );
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+          );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_targets_workspace_agent_filesystem_source_ref
+        ON certificate_targets(workspace_id, source, source_ref)
+        WHERE source = 'agent_filesystem' AND source_ref IS NOT NULL;
+
+      -- B18: server-owned agent attribution + client evidence idempotency keys.
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS created_by_agent_id UUID NULL;
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS client_evidence_id TEXT NULL
+          CHECK (
+            client_evidence_id IS NULL OR
+            (
+              char_length(btrim(client_evidence_id)) BETWEEN 1 AND 128 AND
+              client_evidence_id ~ '^[A-Za-z0-9_.:-]+$'
+            )
+          );
+      ALTER TABLE certificate_evidence
+        DROP CONSTRAINT IF EXISTS fk_certificate_evidence_created_by_agent;
+      ALTER TABLE certificate_evidence
+        ADD CONSTRAINT fk_certificate_evidence_created_by_agent
+        FOREIGN KEY (created_by_agent_id)
+        REFERENCES certops_agents(id)
+        ON DELETE SET NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certificate_evidence_agent_client_evidence_id
+        ON certificate_evidence(workspace_id, created_by_agent_id, client_evidence_id)
+        WHERE created_by_agent_id IS NOT NULL AND client_evidence_id IS NOT NULL;
+
+      -- H2: bind approvals to a canonical execution intent hash (operation +
+      -- subject + target + profile snapshot + payload), not only mutable payload.
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS approved_canonical_intent_hash CHAR(64) NULL
+          CHECK (
+            approved_canonical_intent_hash IS NULL OR
+            approved_canonical_intent_hash ~ '^[a-f0-9]{64}$'
+          );
+      ALTER TABLE certops_job_approvals
+        ADD COLUMN IF NOT EXISTS canonical_intent_hash CHAR(64) NULL
+          CHECK (
+            canonical_intent_hash IS NULL OR
+            canonical_intent_hash ~ '^[a-f0-9]{64}$'
+          );
+
+      -- H3: overlapping signing-key rotation acknowledgement tracking.
+      -- Existing certops_signing_keys statuses already include retiring for
+      -- the previous active key; agents acknowledge the new active key via
+      -- heartbeat pinned_signing_key_id.
+      CREATE TABLE IF NOT EXISTS certops_signing_key_acks (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        agent_id UUID NOT NULL REFERENCES certops_agents(id) ON DELETE CASCADE,
+        signing_key_id TEXT NOT NULL
+          CHECK (signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_signing_key_acks_agent_key
+          UNIQUE (agent_id, signing_key_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_certops_signing_key_acks_workspace_key
+        ON certops_signing_key_acks(workspace_id, signing_key_id);
+
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS supersedes_signing_key_id TEXT NULL
+          CHECK (
+            supersedes_signing_key_id IS NULL OR
+            supersedes_signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'
+          );
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS rotation_started_at TIMESTAMPTZ NULL;
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS rotation_forced_at TIMESTAMPTZ NULL;
+      ALTER TABLE certops_signing_keys
+        ADD COLUMN IF NOT EXISTS rotation_force_reason TEXT NULL
+          CHECK (
+            rotation_force_reason IS NULL OR
+            char_length(rotation_force_reason) <= 1024
+          );
+
+      -- H12: forced retirement fences in-flight work for operator reconciliation.
+      -- The status CHECK is redeclared cumulatively here (migration 26 already
+      -- added dry_run_complete) so this ALTER does not silently drop it.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_status_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_status_check CHECK (
+          status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete', 'orphaned_unknown_effect'
+          )
+        );
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_status_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_status_check CHECK (
+          status IS NULL OR status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete', 'orphaned_unknown_effect'
+          )
+        );
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS needs_operator_reconciliation BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS reconciliation_reason TEXT NULL
+          CHECK (
+            reconciliation_reason IS NULL OR
+            char_length(reconciliation_reason) <= 1024
+          );
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_needs_reconciliation
+        ON certificate_jobs(workspace_id, needs_operator_reconciliation)
+        WHERE needs_operator_reconciliation = TRUE;
+    `,
+  },
+  {
+    version: 29,
+    name: "certops_agent_registration_idempotency",
+    sql: `
+      -- H1: durable registrationId → credential replay map so a crash after
+      -- bootstrap-token consumption can still recover the issued credential.
+      -- Retained for a short crash-retry window (default 7 days); expired rows
+      -- are ignored by lookup and may be deleted by ops cleanup.
+      CREATE TABLE IF NOT EXISTS certops_agent_registration_replays (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        bootstrap_token_id UUID NOT NULL
+          REFERENCES certops_agent_bootstrap_tokens(id) ON DELETE CASCADE,
+        registration_id TEXT NOT NULL
+          CHECK (registration_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        agent_id TEXT NOT NULL
+          CHECK (agent_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        -- Plaintext credential retained ONLY for the idempotent replay window.
+        -- Agents receive it once at register; this column exists so a lost
+        -- response can be replayed. Rows expire via expires_at.
+        credential TEXT NOT NULL
+          CHECK (char_length(credential) BETWEEN 1 AND 256),
+        protocol_version TEXT NOT NULL
+          CHECK (protocol_version ~ '^[0-9]+\\.[0-9]+\\.[0-9]+$'),
+        signing_key_id TEXT NULL
+          CHECK (
+            signing_key_id IS NULL OR
+            signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'
+          ),
+        signing_public_key_pem TEXT NULL
+          CHECK (
+            signing_public_key_pem IS NULL OR
+            char_length(signing_public_key_pem) <= 8192
+          ),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        CONSTRAINT uq_certops_agent_registration_replays_token_registration
+          UNIQUE (bootstrap_token_id, registration_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_registration_replays_expires
+        ON certops_agent_registration_replays(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_registration_replays_workspace
+        ON certops_agent_registration_replays(workspace_id, created_at DESC);
+    `,
+  },
+  {
+    version: 30,
+    name: "certops_registration_replay_credential_encryption",
+    sql: `
+      -- Encrypt H1 registration-replay credentials at rest. Pre-existing
+      -- plaintext rows are wiped (short-lived crash-retry window only); a
+      -- retry after wipe uses a fresh bootstrap token / registration.
+      ALTER TABLE certops_agent_registration_replays
+        ADD COLUMN IF NOT EXISTS credential_ciphertext TEXT NULL
+          CHECK (
+            credential_ciphertext IS NULL OR
+            (
+              char_length(credential_ciphertext) BETWEEN 1 AND 2048 AND
+              credential_ciphertext ~ '^[a-f0-9]+:[a-f0-9]+:[a-f0-9]+$'
+            )
+          );
+      ALTER TABLE certops_agent_registration_replays
+        ADD COLUMN IF NOT EXISTS encryption_version INTEGER NOT NULL DEFAULT 1
+          CHECK (encryption_version >= 1);
+
+      DELETE FROM certops_agent_registration_replays;
+
+      ALTER TABLE certops_agent_registration_replays
+        DROP COLUMN IF EXISTS credential;
+
+      ALTER TABLE certops_agent_registration_replays
+        ALTER COLUMN credential_ciphertext SET NOT NULL;
+    `,
+  },
+  {
+    version: 31,
+    name: "certops_agents_agent_id_scoped_to_workspace",
+    sql: `
+      -- agent_id was globally unique across all workspaces, so two unrelated
+      -- tenants who both pick a common id (e.g. "prod-web-01") could not
+      -- both register: the second registration hard-fails with
+      -- CERTOPS_AGENT_REGISTRATION_CONFLICT, and one workspace's bootstrap
+      -- token holder could inadvertently (or deliberately) block agent
+      -- registration for another workspace. Every other certops query
+      -- scopes strictly by workspace_id; agent_id uniqueness now matches
+      -- that pattern instead of being a global namespace.
+      DROP INDEX IF EXISTS uq_certops_agents_agent_id;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_agents_workspace_agent_id
+        ON certops_agents(workspace_id, agent_id);
+    `,
+  },
 ];
 
 async function runMigrations() {

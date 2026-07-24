@@ -3874,4 +3874,62 @@ describe("CertOps executor event ingestion", function () {
       await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
     }
   });
+
+  it("keeps event and evidence reporting available for work already in a paused workspace", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-paused-workspace",
+    );
+
+    try {
+      await TestUtils.execQuery(
+        "UPDATE workspaces SET certops_paused = TRUE WHERE id = $1",
+        [workspaceA],
+      );
+      const job = await createJob({ workspaceId: workspaceA, ownerId });
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write", "certops:evidence:write"],
+      });
+      const app = buildExecutorApp();
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      const eventResponse = await supertest(app)
+        .post(`/api/v1/certops/jobs/${job.id}/events`)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          eventType: "job.progress",
+          status: "running",
+          occurredAt: new Date().toISOString(),
+          message: "Work already in flight",
+        });
+      expect(eventResponse.status).to.equal(202);
+
+      const evidenceResponse = await supertest(app)
+        .post(`/api/v1/certops/jobs/${job.id}/evidence`)
+        .set("Authorization", auth)
+        .send({
+          schemaVersion: 1,
+          eventId: `event-${crypto.randomUUID()}`,
+          occurredAt: new Date().toISOString(),
+          evidence: [
+            {
+              eventType: "certificate.observed",
+              output: "paused workspace status reported honestly",
+            },
+          ],
+        });
+      expect(evidenceResponse.status).to.equal(202);
+      expect(evidenceResponse.body.evidenceIds).to.have.length(1);
+      const evidence = await listCertificateEvidence({
+        workspaceId: workspaceA,
+        jobId: job.id,
+      });
+      expect(evidence.items).to.have.length(1);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
 });

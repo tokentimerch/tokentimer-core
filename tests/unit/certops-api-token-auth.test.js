@@ -613,6 +613,8 @@ describe("CertOps machine-token CSRF exemption", () => {
       "/v1/certops/executor/events/",
       "/api/v1/certops/executor/events",
       "/API/v1/CertOps/Executor/Events/",
+      "/v1/certops/executor/provisioning-commands/next",
+      "/API/v1/CertOps/Executor/Provisioning-Commands/11111111-1111-4111-8111-111111111111/Authorize-Mutation/",
       "/v1/certops/jobs/1/events",
       "/v1/certops/jobs/1/events/",
       "/api/v1/certops/jobs/1/evidence",
@@ -629,8 +631,13 @@ describe("CertOps machine-token CSRF exemption", () => {
       "/v1/certops/jobs/1/events/extra",
       "/v1/certops/jobs//events",
       "/v1/certops/jobs/1/events//",
+      "/v1/certops/executor/provisioning-commands//authorize-mutation",
+      "/v1/certops/executor/provisioning-commands/1/authorize-mutation/extra",
       "/v1/workspaces/111/certops/certificates",
-      "/v1/certops/agent/register",
+      // /v1/certops/agent/register is now exempt; keep only its
+      // malformed neighbors here.
+      "/v1/certops/agent/register/extra",
+      "/v1/certops/agent//register",
     ]) {
       assert.equal(isCertOpsMachineTokenCsrfExemptPath(requestPath), false);
     }

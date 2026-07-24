@@ -23,7 +23,9 @@
         "certificate_jobs",
         "certificate_job_log",
         "certificate_evidence",
-        "certificate_executor_events"
+        "certificate_executor_events",
+        "certificate_controller_observations",
+        "certificate_controller_provision_deliveries"
       ],
       "properties": {
         "users": {
@@ -60,10 +62,16 @@
           "$ref": "#/definitions/tableCertificateJobLog"
         },
         "certificate_evidence": {
-          "$ref": "#/definitions/tableCertificateEvidenceM2"
+          "$ref": "#/definitions/tableCertificateEvidence"
         },
         "certificate_executor_events": {
           "$ref": "#/definitions/tableCertificateExecutorEvents"
+        },
+        "certificate_controller_observations": {
+          "$ref": "#/definitions/tableCertificateControllerObservations"
+        },
+        "certificate_controller_provision_deliveries": {
+          "$ref": "#/definitions/tableCertificateControllerProvisionDeliveries"
         }
       }
     }
@@ -90,8 +98,11 @@
         "requiredColumns": {
           "type": "array",
           "items": { "type": "string" },
-          "contains": { "const": "id" },
-          "minItems": 4
+          "minItems": 5,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "certops_paused" } }
+          ]
         }
       }
     },
@@ -285,7 +296,7 @@
           "items": { "type": "string" },
           "uniqueItems": true,
           "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
-          "minItems": 9,
+          "minItems": 10,
           "allOf": [
             { "contains": { "const": "id" } },
             { "contains": { "const": "workspace_id" } },
@@ -293,6 +304,7 @@
             { "contains": { "const": "token_prefix" } },
             { "contains": { "const": "token_hash" } },
             { "contains": { "const": "scopes" } },
+            { "contains": { "const": "controller_cluster_id" } },
             { "contains": { "const": "status" } },
             { "contains": { "const": "created_at" } },
             { "contains": { "const": "updated_at" } }
@@ -319,6 +331,7 @@
             { "contains": { "const": "source" } },
             { "contains": { "const": "payload" } },
             { "contains": { "const": "result_metadata" } },
+            { "contains": { "const": "creation_request_hash" } },
             { "contains": { "const": "created_at" } },
             { "contains": { "const": "updated_at" } }
           ]
@@ -347,7 +360,7 @@
         }
       }
     },
-    "tableCertificateEvidenceM2": {
+    "tableCertificateEvidence": {
       "type": "object",
       "additionalProperties": false,
       "required": ["requiredColumns"],
@@ -388,6 +401,56 @@
             { "contains": { "const": "request_hash" } },
             { "contains": { "const": "status" } },
             { "contains": { "const": "created_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateControllerObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 10,
+          "allOf": [
+            { "contains": { "const": "id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "controller_cluster_id" } },
+            { "contains": { "const": "idempotency_key" } },
+            { "contains": { "const": "request_hash" } },
+            { "contains": { "const": "managed_certificate_id" } },
+            { "contains": { "const": "target_id" } },
+            { "contains": { "const": "certificate_instance_id" } },
+            { "contains": { "const": "status" } },
+            { "contains": { "const": "created_at" } }
+          ]
+        }
+      }
+    },
+    "tableCertificateControllerProvisionDeliveries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredColumns"],
+      "properties": {
+        "requiredColumns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
+          "minItems": 8,
+          "allOf": [
+            { "contains": { "const": "job_id" } },
+            { "contains": { "const": "workspace_id" } },
+            { "contains": { "const": "controller_cluster_id" } },
+            { "contains": { "const": "delivered_at" } },
+            { "contains": { "const": "updated_at" } },
+            { "contains": { "const": "started_at" } },
+            { "contains": { "const": "completed_at" } },
+            { "contains": { "const": "failed_at" } }
           ]
         }
       }

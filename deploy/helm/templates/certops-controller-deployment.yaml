@@ -1,0 +1,124 @@
+{{- if .Values.certops.controller.enabled }}
+{{- include "tokentimer.certopsControllerValidate" . }}
+{{- $controller := .Values.certops.controller -}}
+{{- $watchNamespaces := include "tokentimer.certopsControllerWatchNamespaces" . | fromYamlArray -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tokentimer.certopsControllerName" . | quote }}
+  labels:
+    {{- include "tokentimer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certops-controller
+spec:
+  {{- if eq ($controller.mode | toString) "provision" }}
+  # Provision writes must never overlap without leader election.
+  strategy:
+    type: Recreate
+  {{- end }}
+  # The validation helper rejects values other than one until leader election
+  # exists. Keeping this explicit makes the single-replica contract visible.
+  replicas: {{ $controller.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tokentimer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: certops-controller
+  template:
+    metadata:
+      annotations:
+        checksum/certops-controller-config: {{ toJson $controller | sha256sum }}
+        {{- with $controller.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "tokentimer.selectorLabels" . | nindent 8 }}
+        {{- with $controller.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        app.kubernetes.io/component: certops-controller
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "tokentimer.certopsControllerServiceAccountName" . | quote }}
+      automountServiceAccountToken: true
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: certops-controller
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "tokentimer.image" (dict "image" $controller.image "global" .Values.global "defaultTag" .Chart.AppVersion) | quote }}
+          imagePullPolicy: {{ $controller.image.pullPolicy | quote }}
+          ports:
+            - name: http
+              containerPort: {{ $controller.healthPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml $controller.resources | nindent 12 }}
+          env:
+            - name: TOKENTIMER_API_URL
+              value: {{ $controller.api.url | quote }}
+            - name: TOKENTIMER_WORKSPACE_ID
+              value: {{ $controller.api.workspaceId | quote }}
+            - name: TOKENTIMER_CLUSTER_ID
+              value: {{ $controller.api.clusterId | quote }}
+            - name: TOKENTIMER_API_TOKEN_FILE
+              value: /var/run/tokentimer-api-token/token
+            - name: CERTOPS_CONTROLLER_MODE
+              value: {{ $controller.mode | quote }}
+            - name: CERTOPS_CLUSTER_WIDE
+              value: {{ $controller.clusterWide | quote }}
+            - name: CERTOPS_SECRET_FALLBACK_ENABLED
+              value: {{ $controller.secretFallbackEnabled | quote }}
+            - name: CERTOPS_HEALTH_PORT
+              value: {{ $controller.healthPort | quote }}
+            - name: CERTOPS_RECONCILE_INTERVAL
+              value: {{ $controller.reconcileInterval | quote }}
+            - name: CERTOPS_SHUTDOWN_TIMEOUT
+              value: {{ $controller.shutdownTimeout | quote }}
+            {{- if not $controller.clusterWide }}
+            - name: CERTOPS_WATCH_NAMESPACES
+              value: {{ join "," $watchNamespaces | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: api-token
+              mountPath: /var/run/tokentimer-api-token
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: api-token
+          secret:
+            secretName: {{ $controller.apiToken.existingSecret | quote }}
+            defaultMode: 256
+            items:
+              - key: {{ $controller.apiToken.key | quote }}
+                path: token
+      {{- with $controller.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $controller.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $controller.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

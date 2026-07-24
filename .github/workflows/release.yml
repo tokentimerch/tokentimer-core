@@ -11,8 +11,236 @@ env:
   HELM_OCI_REPO: ghcr.io/${{ github.repository_owner }}/charts
 
 jobs:
+  # Stage 1a: build and push immutable versioned image tags only (never :latest).
+  build-and-push-docker:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - component: api
+            dockerfile: deploy/compose/Dockerfile.api
+          - component: worker
+            dockerfile: deploy/compose/Dockerfile.worker
+          - component: dashboard
+            dockerfile: deploy/compose/Dockerfile.dashboard
+          - component: k8s-controller
+            dockerfile: apps/k8s-controller/Dockerfile
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.component }}
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Stage 1b: package Helm chart (no OCI publish yet).
+  build-helm-chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Install Helm
+        run: |
+          curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz
+          echo "0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Update Chart version from tag
+        run: |
+          cd deploy/helm
+          VER='${{ steps.get_version.outputs.VERSION }}'
+          sed -i "s/^version:.*/version: \"$VER\"/" Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"$VER\"/" Chart.yaml
+          sed -i "/repository: tokentimer-core-api\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
+          sed -i "/repository: tokentimer-core-dashboard\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
+          sed -i "/repository: tokentimer-core-worker\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
+          sed -i "/repository: tokentimer-core-k8s-controller\$/,/pullPolicy:/{s/^      tag: .*/      tag: \"$VER\"/}" values.yaml
+
+      - name: Package chart
+        run: helm package deploy/helm --destination .helm-pkg
+
+      - name: Lint and template packaged chart
+        run: |
+          CHART=".helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz"
+          test -f "$CHART"
+          helm lint "$CHART"
+          helm template tokentimer "$CHART" >/dev/null
+
+      - name: Upload Helm package artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: helm-chart
+          path: .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz
+          if-no-files-found: error
+
+  # Stage 1c: build agent release tarball + checksum (not attached yet).
+  pack-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Pack agent release tarball
+        run: node packages/agent/scripts/pack-release.js --out-dir agent-dist
+
+      - name: Verify agent checksum
+        run: |
+          cd agent-dist
+          ls -la
+          sha256sum -c ./*.sha256
+
+      - name: Upload agent release artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: agent-release
+          path: |
+            agent-dist/*.tgz
+            agent-dist/*.sha256
+          if-no-files-found: error
+
+  # Stage 2: verify all artifacts before any public release / :latest / Helm OCI publish.
+  verify-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-push-docker
+      - build-helm-chart
+      - pack-agent
+    permissions:
+      packages: read
+      contents: read
+    steps:
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify versioned image digests
+        run: |
+          set -euo pipefail
+          VER='${{ steps.get_version.outputs.VERSION }}'
+          OWNER='${{ github.repository_owner }}'
+          for component in api worker dashboard k8s-controller; do
+            IMAGE="ghcr.io/${OWNER}/tokentimer-core-${component}:${VER}"
+            echo "Inspecting ${IMAGE}"
+            docker buildx imagetools inspect "$IMAGE"
+          done
+
+      - name: Install Helm
+        run: |
+          curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz
+          echo "0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Download Helm package artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: helm-chart
+          path: .helm-pkg
+
+      - name: Verify Helm package
+        run: |
+          set -euo pipefail
+          CHART=".helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz"
+          test -f "$CHART"
+          helm lint "$CHART"
+          helm template tokentimer "$CHART" >/dev/null
+
+      - name: Download agent release artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: agent-release
+          path: agent-dist
+
+      - name: Verify agent release artifacts
+        run: |
+          set -euo pipefail
+          cd agent-dist
+          test -n "$(ls *.tgz 2>/dev/null)"
+          test -n "$(ls *.sha256 2>/dev/null)"
+          sha256sum -c ./*.sha256
+
+  # Stage 3a: publish Helm to OCI only after verification (chart refs versioned images).
+  publish-helm-chart:
+    runs-on: ubuntu-latest
+    needs: verify-release
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Install Helm
+        run: |
+          curl -fsSLo /tmp/helm.tar.gz https://get.helm.sh/helm-v3.20.1-linux-amd64.tar.gz
+          echo "0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3  /tmp/helm.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Download Helm package artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: helm-chart
+          path: .helm-pkg
+
+      - name: Log in to OCI registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.HELM_OCI_REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Push chart to OCI registry
+        run: helm push .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz oci://${{ env.HELM_OCI_REPO }}
+
+  # Stage 3b: create the public GitHub Release only after verify + Helm publish succeed.
   create-release:
     runs-on: ubuntu-latest
+    needs:
+      - verify-release
+      - publish-helm-chart
     permissions:
       contents: write
     steps:
@@ -21,6 +249,12 @@ jobs:
       - name: Extract version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download agent release artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: agent-release
+          path: agent-dist
 
       - name: Detect existing GitHub Release for tag
         id: release_lookup
@@ -61,19 +295,32 @@ jobs:
             ```
           draft: false
           prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'alpha') || contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'rc') }}
+          files: |
+            agent-dist/*.tgz
+            agent-dist/*.sha256
 
-  build-and-push-docker:
+      - name: Upload release assets to existing release
+        if: steps.release_lookup.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          gh release upload "$TAG_NAME" agent-dist/*.tgz agent-dist/*.sha256 \
+            --repo "${{ github.repository }}" --clobber
+
+  # Stage 4: promote all components to :latest together after the public release exists.
+  # :latest is a convenience/dev channel only. Reproducible deploys must use versioned
+  # tags or digests from release-manifest.json (attached to the GitHub Release and
+  # uploaded as a workflow artifact). Helm chart defaults pin appVersion tags (not
+  # :latest); see deploy/helm/values.yaml image.digest notes.
+  promote-latest:
     runs-on: ubuntu-latest
     needs: create-release
     permissions:
       packages: write
-      contents: read
-    strategy:
-      matrix:
-        component: [api, worker, dashboard]
+      contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
       - name: Extract version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -88,51 +335,129 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push ${{ matrix.component }}
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
-        with:
-          context: .
-          file: deploy/compose/Dockerfile.${{ matrix.component }}
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:${{ steps.get_version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/tokentimer-core-${{ matrix.component }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  publish-helm-chart:
-    runs-on: ubuntu-latest
-    needs: create-release
-    permissions:
-      packages: write
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Extract version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Install Helm
+      # Fail the whole job before any :latest mutation if any versioned image is missing.
+      - name: Verify versioned image digests
+        id: verify_digests
         run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.20.1 bash
-          helm version
-
-      - name: Log in to OCI registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.HELM_OCI_REGISTRY }} -u ${{ github.actor }} --password-stdin
-
-      - name: Update Chart version from tag
-        run: |
-          cd deploy/helm
+          set -euo pipefail
           VER='${{ steps.get_version.outputs.VERSION }}'
-          sed -i "s/^version:.*/version: \"$VER\"/" Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"$VER\"/" Chart.yaml
-          sed -i "/repository: tokentimer-core-api\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
-          sed -i "/repository: tokentimer-core-dashboard\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
-          sed -i "/repository: tokentimer-core-worker\$/,/pullPolicy:/{s/^    tag: .*/    tag: \"$VER\"/}" values.yaml
+          OWNER='${{ github.repository_owner }}'
+          echo '{}' > digests.json
 
-      - name: Package chart
-        run: helm package deploy/helm --destination .helm-pkg
+          for component in api worker dashboard k8s-controller; do
+            IMAGE="ghcr.io/${OWNER}/tokentimer-core-${component}:${VER}"
+            echo "Inspecting ${IMAGE}"
+            # Existence check: non-zero exit fails the job before any promotion.
+            docker buildx imagetools inspect "$IMAGE" >/dev/null
 
-      - name: Push chart to OCI registry
-        run: helm push .helm-pkg/tokentimer-${{ steps.get_version.outputs.VERSION }}.tgz oci://${{ env.HELM_OCI_REPO }}
+            DIGEST="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$IMAGE" 2>/dev/null || true)"
+            if [[ -z "${DIGEST}" || "${DIGEST}" == "<no value>" || "${DIGEST}" != sha256:* ]]; then
+              DIGEST="$(docker buildx imagetools inspect --format '{{.Digest}}' "$IMAGE" 2>/dev/null || true)"
+            fi
+            if [[ -z "${DIGEST}" || "${DIGEST}" == "<no value>" || "${DIGEST}" != sha256:* ]]; then
+              echo "::error::Failed to resolve digest for ${IMAGE}"
+              docker buildx imagetools inspect "$IMAGE" || true
+              exit 1
+            fi
+
+            echo "Resolved ${component} -> ${DIGEST}"
+            KEY="$component"
+            if [ "$component" = "k8s-controller" ]; then
+              KEY="k8sController"
+            fi
+            jq --arg k "$KEY" --arg d "$DIGEST" --arg img "$IMAGE" \
+              '.[$k] = {digest: $d, image: $img}' digests.json > digests.json.tmp
+            mv digests.json.tmp digests.json
+          done
+
+          echo "All versioned image digests resolved:"
+          cat digests.json
+
+      - name: Build release manifest
+        run: |
+          set -euo pipefail
+          VER='${{ steps.get_version.outputs.VERSION }}'
+          PROMOTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          test -f digests.json
+          jq -n \
+            --arg version "$VER" \
+            --arg promotedAt "$PROMOTED_AT" \
+            --slurpfile digests digests.json \
+            '{
+              version: $version,
+              components: {
+                api: { digest: $digests[0].api.digest },
+                worker: { digest: $digests[0].worker.digest },
+                dashboard: { digest: $digests[0].dashboard.digest },
+                k8sController: { digest: $digests[0].k8sController.digest }
+              },
+              promotedAt: $promotedAt
+            }' > release-manifest.json
+
+          for key in api worker dashboard k8sController; do
+            DIGEST="$(jq -r --arg k "$key" '.components[$k].digest' release-manifest.json)"
+            case "$DIGEST" in
+              sha256:*) ;;
+              *)
+                echo "::error::release-manifest.json missing digest for ${key}"
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Wrote release-manifest.json:"
+          cat release-manifest.json
+
+      - name: Upload release manifest artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-manifest
+          path: release-manifest.json
+          if-no-files-found: error
+
+      - name: Attach release manifest to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          test -f release-manifest.json
+          gh release upload "$TAG_NAME" release-manifest.json \
+            --repo "${{ github.repository }}" --clobber
+
+      # Promote from the verified digests captured above (not by re-resolving :${VERSION}).
+      # Idempotent: re-running retags the same digests onto :latest.
+      - name: Promote verified digests to :latest
+        run: |
+          set -euo pipefail
+          OWNER='${{ github.repository_owner }}'
+          test -f release-manifest.json
+
+          promote_one() {
+            local component="$1"
+            local key="$2"
+            local digest
+            digest="$(jq -r --arg k "$key" '.components[$k].digest' release-manifest.json)"
+            case "$digest" in
+              sha256:*) ;;
+              *)
+                echo "::error::Missing digest for ${key} in release-manifest.json"
+                exit 1
+                ;;
+            esac
+            local repo="ghcr.io/${OWNER}/tokentimer-core-${component}"
+            local src="${repo}@${digest}"
+            local dst="${repo}:latest"
+            echo "Promoting ${src} -> ${dst}"
+            if ! docker buildx imagetools create -t "$dst" "$src"; then
+              echo "::error::Failed promoting ${component} to :latest from ${src}"
+              exit 1
+            fi
+          }
+
+          promote_one api api
+          promote_one worker worker
+          promote_one dashboard dashboard
+          promote_one k8s-controller k8sController
+
+          echo "All components promoted to :latest from release-manifest.json digests"

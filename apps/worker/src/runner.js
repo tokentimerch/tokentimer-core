@@ -37,6 +37,7 @@ export const DEFAULT_WORKER_CRONS = {
   "auto-sync": "*/1 * * * *",
   "endpoint-check": "*/1 * * * *",
   "weekly-digest": "0 9 * * 1",
+  certops: "*/1 * * * *",
 };
 
 export function createLazyWorkerRun(importModule, selectRun) {
@@ -127,6 +128,22 @@ export const workerDefinitions = {
     run: createLazyWorkerRun(
       () => import("./weekly-digest.js"),
       ({ weeklyDigestJob }) => weeklyDigestJob,
+    ),
+  },
+  certops: {
+    name: "certops",
+    label: "certops-maintenance",
+    cronEnv: "WORKER_CERTOPS_CRON",
+    defaultCron: DEFAULT_WORKER_CRONS.certops,
+    intervalEnv: "WORKER_CERTOPS_INTERVAL_MS",
+    runOnStartEnv: "WORKER_CERTOPS_RUN_ON_START",
+    defaultIntervalMs: 60_000,
+    runOnStartDefault: false,
+    cronRunOnStartDefault: false,
+    localDevRunOnStartDefault: false,
+    run: createLazyWorkerRun(
+      () => import("./certops-worker.js"),
+      ({ runCertOpsMaintenance }) => () => runCertOpsMaintenance(),
     ),
   },
 };

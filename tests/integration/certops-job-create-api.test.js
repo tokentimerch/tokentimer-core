@@ -2,9 +2,13 @@ const { loadRootEnv } = require("../../scripts/load-root-env");
 
 loadRootEnv();
 
+const crypto = require("node:crypto");
 const { expect, request, TestUtils } = require("./setup");
 const { requireMigrateModule } = require("./variant-paths");
 const { runMigrations } = requireMigrateModule();
+const {
+  updateCertificateJobStatus,
+} = require("../../apps/api/services/certops/jobs");
 
 const BASE = process.env.TEST_API_URL || "http://localhost:4000";
 
@@ -166,10 +170,10 @@ async function cleanupWorkspaceFixture(fixture) {
   }
 }
 
-async function jobCreatedAuditEvents(workspaceId, subjectId) {
+async function jobCreatedAuditEvents(workspaceId, jobId) {
   // audit_events.target_id is an INTEGER column; writeAudit stores NULL for
-  // the certificate job's UUID id, so manual-create audits must be located
-  // by the subjectId recorded in metadata instead of target_id.
+  // the certificate job's UUID id. The public UUID in metadata is therefore
+  // the durable direct correlation key, including for bare noop jobs.
   const result = await TestUtils.execQuery(
     `SELECT actor_user_id,
             subject_user_id,
@@ -180,9 +184,9 @@ async function jobCreatedAuditEvents(workspaceId, subjectId) {
        FROM audit_events
       WHERE workspace_id = $1
         AND action = 'CERTOPS_JOB_CREATED_MANUAL'
-        AND metadata->>'subjectId' = $2
+        AND metadata->>'jobId' = $2
       ORDER BY id ASC`,
-    [workspaceId, subjectId],
+    [workspaceId, jobId],
   );
   return result.rows;
 }
@@ -270,7 +274,7 @@ describe("CertOps manual job creation API", function () {
 
     const audits = await jobCreatedAuditEvents(
       fixture.workspaceId,
-      "cert-manual-1",
+      response.body.job.id,
     );
     expect(audits).to.have.length(1);
     expect(audits[0]).to.include({
@@ -280,11 +284,13 @@ describe("CertOps manual job creation API", function () {
       workspace_id: fixture.workspaceId,
     });
     expect(audits[0].metadata).to.deep.include({
+      jobId: response.body.job.id,
       operation: "deploy",
       subjectType: "managed_certificate",
       subjectId: "cert-manual-1",
       source: "api",
     });
+    expectNoSensitiveValues(audits[0].metadata);
   });
 
   it("allows a bare operation with no subject", async () => {
@@ -301,6 +307,19 @@ describe("CertOps manual job creation API", function () {
       subjectId: null,
     });
     expectNoSensitiveValues(response.body);
+    const audits = await jobCreatedAuditEvents(
+      fixture.workspaceId,
+      response.body.job.id,
+    );
+    expect(audits).to.have.length(1);
+    expect(audits[0].metadata).to.deep.include({
+      jobId: response.body.job.id,
+      operation: "noop",
+      subjectType: null,
+      subjectId: null,
+      source: "api",
+    });
+    expectNoSensitiveValues(audits[0].metadata);
   });
 
   it("rejects invalid operations and subject combinations without creating a job", async () => {
@@ -373,37 +392,59 @@ describe("CertOps manual job creation API", function () {
       .set("Cookie", fixture.viewerSession.cookie)
       .send({
         operation: "deploy",
-        payload: { secret: "password=swordfish" },
+        payload: {
+          note: "-----BEGIN PRIVATE KEY-----\nredacted\n-----END PRIVATE KEY-----",
+        },
       });
     expect(viewerRejected.status).to.equal(422);
     expect(viewerRejected.body.code).to.equal("PRIVATE_KEY_MATERIAL_REJECTED");
-    expectNoSensitiveValues(viewerRejected.body, ["password=swordfish"]);
+    expectNoSensitiveValues(viewerRejected.body);
   });
 
-  it("returns the same job on idempotency-key replay and 409s on conflicting reuse", async () => {
+  it("replays a lifecycle-advanced job without duplicating its creation audit", async () => {
     const idempotencyKey = `manual-job-${Date.now()}`;
+    const subjectId = `idempotency-${crypto.randomUUID()}`;
+    const requestBody = {
+      operation: "renew",
+      subjectType: "domain",
+      subjectId,
+      idempotencyKey,
+      payload: { request: { source: "manual" } },
+    };
     const first = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
       .set("Cookie", fixture.managerSession.cookie)
-      .send({
-        operation: "renew",
-        subjectType: "domain",
-        subjectId: "example.com",
-        idempotencyKey,
-      })
+      .send(requestBody)
       .expect(201);
+    expect(await jobCreatedAuditEvents(fixture.workspaceId, first.body.job.id)).to.have.length(1);
+
+    const running = await updateCertificateJobStatus({
+      workspaceId: fixture.workspaceId,
+      jobId: first.body.job.id,
+      status: "running",
+      resultMetadata: { phase: "validated" },
+    });
+    expect(running.status).to.equal("running");
 
     const replay = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
       .set("Cookie", fixture.managerSession.cookie)
-      .send({
-        operation: "renew",
-        subjectType: "domain",
-        subjectId: "example.com",
-        idempotencyKey,
-      })
+      .send(requestBody)
       .expect(201);
     expect(replay.body.job.id).to.equal(first.body.job.id);
+    expect(replay.body.job.status).to.equal("running");
+    expect(replay.body.job.resultMetadata).to.deep.equal({ phase: "validated" });
+
+    const jobs = await TestUtils.execQuery(
+      `SELECT id, creation_request_hash
+         FROM certificate_jobs
+        WHERE workspace_id = $1
+          AND idempotency_key = $2`,
+      [fixture.workspaceId, idempotencyKey],
+    );
+    expect(jobs.rows).to.have.length(1);
+    expect(jobs.rows[0].creation_request_hash).to.match(/^[a-f0-9]{64}$/);
+    expect(await jobCreatedAuditEvents(fixture.workspaceId, first.body.job.id)).to.have.length(1);
 
     const conflicting = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
@@ -411,8 +452,9 @@ describe("CertOps manual job creation API", function () {
       .send({
         operation: "revoke",
         subjectType: "domain",
-        subjectId: "example.com",
+        subjectId,
         idempotencyKey,
+        payload: { request: { source: "manual" } },
       });
     expect(conflicting.status).to.equal(409);
     expect(conflicting.body.code).to.equal("CERTOPS_JOB_IDEMPOTENCY_CONFLICT");
@@ -420,15 +462,53 @@ describe("CertOps manual job creation API", function () {
 
     const auditsForFirstJob = await jobCreatedAuditEvents(
       fixture.workspaceId,
-      "example.com",
+      first.body.job.id,
     );
-    // The route audits every successful call, including an idempotent
-    // replay that resolves to the same job (still a 201), so two audit
-    // rows are expected here; the 409 conflict must not add a third.
-    expect(auditsForFirstJob).to.have.length(2);
+    // The creation audit is written only for the newly inserted job. A replay
+    // returns the current job, while a conflicting key reuse writes nothing.
+    expect(auditsForFirstJob).to.have.length(1);
     expect(auditsForFirstJob.every((row) => row.target_id === null)).to.equal(
       true,
     );
+    expect(auditsForFirstJob[0].metadata.jobId).to.equal(first.body.job.id);
+  });
+
+  it("keeps same-subject manual-job audits uniquely traceable by jobId", async () => {
+    const subjectId = `shared-subject-${crypto.randomUUID()}`;
+    const first = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId,
+        idempotencyKey: `first-${crypto.randomUUID()}`,
+      })
+      .expect(201);
+    const second = await request(BASE)
+      .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
+      .set("Cookie", fixture.managerSession.cookie)
+      .send({
+        operation: "reload",
+        subjectType: "managed_certificate",
+        subjectId,
+        idempotencyKey: `second-${crypto.randomUUID()}`,
+      })
+      .expect(201);
+
+    expect(second.body.job.id).to.not.equal(first.body.job.id);
+    const [firstAudits, secondAudits] = await Promise.all([
+      jobCreatedAuditEvents(fixture.workspaceId, first.body.job.id),
+      jobCreatedAuditEvents(fixture.workspaceId, second.body.job.id),
+    ]);
+    expect(firstAudits).to.have.length(1);
+    expect(secondAudits).to.have.length(1);
+    expect(firstAudits[0].metadata.jobId).to.equal(first.body.job.id);
+    expect(secondAudits[0].metadata.jobId).to.equal(second.body.job.id);
+    expect(firstAudits[0].metadata.subjectId).to.equal(subjectId);
+    expect(secondAudits[0].metadata.subjectId).to.equal(subjectId);
+    expectNoSensitiveValues(firstAudits[0].metadata);
+    expectNoSensitiveValues(secondAudits[0].metadata);
   });
 
   it("scopes created jobs to the requesting workspace only", async () => {

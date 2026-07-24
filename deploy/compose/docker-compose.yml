@@ -75,6 +75,16 @@ services:
       # worker below so the monitor bridge gate resolves consistently.
       CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
 
+      # AES-256-GCM wrap keys for CertOps job-signing key custody and agent
+      # registration-replay credential encryption (64 hex chars = 32 bytes
+      # each, e.g. `openssl rand -hex 32`). Not needed for plain certificate
+      # inventory/import; only the agent register/heartbeat/claim/results
+      # routes touch them, and they fail closed with HTTP 500 there when
+      # unset or malformed, so leaving these empty is safe until you connect
+      # a CertOps agent.
+      CERTOPS_SIGNING_ENCRYPTION_KEY: ${CERTOPS_SIGNING_ENCRYPTION_KEY:-}
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: ${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-}
+
       # Auth
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: ${SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE:-false}

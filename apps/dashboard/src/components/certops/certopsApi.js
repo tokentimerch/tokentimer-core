@@ -2,7 +2,7 @@ import apiClient from '../../utils/apiClient';
 import { pickPrimaryCertificate } from './certopsFormat';
 
 /**
- * CertOps API helpers (M1 inventory surface).
+ * CertOps API helpers (inventory surface).
  *
  * Kept in a dedicated module rather than the shared apiClient.js so the CertOps
  * feature stays additive and self-contained (new files, minimal wiring edits).

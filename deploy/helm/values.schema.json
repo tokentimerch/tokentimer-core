@@ -7,7 +7,13 @@
       "properties": {
         "sessionSecret": { "type": "string" },
         "existingSecret": { "type": "string" },
-        "adminEmail": { "type": "string", "format": "email" },
+        "adminEmail": {
+          "type": "string",
+          "anyOf": [
+            { "const": "" },
+            { "format": "email" }
+          ]
+        },
         "adminPassword": { "type": "string" },
         "adminName": { "type": "string" },
         "disableAdminBootstrap": { "type": "boolean" },
@@ -48,6 +54,60 @@
           "type": "object",
           "properties": {
             "repository": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "certops": {
+      "type": "object",
+      "properties": {
+        "controller": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "mode": { "type": "string", "enum": ["observe", "provision"] },
+            "replicaCount": { "type": "integer", "minimum": 1 },
+            "clusterWide": { "type": "boolean" },
+            "watchNamespaces": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "secretFallbackEnabled": { "type": "boolean" },
+            "image": {
+              "type": "object",
+              "properties": {
+                "registry": { "type": "string" },
+                "repository": { "type": "string" },
+                "tag": { "type": "string" },
+                "digest": { "type": "string" },
+                "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+              }
+            },
+            "api": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "workspaceId": {
+                  "type": "string",
+                  "anyOf": [
+                    { "const": "" },
+                    { "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+                  ]
+                },
+                "clusterId": { "type": "string" }
+              }
+            },
+            "apiToken": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "key": { "type": "string" }
+              }
+            },
+            "healthPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "reconcileInterval": { "type": "string" },
+            "shutdownTimeout": { "type": "string" }
           }
         }
       }
@@ -108,6 +168,22 @@
               }
             },
             "httpsCidrs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/(3[0-2]|[12]?[0-9])$"
+              }
+            },
+            "controllerApiCidrs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/(3[0-2]|[12]?[0-9])$"
+              }
+            },
+            "controllerApiPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "kubeApiServerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "kubeApiServerCidrs": {
               "type": "array",
               "items": {
                 "type": "string",

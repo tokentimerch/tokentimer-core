@@ -1,9 +1,19 @@
 import winston from "winston";
+import logScrubber from "@tokentimer/log-scrub";
 import { cLogError } from "./metrics.js";
+
+const { sanitizeLogRecord } = logScrubber;
 
 const isDev =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 const isStaging = process.env.NODE_ENV === "staging";
+
+const safeLogFormat = winston.format((info) => {
+  const sanitized = sanitizeLogRecord(info);
+  for (const key of Object.keys(info)) delete info[key];
+  Object.assign(info, sanitized);
+  return info;
+});
 
 // Create Winston logger
 const logger = winston.createLogger({
@@ -11,6 +21,7 @@ const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.errors({ stack: true }),
+    safeLogFormat(),
     winston.format.json(),
   ),
   defaultMeta: { service: "tokentimer-worker" },
