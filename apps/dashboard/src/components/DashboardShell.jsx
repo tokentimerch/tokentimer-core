@@ -39,6 +39,7 @@ import {
   LogOut,
   Moon,
   Settings,
+  ShieldCheck,
   Sun,
   User,
 } from 'lucide-react';
@@ -412,6 +413,13 @@ export default function DashboardShell({
             to: '/control-center',
           },
           {
+            key: 'certops',
+            label: 'CertOps',
+            icon: ShieldCheck,
+            active: currentPath.startsWith('/certops'),
+            to: '/certops/operations',
+          },
+          {
             key: 'docs',
             label: 'Docs',
             icon: BookOpen,
@@ -463,7 +471,10 @@ export default function DashboardShell({
   const mainMobileNavItems = [
     menuItems.find(item => item.key === 'tokens'),
     ...(dashboardCanSeeManagerNav
-      ? [menuItems.find(item => item.key === 'control-center')]
+      ? [
+          menuItems.find(item => item.key === 'control-center'),
+          menuItems.find(item => item.key === 'certops'),
+        ]
       : []),
     menuItems.find(item => item.key === 'docs'),
   ].filter(Boolean);

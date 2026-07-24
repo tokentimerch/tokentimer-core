@@ -231,7 +231,7 @@ describe("CertOps agent routes OpenAPI contract", () => {
 
 describe("CertOps route-compat contract (agent runtime)", () => {
   it("carries the agent-runtime version and status", () => {
-    assert.strictEqual(routeCompat.version, "0.16.0");
+    assert.strictEqual(routeCompat.version, "0.17.0");
     assert.strictEqual(routeCompat.status, "agent-runtime-stable");
   });
 

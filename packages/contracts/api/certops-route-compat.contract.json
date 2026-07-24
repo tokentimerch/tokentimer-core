@@ -1,8 +1,8 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "status": "agent-runtime-stable",
-  "description": "Frozen CertOps route namespaces and stable routes. The controller lane added only narrow cert-manager observation, provisioning intent, cluster-bound command, and just-in-time mutation-authorization surfaces. The agent protocol is implemented server-side: the /api/v1/certops/agent routes are live control-plane endpoints (register, heartbeat, claim, lease renew, results) with Ed25519-signed job dispatch, single-use result nonces, claim-ownership re-proof, executor_kind lane separation, and capability-matched claiming.",
+  "description": "Frozen CertOps route namespaces and stable routes. The controller lane added only narrow cert-manager observation, provisioning intent, cluster-bound command, and just-in-time mutation-authorization surfaces. The agent protocol is implemented server-side: the /api/v1/certops/agent routes are live control-plane endpoints (register, heartbeat, claim, lease renew, results) with Ed25519-signed job dispatch, single-use result nonces, claim-ownership re-proof, executor_kind lane separation, and capability-matched claiming. 0.17.0 adds the workspace-scoped agent lifecycle admin routes (bootstrap-token issue/list/revoke, agent list/retire) and the approval-gate decision routes (approve, reject) to stableRoutes; all seven previously shipped without a corresponding contract entry.",
   "namespacePolicy": {
     "workspaceScoped": {
       "prefix": "/api/v1/workspaces/{id}/certops",
@@ -34,7 +34,7 @@
         "Enrollment and steady state use different credentials, by design.",
         "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
         "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/{jobId}/lease, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
-        "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen in Phase 0; request/response bodies for register/heartbeat/claim/result/evidence are specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType. POST /agent/jobs/{jobId}/lease is a lean claimId+sequence body (see COORDINATION-B6.md) that transitions claimed→running and renews the lease/nonce before side effects."
+        "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen in Phase 0; request/response bodies for register/heartbeat/claim/result/evidence are specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType. POST /agent/jobs/{jobId}/lease is a lean claimId+sequence body that transitions claimed→running and renews the lease/nonce before side effects."
       ]
     }
   },
@@ -73,6 +73,13 @@
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens/{tokenId}/revoke", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens/{tokenId}/revoke", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/agents", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/agents/{agentId}/retire", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/approve", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/reject", "method": "POST" },
       { "path": "/api/v1/certops/executor/events", "method": "POST" },
       { "path": "/api/v1/certops/executor/observations", "method": "POST" },
       { "path": "/api/v1/certops/executor/provisioning-commands/next", "method": "POST" },
