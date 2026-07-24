@@ -8,6 +8,11 @@
  * optionally at configured recursive resolvers). On cleanup, the hook waits
  * until the value is gone so evidence can record both sides of the cycle.
  *
+ * Each poll target (authoritative IP or configured recursive resolver) is
+ * queried independently with its own dns.Resolver. Success is evaluated by
+ * verificationMode: default `all` requires every target to confirm; `quorum`
+ * requires at least quorumCount independent confirmations.
+ *
  * Uses Node's dns.Resolver with explicit server IPs — never the process
  * default resolver alone when authoritative NS can be discovered.
  */
@@ -17,6 +22,8 @@ const { isNonEmptyString } = require("./internal.js");
 
 const DEFAULT_TIMEOUT_MS = 120 * 1000;
 const DEFAULT_INTERVAL_MS = 2 * 1000;
+const DEFAULT_VERIFICATION_MODE = "all";
+const VERIFICATION_MODES = new Set(["all", "quorum"]);
 
 /**
  * @param {unknown} value
@@ -36,6 +43,8 @@ function isPositiveInt(value) {
  *   intervalMs: number,
  *   resolvers: string[],
  *   checkAuthoritative: boolean,
+ *   verificationMode: "all"|"quorum",
+ *   quorumCount: number|null,
  * }}
  */
 function normalizePropagationConfig(raw) {
@@ -45,12 +54,15 @@ function normalizePropagationConfig(raw) {
       intervalMs: DEFAULT_INTERVAL_MS,
       resolvers: [],
       checkAuthoritative: true,
+      verificationMode: DEFAULT_VERIFICATION_MODE,
+      quorumCount: null,
     };
   }
   if (typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(
       "tokentimer-agent: dnsPropagation in config.json must be an object " +
-        "({ timeoutMs?, intervalMs?, resolvers?, checkAuthoritative? })",
+        "({ timeoutMs?, intervalMs?, resolvers?, checkAuthoritative?, " +
+        "verificationMode?, quorumCount? })",
     );
   }
 
@@ -87,7 +99,39 @@ function normalizePropagationConfig(raw) {
     );
   }
 
-  return { timeoutMs, intervalMs, resolvers, checkAuthoritative };
+  const verificationMode =
+    raw.verificationMode === undefined
+      ? DEFAULT_VERIFICATION_MODE
+      : raw.verificationMode;
+  if (!VERIFICATION_MODES.has(verificationMode)) {
+    throw new Error(
+      `tokentimer-agent: dnsPropagation.verificationMode must be "all" or "quorum", got ${JSON.stringify(verificationMode)}`,
+    );
+  }
+
+  let quorumCount = null;
+  if (raw.quorumCount !== undefined) {
+    if (!isPositiveInt(raw.quorumCount)) {
+      throw new Error(
+        `tokentimer-agent: dnsPropagation.quorumCount must be a positive integer, got ${JSON.stringify(raw.quorumCount)}`,
+      );
+    }
+    quorumCount = raw.quorumCount;
+  }
+  if (verificationMode === "quorum" && quorumCount === null) {
+    throw new Error(
+      'tokentimer-agent: dnsPropagation.quorumCount is required when verificationMode is "quorum"',
+    );
+  }
+
+  return {
+    timeoutMs,
+    intervalMs,
+    resolvers,
+    checkAuthoritative,
+    verificationMode,
+    quorumCount,
+  };
 }
 
 /**
@@ -186,6 +230,8 @@ async function discoverAuthoritativeResolverIps(recordName, deps = {}) {
 
 /**
  * Queries TXT at `recordName` via an explicit resolver server list.
+ * Prefer resolveTxtViaServer for independent per-server polls; this helper
+ * remains for callers that intentionally share one Resolver across a list.
  *
  * @param {string} recordName
  * @param {string[]} servers
@@ -215,18 +261,88 @@ async function resolveTxtViaServers(recordName, servers, deps = {}) {
 }
 
 /**
- * Polls until `predicate(values)` is true or timeout.
+ * Queries TXT at `recordName` against a single resolver IP (or the process
+ * default resolver when `server` is null).
+ *
+ * @param {string} recordName
+ * @param {string|null} server
+ * @param {{ Resolver?: typeof dns.Resolver }} [deps]
+ * @returns {Promise<string[]>}
+ */
+async function resolveTxtViaServer(recordName, server, deps = {}) {
+  const servers = server === null || server === undefined ? [] : [server];
+  return resolveTxtViaServers(recordName, servers, deps);
+}
+
+/**
+ * @param {Array<{ matched: boolean }>} serverResults
+ * @param {"all"|"quorum"} verificationMode
+ * @param {number|null} quorumCount
+ * @returns {boolean}
+ */
+function isVerificationPolicySatisfied(serverResults, verificationMode, quorumCount) {
+  if (!Array.isArray(serverResults) || serverResults.length === 0) {
+    return false;
+  }
+  const matchedCount = serverResults.filter((entry) => entry.matched === true).length;
+  if (verificationMode === "quorum") {
+    return matchedCount >= quorumCount;
+  }
+  return matchedCount === serverResults.length;
+}
+
+/**
+ * Queries each poll target independently (concurrent), attributing values
+ * and match status per server.
+ *
+ * @param {string} recordName
+ * @param {string[]} servers empty => one poll against the system default
+ * @param {(values: string[]) => boolean} predicate
+ * @param {typeof resolveTxtViaServers} resolveTxt
+ * @returns {Promise<Array<{ server: string|null, values: string[], matched: boolean, error: string|null }>>}
+ */
+async function queryServersIndependently(recordName, servers, predicate, resolveTxt) {
+  const targets = servers.length > 0 ? servers : [null];
+  return Promise.all(
+    targets.map(async (server) => {
+      const serverList = server === null ? [] : [server];
+      try {
+        const values = await resolveTxt(recordName, serverList);
+        const list = Array.isArray(values) ? values : [];
+        return {
+          server,
+          values: list,
+          matched: predicate(list) === true,
+          error: null,
+        };
+      } catch (err) {
+        return {
+          server,
+          values: [],
+          matched: false,
+          error: err && err.message ? err.message : String(err),
+        };
+      }
+    }),
+  );
+}
+
+/**
+ * Polls until every (or a quorum of) independent server query satisfies
+ * `predicate`, or timeout.
  *
  * @param {object} options
  * @param {string} options.recordName
  * @param {string[]} options.servers
- * @param {(values: string[]) => boolean} options.predicate
+ * @param {(values: string[]) => boolean} options.predicate applied per server
  * @param {number} options.timeoutMs
  * @param {number} options.intervalMs
+ * @param {"all"|"quorum"} [options.verificationMode]
+ * @param {number|null} [options.quorumCount]
  * @param {(ms: number) => Promise<void>} [options.sleep]
  * @param {() => number} [options.now]
  * @param {typeof resolveTxtViaServers} [options.resolveTxt]
- * @returns {Promise<{ ok: true, observedValues: string[], attempts: number, elapsedMs: number, servers: string[] } | { ok: false, detail: string, attempts: number, elapsedMs: number, servers: string[], lastValues: string[] }>}
+ * @returns {Promise<object>}
  */
 async function pollTxtUntil({
   recordName,
@@ -234,6 +350,8 @@ async function pollTxtUntil({
   predicate,
   timeoutMs,
   intervalMs,
+  verificationMode = DEFAULT_VERIFICATION_MODE,
+  quorumCount = null,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now = () => Date.now(),
   resolveTxt = resolveTxtViaServers,
@@ -247,48 +365,52 @@ async function pollTxtUntil({
 
   const startedAt = now();
   let attempts = 0;
-  let lastValues = [];
+  let lastServerResults = [];
 
   for (;;) {
     attempts += 1;
-    try {
-      lastValues = await resolveTxt(recordName, servers);
-    } catch (err) {
-      lastValues = [];
-      const elapsedMs = now() - startedAt;
-      if (elapsedMs >= timeoutMs) {
-        return {
-          ok: false,
-          detail: `DNS poll failed: ${err && err.message ? err.message : String(err)}`,
-          attempts,
-          elapsedMs,
-          servers,
-          lastValues,
-        };
-      }
-      await sleep(intervalMs);
-      continue;
-    }
+    lastServerResults = await queryServersIndependently(
+      recordName,
+      servers,
+      predicate,
+      resolveTxt,
+    );
 
-    if (predicate(lastValues)) {
+    if (isVerificationPolicySatisfied(lastServerResults, verificationMode, quorumCount)) {
+      const observedValues = [
+        ...new Set(lastServerResults.flatMap((entry) => entry.values)),
+      ];
       return {
         ok: true,
-        observedValues: lastValues,
+        observedValues,
         attempts,
         elapsedMs: now() - startedAt,
         servers,
+        verificationMode,
+        quorumCount,
+        serverResults: lastServerResults,
       };
     }
 
     const elapsedMs = now() - startedAt;
     if (elapsedMs >= timeoutMs) {
+      const hardErrors = lastServerResults
+        .filter((entry) => entry.error)
+        .map((entry) => `${entry.server ?? "default"}: ${entry.error}`);
+      const detail =
+        hardErrors.length === lastServerResults.length && hardErrors.length > 0
+          ? `DNS poll failed: ${hardErrors.join("; ")}`
+          : `DNS propagation wait timed out after ${timeoutMs} ms (${attempts} attempts)`;
       return {
         ok: false,
-        detail: `DNS propagation wait timed out after ${timeoutMs} ms (${attempts} attempts)`,
+        detail,
         attempts,
         elapsedMs,
         servers,
-        lastValues,
+        verificationMode,
+        quorumCount,
+        serverResults: lastServerResults,
+        lastValues: [...new Set(lastServerResults.flatMap((entry) => entry.values))],
       };
     }
     await sleep(intervalMs);
@@ -314,6 +436,8 @@ async function waitForTxtPresent(options, deps = {}) {
     predicate: (values) => values.includes(txtValue),
     timeoutMs: config.timeoutMs,
     intervalMs: config.intervalMs,
+    verificationMode: config.verificationMode,
+    quorumCount: config.quorumCount,
     sleep: deps.sleep,
     now: deps.now,
     resolveTxt: deps.resolveTxt,
@@ -340,6 +464,8 @@ async function waitForTxtAbsent(options, deps = {}) {
     predicate: (values) => !values.includes(txtValue),
     timeoutMs: config.timeoutMs,
     intervalMs: config.intervalMs,
+    verificationMode: config.verificationMode,
+    quorumCount: config.quorumCount,
     sleep: deps.sleep,
     now: deps.now,
     resolveTxt: deps.resolveTxt,
@@ -372,10 +498,13 @@ async function collectPollServers(recordName, config, deps) {
 module.exports = {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_INTERVAL_MS,
+  DEFAULT_VERIFICATION_MODE,
   normalizePropagationConfig,
   zoneCandidatesForHostname,
   discoverAuthoritativeResolverIps,
   resolveTxtViaServers,
+  resolveTxtViaServer,
+  isVerificationPolicySatisfied,
   pollTxtUntil,
   waitForTxtPresent,
   waitForTxtAbsent,

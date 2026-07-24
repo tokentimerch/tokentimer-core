@@ -26,7 +26,10 @@
  * After a successful present, this hook polls authoritative (and optional
  * recursive) resolvers until the TXT value is visible before returning 0,
  * so ACME validation does not race DNS propagation. After cleanup it
- * verifies the value is gone. Both waits emit a single JSON evidence line
+ * verifies the value is gone — except for providers that declare
+ * `capabilities.cleanupVerifiable: false` (e.g. acme-dns), where cleanup
+ * does not delete the TXT and absence polling is skipped with status
+ * `cleanup_not_applicable`. Both paths emit a single JSON evidence line
  * on stdout (no secrets).
  *
  * Output hygiene: this hook never prints credentials or raw provider
@@ -45,6 +48,7 @@ const {
   waitForTxtPresent,
   waitForTxtAbsent,
 } = require("./propagate.js");
+const { getDnsProviderCapabilities } = require("./index.js");
 
 const CHALLENGE_LABEL = "_acme-challenge";
 const USAGE = "usage: certops-dns-hook <present|cleanup>";
@@ -239,6 +243,31 @@ async function runDnsHook({
       return 1;
     }
 
+    const capabilities = getDnsProviderCapabilities(provider);
+    // acme-dns (and any future provider with cleanupVerifiable: false) does
+    // not delete the TXT on cleanup; waiting for absence would time out.
+    if (mode === "cleanup" && capabilities.cleanupVerifiable === false) {
+      stdout.write(
+        `${JSON.stringify({
+          event: "dns.propagation",
+          mode,
+          provider,
+          zone,
+          recordName,
+          ok: true,
+          attempts: 0,
+          elapsedMs: 0,
+          servers: [],
+          phase: "cleanup-verify",
+          status: "cleanup_not_applicable",
+        })}\n`,
+      );
+      stdout.write(
+        `certops-dns-hook: ${mode} ok for ${recordName} via ${provider} (zone ${zone})\n`,
+      );
+      return 0;
+    }
+
     const propagationConfig = normalizePropagationConfig(config.dnsPropagation);
     const waitResult =
       mode === "present"
@@ -263,6 +292,8 @@ async function runDnsHook({
         elapsedMs: waitResult.elapsedMs,
         servers: waitResult.servers,
         phase: waitResult.phase,
+        verificationMode: waitResult.verificationMode,
+        serverResults: waitResult.serverResults,
       })}\n`,
     );
 

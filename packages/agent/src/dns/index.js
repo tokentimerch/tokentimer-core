@@ -151,6 +151,32 @@ const SUPPORTED_DNS_PROVIDERS = Object.freeze([
   "powerdns",
 ]);
 
+/** Defaults when a provider module does not declare `capabilities`. */
+const DEFAULT_PROVIDER_CAPABILITIES = Object.freeze({
+  cleanupVerifiable: true,
+});
+
+/**
+ * Resolves capability flags for a supported provider id.
+ * Unknown providers still get the safe defaults (callers that need a hard
+ * reject should use createDnsSolver / listSupportedDnsProviders).
+ *
+ * @param {string} provider
+ * @returns {{ cleanupVerifiable: boolean }}
+ */
+function getDnsProviderCapabilities(provider) {
+  const declared =
+    isNonEmptyString(provider) && PROVIDER_MODULES[provider]
+      ? PROVIDER_MODULES[provider].capabilities
+      : undefined;
+  return {
+    cleanupVerifiable:
+      declared && typeof declared.cleanupVerifiable === "boolean"
+        ? declared.cleanupVerifiable
+        : DEFAULT_PROVIDER_CAPABILITIES.cleanupVerifiable,
+  };
+}
+
 /**
  * @returns {string[]} provider ids accepted by createDnsSolver (fresh copy).
  */
@@ -194,6 +220,7 @@ function conflictBackoffMs(attempt) {
  *   presentChallenge: (inputs: { zone: string, recordName: string, txtValue: string }) => Promise<object>,
  *   cleanupChallenge: (inputs: { zone: string, recordName: string, txtValue: string }) => Promise<object>,
  *   listManagedZones: (() => Promise<string[]>)|null,
+ *   capabilities: { cleanupVerifiable: boolean },
  * }}
  */
 function createDnsSolver({
@@ -216,6 +243,8 @@ function createDnsSolver({
       `dns: unsupported provider ${JSON.stringify(provider)}; supported: ${SUPPORTED_DNS_PROVIDERS.join(", ")}`,
     );
   }
+
+  const capabilities = getDnsProviderCapabilities(provider);
 
   if (credentials === null || typeof credentials !== "object" || Array.isArray(credentials)) {
     throw new Error(`dns: ${provider} credentials must be an object`);
@@ -351,6 +380,7 @@ function createDnsSolver({
 
   return {
     provider,
+    capabilities,
     presentChallenge: (inputs) => runLocked("presentChallenge", inputs),
     cleanupChallenge: (inputs) => runLocked("cleanupChallenge", inputs),
     listManagedZones,
@@ -366,8 +396,10 @@ function createDnsSolver({
 
 module.exports = {
   listSupportedDnsProviders,
+  getDnsProviderCapabilities,
   createDnsSolver,
   DEFAULT_TIMEOUT_MS,
+  DEFAULT_PROVIDER_CAPABILITIES,
   OUTPUT_EXCERPT_MAX_CHARS,
   CONFLICT_RETRY_STATUSES,
   CONFLICT_MAX_ATTEMPTS,

@@ -171,3 +171,15 @@ test("acme-dns: cleanup is a no-op success and performs no fetch", async () => {
   assert.deepEqual(result, { provider: "acme-dns", ok: true });
   assert.equal(fetchStub.calls.length, 0);
 });
+
+test("acme-dns: declares cleanupVerifiable: false", () => {
+  const { capabilities } = require("./acme-dns.js");
+  assert.equal(capabilities.cleanupVerifiable, false);
+
+  const solver = createDnsSolver({
+    provider: "acme-dns",
+    credentials: CREDENTIALS,
+    fetchImpl: makeFetchStub(() => ({})),
+  });
+  assert.equal(solver.capabilities.cleanupVerifiable, false);
+});

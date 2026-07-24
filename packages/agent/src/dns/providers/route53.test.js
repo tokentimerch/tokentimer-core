@@ -100,7 +100,7 @@ test("route53: SigV4 canonical request and signature match the fixed vector", ()
 test("route53: a sessionToken joins the signed headers", () => {
   const { canonicalRequest, headers } = signRequest({
     method: "GET",
-    path: "/2013-04-01/hostedzonebyname",
+    path: "/2013-04-01/hostedzonesbyname",
     query: [["dnsname", "example.com"]],
     body: "",
     amzDate: "20260101T000000Z",
@@ -288,7 +288,7 @@ test("route53: cleanup of an already-absent value is idempotent success", async 
 
 test("route53: hosted zone is looked up by name when hostedZoneId is absent", async () => {
   const fetchStub = makeFetchStub((url, options) => {
-    if (url.includes("/hostedzonebyname")) {
+    if (url.includes("/hostedzonesbyname")) {
       return {
         status: 200,
         body:
@@ -312,7 +312,7 @@ test("route53: hosted zone is looked up by name when hostedZoneId is absent", as
 
   assert.equal(result.ok, true);
   assert.equal(fetchStub.calls.length, 3);
-  assert.match(fetchStub.calls[0].url, /hostedzonebyname\?dnsname=example\.com&maxitems=1$/);
+  assert.match(fetchStub.calls[0].url, /hostedzonesbyname\?dnsname=example\.com&maxitems=1$/);
   assert.match(fetchStub.calls[1].url, /\/hostedzone\/ZLOOKEDUP\/rrset\?name=/);
   assert.match(fetchStub.calls[2].url, /\/hostedzone\/ZLOOKEDUP\/rrset$/);
 });

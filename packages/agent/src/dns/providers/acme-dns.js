@@ -26,6 +26,10 @@
  * cleanupChallenge is a deliberate no-op success: the acme-dns server keeps
  * exactly two TXT slots per subdomain and rotates the oldest out on every
  * update, so there is nothing to delete and no delete endpoint exists.
+ *
+ * capabilities.cleanupVerifiable is false so the hook skips post-cleanup
+ * "wait for TXT absence" polling (the value is not deleted and would never
+ * disappear).
  */
 
 const {
@@ -35,6 +39,11 @@ const {
 } = require("../internal.js");
 
 const PROVIDER_ID = "acme-dns";
+
+/** Provider capability flags consumed by the DNS hook / solver factory. */
+const capabilities = Object.freeze({
+  cleanupVerifiable: false,
+});
 
 /**
  * @param {object} credentials
@@ -120,6 +129,7 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
 
 module.exports = {
   PROVIDER_ID,
+  capabilities,
   validateCredentials,
   collectSecretStrings,
   createSolverImpl,

@@ -20,7 +20,7 @@
  *   }
  *
  * API surface used (route53.amazonaws.com, XML API 2013-04-01):
- *   GET  /2013-04-01/hostedzonebyname?dnsname=<zone>&maxitems=1
+ *   GET  /2013-04-01/hostedzonesbyname?dnsname=<zone>&maxitems=1
  *   GET  /2013-04-01/hostedzone/<id>/rrset?name=&type=TXT&maxitems=1
  *        ListResourceRecordSets (read-modify-write basis)
  *   POST /2013-04-01/hostedzone/<id>/rrset   ChangeResourceRecordSets
@@ -323,7 +323,7 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
 
     const response = await signedFetch({
       method: "GET",
-      path: `/${API_VERSION}/hostedzonebyname`,
+      path: `/${API_VERSION}/hostedzonesbyname`,
       query: [
         ["dnsname", zone],
         ["maxitems", "1"],

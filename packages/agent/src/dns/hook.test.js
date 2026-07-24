@@ -221,6 +221,81 @@ test("hook: cleanup dispatches cleanupChallenge", async () => {
   assert.equal(harness.solverCalls[0].operation, "cleanup");
 });
 
+test("hook: acme-dns cleanup skips TXT-absence poll and reports cleanup_not_applicable", async () => {
+  let resolveTxtCalls = 0;
+  const harness = makeHarness({
+    argv: ["cleanup"],
+    env: { CERTBOT_DOMAIN: "www.example.com", CERTBOT_VALIDATION: "token-value" },
+    loadConfig: () => ({
+      policy: {
+        allowedDnsProviders: ["acme-dns"],
+        allowedDnsZones: ["example.com"],
+      },
+      dnsProviders: {
+        "acme-dns": { credentialsFile: "/etc/tokentimer-agent/dns/acme-dns.json" },
+        zoneProviderMap: { "example.com": "acme-dns" },
+      },
+    }),
+    createSolver: () => ({
+      provider: "acme-dns",
+      presentChallenge: async () => ({ ok: true }),
+      cleanupChallenge: async () => ({ ok: true, provider: "acme-dns" }),
+    }),
+    propagationDeps: {
+      discoverAuthoritativeResolverIps: async () => ["203.0.113.1"],
+      resolveTxt: async () => {
+        resolveTxtCalls += 1;
+        return ["token-value"];
+      },
+      sleep: async () => {},
+    },
+  });
+
+  const exitCode = await runDnsHook(harness);
+
+  assert.equal(exitCode, 0);
+  assert.equal(resolveTxtCalls, 0);
+  const evidence = JSON.parse(
+    harness.stdout.output
+      .split("\n")
+      .find((line) => line.includes('"event":"dns.propagation"')),
+  );
+  assert.equal(evidence.ok, true);
+  assert.equal(evidence.provider, "acme-dns");
+  assert.equal(evidence.phase, "cleanup-verify");
+  assert.equal(evidence.status, "cleanup_not_applicable");
+  assert.equal(evidence.attempts, 0);
+});
+
+test("hook: cloudflare cleanup still waits for TXT absence", async () => {
+  let resolveTxtCalls = 0;
+  const harness = makeHarness({
+    argv: ["cleanup"],
+    propagationDeps: {
+      discoverAuthoritativeResolverIps: async () => ["203.0.113.1"],
+      resolveTxt: async () => {
+        resolveTxtCalls += 1;
+        return [];
+      },
+      sleep: async () => {},
+    },
+  });
+
+  const exitCode = await runDnsHook(harness);
+
+  assert.equal(exitCode, 0);
+  assert.ok(resolveTxtCalls >= 1);
+  const evidence = JSON.parse(
+    harness.stdout.output
+      .split("\n")
+      .find((line) => line.includes('"event":"dns.propagation"')),
+  );
+  assert.equal(evidence.ok, true);
+  assert.equal(evidence.provider, "cloudflare");
+  assert.equal(evidence.phase, "cleanup-verify");
+  assert.notEqual(evidence.status, "cleanup_not_applicable");
+});
+
 test("hook: a solver failure result exits nonzero with the redacted result JSON", async () => {
   const harness = makeHarness({
     createSolver: () => ({
