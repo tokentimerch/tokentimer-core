@@ -17,6 +17,7 @@ const CERTOPS_JOB_EVIDENCE_PATH = "/api/v1/certops/jobs/:jobId/evidence";
 const CERTOPS_AGENT_REGISTER_PATH = "/api/v1/certops/agent/register";
 const CERTOPS_AGENT_HEARTBEAT_PATH = "/api/v1/certops/agent/heartbeat";
 const CERTOPS_AGENT_JOBS_CLAIM_PATH = "/api/v1/certops/agent/jobs/claim";
+const CERTOPS_AGENT_JOBS_LEASE_PATH = "/api/v1/certops/agent/jobs/:jobId/lease";
 const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
 const CERTOPS_MACHINE_WRITE_ROUTE_FAMILIES = Object.freeze({
   aggregateExecutorEvents: "aggregate-executor-events",
@@ -99,6 +100,7 @@ function certOpsMachineWriteRouteFamily(requestPath, options = {}) {
       normalizedPath === `${prefix}/agent/heartbeat/` ||
       normalizedPath === `${prefix}/agent/jobs/claim` ||
       normalizedPath === `${prefix}/agent/jobs/claim/` ||
+      new RegExp(`^${prefix}/agent/jobs/[^/]+/lease/?$`).test(normalizedPath) ||
       normalizedPath === `${prefix}/agent/jobs/results` ||
       normalizedPath === `${prefix}/agent/jobs/results/`
     ) {
@@ -197,6 +199,7 @@ module.exports = {
   CERTOPS_EXECUTOR_EVENTS_PATH,
   CERTOPS_AGENT_HEARTBEAT_PATH,
   CERTOPS_AGENT_JOBS_CLAIM_PATH,
+  CERTOPS_AGENT_JOBS_LEASE_PATH,
   CERTOPS_AGENT_JOBS_RESULTS_PATH,
   CERTOPS_AGENT_REGISTER_PATH,
   CERTOPS_CONTROLLER_OBSERVATIONS_PATH,

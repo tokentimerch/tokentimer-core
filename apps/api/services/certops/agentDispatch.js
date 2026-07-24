@@ -12,6 +12,7 @@
  */
 
 const { pool } = require("../../db/database");
+const crypto = require("node:crypto");
 const {
   consumeBootstrapToken,
   generateAgentCredential,
@@ -22,6 +23,7 @@ const {
   getActiveSigningKeyPublicInfo,
   signJobForDispatch,
   consumeNonce,
+  extendJobNonceExpiry,
 } = require("./jobSigning");
 const {
   lockWorkspaceForCertOpsSideEffect,
@@ -32,8 +34,13 @@ const {
 } = require("./jobApprovals");
 const { queueCertRenewalFailedAlert } = require("./renewalFailureAlerts");
 const {
+  dispatchNonceTtlSeconds,
+  jobLeaseSeconds,
+} = require("./leaseTiming");
+const {
   redactGenericSecrets,
   redactPrivateKeyMaterial,
+  assertNoPrivateKeyMaterial,
 } = require("../../utils/secretMaterial");
 const { logger } = require("../../utils/logger");
 
@@ -52,18 +59,10 @@ const CERTOPS_AGENT_RESULT_NONCE_REJECTED =
 const CERTOPS_AGENT_RESULT_STATUS_INVALID =
   "CERTOPS_AGENT_RESULT_STATUS_INVALID";
 const CERTOPS_AGENT_SEQUENCE_REGRESSION = "CERTOPS_AGENT_SEQUENCE_REGRESSION";
+const CERTOPS_AGENT_LEASE_INVALID = "CERTOPS_AGENT_LEASE_INVALID";
+const CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE =
+  "CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE";
 
-const DEFAULT_JOB_LEASE_SECONDS = 900;
-// The dispatch nonce must stay consumable for the whole window the agent is
-// allowed to work and report: lease + clock-drift tolerance + bounded
-// result-delivery grace. A nonce that expires before the lease would reject
-// legitimate results from long-running (but in-lease) jobs.
-const NONCE_TTL_GRACE_SECONDS = 300;
-
-// result body status -> certificate_jobs terminal status. "rejected" and
-// "blocked" from the agent-protocol resultBody map to the jobs.js statuses
-// of the same name; the transitions map allows all of these from
-// claimed/running.
 const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   succeeded: "succeeded",
   failed: "failed",
@@ -74,16 +73,13 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   dry_run_complete: "dry_run_complete",
 });
 
+// Re-export shared lease default for existing callers/tests.
+const { DEFAULT_JOB_LEASE_SECONDS } = require("./leaseTiming");
+
 function serviceError(message, code) {
   const error = new Error(message);
   error.code = code;
   return error;
-}
-
-function jobLeaseSeconds(env = process.env) {
-  const raw = Number.parseInt(env.CERTOPS_JOB_LEASE_SECONDS, 10);
-  if (Number.isInteger(raw) && raw > 0) return raw;
-  return DEFAULT_JOB_LEASE_SECONDS;
 }
 
 async function withTransaction(dbPool, fn) {
@@ -327,6 +323,19 @@ async function recordHeartbeat({
     typeof body.pinnedSigningKeyId === "string" && body.pinnedSigningKeyId
       ? body.pinnedSigningKeyId
       : null;
+  const supportedOperations = normalizeStringList(body.supportedOperations, 16);
+  const supportedDnsProviders = normalizeStringList(
+    body.supportedDnsProviders,
+    64,
+  );
+  const declaredTargetSelectors = normalizeStringList(
+    body.declaredTargetSelectors,
+    64,
+  );
+  const declaredCommandProfileNames = normalizeStringList(
+    body.declaredCommandProfileNames,
+    64,
+  );
 
   return await withTransaction(dbPool, async (client) => {
     // Sequence enforcement runs after auth (route middleware) and before
@@ -342,6 +351,22 @@ async function recordHeartbeat({
               uptime_seconds = $4,
               pinned_signing_key_id = COALESCE($5, pinned_signing_key_id),
               agent_version = $6,
+              supported_operations = CASE
+                WHEN $7::jsonb = '[]'::jsonb THEN supported_operations
+                ELSE $7::jsonb
+              END,
+              supported_dns_providers = CASE
+                WHEN $8::jsonb = '[]'::jsonb THEN supported_dns_providers
+                ELSE $8::jsonb
+              END,
+              declared_target_selectors = CASE
+                WHEN $9::jsonb = '[]'::jsonb THEN declared_target_selectors
+                ELSE $9::jsonb
+              END,
+              declared_command_profile_names = CASE
+                WHEN $10::jsonb = '[]'::jsonb THEN declared_command_profile_names
+                ELSE $10::jsonb
+              END,
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
               updated_at = NOW()
         WHERE id = $1
@@ -354,6 +379,10 @@ async function recordHeartbeat({
         uptimeSeconds,
         pinnedSigningKeyId,
         body.agentVersion || agent.agentVersion,
+        JSON.stringify(supportedOperations),
+        JSON.stringify(supportedDnsProviders),
+        JSON.stringify(declaredTargetSelectors),
+        JSON.stringify(declaredCommandProfileNames),
       ],
     );
 
@@ -376,11 +405,79 @@ async function recordHeartbeat({
 
 // --- Claim (7.3) ---
 
+function normalizeStringList(value, maxItems) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => typeof item === "string" && item.length > 0)
+    .slice(0, maxItems);
+}
+
+function jsonbTextArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string");
+}
+
 /**
- * Claims up to maxJobs pending jobs for the agent inside one transaction on
- * one client: workspace kill-switch lock first (dispatch is blocked while
- * paused/disabled; results never are), then FOR UPDATE SKIP LOCKED job
- * selection, per-job lease fields, and signed dispatch payloads.
+ * Resolve the public leaf(+chain) PEM for a standalone deploy job from
+ * managed certificate inventory. PEM is attached only at signed dispatch
+ * time (never persisted in certificate_jobs.payload).
+ */
+async function resolveDeployPublicCertificate({
+  client,
+  workspaceId,
+  job,
+  payload,
+}) {
+  const managedCertificateId =
+    (job.subject_type === "managed_certificate" && job.subject_id) ||
+    payload.certificateId ||
+    payload.target?.managedCertificateId ||
+    null;
+  if (!managedCertificateId) {
+    throw serviceError(
+      "Deploy job has no managed certificate to resolve a public certificate from",
+      CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+    );
+  }
+  const result = await client.query(
+    `SELECT certificate_pem, fingerprint_sha256
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND id = $2
+      LIMIT 1`,
+    [workspaceId, managedCertificateId],
+  );
+  const row = result.rows[0];
+  const certificatePem =
+    typeof row?.certificate_pem === "string" ? row.certificate_pem.trim() : "";
+  if (!certificatePem || !certificatePem.startsWith("-----BEGIN CERTIFICATE-----")) {
+    throw serviceError(
+      "Public certificate material is unavailable for this deploy job",
+      CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+    );
+  }
+  assertNoPrivateKeyMaterial(certificatePem);
+  const certificatePemSha256 = crypto
+    .createHash("sha256")
+    .update(certificatePem, "utf8")
+    .digest("hex");
+  return {
+    certificatePem,
+    certificatePemSha256,
+    fingerprintSha256: row.fingerprint_sha256 || null,
+  };
+}
+
+/**
+ * Claims up to maxJobs pending agent-lane jobs for the agent inside one
+ * transaction on one client: workspace kill-switch lock first (dispatch is
+ * blocked while paused/disabled; results never are), then FOR UPDATE SKIP
+ * LOCKED job selection matched on executor_kind + capabilities + selectors,
+ * per-job lease fields, and signed dispatch payloads.
+ *
+ * Controller-lane jobs (executor_kind='controller') are never selectable
+ * here (B2). Capability/target matching is B5. Deploy jobs receive the
+ * public certificate PEM (+ content hash) at this point (B15).
  */
 async function claimJobs({
   dbPool = pool,
@@ -396,6 +493,8 @@ async function claimJobs({
   const invalidateApproval =
     deps.invalidateApprovalForClaim || invalidateApprovalForClaim;
   const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
+  const resolveDeployCert =
+    deps.resolveDeployPublicCertificate || resolveDeployPublicCertificate;
 
   const maxJobs =
     Number.isInteger(body.maxJobs) && body.maxJobs >= 1 && body.maxJobs <= 16
@@ -404,7 +503,12 @@ async function claimJobs({
   const supportedActions = Array.isArray(body.supportedActions)
     ? body.supportedActions.filter((action) => typeof action === "string")
     : [];
+  const supportedDnsProviders = normalizeStringList(
+    body.supportedDnsProviders,
+    64,
+  );
   const leaseSeconds = jobLeaseSeconds(env);
+  const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
 
   return await withTransaction(dbPool, async (client) => {
     // Sequence enforcement first (post-auth, pre-dispatch): a regression
@@ -420,32 +524,91 @@ async function claimJobs({
     // Claiming is a liveness signal: an agent polling for jobs is alive, so
     // last_seen_at advances and an 'offline' agent flips back to 'active'.
     // Without this, a stale-swept agent could keep receiving jobs while
-    // being displayed as offline.
+    // being displayed as offline. Also refresh capability columns from the
+    // claim body so the matcher stays current even between heartbeats.
     await client.query(
       `UPDATE certops_agents
           SET last_seen_at = NOW(),
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
+              supported_operations = CASE
+                WHEN $2::jsonb = '[]'::jsonb THEN supported_operations
+                ELSE $2::jsonb
+              END,
+              supported_dns_providers = CASE
+                WHEN $3::jsonb = '[]'::jsonb THEN supported_dns_providers
+                ELSE $3::jsonb
+              END,
               updated_at = NOW()
         WHERE id = $1
           AND status <> 'retired'`,
-      [agent.id],
+      [
+        agent.id,
+        JSON.stringify(supportedActions),
+        JSON.stringify(supportedDnsProviders),
+      ],
     );
 
     if (supportedActions.length === 0) return { jobs: [] };
 
+    // Load the agent's persisted selectors for the claim matcher. The claim
+    // body can override DNS providers for this poll; targets/profiles come
+    // from registration/heartbeat.
+    const agentCaps = await client.query(
+      `SELECT declared_target_selectors,
+              declared_command_profile_names,
+              supported_dns_providers
+         FROM certops_agents
+        WHERE id = $1
+        FOR UPDATE`,
+      [agent.id],
+    );
+    const caps = agentCaps.rows[0] || {};
+    const targetSelectors = jsonbTextArray(caps.declared_target_selectors);
+    const commandProfiles = jsonbTextArray(caps.declared_command_profile_names);
+    const dnsProviders =
+      supportedDnsProviders.length > 0
+        ? supportedDnsProviders
+        : jsonbTextArray(caps.supported_dns_providers);
+
+    // B2/B5: agent lane only; match assigned agent, target selector, DNS
+    // provider, and command profile when the job requires them.
     const selected = await client.query(
       `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
-              approved_payload_hash, mode
+              approved_payload_hash, mode, executor_kind,
+              assigned_agent_id, required_target_selector,
+              required_dns_provider, required_command_profile
          FROM certificate_jobs
         WHERE workspace_id = $1
           AND status = 'pending'
+          AND executor_kind = 'agent'
           AND (scheduled_for IS NULL OR scheduled_for <= NOW())
           AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           AND operation = ANY($2::text[])
+          AND (assigned_agent_id IS NULL OR assigned_agent_id = $3::uuid)
+          AND (
+            required_target_selector IS NULL
+            OR required_target_selector = ANY($4::text[])
+          )
+          AND (
+            required_dns_provider IS NULL
+            OR required_dns_provider = ANY($5::text[])
+          )
+          AND (
+            required_command_profile IS NULL
+            OR required_command_profile = ANY($6::text[])
+          )
         ORDER BY created_at
-        LIMIT $3
+        LIMIT $7
         FOR UPDATE SKIP LOCKED`,
-      [agent.workspaceId, supportedActions, maxJobs],
+      [
+        agent.workspaceId,
+        supportedActions,
+        agent.id,
+        targetSelectors,
+        dnsProviders,
+        commandProfiles,
+        maxJobs,
+      ],
     );
 
     const jobs = [];
@@ -473,12 +636,48 @@ async function claimJobs({
         }
       }
 
+      // B15: resolve public cert before claiming so a missing inventory
+      // row blocks only this job instead of aborting the whole claim batch.
+      let deployPublicCert = null;
+      if (row.operation === "deploy") {
+        const rowPayload =
+          row.payload && typeof row.payload === "object"
+            ? row.payload
+            : safeParseJson(row.payload);
+        try {
+          deployPublicCert = await resolveDeployCert({
+            client,
+            workspaceId: agent.workspaceId,
+            job: row,
+            payload: rowPayload,
+          });
+        } catch (error) {
+          if (error?.code !== CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE) throw error;
+          await client.query(
+            `UPDATE certificate_jobs
+                SET status = 'blocked',
+                    error_code = $2,
+                    error_message = $3,
+                    completed_at = COALESCE(completed_at, NOW()),
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [
+              row.id,
+              CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+              "Public certificate material is unavailable for this deploy job",
+            ],
+          );
+          continue;
+        }
+      }
+
       const claimed = await client.query(
         `UPDATE certificate_jobs
             SET status = 'claimed',
                 claimed_by_agent_id = $2,
                 claim_id = gen_random_uuid(),
                 lease_expires_at = NOW() + make_interval(secs => $3),
+                lease_renewed_at = NULL,
                 attempt_count = attempt_count + 1,
                 queued_at = COALESCE(queued_at, NOW()),
                 updated_at = NOW()
@@ -513,15 +712,36 @@ async function claimJobs({
         attemptCount: job.attempt_count,
       };
 
+      if (deployPublicCert) {
+        basePayload.certificatePem = deployPublicCert.certificatePem;
+        basePayload.certificatePemSha256 =
+          deployPublicCert.certificatePemSha256;
+        if (
+          !basePayload.target ||
+          typeof basePayload.target !== "object" ||
+          Array.isArray(basePayload.target)
+        ) {
+          basePayload.target = {};
+        }
+        if (
+          deployPublicCert.fingerprintSha256 &&
+          !basePayload.target.fingerprintSha256
+        ) {
+          basePayload.target = {
+            ...basePayload.target,
+            fingerprintSha256: deployPublicCert.fingerprintSha256,
+          };
+        }
+      }
+
       const signedJob = await signJob({
         client,
         job: basePayload,
         agentId: agent.id,
         workspaceId: agent.workspaceId,
-        // Nonce validity covers the full lease plus grace so a legitimate
-        // in-lease result can always consume its nonce (see
-        // NONCE_TTL_GRACE_SECONDS).
-        nonceTtlSeconds: leaseSeconds + NONCE_TTL_GRACE_SECONDS,
+        // Nonce validity covers lease + reaper hard grace + delivery grace
+        // (leaseTiming.dispatchNonceTtlSeconds) and is extended on renew.
+        nonceTtlSeconds,
       });
       jobs.push(signedJob);
     }
@@ -538,6 +758,116 @@ function safeParseJson(value) {
   } catch {
     return {};
   }
+}
+
+// --- Lease renew (B6/B7) ---
+//
+// Contract for the agent runtime (see COORDINATION-B6.md at worktree root):
+//   POST /api/v1/certops/agent/jobs/:jobId/lease
+//   Auth: agent credential bearer
+//   Body: { claimId: <uuid from signed dispatch>, sequence?: <int>=1 }
+//   200: {
+//     ok: true,
+//     jobId, status: "running", claimId,
+//     leaseExpiresAt, nonceExpiresAt
+//   }
+// Call this to transition claimed→running on first renew, and again before
+// each external side effect (ACME/DNS/deploy/reload) so the reaper can tell
+// "never renewed / safe to requeue" from "effects unknown".
+
+/**
+ * Re-proves claim ownership (agent_id + claim_id), transitions claimed→running
+ * on first call, extends lease_expires_at, stamps lease_renewed_at, and
+ * extends the still-open dispatch nonce so late results remain reportable
+ * for the full renewable lease + hard-grace window.
+ */
+async function renewJobLease({
+  dbPool = pool,
+  agent,
+  jobId,
+  claimId,
+  envelope = {},
+  env = process.env,
+  deps = {},
+} = {}) {
+  const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
+  const extendNonce = deps.extendJobNonceExpiry || extendJobNonceExpiry;
+  const leaseSeconds = jobLeaseSeconds(env);
+  const nonceTtlSeconds = dispatchNonceTtlSeconds(env);
+
+  if (typeof jobId !== "string" || jobId.length === 0) {
+    throw serviceError("jobId is required", CERTOPS_AGENT_LEASE_INVALID);
+  }
+  if (typeof claimId !== "string" || claimId.length === 0) {
+    throw serviceError("claimId is required", CERTOPS_AGENT_LEASE_INVALID);
+  }
+
+  return await withTransaction(dbPool, async (client) => {
+    await enforceSequence({ client, agentRowId: agent.id, envelope });
+
+    const locked = await client.query(
+      `SELECT id, status, claimed_by_agent_id, claim_id, lease_expires_at
+         FROM certificate_jobs
+        WHERE id = $1
+          AND workspace_id = $2
+          AND executor_kind = 'agent'
+        FOR UPDATE`,
+      [jobId, agent.workspaceId],
+    );
+    const job = locked.rows[0];
+    if (!job) {
+      throw serviceError(
+        "Certificate job not found",
+        CERTOPS_AGENT_JOB_NOT_FOUND,
+      );
+    }
+    if (
+      String(job.claimed_by_agent_id || "") !== String(agent.id) ||
+      String(job.claim_id || "") !== String(claimId)
+    ) {
+      throw serviceError(
+        "Lease renew does not match the current claim for this job",
+        CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+      );
+    }
+    if (job.status !== "claimed" && job.status !== "running") {
+      throw serviceError(
+        "Certificate job is not in a renewable lease state",
+        CERTOPS_AGENT_LEASE_INVALID,
+      );
+    }
+
+    const updated = await client.query(
+      `UPDATE certificate_jobs
+          SET status = 'running',
+              started_at = COALESCE(started_at, NOW()),
+              lease_expires_at = NOW() + make_interval(secs => $2),
+              lease_renewed_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, status, claim_id, lease_expires_at, lease_renewed_at`,
+      [job.id, leaseSeconds],
+    );
+    const row = updated.rows[0];
+
+    const nonceOutcome = await extendNonce({
+      client,
+      jobId: String(job.id),
+      workspaceId: agent.workspaceId,
+      agentRowId: agent.id,
+      nonceTtlSeconds,
+    });
+
+    return {
+      ok: true,
+      jobId: String(row.id),
+      status: row.status,
+      claimId: row.claim_id,
+      leaseExpiresAt: dateToIso(row.lease_expires_at),
+      leaseRenewedAt: dateToIso(row.lease_renewed_at),
+      nonceExpiresAt: nonceOutcome.expiresAt,
+    };
+  });
 }
 
 // --- Results (7.4/7.7) ---
@@ -785,7 +1115,9 @@ async function assertEvidenceClaimOwnership({
 
 module.exports = {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_JOB_NOT_FOUND,
+  CERTOPS_AGENT_LEASE_INVALID,
   CERTOPS_AGENT_MESSAGE_INVALID,
   CERTOPS_AGENT_REGISTRATION_CONFLICT,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
@@ -801,11 +1133,13 @@ module.exports = {
   jobLeaseSeconds,
   recordHeartbeat,
   registerAgent,
+  renewJobLease,
+  resolveDeployPublicCertificate,
   _test: {
-    NONCE_TTL_GRACE_SECONDS,
     RESULT_STATUS_TO_JOB_STATUS,
     dateToIso,
     envelopeSequence,
+    normalizeStringList,
     safeParseJson,
     serviceError,
     withTransaction,

@@ -278,9 +278,17 @@ describe("CertOps inventory migration", () => {
       "expected certops_token_lifecycle_status migration",
     );
     assert.equal(certOpsTokenLifecycleMigration.version, 11);
+    const tailVersions = migrations
+      .slice(10)
+      .map((migration) => migration.version);
+    const expectedTailVersions = Array.from(
+      { length: tailVersions.length },
+      (_, index) => 11 + index,
+    );
     assert.deepEqual(
-      migrations.slice(-16).map((migration) => migration.version),
-      [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
+      tailVersions,
+      expectedTailVersions,
+      "migration versions from 11 onward must be sequential with no gaps or duplicates",
     );
     assert.match(
       certOpsTokenLifecycleMigration.sql,

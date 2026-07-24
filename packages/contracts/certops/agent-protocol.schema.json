@@ -194,6 +194,17 @@
             "enum": ["renew", "deploy", "reload", "revoke", "noop"]
           },
           "description": "Subset of job-payload.schema.json actions this agent build can execute; lets the claim query skip jobs the agent cannot run."
+        },
+        "supportedDnsProviders": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Matched against certificate_jobs.required_dns_provider at claim time."
         }
       }
     },

@@ -1841,6 +1841,94 @@ const migrations = [
         ON certificate_jobs(workspace_id, mode, status);
     `,
   },
+  {
+    version: 27,
+    name: "certops_dispatch_executor_lanes_and_routing",
+    sql: `
+      -- B2: immutable executor lane separating agent jobs from controller
+      -- provisioning jobs so an agent that supports 'deploy' can never claim
+      -- a controller_provisioning command (and vice versa).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS executor_kind TEXT NOT NULL DEFAULT 'agent';
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_executor_kind_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_executor_kind_check
+          CHECK (executor_kind IN ('agent', 'controller'));
+
+      -- Existing controller_provisioning rows must be lane-locked; the
+      -- column is otherwise immutable after insert (enforced in services).
+      UPDATE certificate_jobs
+         SET executor_kind = 'controller'
+       WHERE source = 'controller_provisioning'
+         AND executor_kind <> 'controller';
+
+      -- Controller claim binding: which authenticated cluster holds the
+      -- lease (distinct from claimed_by_agent_id on the agent lane).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS claimed_by_controller_cluster_id TEXT NULL
+          CHECK (
+            claimed_by_controller_cluster_id IS NULL OR
+            (
+              char_length(claimed_by_controller_cluster_id) BETWEEN 1 AND 63 AND
+              claimed_by_controller_cluster_id ~ '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+            )
+          );
+
+      -- B6: first successful lease renew stamps this; the reaper treats a
+      -- NULL value as "no side effects proven" (safe requeue) and a non-NULL
+      -- value as effects-unknown (manual reconciliation, no silent retry).
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS lease_renewed_at TIMESTAMPTZ NULL;
+
+      -- B5: job routing selectors set at creation time. NULL means "any
+      -- capable agent in the workspace may claim this job".
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS assigned_agent_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS required_target_selector TEXT NULL
+          CHECK (
+            required_target_selector IS NULL OR
+            char_length(required_target_selector) BETWEEN 1 AND 512
+          );
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS required_dns_provider TEXT NULL
+          CHECK (
+            required_dns_provider IS NULL OR
+            required_dns_provider ~ '^[A-Za-z0-9_.:-]{1,64}$'
+          );
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS required_command_profile TEXT NULL
+          CHECK (
+            required_command_profile IS NULL OR
+            required_command_profile ~ '^[A-Za-z0-9_.:-]{1,128}$'
+          );
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS fk_certificate_jobs_assigned_agent;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT fk_certificate_jobs_assigned_agent
+        FOREIGN KEY (assigned_agent_id)
+        REFERENCES certops_agents(id)
+        ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimable_agent_lane
+        ON certificate_jobs(workspace_id, status, executor_kind, next_attempt_at, scheduled_for)
+        WHERE status = 'pending' AND executor_kind = 'agent';
+      CREATE INDEX IF NOT EXISTS idx_certificate_jobs_claimable_controller_lane
+        ON certificate_jobs(workspace_id, status, executor_kind, created_at)
+        WHERE status = 'pending' AND executor_kind = 'controller';
+
+      -- B5: persisted agent capabilities used by the claim matcher.
+      -- declared_target_selectors / declared_command_profile_names already
+      -- exist from migration 24; these two cover operations + DNS providers
+      -- refreshed on heartbeat/claim.
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS supported_operations JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS supported_dns_providers JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `,
+  },
 ];
 
 async function runMigrations() {

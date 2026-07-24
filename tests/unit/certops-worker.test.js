@@ -103,6 +103,7 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(client.queries[0].sql, "BEGIN");
     const select = client.queries[1].sql;
     assert.match(select, /cj\.status IN \('claimed', 'running'\)/);
+    assert.match(select, /cj\.executor_kind = 'agent'/);
     assert.match(select, /cj\.lease_expires_at < NOW\(\)/);
     assert.match(select, /LEFT JOIN certops_agents ca/);
     assert.match(select, /AS agent_alive/);
@@ -120,6 +121,7 @@ describe("certops maintenance worker", () => {
         status: "claimed",
         attempt_count: 1,
         max_attempts: 3,
+        lease_renewed_at: null,
         agent_alive: false,
         past_hard_grace: false,
       },
@@ -171,6 +173,7 @@ describe("certops maintenance worker", () => {
         status: "claimed",
         attempt_count: 1,
         max_attempts: 3,
+        lease_renewed_at: null,
         agent_alive: true,
         past_hard_grace: false,
       },
@@ -194,17 +197,50 @@ describe("certops maintenance worker", () => {
     );
   });
 
-  it("fails alive-but-silent agents past the hard grace without requeue", async () => {
+  it("requeues never-renewed claimed jobs past hard grace even if agent is alive (B6)", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
-        id: "job-hung",
+        id: "job-hung-never-renewed",
         workspace_id: "ws-1",
         status: "claimed",
         attempt_count: 1,
         max_attempts: 3,
+        lease_renewed_at: null,
         agent_alive: true,
         past_hard_grace: true,
+      },
+    ]);
+
+    const summary = await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+    });
+
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 1,
+      failed: 0,
+      deferred: 0,
+    });
+    const update = client.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_jobs SET status = 'pending'"),
+    );
+    assert.ok(update, "never-renewed past grace must requeue safely");
+  });
+
+  it("fails renewed jobs as effects_unknown without requeue (B6)", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-renewed",
+        workspace_id: "ws-1",
+        status: "running",
+        attempt_count: 1,
+        max_attempts: 3,
+        lease_renewed_at: new Date("2026-07-22T10:00:00.000Z"),
+        agent_alive: false,
+        past_hard_grace: false,
       },
     ]);
 
@@ -223,9 +259,7 @@ describe("certops maintenance worker", () => {
       q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
     );
     assert.ok(update, "expected a fail UPDATE");
-    // The agent may have executed side effects: never requeue, and record
-    // lease_expired (not agent_offline) because the agent is still alive.
-    assert.deepStrictEqual(update.params, ["job-hung", "lease_expired"]);
+    assert.deepStrictEqual(update.params, ["job-renewed", "effects_unknown"]);
   });
 
   it("fails claimed jobs without retry budget as agent_offline", async () => {
@@ -237,6 +271,7 @@ describe("certops maintenance worker", () => {
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
+        lease_renewed_at: null,
         agent_alive: false,
         past_hard_grace: false,
       },
@@ -270,7 +305,7 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(metadata.errorCode, "agent_offline");
   });
 
-  it("never requeues running jobs because pending is not a legal transition", async () => {
+  it("never requeues running jobs because side effects may have happened", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
@@ -279,6 +314,7 @@ describe("certops maintenance worker", () => {
         status: "running",
         attempt_count: 0,
         max_attempts: 3,
+        lease_renewed_at: null,
         agent_alive: false,
         past_hard_grace: false,
       },
@@ -299,6 +335,7 @@ describe("certops maintenance worker", () => {
       q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
     );
     assert.ok(update, "running job must fail, not requeue");
+    assert.deepStrictEqual(update.params, ["job-3", "effects_unknown"]);
   });
 
   it("rolls back when a reaper update fails", async () => {
@@ -317,6 +354,7 @@ describe("certops maintenance worker", () => {
                 status: "claimed",
                 attempt_count: 0,
                 max_attempts: 3,
+                lease_renewed_at: null,
                 agent_alive: false,
                 past_hard_grace: false,
               },

@@ -6,6 +6,7 @@ const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const { createCertificateJob } = require("./jobs");
 const { upsertManagedCertificateForControllerProvisioning } = require("./inventory");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
+const { jobLeaseSeconds } = require("./leaseTiming");
 
 const CERTOPS_CONTROLLER_PROVISIONING_INVALID =
   "CERTOPS_CONTROLLER_PROVISIONING_INVALID";
@@ -258,6 +259,7 @@ async function createControllerProvisionIntent({
       // This source is server-owned; generic manual deploy jobs must never be
       // interpreted as executable cert-manager provisioning commands.
       source: CONTROLLER_PROVISIONING_JOB_SOURCE,
+      executorKind: "controller",
       requestedByUserId: actorUserId,
       subjectType: "managed_certificate",
       subjectId: managedCertificate.id,
@@ -356,12 +358,17 @@ async function authorizeControllerProvisioningMutation({
           AND d.workspace_id = j.workspace_id
         WHERE j.id = $1
           AND j.workspace_id = $2
+          AND j.executor_kind = 'controller'
           AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
           AND j.operation = 'deploy'
           AND j.status NOT IN ('rejected', 'succeeded', 'failed', 'blocked', 'cancelled')
           AND j.payload->>'kind' = 'cert_manager_provision'
           AND j.payload #>> '{desiredCertificate,clusterId}' = $3
           AND d.controller_cluster_id = $3
+          AND (
+            j.claimed_by_controller_cluster_id IS NULL
+            OR j.claimed_by_controller_cluster_id = $3
+          )
         FOR UPDATE OF j`,
       [normalizedJobId, apiToken.workspaceId, apiToken.controllerClusterId],
     );
@@ -438,26 +445,48 @@ async function authorizeControllerProvisioningMutation({
   }
 }
 
-async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool } = {}) {
+async function takeNextControllerProvisioningCommand({
+  apiToken,
+  dbPool = pool,
+  env = process.env,
+} = {}) {
   if (!apiToken?.workspaceId || !apiToken?.controllerClusterId) {
     throw provisioningError("Provisioning token binding is unavailable", CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_BINDING_REQUIRED);
   }
+  const leaseSeconds = jobLeaseSeconds(env);
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
     await lockWorkspaceForCertOpsSideEffect({ client, workspaceId: apiToken.workspaceId });
+    // B2: controller lane only. Atomically claim/lease to the authenticated
+    // cluster identity so (a) agents never see these jobs and (b) another
+    // cluster cannot steal a command mid-delivery.
     const selected = await client.query(
-      `SELECT j.id, j.payload, j.subject_type, j.subject_id,
-              d.started_at, d.completed_at, d.failed_at
+      `SELECT j.id, j.payload, j.subject_type, j.subject_id, j.status,
+              j.claimed_by_controller_cluster_id, j.claim_id, j.lease_expires_at,
+              d.started_at, d.completed_at, d.failed_at, d.delivered_at
          FROM certificate_jobs j
          LEFT JOIN certificate_controller_provision_deliveries d ON d.job_id = j.id
         WHERE j.workspace_id = $1
+          AND j.executor_kind = 'controller'
           AND j.source = '${CONTROLLER_PROVISIONING_JOB_SOURCE}'
           AND j.operation = 'deploy'
-          AND j.status NOT IN ('rejected', 'succeeded', 'failed', 'blocked', 'cancelled')
+          AND j.status IN ('pending', 'claimed', 'running')
           AND j.payload->>'kind' = 'cert_manager_provision'
           AND j.payload #>> '{desiredCertificate,clusterId}' = $2
-          AND (d.delivered_at IS NULL OR d.delivered_at <= NOW() - ($3 || ' seconds')::interval)
+          AND (
+            j.claimed_by_controller_cluster_id IS NULL
+            OR j.claimed_by_controller_cluster_id = $2
+          )
+          AND (
+            d.delivered_at IS NULL
+            OR d.delivered_at <= NOW() - ($3 || ' seconds')::interval
+            OR (
+              j.claimed_by_controller_cluster_id = $2
+              AND j.lease_expires_at IS NOT NULL
+              AND j.lease_expires_at < NOW()
+            )
+          )
         ORDER BY j.created_at ASC, j.id ASC
         FOR UPDATE OF j SKIP LOCKED
         LIMIT 1`,
@@ -488,6 +517,9 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
         `UPDATE certificate_jobs
             SET status = 'blocked', error_code = $2,
                 error_message = 'Controller provisioning command rejected',
+                claimed_by_controller_cluster_id = NULL,
+                claim_id = NULL,
+                lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1`,
         [row.id, INVALID_COMMAND_ERROR_CODE],
@@ -527,6 +559,9 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
         `UPDATE certificate_jobs
             SET status = 'blocked', error_code = $2,
                 error_message = 'Controller provisioning command rejected',
+                claimed_by_controller_cluster_id = NULL,
+                claim_id = NULL,
+                lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1`,
         [row.id, INVALID_COMMAND_ERROR_CODE],
@@ -534,6 +569,27 @@ async function takeNextControllerProvisioningCommand({ apiToken, dbPool = pool }
       await client.query("COMMIT");
       return null;
     }
+
+    // Atomic claim/lease bound to this cluster identity.
+    await client.query(
+      `UPDATE certificate_jobs
+          SET status = CASE
+                WHEN status = 'pending' THEN 'claimed'
+                ELSE status
+              END,
+              claimed_by_controller_cluster_id = $2,
+              claim_id = COALESCE(claim_id, gen_random_uuid()),
+              lease_expires_at = NOW() + make_interval(secs => $3),
+              attempt_count = CASE
+                WHEN status = 'pending' THEN attempt_count + 1
+                ELSE attempt_count
+              END,
+              queued_at = COALESCE(queued_at, NOW()),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [row.id, apiToken.controllerClusterId, leaseSeconds],
+    );
+
     await client.query(
       `INSERT INTO certificate_controller_provision_deliveries
          (job_id, workspace_id, controller_cluster_id, delivered_at, updated_at)

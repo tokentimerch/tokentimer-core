@@ -34,6 +34,7 @@ const AGENT_PATHS = [
   "/api/v1/certops/agent/register",
   "/api/v1/certops/agent/heartbeat",
   "/api/v1/certops/agent/jobs/claim",
+  "/api/v1/certops/agent/jobs/job-1/lease",
   "/api/v1/certops/agent/jobs/results",
 ];
 

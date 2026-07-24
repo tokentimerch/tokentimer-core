@@ -46,6 +46,7 @@ const AGENT_ROUTES = {
   "/api/v1/certops/agent/register": "agentBootstrapTokenAuth",
   "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
+  "/api/v1/certops/agent/jobs/{jobId}/lease": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/results": "agentCredentialAuth",
 };
 
@@ -78,7 +79,7 @@ function extractSchemaBlock(yaml, schemaName) {
 }
 
 describe("CertOps agent routes OpenAPI contract", () => {
-  it("documents all four agent paths with the frozen auth split", () => {
+  it("documents all agent paths with the frozen auth split", () => {
     for (const [routePath, scheme] of Object.entries(AGENT_ROUTES)) {
       const block = extractPathBlock(openApiYaml, routePath);
       assert.ok(
@@ -144,6 +145,15 @@ describe("CertOps agent routes OpenAPI contract", () => {
           "PRIVATE_KEY_MATERIAL_REJECTED",
         ],
         statuses: ['"401"', '"404"', '"409"', '"410"', '"422"', '"429"'],
+      },
+      "/api/v1/certops/agent/jobs/{jobId}/lease": {
+        success: '"200"',
+        codes: [
+          "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH",
+          "CERTOPS_AGENT_RETIRED",
+          "PRIVATE_KEY_MATERIAL_REJECTED",
+        ],
+        statuses: ['"400"', '"401"', '"404"', '"409"', '"410"', '"422"', '"429"'],
       },
       "/api/v1/certops/agent/jobs/results": {
         success: '"200"',
@@ -221,7 +231,7 @@ describe("CertOps agent routes OpenAPI contract", () => {
 
 describe("CertOps route-compat contract (agent runtime)", () => {
   it("carries the agent-runtime version and status", () => {
-    assert.strictEqual(routeCompat.version, "0.15.0");
+    assert.strictEqual(routeCompat.version, "0.16.0");
     assert.strictEqual(routeCompat.status, "agent-runtime-stable");
   });
 
@@ -235,7 +245,7 @@ describe("CertOps route-compat contract (agent runtime)", () => {
     }
   });
 
-  it("keeps the four agent routes in stableRoutes as POST", () => {
+  it("keeps the agent routes in stableRoutes as POST", () => {
     const stable = routeCompat.guarantees.stableRoutes;
     for (const routePath of Object.keys(AGENT_ROUTES)) {
       assert.ok(

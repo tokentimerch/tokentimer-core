@@ -5,6 +5,7 @@
  *   POST /api/v1/certops/agent/register     (bootstrap-token auth)
  *   POST /api/v1/certops/agent/heartbeat    (credential auth)
  *   POST /api/v1/certops/agent/jobs/claim   (credential auth)
+ *   POST /api/v1/certops/agent/jobs/:jobId/lease (credential auth)
  *   POST /api/v1/certops/agent/jobs/results (credential auth)
  *
  * Middleware order mirrors apps/api/routes/certops-executor.js:
@@ -40,7 +41,9 @@ const {
 const { CERTOPS_DISABLED } = require("../services/certops/settings");
 const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_JOB_NOT_FOUND,
+  CERTOPS_AGENT_LEASE_INVALID,
   CERTOPS_AGENT_REGISTRATION_CONFLICT,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
@@ -53,6 +56,7 @@ const {
   ingestResult,
   recordHeartbeat,
   registerAgent,
+  renewJobLease,
 } = require("../services/certops/agentDispatch");
 const {
   createCertificateEvidence,
@@ -64,7 +68,10 @@ const { CERTOPS_JOB_NOT_FOUND } = require("../services/certops/jobs");
 const CERTOPS_AGENT_REGISTER_PATH = "/api/v1/certops/agent/register";
 const CERTOPS_AGENT_HEARTBEAT_PATH = "/api/v1/certops/agent/heartbeat";
 const CERTOPS_AGENT_JOBS_CLAIM_PATH = "/api/v1/certops/agent/jobs/claim";
+const CERTOPS_AGENT_JOBS_LEASE_PATH = "/api/v1/certops/agent/jobs/:jobId/lease";
 const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
+const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const CLAIM_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_MESSAGE_INVALID = "CERTOPS_AGENT_MESSAGE_INVALID";
@@ -272,6 +279,51 @@ function validateClaimBody(envelope) {
       throw messageError("supportedActions is invalid");
     }
   }
+  if (body.supportedDnsProviders !== undefined) {
+    if (
+      !Array.isArray(body.supportedDnsProviders) ||
+      body.supportedDnsProviders.length > 64
+    ) {
+      throw messageError("supportedDnsProviders is invalid");
+    }
+    for (const item of body.supportedDnsProviders) {
+      if (
+        typeof item !== "string" ||
+        item.length < 1 ||
+        item.length > 64 ||
+        !AGENT_ID_PATTERN.test(item)
+      ) {
+        throw messageError("supportedDnsProviders contains an invalid entry");
+      }
+    }
+  }
+  return body;
+}
+
+/**
+ * Lease renew body (B6). Not an agent-protocol envelope messageType: the
+ * job id is in the path and ownership is re-proven with claimId + the
+ * authenticated agent. Optional sequence keeps the same anti-regression
+ * gate as other credential routes.
+ */
+function validateLeaseBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw messageError("Lease body must be a JSON object");
+  }
+  if (
+    typeof body.claimId !== "string" ||
+    body.claimId.length < 1 ||
+    body.claimId.length > 128 ||
+    !CLAIM_ID_PATTERN.test(body.claimId)
+  ) {
+    throw messageError("claimId is invalid");
+  }
+  if (
+    body.sequence !== undefined &&
+    (!Number.isInteger(body.sequence) || body.sequence < 1)
+  ) {
+    throw messageError("sequence must be an integer >= 1 when present");
+  }
   return body;
 }
 
@@ -459,6 +511,16 @@ function handleAgentRouteError(res, error) {
         error: "Result does not match the current claim for this job",
         code: CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
       });
+    case CERTOPS_AGENT_LEASE_INVALID:
+      return res.status(400).json({
+        error: error.message || "Lease renew request is invalid",
+        code: CERTOPS_AGENT_LEASE_INVALID,
+      });
+    case CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE:
+      return res.status(409).json({
+        error: error.message || "Deploy public certificate is unavailable",
+        code: CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+      });
     case CERTOPS_AGENT_RESULT_NONCE_REJECTED:
       return res.status(409).json({
         error: "Result nonce was rejected",
@@ -546,6 +608,33 @@ async function claimHandler(req, res, options = {}) {
     // { jobs: [...] } where each job is the signed dispatch payload the
     // agent client passes to verifyJobSignature (job fields + nonce,
     // issuedAt, expiresAt, signingKeyId, signature).
+    return res.status(200).json(result);
+  } catch (error) {
+    return handleAgentRouteError(res, error);
+  }
+}
+
+async function leaseHandler(req, res, options = {}) {
+  try {
+    const jobId = req.params?.jobId;
+    if (
+      typeof jobId !== "string" ||
+      jobId.length < 1 ||
+      jobId.length > 128 ||
+      !JOB_ID_PATTERN.test(jobId)
+    ) {
+      throw messageError("jobId is invalid");
+    }
+    const body = validateLeaseBody(req.body);
+    const result = await (options.renewJobLease || renewJobLease)({
+      dbPool: options.dbPool,
+      agent: req.certopsAgent,
+      jobId,
+      claimId: body.claimId,
+      envelope: { sequence: body.sequence },
+      env: options.env,
+      deps: options.leaseDeps,
+    });
     return res.status(200).json(result);
   } catch (error) {
     return handleAgentRouteError(res, error);
@@ -727,6 +816,15 @@ function createCertOpsAgentRouter(options = {}) {
     (req, res) => claimHandler(req, res, options),
   );
 
+  // B6: claimed→running + lease/nonce renew, keyed on agent + claimId.
+  // See COORDINATION-B6.md for the agent-runtime contract.
+  certOpsAgentRouter.post(
+    CERTOPS_AGENT_JOBS_LEASE_PATH,
+    ...credentialChain,
+    requireNonRetiredAgent,
+    (req, res) => leaseHandler(req, res, options),
+  );
+
   // Results keep the retired 410 consistent with heartbeat/claim: the agent
   // client's postJson treats any non-2xx as terminal for the request, and
   // only heartbeat special-cases 410 into { retired: true } -- a retired
@@ -750,6 +848,7 @@ module.exports._test = {
   AGENT_UNAUTHORIZED_RESPONSE,
   CERTOPS_AGENT_HEARTBEAT_PATH,
   CERTOPS_AGENT_JOBS_CLAIM_PATH,
+  CERTOPS_AGENT_JOBS_LEASE_PATH,
   CERTOPS_AGENT_JOBS_RESULTS_PATH,
   CERTOPS_AGENT_MESSAGE_INVALID,
   CERTOPS_AGENT_REGISTER_PATH,
@@ -758,6 +857,7 @@ module.exports._test = {
   claimHandler,
   handleAgentRouteError,
   heartbeatHandler,
+  leaseHandler,
   registerHandler,
   rejectAgentPrivateMaterial,
   requireNonRetiredAgent,
@@ -766,6 +866,7 @@ module.exports._test = {
   validateEnvelope,
   validateEvidenceBody,
   validateHeartbeatBody,
+  validateLeaseBody,
   validateRegisterBody,
   validateResultBody,
 };

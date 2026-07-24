@@ -16,6 +16,7 @@ const {
   getActiveSigningKeyPublicInfo,
   signJobForDispatch,
   consumeNonce,
+  extendJobNonceExpiry,
   sweepExpiredNonces,
   _test,
 } = require(
@@ -134,6 +135,32 @@ function createMemoryClient() {
         if (!row) return { rows: [] };
         row.consumed_at = new Date();
         return { rows: [{ nonce: row.nonce }] };
+      }
+
+      if (
+        normalizedSql.includes("UPDATE certops_consumed_nonces") &&
+        normalizedSql.includes("SET expires_at = NOW()")
+      ) {
+        const jobId = params[0];
+        const workspaceId = params[1];
+        const agentRowId = params[2];
+        const ttlSeconds = params[3];
+        const matches = nonceRows.filter(
+          (item) =>
+            item.job_id === jobId &&
+            item.workspace_id === workspaceId &&
+            item.consumed_at === null &&
+            (agentRowId == null ||
+              item.issued_to_agent_id == null ||
+              item.issued_to_agent_id === agentRowId),
+        );
+        const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+        for (const row of matches) {
+          row.expires_at = expiresAt;
+        }
+        return {
+          rows: matches.length ? [{ expires_at: expiresAt }] : [],
+        };
       }
 
       if (
