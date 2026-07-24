@@ -19,6 +19,7 @@ const {
   buildJobPolicyDescriptor,
   resolveJobCertPath,
   resolveJobMode,
+  isValidCertificateId,
   runDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
@@ -29,6 +30,8 @@ const {
   executeDeployJob,
   renewJobLeaseOrAbort,
   createLeaseState,
+  startPeriodicLeaseRenewal,
+  stopPeriodicLeaseRenewal,
   AGENT_VERSION,
   EXECUTABLE_JOB_ACTIONS,
   OBSERVE_ONLY_CLAIM_ACTIONS,
@@ -103,6 +106,16 @@ function engineWith(policy = {}, options = {}) {
 }
 
 const silentLog = () => {};
+
+async function waitUntil(predicate, { timeoutMs = 2000, intervalMs = 5 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`waitUntil: condition not met within ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
 
 function claimedJob(overrides = {}) {
   return {
@@ -990,6 +1003,40 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(resolveJobMode({ mode: "real", payload: { mode: "dry_run" } }), "real");
   });
 
+  it("resolveJobMode fails CLOSED (dry_run) on an unrecognized mode string, never defaulting to real", () => {
+    // Regression: a present-but-garbage mode value (typo, future enum value
+    // this build predates, or a tampered field) must never be treated the
+    // same as "omitted" -- omitted safely defaults to "real" per
+    // COORDINATION-B4, but a value that IS present and does NOT match a
+    // known mode must resolve to the no-side-effect "dry_run" mode instead
+    // of silently running live operations.
+    assert.equal(resolveJobMode({ mode: "REAL" }), "dry_run");
+    assert.equal(resolveJobMode({ mode: "live" }), "dry_run");
+    assert.equal(resolveJobMode({ mode: "dry-run" }), "dry_run");
+    assert.equal(resolveJobMode({ mode: "" }), "real");
+    assert.equal(resolveJobMode({ payload: { mode: "bogus" } }), "dry_run");
+    // Top-level garbage takes precedence over a valid nested value too.
+    assert.equal(resolveJobMode({ mode: "bogus", payload: { mode: "real" } }), "dry_run");
+  });
+
+  it("isValidCertificateId enforces the job-payload.schema.json certificateId shape", () => {
+    assert.equal(isValidCertificateId("cert-1"), true);
+    assert.equal(isValidCertificateId("Cert_1.example:2026"), true);
+    assert.equal(isValidCertificateId("a".repeat(128)), true);
+    // Regression: this is the one gate standing between an untrusted
+    // certificateId and a keysDir path-traversal write/read
+    // (`${certificateId}.key.pem`), so every path-hostile shape must be
+    // rejected structurally, matching the schema's pattern/length exactly.
+    assert.equal(isValidCertificateId("../../../etc/passwd"), false);
+    assert.equal(isValidCertificateId("a/b"), false);
+    assert.equal(isValidCertificateId("a\\b"), false);
+    assert.equal(isValidCertificateId(""), false);
+    assert.equal(isValidCertificateId("a".repeat(129)), false);
+    assert.equal(isValidCertificateId(null), false);
+    assert.equal(isValidCertificateId(undefined), false);
+    assert.equal(isValidCertificateId(42), false);
+  });
+
   it("renews the lease after accept and reports blocked when ownership is lost", async () => {
     const client = createRecordingClient();
     client.renewLease = async (params) => {
@@ -1052,6 +1099,126 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(client.calls.reportResult.length, 1);
     assert.equal(client.calls.reportResult[0].status, "blocked");
     assert.match(client.calls.reportResult[0].errorMessage, /mandatory confirmation failed/);
+  });
+
+  it("rejects a real renew job whose deploy certPath is outside the policy allowlist BEFORE generating a key (fail-fast, no wasted ACME order)", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    // allowedPaths only covers workDir/deployed; the job's certPath points
+    // elsewhere entirely, matching a policy-disallowed deploy destination.
+    const disallowedDir = path.join(workDir, "not-allowed");
+    fs.mkdirSync(disallowedDir, { recursive: true });
+    const policyEngine = engineWith(
+      {
+        allowedPaths: [path.join(workDir, "deployed")],
+        allowedCommands: { "certbot-renew": { argv: ["certbot"] } },
+        allowedCaEndpoints: ["https://acme.example/dir"],
+      },
+      { declaredTargetSelectors: ["example.com"] },
+    );
+    const job = makeSignedJob({
+      action: "renew",
+      mode: "real",
+      claimId: "claim-path-preflight",
+      jobId: "job-path-preflight",
+      commandRef: "certbot-renew",
+      caEndpoint: "https://acme.example/dir",
+      certPath: path.join(disallowedDir, "cert.pem"),
+    });
+
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.ok(outcome.rejectionReason, "expected a policy rejectionReason");
+    // The whole point of a fail-fast preflight: no key material was ever
+    // generated (keysDir itself was never even created) for a job that
+    // was always going to be rejected at deploy time anyway.
+    assert.equal(fs.existsSync(executionContext.execution.keysDir), false);
+  });
+
+  it("rejects a real renew job with a policy-disallowed dnsProvider before any mutation", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const policyEngine = engineWith(
+      {
+        allowedPaths: [workDir],
+        allowedCommands: { "certbot-renew": { argv: ["certbot"] } },
+        allowedCaEndpoints: ["https://acme.example/dir"],
+        allowedDnsProviders: ["route53"],
+      },
+      { declaredTargetSelectors: ["example.com"] },
+    );
+    const job = makeSignedJob({
+      action: "renew",
+      mode: "real",
+      claimId: "claim-dns-preflight",
+      jobId: "job-dns-preflight",
+      commandRef: "certbot-renew",
+      caEndpoint: "https://acme.example/dir",
+      certPath: path.join(workDir, "deployed", "cert.pem"),
+      dnsProvider: "cloudflare",
+      dnsZone: "example.com",
+    });
+
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "rejected");
+    assert.equal(fs.existsSync(executionContext.execution.keysDir), false);
+  });
+
+  it("rejects a real renew job whose certificateId is path-traversal-shaped, BEFORE writing any key file", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const policyEngine = engineWith(
+      {
+        allowedPaths: [workDir],
+        allowedCommands: { "certbot-renew": { argv: ["certbot"] } },
+        allowedCaEndpoints: ["https://acme.example/dir"],
+      },
+      { declaredTargetSelectors: ["example.com"] },
+    );
+    const job = makeSignedJob({
+      action: "renew",
+      mode: "real",
+      claimId: "claim-certid-preflight",
+      jobId: "job-certid-preflight",
+      commandRef: "certbot-renew",
+      caEndpoint: "https://acme.example/dir",
+      certPath: path.join(workDir, "deployed", "cert.pem"),
+      certificateId: "../../../etc/cron.d/malicious",
+    });
+
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /certificateId/);
+    // The gate runs before keysDir is even created; no key file exists
+    // anywhere, in particular not outside keysDir.
+    assert.equal(fs.existsSync(executionContext.execution.keysDir), false);
   });
 
   it("renews the lease before each side-effecting renew step", async () => {
@@ -1609,6 +1776,89 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
         }),
       /replay store/,
     );
+  });
+
+  it("buildExecutionContext threads the configured clockDriftToleranceMs into the replay cache's retention (not the 30s default)", () => {
+    // Regression: retentionToleranceMs must track execution.clockDriftToleranceMs
+    // exactly, since checkJobTimeWindow accepts jobs until expiresAt + that same
+    // tolerance. A hardcoded default here would let the sweep evict a nonce
+    // while its job is still acceptable, reopening the replay window.
+    const storePath = path.join(workDir, "tolerance-replay-store.json");
+    const context = buildExecutionContext({
+      config: {
+        execution: {
+          enabled: true,
+          dryRun: true,
+          keysDir: path.join(workDir, "tolerance-keys"),
+          replayStorePath: storePath,
+          outboxDir: path.join(workDir, "tolerance-outbox"),
+          clockDriftToleranceMs: 300000,
+        },
+        pinnedSigningKey: null,
+      },
+    });
+
+    const nowMs = Date.now();
+    // expiresAt is 100s in the past: outside the 30s default tolerance
+    // (would be evicted) but well inside the configured 300s tolerance
+    // (must be retained).
+    const expiresAt = nowMs - 100000;
+    context.replayCache.consume({ nonce: "n-1", jobId: "job-1", expiresAt });
+
+    const removed = context.replayCache.sweep(nowMs);
+    assert.equal(removed, 0, "nonce must survive sweep within the configured 300s tolerance");
+    assert.equal(context.replayCache.size(), 1);
+
+    // Past the configured tolerance, the sweep must evict it.
+    const removedLater = context.replayCache.sweep(nowMs + 300000 + 1000);
+    assert.equal(removedLater, 1);
+    assert.equal(context.replayCache.size(), 0);
+  });
+
+  it("startPeriodicLeaseRenewal clears a stale abort once a later heartbeat actually confirms the lease (no sticky misreport)", async () => {
+    // Regression: a transient heartbeat failure at/after the confirmed lease
+    // expiry aborts immediately (status "blocked"). If the very next
+    // heartbeat then succeeds, getAbort() must stop reporting that stale
+    // abort -- otherwise a fully executed success later gets overwritten
+    // with "blocked" (see handleClaimedJob) and the journal cleanup for
+    // terminal "blocked" outcomes erases the record of real side effects.
+    let calls = 0;
+    const leaseClient = {
+      renewLease: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("simulated transient network blip");
+        }
+        return {
+          ok: true,
+          leaseExpiresAt: new Date(Date.now() + 900000).toISOString(),
+        };
+      },
+    };
+    const leaseState = createLeaseState();
+    // Already at/past expiry so the first transient failure aborts
+    // immediately (no internal retry loop to wait out).
+    leaseState.lastConfirmedExpiresAtMs = Date.now() - 1000;
+
+    const handle = startPeriodicLeaseRenewal(
+      { leaseClient, jobId: "job-sticky", claimId: "claim-1", log: silentLog, leaseState },
+      { intervalMs: 10 },
+    );
+    try {
+      await waitUntil(() => calls >= 1, { timeoutMs: 2000 });
+      await waitUntil(() => handle.getAbort() !== null, { timeoutMs: 2000 });
+      assert.equal(handle.getAbort().status, "blocked");
+
+      await waitUntil(() => calls >= 2, { timeoutMs: 2000 });
+      await waitUntil(() => handle.getAbort() === null, { timeoutMs: 2000 });
+      assert.equal(
+        handle.getAbort(),
+        null,
+        "a later successful renew must clear the earlier transient abort",
+      );
+    } finally {
+      stopPeriodicLeaseRenewal(handle);
+    }
   });
 
   it("resolveJobCertPath prefers job.certPath, falls back to absolute target.reference, else null", () => {

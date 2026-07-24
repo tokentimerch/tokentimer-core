@@ -147,13 +147,16 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     const source = sourceName(zone, recordName);
     const records = Array.isArray(listResult.data) ? listResult.data : [];
     // Exact type + source + target match so cleanup never deletes an
-    // unrelated record that happens to share the name.
+    // unrelated record that happens to share the name. Infomaniak may
+    // return the target quoted (RFC 1035 TXT wire representation); accept
+    // both spellings so cleanup never silently no-ops and orphans the
+    // challenge record.
     const matches = records.filter(
       (record) =>
         record &&
         record.type === "TXT" &&
         record.source === source &&
-        record.target === txtValue &&
+        (record.target === txtValue || record.target === `"${txtValue}"`) &&
         (isNonEmptyString(record.id) || Number.isInteger(record.id)),
     );
     if (matches.length === 0) {

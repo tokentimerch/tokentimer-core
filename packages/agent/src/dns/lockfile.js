@@ -116,14 +116,38 @@ async function withFileLock(key, task, options = {}) {
       }
 
       if (stale) {
+        // Reclaim by atomic rename rather than unlink-by-path: renaming a
+        // stale lock file to a per-attempt-unique name is atomic on both
+        // POSIX and Windows, so at most one concurrent waiter can ever win
+        // the rename for a given on-disk lock file instance. A plain
+        // stat-then-unlink here would race: waiter B could stat, decide
+        // stale, then waiter A reclaims (unlinks the stale file and creates
+        // a fresh lock) before B's unlink runs; B's unlink-by-path would
+        // then delete A's brand-new lock, and both A and B would end up
+        // believing they hold the lock and run the task concurrently --
+        // exactly the merge-then-REPLACE clobbering scenario this lock
+        // exists to prevent.
+        const reclaimPath = `${lockPath}.reclaim.${process.pid}.${crypto
+          .randomBytes(8)
+          .toString("hex")}`;
         try {
-          fs.unlinkSync(lockPath);
-          continue;
+          fs.renameSync(lockPath, reclaimPath);
+        } catch (renameErr) {
+          if (renameErr && renameErr.code === "ENOENT") {
+            // Another waiter already reclaimed or released it first; retry
+            // without touching anything we no longer own.
+            continue;
+          }
+          throw renameErr;
+        }
+        try {
+          fs.unlinkSync(reclaimPath);
         } catch (unlinkErr) {
-          if (unlinkErr && unlinkErr.code !== "ENOENT") {
+          if (!unlinkErr || unlinkErr.code !== "ENOENT") {
             throw unlinkErr;
           }
         }
+        continue;
       }
 
       if (now() - startedAt >= waitTimeoutMs) {
@@ -149,8 +173,12 @@ async function withFileLock(key, task, options = {}) {
       fs.unlinkSync(lockPath);
     } catch (unlinkErr) {
       if (!unlinkErr || unlinkErr.code !== "ENOENT") {
-        // Best-effort release; surface unexpected failures.
-        throw unlinkErr;
+        // Best-effort release; log rather than throw from a finally block,
+        // which would otherwise replace/mask task()'s own thrown error
+        // (or its return value) with this cleanup failure.
+        process.stderr.write(
+          `dns: failed to release lock ${JSON.stringify(key)} at ${lockPath}: ${unlinkErr.message}\n`,
+        );
       }
     }
   }

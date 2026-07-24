@@ -530,6 +530,77 @@ function backupPathFor(destinationPath, backupDir, now) {
   return path.join(dir, `${path.basename(destinationPath)}.${timestamp}.bak`);
 }
 
+const BACKUP_FILENAME_SUFFIX = ".bak";
+
+/**
+ * Prunes old timestamped backups for one destination basename down to
+ * `retentionCount`, keeping the most recent ones. Only ever deletes files
+ * matching this module's OWN backup naming convention
+ * (`<basename>.<ISO-ts-with-dashes>.bak`) inside the resolved backup
+ * directory, so it can never remove an unrelated file an operator placed
+ * there. Best-effort: ANY failure (readdir, unlink, anything unexpected) is
+ * caught and swallowed internally rather than propagated -- backup
+ * retention is disk-hygiene, not a correctness gate, and call sites invoke
+ * this fire-and-forget after a deploy has already been reported successful,
+ * with no logger threaded through, so there is nothing useful a caller
+ * could do with a rejected promise here besides accidentally failing an
+ * otherwise-successful deploy.
+ *
+ * @param {string} destinationPath
+ * @param {string|undefined|null} backupDir
+ * @param {number|undefined|null} retentionCount when absent, no pruning
+ *   happens (unbounded backups is the pre-existing default behavior)
+ * @param {{ _fsOverrides?: object }} [options]
+ * @returns {Promise<{ removed: string[] }>}
+ */
+async function pruneDeployBackups(destinationPath, backupDir, retentionCount, { _fsOverrides } = {}) {
+  if (!Number.isInteger(retentionCount) || retentionCount < 1) {
+    return { removed: [] };
+  }
+  try {
+    const fspImpl = { ...fsp, ..._fsOverrides };
+    const dir = backupDir || path.dirname(destinationPath);
+    const basename = path.basename(destinationPath);
+    const prefix = `${basename}.`;
+
+    let entries;
+    try {
+      entries = await fspImpl.readdir(dir);
+    } catch (err) {
+      if (err?.code === "ENOENT") return { removed: [] };
+      throw err;
+    }
+
+    const candidates = entries.filter(
+      (name) => name.startsWith(prefix) && name.endsWith(BACKUP_FILENAME_SUFFIX),
+    );
+    if (candidates.length <= retentionCount) {
+      return { removed: [] };
+    }
+
+    // Sort by the embedded timestamp (lexicographically sortable ISO-8601
+    // with dashes in place of colons), oldest first, so retention always
+    // keeps the most RECENT backups regardless of filesystem mtime
+    // resolution or clock skew between backup writes.
+    const sorted = [...candidates].sort();
+    const toRemove = sorted.slice(0, sorted.length - retentionCount);
+
+    const removed = [];
+    for (const name of toRemove) {
+      const fullPath = path.join(dir, name);
+      try {
+        await fspImpl.unlink(fullPath);
+        removed.push(fullPath);
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+    }
+    return { removed };
+  } catch (_err) {
+    return { removed: [] };
+  }
+}
+
 // --- Deploy ------------------------------------------------------------------
 
 /**
@@ -801,6 +872,25 @@ async function deployCertificate({
     } catch (err) {
       const rolledBack = await rollbackFiles();
       return failure("write", `deploy: atomic write failed: ${err?.message || err}`, rolledBack);
+    }
+
+    // Retention pruning runs AFTER the deploy is already durably committed
+    // and is best-effort (see pruneDeployBackups docblock) -- it must never
+    // affect the success result of a deploy that already happened.
+    if (Number.isInteger(target.backupRetentionCount)) {
+      if (backupPath !== null) {
+        await pruneDeployBackups(realDestination, target.backupDir, target.backupRetentionCount, {
+          _fsOverrides,
+        });
+      }
+      if (chainBackupPath !== null && realChainDestination !== null) {
+        await pruneDeployBackups(
+          realChainDestination,
+          target.backupDir,
+          target.backupRetentionCount,
+          { _fsOverrides },
+        );
+      }
     }
 
     counters.succeeded += 1;
@@ -1188,6 +1278,36 @@ async function deployCertificateAndKey({
 
     if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
 
+    // Retention pruning runs AFTER the deploy is already durably committed
+    // and is best-effort (see pruneDeployBackups docblock) -- it must never
+    // affect the success result of a deploy that already happened.
+    if (Number.isInteger(target.backupRetentionCount)) {
+      if (certBackupPath !== null) {
+        await pruneDeployBackups(
+          realCertDestination,
+          target.backupDir,
+          target.backupRetentionCount,
+          { _fsOverrides },
+        );
+      }
+      if (keyBackupPath !== null) {
+        await pruneDeployBackups(
+          realKeyDestination,
+          target.backupDir,
+          target.backupRetentionCount,
+          { _fsOverrides },
+        );
+      }
+      if (chainBackupPath !== null && realChainDestination !== null) {
+        await pruneDeployBackups(
+          realChainDestination,
+          target.backupDir,
+          target.backupRetentionCount,
+          { _fsOverrides },
+        );
+      }
+    }
+
     counters.succeeded += 1;
     return {
       deployed: true,
@@ -1297,6 +1417,7 @@ module.exports = {
   deployCertificateAndKey,
   discardDeployBackups,
   removeDeployedArtifacts,
+  pruneDeployBackups,
   parseDeployFileMode,
   getDeployMetrics,
   resetDeployMetrics,

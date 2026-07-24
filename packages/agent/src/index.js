@@ -105,7 +105,7 @@ const {
   hasReportableJobId,
 } = require("./claimed-job");
 const { defaultAgentLogger } = require("./logging");
-const { verifyJobSignature, checkJobTimeWindow, DEFAULT_TIME_WINDOW_TOLERANCE_MS } = require("./signing");
+const { verifyJobSignature, checkJobTimeWindow } = require("./signing");
 const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
 const { generateKeyPairToFile, discardStagedKey, generateCsr } = require("./keys");
@@ -264,19 +264,33 @@ const AGENT_RETIRED_EXIT_CODE = 86;
 /**
  * Resolves the authoritative job mode from a signed dispatch payload.
  * Per COORDINATION-B4: prefer top-level `job.mode`, then `job.payload.mode`,
- * default `"real"` when omitted (dry-run is never an ambient default).
+ * default `"real"` when BOTH are omitted (dry-run is never an ambient
+ * default for a job that never specified a mode at all).
+ *
+ * Fails CLOSED, not open, on a present-but-unrecognized value: only the
+ * exact strings "real" and "dry_run" are ever treated as "real". Any other
+ * non-empty string (a typo, a future mode this build predates, or a
+ * malformed/tampered value) resolves to "dry_run" -- the no-side-effect
+ * mode -- rather than silently defaulting to "real" and running live
+ * ACME/DNS/deploy operations against a value nobody asked for. The agent
+ * has no independent schema validation of the raw job body before this
+ * runs, so this function is the last line of defense against exactly that
+ * failure mode.
  *
  * @param {object} job
  * @returns {"real"|"dry_run"}
  */
 function resolveJobMode(job) {
+  const topLevel = job?.mode;
+  const nested = job?.payload?.mode;
   const raw =
-    typeof job?.mode === "string" && job.mode.length > 0
-      ? job.mode
-      : typeof job?.payload?.mode === "string" && job.payload.mode.length > 0
-        ? job.payload.mode
-        : "real";
-  return raw === "dry_run" ? "dry_run" : "real";
+    typeof topLevel === "string" && topLevel.length > 0
+      ? topLevel
+      : typeof nested === "string" && nested.length > 0
+        ? nested
+        : null;
+  if (raw === null) return "real";
+  return raw === "real" ? "real" : "dry_run";
 }
 
 /**
@@ -525,6 +539,15 @@ function startPeriodicLeaseRenewal(leaseOpts, { intervalMs = LEASE_HEARTBEAT_INT
         if (result && result.ok === false) {
           lastAbort = result.abort;
           if (typeof onAbort === "function") onAbort(result.abort);
+        } else if (result && result.ok === true) {
+          // A successful renew means ownership/liveness is confirmed as of
+          // now; a PRIOR transient abort must not survive it. Without this,
+          // one recovered heartbeat blip would permanently reclassify a
+          // later genuine success as "blocked" (see getAbort()) and the
+          // job-journal cleanup for terminal "blocked" outcomes would then
+          // erase the durable record of side effects that actually
+          // executed.
+          lastAbort = null;
         }
       })
       .catch((err) => {
@@ -655,6 +678,31 @@ function isAbsolutePathLike(candidate) {
     (/^\//.test(candidate) ||
       /^[A-Za-z]:[\\/]/.test(candidate) ||
       /^\\\\/.test(candidate))
+  );
+}
+
+/**
+ * Structural check mirroring job-payload.schema.json's certificateId
+ * pattern/length (1-128 chars, `^[A-Za-z0-9_.:-]+$`). The signature on a
+ * signed job only proves the control plane's key produced these exact
+ * bytes -- it says nothing about whether the CONTENT is well-formed. Every
+ * real usage of job.certificateId builds a filesystem path under keysDir
+ * (`${certificateId}.key.pem`) via plain string interpolation with no
+ * further containment check downstream, so this is the one place that
+ * stands between an untrusted/compromised control plane naming a
+ * certificateId like "../../../etc/cron.d/x" and the agent writing (or
+ * reading, for the deploy-side lookup) outside keysDir entirely (ADR-0002:
+ * agent-local policy/validation wins even against a compromised server).
+ *
+ * @param {unknown} candidate
+ * @returns {boolean}
+ */
+function isValidCertificateId(candidate) {
+  return (
+    typeof candidate === "string" &&
+    candidate.length > 0 &&
+    candidate.length <= 128 &&
+    /^[A-Za-z0-9_.:-]+$/.test(candidate)
   );
 }
 
@@ -1759,6 +1807,20 @@ async function executeRenewJob({
     };
   }
 
+  // Structural gate on certificateId BEFORE it is ever interpolated into a
+  // keysDir filesystem path (see isValidCertificateId doc comment): the
+  // Ed25519 signature proves provenance of the bytes, not that the content
+  // matches job-payload.schema.json's certificateId pattern/length.
+  if (!isValidCertificateId(job.certificateId)) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        `renew job has a missing or malformed certificateId (expected 1-128 chars ` +
+          `matching ^[A-Za-z0-9_.:-]+$, got ${JSON.stringify(job.certificateId)})`,
+      ),
+    };
+  }
+
   const sansResolved = resolveJobSans(job);
   if (sansResolved && sansResolved.error) {
     return { status: "failed", errorMessage: sansResolved.error };
@@ -1776,6 +1838,48 @@ async function executeRenewJob({
     return { status: "failed", errorMessage: deployTargetsResolved.error };
   }
   const deployTargets = deployTargetsResolved.targets;
+
+  // Fail-fast policy preflight, BEFORE any mutation (keygen/ACME order/
+  // lease renew): mirrors executeDryRunPlan's dnsProvider/dnsZone/path
+  // checks so a policy-disallowed job never burns an ACME rate-limit slot
+  // or generates a key it can never deploy. buildSignedJobPolicyDescriptor
+  // already gated job.dnsZone/dnsProvider/target.reference once at claim
+  // time (handleSignedJob step 4) against the SAME policy engine; this is
+  // deliberate defense-in-depth re-verification at the point closest to
+  // the actual mutating steps, and also extends coverage to every
+  // deployTargets[] destination (claim-time only sees target.reference).
+  for (const deployTarget of deployTargets) {
+    if (typeof deployTarget.certPath === "string" && deployTarget.certPath.length > 0) {
+      const pathVerdict = policyEngine.checkPath(deployTarget.certPath);
+      if (!pathVerdict.allowed) {
+        return {
+          status: "rejected",
+          rejectionReason: pathVerdict.rejectionReason,
+          errorMessage: boundErrorMessage(pathVerdict.detail),
+        };
+      }
+    }
+  }
+  if (typeof job.dnsProvider === "string" && job.dnsProvider.length > 0) {
+    const dnsVerdict = policyEngine.checkDnsProvider(job.dnsProvider);
+    if (!dnsVerdict.allowed) {
+      return {
+        status: "rejected",
+        rejectionReason: dnsVerdict.rejectionReason,
+        errorMessage: boundErrorMessage(dnsVerdict.detail),
+      };
+    }
+  }
+  if (typeof job.dnsZone === "string" && job.dnsZone.length > 0) {
+    const zoneVerdict = policyEngine.checkDnsZone(job.dnsZone);
+    if (!zoneVerdict.allowed) {
+      return {
+        status: "rejected",
+        rejectionReason: zoneVerdict.rejectionReason,
+        errorMessage: boundErrorMessage(zoneVerdict.detail),
+      };
+    }
+  }
 
   if (typeof job.commandRef !== "string" || job.commandRef.length === 0) {
     return {
@@ -2237,6 +2341,7 @@ async function runDeployReloadVerifyForTargets({
           owner: target.owner,
           group: target.group,
           backupDir: target.backupDir,
+          backupRetentionCount: target.backupRetentionCount,
         }
       : job;
     const targetKeyPath =
@@ -2436,6 +2541,7 @@ async function runDeployReloadVerifyForTargets({
       owner: target.owner,
       group: target.group,
       backupDir: target.backupDir,
+      backupRetentionCount: target.backupRetentionCount,
     };
 
     const targetKeyPath =
@@ -2785,6 +2891,9 @@ async function runDeployReloadVerify({
     ...(resolvedChainPath ? { chainPath: resolvedChainPath } : {}),
     ...(usePairedDeploy ? { keyPath } : {}),
     ...(job?.backupDir ? { backupDir: job.backupDir } : {}),
+    ...(Number.isInteger(job?.backupRetentionCount)
+      ? { backupRetentionCount: job.backupRetentionCount }
+      : {}),
     ...(job?.certMode != null ? { certMode: job.certMode } : {}),
     ...(job?.keyMode != null ? { keyMode: job.keyMode } : {}),
     ...(job?.chainMode != null ? { chainMode: job.chainMode } : {}),
@@ -3116,8 +3225,7 @@ async function executeDeployJob({
   if (
     typeof keysDir === "string" &&
     keysDir.length > 0 &&
-    typeof job.certificateId === "string" &&
-    job.certificateId.length > 0
+    isValidCertificateId(job.certificateId)
   ) {
     const candidate = path.join(keysDir, `${job.certificateId}.key.pem`);
     if (fs.existsSync(candidate)) {
@@ -3422,8 +3530,10 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
       // accepts (expiresAt + tolerance), and the sweep must run on the
       // same offset-adjusted timeline as the acceptance decision --
       // otherwise a nonce could be evicted while its job is still
-      // acceptable, reopening the replay window.
-      retentionToleranceMs: DEFAULT_TIME_WINDOW_TOLERANCE_MS,
+      // acceptable, reopening the replay window. clockDriftToleranceMs is
+      // operator-configurable (config.execution.clockDriftToleranceMs), so
+      // it must be threaded through here rather than assuming the default.
+      retentionToleranceMs: config.execution.clockDriftToleranceMs,
       now: () => Date.now() + (clockEstimator.getOffsetMs() ?? 0),
     });
   } catch (err) {
@@ -3698,6 +3808,7 @@ module.exports = {
   resolveJobSans,
   mapJobKeyAlgorithm,
   resolveJobMode,
+  isValidCertificateId,
   runDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,

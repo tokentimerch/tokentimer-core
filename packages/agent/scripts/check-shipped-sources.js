@@ -4,6 +4,12 @@
  * Validates that every shipped agent JavaScript file:
  *   1. Parses under the current Node (node --check)
  *   2. Does not require/import paths that resolve outside packages/agent
+ *   3. Does not require any bare package (node_modules) specifier at all,
+ *      since the installer never runs `npm install` and only copies this
+ *      package directory (see install-agent.sh); the shipped agent must
+ *      have zero runtime dependencies. Devtime-only tools (ajv, eslint,
+ *      etc.) must stay confined to scripts/build-*.js, which are not part
+ *      of the shipped bin/src/vendor tree this check scans.
  *
  * The installer copies only this package directory, so monorepo-relative
  * imports (packages/log-scrub, apps/api, packages/contracts, ...) are
@@ -39,14 +45,15 @@ function collectShippedJavaScript(directory) {
   });
 }
 
-function isBuiltinOrPackageName(specifier) {
-  if (specifier.startsWith("node:")) return true;
-  if (!specifier.startsWith(".") && !specifier.startsWith("/")) return true;
-  return false;
+function isBuiltin(specifier) {
+  return specifier.startsWith("node:");
 }
 
 function assertImportStaysInsidePackage(filePath, specifier) {
-  if (isBuiltinOrPackageName(specifier)) return null;
+  if (isBuiltin(specifier)) return null;
+  if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+    return `requires bare package "${specifier}"; the shipped agent has zero runtime dependencies (devtime-only tools like ajv must stay confined to scripts/build-*.js, which this check does not scan)`;
+  }
   const resolved = path.resolve(path.dirname(filePath), specifier);
   const relative = path.relative(packageRoot, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {

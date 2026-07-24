@@ -270,6 +270,54 @@ describe("deployCertificate", () => {
     assert.equal(path.dirname(result.backupPath), backupDir);
   });
 
+  it("prunes old backups down to target.backupRetentionCount after a successful deploy", async () => {
+    const dir = makeTempDir();
+    const backupDir = path.join(dir, "backups");
+    fs.mkdirSync(backupDir);
+    const target = makeTarget(dir, { backupDir, backupRetentionCount: 2 });
+    const checkPath = makeCheckPath(dir);
+
+    // Four successive deploys with alternating content create three
+    // timestamped backups (the first deploy has nothing to back up);
+    // retention of 2 must prune down to the 2 most recent after the last.
+    await deployCertificate({ target, certificatePem: CERT_PEM, checkPath });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deployCertificate({ target, certificatePem: OTHER_CERT_PEM, checkPath });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deployCertificate({ target, certificatePem: CERT_PEM, checkPath });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const fourth = await deployCertificate({ target, certificatePem: OTHER_CERT_PEM, checkPath });
+
+    assert.equal(fourth.deployed, true);
+    const backupFiles = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("server.crt.") && name.endsWith(".bak"));
+    assert.equal(backupFiles.length, 2, "must retain only the 2 most recent backups");
+    // The most recent backup (from the fourth deploy) survives.
+    assert.equal(fs.existsSync(fourth.backupPath), true);
+  });
+
+  it("does not prune backups when target.backupRetentionCount is absent (unbounded, pre-existing default)", async () => {
+    const dir = makeTempDir();
+    const backupDir = path.join(dir, "backups");
+    fs.mkdirSync(backupDir);
+    const target = makeTarget(dir, { backupDir });
+    const checkPath = makeCheckPath(dir);
+
+    await deployCertificate({ target, certificatePem: CERT_PEM, checkPath });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deployCertificate({ target, certificatePem: OTHER_CERT_PEM, checkPath });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deployCertificate({ target, certificatePem: CERT_PEM, checkPath });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deployCertificate({ target, certificatePem: OTHER_CERT_PEM, checkPath });
+
+    const backupFiles = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("server.crt.") && name.endsWith(".bak"));
+    assert.equal(backupFiles.length, 3, "no retentionCount configured: all backups kept");
+  });
+
   it("rolls back from the backup when the atomic write fails", async () => {
     const dir = makeTempDir();
     const target = makeTarget(dir);

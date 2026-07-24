@@ -139,6 +139,34 @@ test("infomaniak: cleanup lists zone records and DELETEs the exact match only", 
   assert.match(fetchStub.calls[1].url, /\/2\/zones\/example\.com\/records\/3$/);
 });
 
+test("infomaniak: cleanup matches a quoted TXT target (API wire representation) and still deletes it", async () => {
+  // Regression: Infomaniak's record lookup can return TXT targets quoted
+  // (e.g. `"token-value"`); an exact unquoted comparison would find no
+  // match, silently no-op, and orphan the challenge record forever.
+  const fetchStub = makeFetchStub((url, options) => {
+    if (options.method === "GET") {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          result: "success",
+          data: [
+            { id: 7, type: "TXT", source: "_acme-challenge", target: '"token-value"' },
+          ],
+        }),
+      };
+    }
+    return { status: 200, body: '{"result":"success","data":true}' };
+  });
+  const solver = solverWith(fetchStub);
+
+  const result = await solver.cleanupChallenge(CHALLENGE);
+
+  assert.equal(result.ok, true);
+  assert.equal(fetchStub.calls.length, 2);
+  assert.equal(fetchStub.calls[1].options.method, "DELETE");
+  assert.match(fetchStub.calls[1].url, /\/2\/zones\/example\.com\/records\/7$/);
+});
+
 test("infomaniak: cleanup of an already-absent record is idempotent success", async () => {
   const fetchStub = makeFetchStub(() => ({
     status: 200,

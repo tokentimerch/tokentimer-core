@@ -201,3 +201,66 @@ test("hetzner: error body echoing the apiToken is redacted wholesale", async () 
 test("hetzner: API_BASE_URL points at the Cloud Console API", () => {
   assert.equal(API_BASE_URL, "https://api.hetzner.cloud/v1");
 });
+
+// ---------------------------------------------------------------------------
+// listManagedZones (pagination)
+// ---------------------------------------------------------------------------
+
+test("hetzner: listManagedZones follows meta.pagination.next_page across multiple pages", async () => {
+  const { listManagedZones } = require("./hetzner.js");
+  const pages = {
+    1: {
+      zones: [{ name: "a.example.com." }, { name: "b.example.com" }],
+      meta: { pagination: { page: 1, next_page: 2 } },
+    },
+    2: {
+      zones: [{ name: "c.example.com" }],
+      meta: { pagination: { page: 2, next_page: null } },
+    },
+  };
+  const fetchStub = makeFetchStub((url) => {
+    const match = /[?&]page=(\d+)/.exec(url);
+    const page = match ? Number(match[1]) : 1;
+    return { status: 200, body: JSON.stringify(pages[page]) };
+  });
+
+  const zones = await listManagedZones({
+    credentials: { apiToken: "hetzner-token" },
+    fetchImpl: fetchStub,
+    timeoutMs: 5000,
+  });
+
+  assert.deepEqual(zones, ["a.example.com", "b.example.com", "c.example.com"]);
+  assert.equal(fetchStub.calls.length, 2, "must fetch both pages, not stop at the first");
+});
+
+test("hetzner: listManagedZones stops when next_page is absent (single page, backward compatible)", async () => {
+  const { listManagedZones } = require("./hetzner.js");
+  const fetchStub = makeFetchStub(() => ({
+    status: 200,
+    body: '{"zones":[{"name":"only.example.com"}]}',
+  }));
+
+  const zones = await listManagedZones({
+    credentials: { apiToken: "hetzner-token" },
+    fetchImpl: fetchStub,
+    timeoutMs: 5000,
+  });
+
+  assert.deepEqual(zones, ["only.example.com"]);
+  assert.equal(fetchStub.calls.length, 1);
+});
+
+test("hetzner: listManagedZones request URLs carry page and per_page params", async () => {
+  const { listManagedZones } = require("./hetzner.js");
+  const fetchStub = makeFetchStub(() => ({ status: 200, body: '{"zones":[]}' }));
+
+  await listManagedZones({
+    credentials: { apiToken: "hetzner-token" },
+    fetchImpl: fetchStub,
+    timeoutMs: 5000,
+  });
+
+  assert.match(fetchStub.calls[0].url, /\/zones\?page=1&per_page=50$/);
+});
+

@@ -248,7 +248,13 @@ async function resolveTxtViaServers(recordName, servers, deps = {}) {
     resolver.resolveTxt(recordName, (err, records) => {
       if (err) {
         // ENODATA / ENOTFOUND mean "not present yet" during present waits.
-        if (err.code === "ENODATA" || err.code === "ENOTFOUND" || err.code === "SERVFAIL") {
+        // Node's c-ares error codes are E-prefixed (dns.SERVFAIL ===
+        // "ESERVFAIL"); a bare "SERVFAIL" never matches and previously fell
+        // through to the reject path below, so a transient SERVFAIL from a
+        // resolver could never be treated as "not present yet" -- most
+        // consequentially during waitForTxtAbsent cleanup verification,
+        // where it would burn the full timeout even though cleanup succeeded.
+        if (err.code === "ENODATA" || err.code === "ENOTFOUND" || err.code === "ESERVFAIL") {
           resolve([]);
           return;
         }

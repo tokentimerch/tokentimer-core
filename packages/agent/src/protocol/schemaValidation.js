@@ -1,23 +1,24 @@
 "use strict";
 
 /**
- * Agent-side CertOps protocol validation compiled from the canonical
- * agent-protocol schema (vendored under vendor/contracts so the shipped
- * package stays self-contained; refresh via scripts/sync-vendor.js).
+ * Agent-side CertOps protocol validation.
+ *
+ * The actual validator is precompiled ahead-of-time from the canonical
+ * agent-protocol schema into a standalone, dependency-free module (vendored
+ * under vendor/contracts/agent-protocol-validator.generated.js). ajv and
+ * ajv-formats are devDependencies used only by that build step
+ * (scripts/build-protocol-validator.js); the shipped agent package has zero
+ * runtime dependencies, matching what the installer actually ships (it
+ * copies packages/agent excluding node_modules and never runs an install).
+ * Refresh both the schema and the generated validator via
+ * scripts/sync-vendor.js.
  *
  * Shape/enum/type checks only — semantic authorization stays in the runtime
  * and control-plane services.
  */
 
-const Ajv = require("ajv");
-const addFormats = require("ajv-formats");
 const agentProtocolSchema = require("../../vendor/contracts/agent-protocol.schema.json");
-
-// Module-level compile (once per process), matching the contracts test AJV
-// config: draft-07 schemas, allErrors, non-strict, formats plugin.
-const ajv = new Ajv({ allErrors: true, strict: false });
-addFormats(ajv);
-const validateCompiled = ajv.compile(agentProtocolSchema);
+const validateCompiled = require("../../vendor/contracts/agent-protocol-validator.generated.js");
 
 function formatAjvError(error) {
   if (error.keyword === "additionalProperties") {

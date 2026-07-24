@@ -63,7 +63,9 @@
  *                "--preferred-chain", preferredChain   (optional),
  *                "--eab-kid", eabKid                   (optional, with hmac),
  *                "--eab-hmac-key", eabHmacKey           (optional, with kid),
- *                "--dry-run"       (only when dryRun),
+ *                // never --dry-run: certbot rejects --dry-run with --csr,
+ *                // which this adapter always uses; runRenewal rejects
+ *                // dryRun:true for kind === "certbot" before this point.
  *              ]
  *
  *   acme.sh  : profile.argv ++ [
@@ -348,6 +350,9 @@ function buildAdapterArgs(kind, {
     // part of this string — only the hook binary path + mode.
     const authHook = `${dnsHookPath} present`;
     const cleanupHook = `${dnsHookPath} cleanup`;
+    // No --dry-run here: certbot rejects --dry-run combined with --csr, and
+    // this adapter always issues via --csr. runRenewal rejects dryRun:true
+    // for kind === "certbot" before this function is ever called.
     return [
       "certonly",
       "--non-interactive",
@@ -372,7 +377,6 @@ function buildAdapterArgs(kind, {
       "--logs-dir",
       paths.certbotLogsDir,
       ...typedArgs,
-      ...(dryRun ? ["--dry-run"] : []),
     ];
   }
 
@@ -621,6 +625,21 @@ function createAcmeAdapter({
     }
     if (typeof dryRun !== "boolean") {
       throw new Error("acme: dryRun must be a boolean when provided");
+    }
+    if (kind === "certbot" && dryRun === true) {
+      // certbot hard-errors on `--dry-run` combined with `--csr` ("--dry-run
+      // cannot be used with --csr"), and this adapter always issues via CSR
+      // (zero private-key-custody: the agent generates the key/CSR locally,
+      // never certbot). Surfacing that as a clear programmer/config error
+      // here -- before any exec -- is far better than letting the job fail
+      // with a confusing certbot CLI error after dispatch already committed
+      // to a certbot-configured target.
+      throw new Error(
+        "acme: dryRun is not supported for the certbot adapter (certbot " +
+          "rejects --dry-run together with --csr, which this adapter always " +
+          "uses); route dry-run renewals to a target configured with the " +
+          "acme.sh adapter instead, or omit dryRun for this target",
+      );
     }
     if (preferredChain !== undefined && !isNonEmptyString(preferredChain)) {
       throw new Error("acme: preferredChain must be a non-empty string when provided");

@@ -69,35 +69,53 @@ function collectSecretStrings(credentials) {
 }
 
 /**
- * Lists managed zone names for longest-suffix discovery.
+ * Lists managed zone names for longest-suffix discovery. Paginates through
+ * every page (Hetzner Cloud API caps per_page at 50 and a project can have
+ * more zones than that): without this, longest-suffix discovery would
+ * silently only ever see the first page and treat any zone past it as
+ * "not managed here", causing DNS-01 to spuriously fail.
  * @param {object} options
  * @returns {Promise<string[]>}
  */
 async function listManagedZones({ credentials, fetchImpl, timeoutMs }) {
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    `${API_BASE_URL}/zones`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${credentials.apiToken}`,
+  const names = [];
+  let page = 1;
+  const perPage = 50;
+  // Hard safety cap: never loop forever even if the API's pagination
+  // metadata is malformed or inconsistent across pages.
+  const MAX_PAGES = 200;
+  for (; page <= MAX_PAGES; page += 1) {
+    const response = await fetchWithTimeout(
+      fetchImpl,
+      `${API_BASE_URL}/zones?page=${page}&per_page=${perPage}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${credentials.apiToken}`,
+        },
       },
-    },
-    timeoutMs,
-  );
-  if (!response.ok) {
-    throw new Error(`hetzner list zones failed (HTTP ${response.status})`);
+      timeoutMs,
+    );
+    if (!response.ok) {
+      throw new Error(`hetzner list zones failed (HTTP ${response.status})`);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(response.bodyText);
+    } catch {
+      throw new Error("hetzner list zones returned non-JSON");
+    }
+    const zones = parsed && Array.isArray(parsed.zones) ? parsed.zones : [];
+    for (const zone of zones) {
+      if (zone && isNonEmptyString(zone.name)) {
+        names.push(zone.name.replace(/\.$/, ""));
+      }
+    }
+    const nextPage = parsed?.meta?.pagination?.next_page;
+    if (!Number.isInteger(nextPage) || nextPage <= page) break;
+    page = nextPage - 1; // loop increment adds 1 back
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(response.bodyText);
-  } catch {
-    throw new Error("hetzner list zones returned non-JSON");
-  }
-  const zones = parsed && Array.isArray(parsed.zones) ? parsed.zones : [];
-  return zones
-    .filter((zone) => zone && isNonEmptyString(zone.name))
-    .map((zone) => zone.name.replace(/\.$/, ""));
+  return names;
 }
 
 function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {

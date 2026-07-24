@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const {
   normalizePropagationConfig,
@@ -12,6 +13,7 @@ const {
   waitForTxtPresent,
   waitForTxtAbsent,
   zoneCandidatesForHostname,
+  resolveTxtViaServers,
 } = require("./propagate.js");
 const { findLongestManagedZone, resolveChallengeZone } = require("./zone.js");
 const { withFileLock } = require("./lockfile.js");
@@ -238,6 +240,98 @@ test("resolveChallengeZone falls back to NS discovery", async () => {
     },
   });
   assert.equal(zone, "example.com");
+});
+
+test("resolveTxtViaServers treats a transient SERVFAIL (ESERVFAIL) as 'not present yet', not a hard error", async () => {
+  // Regression: Node's c-ares error codes are E-prefixed (dns.SERVFAIL is
+  // the string "ESERVFAIL"); comparing against the bare "SERVFAIL" string
+  // never matched, so every SERVFAIL response fell through to reject().
+  // During waitForTxtAbsent cleanup verification this meant a transient
+  // SERVFAIL could burn the entire timeout even though the record was
+  // already gone.
+  class FakeResolver {
+    setServers() {}
+    resolveTxt(_name, callback) {
+      callback(Object.assign(new Error("querySrv ESERVFAIL"), { code: "ESERVFAIL" }));
+    }
+  }
+  const result = await resolveTxtViaServers("_acme-challenge.example.com", [], {
+    Resolver: FakeResolver,
+  });
+  assert.deepEqual(result, []);
+});
+
+test("resolveTxtViaServers still rejects on a non-transient resolver error code", async () => {
+  class FakeResolver {
+    setServers() {}
+    resolveTxt(_name, callback) {
+      callback(Object.assign(new Error("boom"), { code: "EFORMERR" }));
+    }
+  }
+  await assert.rejects(
+    () =>
+      resolveTxtViaServers("_acme-challenge.example.com", [], {
+        Resolver: FakeResolver,
+      }),
+    /boom/,
+  );
+});
+
+test("withFileLock reclaims a stale lock via atomic rename, not unlink-by-path", async () => {
+  const lockDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-lock-stale-"));
+  const digest = crypto.createHash("sha256").update("provider:zone:record").digest("hex").slice(0, 32);
+  const lockPath = path.join(lockDir, `${digest}.lock`);
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, acquiredAt: 0, key: "provider:zone:record" }));
+  // Backdate mtime well past staleMs so the lock is immediately reclaimable.
+  const staleTime = new Date(Date.now() - 60000);
+  fs.utimesSync(lockPath, staleTime, staleTime);
+
+  const result = await withFileLock(
+    "provider:zone:record",
+    async () => "ran",
+    { lockDir, staleMs: 1000, pollMs: 5, waitTimeoutMs: 5000 },
+  );
+  assert.equal(result, "ran");
+  assert.equal(fs.existsSync(lockPath), false);
+});
+
+test("withFileLock: a reclaim rename that loses the race (ENOENT) retries instead of stealing a fresh lock", async () => {
+  // Regression: stale-lock reclaim used to be stat-then-unlink-by-path. If
+  // another waiter reclaimed and recreated the lock between our stat and
+  // our unlink, unlink-by-path would delete THEIR fresh lock, letting both
+  // waiters believe they hold it and run concurrently. Reclaiming via
+  // rename-then-verify means a lost race surfaces as ENOENT on the rename
+  // itself, which must be treated as "someone else already handled it" and
+  // retried, never as ownership of whatever now exists at lockPath.
+  const lockDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-lock-race-"));
+  const digest = crypto.createHash("sha256").update("provider:zone:record").digest("hex").slice(0, 32);
+  const lockPath = path.join(lockDir, `${digest}.lock`);
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, acquiredAt: 0, key: "provider:zone:record" }));
+  const staleTime = new Date(Date.now() - 60000);
+  fs.utimesSync(lockPath, staleTime, staleTime);
+
+  const originalRename = fs.renameSync;
+  let renameAttempts = 0;
+  fs.renameSync = (from, to) => {
+    renameAttempts += 1;
+    if (renameAttempts === 1) {
+      // Simulate a concurrent winner: the stale lock is gone by the time
+      // we try to rename it away.
+      throw Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" });
+    }
+    return originalRename(from, to);
+  };
+  try {
+    const result = await withFileLock(
+      "provider:zone:record",
+      async () => "ran-after-retry",
+      { lockDir, staleMs: 1000, pollMs: 5, waitTimeoutMs: 5000 },
+    );
+    assert.equal(result, "ran-after-retry");
+    assert.ok(renameAttempts >= 1, "expected at least one reclaim rename attempt");
+  } finally {
+    fs.renameSync = originalRename;
+  }
 });
 
 test("withFileLock serializes concurrent tasks on the same key", async () => {

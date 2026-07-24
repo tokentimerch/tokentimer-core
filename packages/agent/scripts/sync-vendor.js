@@ -8,6 +8,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const packageRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
@@ -88,3 +89,12 @@ for (const entry of VENDOR_MAP) {
   }
   process.stdout.write(`Synced ${path.relative(packageRoot, entry.to)}\n`);
 }
+
+// The vendored schema just changed above; regenerate the dependency-free
+// standalone validator compiled from it (see build-protocol-validator.js
+// for why this must not pull ajv/ajv-formats into the shipped runtime).
+execFileSync(
+  process.execPath,
+  [path.join(__dirname, "build-protocol-validator.js")],
+  { stdio: "inherit" },
+);

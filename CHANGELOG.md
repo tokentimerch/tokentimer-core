@@ -28,7 +28,7 @@ CertOps agent and cert-manager controller: the first end-to-end path for TokenTi
 
 ### Changed
 
-- `packages/contracts/api/certops-route-compat.contract.json` bumped to `0.15.0` (`agent-runtime-stable`): the four `/api/v1/certops/agent` routes are now live, Ed25519-signed control-plane endpoints, and the executor surface gained controller observation and provisioning transport.
+- `packages/contracts/api/certops-route-compat.contract.json` bumped to `0.16.0` (`agent-runtime-stable`): the four `/api/v1/certops/agent` routes are now live, Ed25519-signed control-plane endpoints, and the executor surface gained controller observation and provisioning transport.
 - Version metadata bumped to 0.11.0 across all manifests, contracts, and Helm chart.
 
 ## [0.10.3] - 2026-07-23

@@ -182,45 +182,15 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
 });
 
-test("certbot adapter appends --dry-run when dryRun: true, after typed options", async () => {
+test("certbot adapter rejects dryRun: true (certbot forbids --dry-run with --csr, which this adapter always uses)", async () => {
   const execStub = makeExecStub();
   const adapter = certbotAdapter(execStub);
 
-  const result = await adapter.runRenewal(
-    baseRenewalInputs({ dryRun: true, preferredChain: "ISRG Root X1" }),
+  await assert.rejects(
+    () => adapter.runRenewal(baseRenewalInputs({ dryRun: true, preferredChain: "ISRG Root X1" })),
+    /dryRun is not supported for the certbot adapter/,
   );
-
-  assert.deepEqual(result.argvUsed, [
-    "certbot",
-    "certonly",
-    "--non-interactive",
-    "--preferred-challenges",
-    "dns",
-    "--manual",
-    "--manual-auth-hook",
-    `${DNS_HOOK_PATH} present`,
-    "--manual-cleanup-hook",
-    `${DNS_HOOK_PATH} cleanup`,
-    "--csr",
-    CSR_PATH,
-    "--server",
-    CA_ENDPOINT,
-    "-d",
-    "example.com",
-    "-d",
-    "www.example.com",
-    "--cert-path",
-    OUT_CERT_PATH,
-    "--config-dir",
-    STATE_PATHS.certbotConfigDir,
-    "--work-dir",
-    STATE_PATHS.certbotWorkDir,
-    "--logs-dir",
-    STATE_PATHS.certbotLogsDir,
-    "--preferred-chain",
-    "ISRG Root X1",
-    "--dry-run",
-  ]);
+  assert.equal(execStub.calls.length, 0, "must reject before any exec, no certbot process spawned");
 });
 
 test("certbot adapter maps EAB typed options and redacts hmac in argvUsed", async () => {

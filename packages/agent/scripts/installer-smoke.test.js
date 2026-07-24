@@ -4,6 +4,13 @@
  * B9 installer smoke test: package the agent, extract it OUTSIDE the monorepo,
  * install production deps, and prove entrypoint imports resolve without any
  * monorepo-relative path layout.
+ *
+ * Also covers the actual install-agent.sh flow directly: that script never
+ * runs npm/pnpm install at all (it tars this directory excluding
+ * node_modules and swaps it into place), so a separate test below
+ * re-extracts the same tarball with zero install step and boots the real
+ * bin/tokentimer-agent.js entrypoint to catch missing-runtime-dependency
+ * regressions the npm-install-based tests above cannot catch.
  */
 
 const { describe, it, before, after } = require("node:test");
@@ -152,5 +159,59 @@ describe("installer packaging smoke (B9)", () => {
         path.join(extractedRoot, "vendor", "contracts", "canonical-json.cjs"),
       ),
     );
+  });
+
+  it("boots with NO install step at all, matching install-agent.sh's tar-copy-only flow", () => {
+    // install-agent.sh never runs npm/pnpm install; it stages this package
+    // directory with `tar --exclude=./node_modules` and swaps it into place
+    // (see scripts/install-agent.sh). Re-extract a FRESH copy of the same
+    // tarball with no node_modules whatsoever and prove the real entrypoint
+    // (bin/tokentimer-agent.js, not just src/index.js in isolation) starts
+    // far enough to reach config loading, i.e. it never throws
+    // MODULE_NOT_FOUND for a missing runtime dependency.
+    const noInstallRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tokentimer-agent-noinstall-"),
+    );
+    const tarball = fs.readdirSync(stagingRoot).find((name) => name.endsWith(".tgz"));
+    assert.ok(tarball, "no packed tarball found to re-extract");
+    runOrThrow(
+      process.platform === "win32" ? "tar.exe" : "tar",
+      ["-xzf", path.join(stagingRoot, tarball), "-C", noInstallRoot],
+    );
+    const noInstallExtracted = path.join(noInstallRoot, "package");
+    assert.ok(
+      !fs.existsSync(path.join(noInstallExtracted, "node_modules")),
+      "precondition: this extraction must have no node_modules, matching install-agent.sh",
+    );
+
+    // Run the actual bin entrypoint with a bogus config dir and a short-lived
+    // abort signal: it should fail on config/network, never on require().
+    const configDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tokentimer-agent-noinstall-config-"),
+    );
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [path.join(noInstallExtracted, "bin", "tokentimer-agent.js")],
+        {
+          encoding: "utf8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            NODE_PATH: "",
+            TOKENTIMER_AGENT_CONFIG_DIR: configDir,
+          },
+        },
+      );
+      const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+      assert.doesNotMatch(
+        output,
+        /MODULE_NOT_FOUND/,
+        `agent entrypoint failed to resolve a require() with no node_modules present:\n${output}`,
+      );
+    } finally {
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+    fs.rmSync(noInstallRoot, { recursive: true, force: true });
   });
 });
