@@ -98,18 +98,3 @@ export async function revokeBootstrapToken(workspaceId, tokenId) {
   );
   return res.data;
 }
-
-/**
- * Builds the copy-paste install command shown by the Deploy an agent panel.
- * The bootstrap token travels via env var (not a flag) so it stays out of
- * shell history-expanded argv examples and process listings.
- */
-export function buildInstallCommand({ apiUrl, workspaceId, bootstrapToken }) {
-  const token = bootstrapToken || '<paste bootstrap token>';
-  return [
-    `sudo TOKENTIMER_AGENT_BOOTSTRAP_TOKEN='${token}' \\`,
-    `  ./install-agent.sh \\`,
-    `  --api-url '${apiUrl}' \\`,
-    `  --workspace-id '${workspaceId}'`,
-  ].join('\n');
-}
