@@ -34,6 +34,10 @@ const {
 const CONFIG_FILE_NAME = "config.json";
 const CREDENTIAL_FILE_NAME = "credential";
 const PENDING_REGISTRATION_FILE_NAME = "registration.pending.json";
+// Client-generated registration idempotency key (H1). Persisted BEFORE the
+// register HTTP call so a crash between token consumption and credential
+// persistence can retry with the same id and accept a replayed response.
+const REGISTRATION_ID_FILE_NAME = "registration-id.json";
 // Pinned control-plane job-signing key (ADR-0003 trust-on-first-use). The
 // stored PEM is PUBLIC key material only (never a private key), so this file
 // is not a secret; it still gets 0600 in the 0700 config dir purely as an
@@ -72,6 +76,7 @@ const DEFAULT_DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_CLOCK_DRIFT_TOLERANCE_MS = 30000;
 const KEYS_DIR_NAME = "keys";
 const REPLAY_STORE_FILE_NAME = "replay-store.json";
+const OUTBOX_DIR_NAME = "outbox";
 
 const REDACTED_CREDENTIAL_PLACEHOLDER = "[AGENT_CREDENTIAL_REDACTED]";
 
@@ -566,6 +571,7 @@ function parseBooleanEnv(value, fallback, envName) {
  *     dryRun: boolean             (default true),
  *     keysDir: string             (default <configDir>/keys),
  *     replayStorePath: string     (default <configDir>/replay-store.json),
+ *     outboxDir: string           (default <configDir>/outbox),
  *     clockDriftToleranceMs: int  (default 30000, must be a positive integer)
  *   }
  *
@@ -579,6 +585,7 @@ function parseBooleanEnv(value, fallback, envName) {
  *   dryRun: boolean,
  *   keysDir: string,
  *   replayStorePath: string,
+ *   outboxDir: string,
  *   clockDriftToleranceMs: number,
  * }|null}
  */
@@ -587,7 +594,7 @@ function validateExecutionObject(execution, configDir) {
   if (typeof execution !== "object" || Array.isArray(execution)) {
     throw new Error(
       "tokentimer-agent: execution in config.json must be an object " +
-        "({ enabled?, dryRun?, keysDir?, replayStorePath?, clockDriftToleranceMs? })",
+        "({ enabled?, dryRun?, keysDir?, replayStorePath?, outboxDir?, clockDriftToleranceMs? })",
     );
   }
 
@@ -632,6 +639,17 @@ function validateExecutionObject(execution, configDir) {
     replayStorePath = execution.replayStorePath;
   }
 
+  let outboxDir = path.join(configDir, OUTBOX_DIR_NAME);
+  if (execution.outboxDir !== undefined) {
+    if (typeof execution.outboxDir !== "string" || execution.outboxDir.length === 0) {
+      throw new Error(
+        "tokentimer-agent: execution.outboxDir must be a non-empty string, got: " +
+          JSON.stringify(execution.outboxDir),
+      );
+    }
+    outboxDir = execution.outboxDir;
+  }
+
   let clockDriftToleranceMs = DEFAULT_CLOCK_DRIFT_TOLERANCE_MS;
   if (execution.clockDriftToleranceMs !== undefined) {
     if (
@@ -647,7 +665,7 @@ function validateExecutionObject(execution, configDir) {
     clockDriftToleranceMs = execution.clockDriftToleranceMs;
   }
 
-  return { enabled, dryRun, keysDir, replayStorePath, clockDriftToleranceMs };
+  return { enabled, dryRun, keysDir, replayStorePath, outboxDir, clockDriftToleranceMs };
 }
 
 /**
@@ -673,6 +691,7 @@ function validateExecutionObject(execution, configDir) {
  *     dryRun: boolean,
  *     keysDir: string,
  *     replayStorePath: string,
+ *     outboxDir: string,
  *     clockDriftToleranceMs: number,
  *   }|null,
  *   pinnedSigningKey: {signingKeyId: string, publicKeyPem: string}|null,
@@ -1074,6 +1093,96 @@ function recoverPendingRegistration(configDir) {
   return registration;
 }
 
+const REGISTRATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+/**
+ * Reads a previously persisted client registration idempotency key.
+ * @param {string} configDir
+ * @returns {string|null}
+ */
+function readRegistrationId(configDir) {
+  const filePath = path.join(configDir, REGISTRATION_ID_FILE_NAME);
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `tokentimer-agent: failed to parse ${filePath}: ${err.message}`,
+    );
+  }
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    typeof parsed.registrationId !== "string" ||
+    !REGISTRATION_ID_PATTERN.test(parsed.registrationId)
+  ) {
+    throw new Error(
+      `tokentimer-agent: ${filePath} is corrupted (expected { registrationId })`,
+    );
+  }
+  return parsed.registrationId;
+}
+
+/**
+ * Persists a client-generated registration idempotency key (0600).
+ * Must be called BEFORE the register HTTP request (H1).
+ * @param {string} configDir
+ * @param {string} registrationId
+ * @returns {void}
+ */
+function writeRegistrationId(configDir, registrationId) {
+  if (typeof registrationId !== "string" || !REGISTRATION_ID_PATTERN.test(registrationId)) {
+    throw new Error(
+      "tokentimer-agent: registrationId must match " +
+        `${REGISTRATION_ID_PATTERN} (1-128 chars)`,
+    );
+  }
+  ensureConfigDir(configDir);
+  writeFileAtomically(
+    path.join(configDir, REGISTRATION_ID_FILE_NAME),
+    `${JSON.stringify({ registrationId })}\n`,
+    0o600,
+  );
+}
+
+/**
+ * Returns an existing registrationId or generates, persists, and returns a
+ * new UUID. Always durable on disk before the caller may send register.
+ * @param {string} configDir
+ * @returns {string}
+ */
+function ensureRegistrationId(configDir) {
+  const existing = readRegistrationId(configDir);
+  if (existing !== null) return existing;
+  const registrationId = crypto.randomUUID();
+  writeRegistrationId(configDir, registrationId);
+  return registrationId;
+}
+
+/**
+ * Clears the registration idempotency key after credentials are durable.
+ * @param {string} configDir
+ * @returns {boolean}
+ */
+function clearRegistrationId(configDir) {
+  const filePath = path.join(configDir, REGISTRATION_ID_FILE_NAME);
+  try {
+    fs.unlinkSync(filePath);
+    fsyncParentDirectory(filePath);
+    return true;
+  } catch (err) {
+    if (err && err.code === "ENOENT") return false;
+    throw err;
+  }
+}
+
 /**
  * Rotates the agent's stored credential to a new value, once the control
  * plane has confirmed the rotation. This is the same validation/write path
@@ -1226,10 +1335,15 @@ module.exports = {
   rotateCredential,
   persistRegistration,
   recoverPendingRegistration,
+  readRegistrationId,
+  writeRegistrationId,
+  ensureRegistrationId,
+  clearRegistrationId,
   redactCredentialForLogging,
   createSequenceAllocator,
   deleteBootstrapEnvFile,
   KNOWN_DNS_PROVIDER_IDS,
   CREDENTIAL_SHAPE_PATTERN,
   MAX_CA_BUNDLE_BYTES,
+  OUTBOX_DIR_NAME,
 };
