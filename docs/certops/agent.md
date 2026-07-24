@@ -587,6 +587,23 @@ Common terminal states and what to look for:
 - **Heartbeat stops and the process exits with a "retired" log line**: the
   control plane returned HTTP 410; this is a clean, intentional shutdown.
 
+### Forced agent retirement and in-flight work
+
+When an operator force-retires an agent (`POST .../agents/:id/retire` with
+`force: true`), the control plane does **not** wait for the lease reaper:
+
+1. Jobs still in `claimed` (no execution start reported) are immediately
+   `cancelled`.
+2. Jobs in `running` are moved to `orphaned_unknown_effect` with
+   `needsOperatorReconciliation: true`, because a side effect (for example a
+   deploy) may already have happened without a reported result.
+3. Subsequent result/evidence submissions from that agent are rejected with
+   HTTP 410.
+
+Operators must review the jobs list for `needsOperatorReconciliation` (or
+status `orphaned_unknown_effect`) and reconcile hosts manually before
+re-dispatching work for the same certificate/target.
+
 Log lines are prefixed `tokentimer-agent:` on stderr. Evidence for rejected
 jobs arrives as `policy.checked` items; execution steps report
 `validation.passed`/`validation.failed`/`deployment.updated` items with a
