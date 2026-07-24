@@ -198,6 +198,97 @@
       "pattern": "^[A-Za-z0-9_.:-]+$",
       "description": "Forward-compatible: DNS provider identifier for DNS-01 challenges. Names an agent-local provider config; never carries credentials."
     },
+    "sans": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "description": "Approved subjectAltName DNS names for renew jobs (from the immutable renewal profile). When absent, the agent falls back to target.reference as the sole SAN.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    },
+    "preferredChain": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Preferred issuer chain name passed to the ACME client (e.g. ISRG Root X1)."
+    },
+    "keyAlgorithm": {
+      "type": "string",
+      "enum": ["rsa", "ecdsa"],
+      "description": "Approved private-key algorithm from the renewal profile. Agent maps this with keySize onto a local generateKeyPair algorithm id."
+    },
+    "keySize": {
+      "type": "integer",
+      "description": "RSA bit length (2048/3072/4096) or ECDSA curve bit size (256/384), paired with keyAlgorithm."
+    },
+    "eabRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque agent-local EAB credential reference. Never the HMAC secret; the agent resolves eabKid/eabHmacKey from a local 0600 credentials file."
+    },
+    "accountRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque agent-local ACME account reference name. When eabRef is absent, may resolve the same local acmeAccounts credentials map."
+    },
+    "deploymentTargets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "description": "Approved multi-destination deploy list from the renewal profile. When absent, the agent deploys to the single resolved certPath.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "reference"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "domain",
+              "endpoint",
+              "kubernetes",
+              "appliance",
+              "load-balancer",
+              "external"
+            ]
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "certPath": {
+            "type": ["string", "null"],
+            "maxLength": 512
+          },
+          "reloadService": {
+            "type": ["string", "null"],
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:@-]{1,128}$"
+          },
+          "chainPath": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "description": "Optional absolute destination for the intermediate chain PEM (agent-local / forward-compatible)."
+          }
+        }
+      }
+    },
+    "chainPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Optional absolute filesystem destination for the intermediate chain PEM, distinct from certPath."
+    },
+    "renewalProfile": {
+      "type": "object",
+      "description": "Immutable renewal-profile snapshot bound at schedule/approval time. Full shape is packages/contracts/certops/renewal-profile.schema.json. Nested on signed dispatch; agent prefers flattened execution fields when present."
+    },
     "metadata": {
       "type": "array",
       "maxItems": 32,

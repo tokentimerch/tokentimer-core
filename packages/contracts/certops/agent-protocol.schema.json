@@ -151,6 +151,17 @@
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Client-generated registration idempotency key (H1). The agent persists this locally BEFORE the register request; a retry with the same registrationId after a crash must receive the same credential response rather than a hard rejection for a spent bootstrap token. See COORDINATION-H1.md."
+        },
+        "supportedDnsProviders": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Declared at registration so the control plane can route matching jobs."
         }
       }
     },
@@ -178,6 +189,17 @@
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$",
           "description": "Job-signing public key id currently pinned by the agent, so the control plane can detect agents still on a retiring key during rotation overlap."
+        },
+        "supportedDnsProviders": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Re-advertised on heartbeat so capability changes are picked up without re-registration."
         }
       }
     },
@@ -235,7 +257,7 @@
         },
         "status": {
           "type": "string",
-          "enum": ["succeeded", "failed", "rejected", "blocked"]
+          "enum": ["succeeded", "failed", "rejected", "blocked", "dry_run_complete", "orphaned_unknown_effect"]
         },
         "rejectionReason": {
           "type": ["string", "null"],

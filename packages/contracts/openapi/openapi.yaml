@@ -7637,7 +7637,7 @@ components:
                   description: Result messages only. Doubles as the claimId when claimId is omitted.
                 status:
                   type: string
-                  enum: [succeeded, failed, rejected, blocked]
+                  enum: [succeeded, failed, rejected, blocked, dry_run_complete, orphaned_unknown_effect]
                   description: Result messages only.
                 rejectionReason:
                   type: string
