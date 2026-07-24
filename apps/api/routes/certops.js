@@ -767,23 +767,7 @@ function jobApprovalDecisionHandler(decision, {
         reason: req.body?.reason,
       });
 
-      await writeAudit({
-        actorUserId: req.user.id,
-        subjectUserId: req.user.id,
-        action:
-          decision === "approve"
-            ? "CERTOPS_JOB_APPROVAL_GRANTED"
-            : "CERTOPS_JOB_APPROVAL_REJECTED",
-        targetType: "certificate_job",
-        targetId: jobId,
-        workspaceId: req.workspace.id,
-        metadata: {
-          jobId,
-          status: result.status,
-          ...(result.payloadHash ? { payloadHash: result.payloadHash } : {}),
-        },
-      });
-
+      // Audit is written inside the approval transaction (jobApprovals.js).
       return res.json(result);
     } catch (err) {
       const handled = handleCertOpsError(res, err);
@@ -1043,7 +1027,15 @@ async function recordBootstrapTokenAudit({
   });
 }
 
-async function recordAgentRetiredAudit({ client, req, agent, force, reason, leasedJobs }) {
+async function recordAgentRetiredAudit({
+  client,
+  req,
+  agent,
+  force,
+  reason,
+  leasedJobs,
+  fenced = null,
+}) {
   const actorUserId = req.user.id;
   await writeAudit({
     client,
@@ -1058,6 +1050,12 @@ async function recordAgentRetiredAudit({ client, req, agent, force, reason, leas
       force,
       reason,
       leasedJobs,
+      ...(fenced
+        ? {
+            cancelledJobIds: fenced.cancelledJobIds || [],
+            orphanedJobIds: fenced.orphanedJobIds || [],
+          }
+        : {}),
     },
   });
 }
@@ -1484,14 +1482,16 @@ router.post(
           return { blocked: true, leasedJobs };
         }
 
-        // The leased jobs themselves are untouched; the lease reaper
-        // worker handles their expiry.
+        // Force-retire immediately fences in-flight leases (H12): claimed
+        // jobs are cancelled; running jobs become orphaned_unknown_effect
+        // for operator reconciliation rather than waiting for the reaper.
         const result = await retireAgent({
           client,
           workspaceId: req.workspace.id,
           agentId,
           retiredBy: req.user.id,
           reason,
+          force,
         });
         if (result.agent && result.retiredNow) {
           await recordAgentRetiredAudit({
@@ -1501,6 +1501,7 @@ router.post(
             force,
             reason,
             leasedJobs,
+            fenced: result.fenced || null,
           });
         }
         return result;
@@ -1521,7 +1522,17 @@ router.post(
         });
       }
 
-      return res.json({ agent: outcome.agent });
+      return res.json({
+        agent: outcome.agent,
+        ...(outcome.fenced
+          ? {
+              fenced: {
+                cancelledJobIds: outcome.fenced.cancelledJobIds || [],
+                orphanedJobIds: outcome.fenced.orphanedJobIds || [],
+              },
+            }
+          : {}),
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;

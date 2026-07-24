@@ -10,6 +10,7 @@
  */
 
 const https = require("node:https");
+const crypto = require("node:crypto");
 const { URL } = require("node:url");
 const {
   assertNoPrivateKeyMaterial,
@@ -243,7 +244,8 @@ function validateEnvelopeBody(messageType, body, problems) {
   }
   body.evidenceItems.forEach((item, index) => {
     const itemLabel = `evidence body.evidenceItems[${index}]`;
-    if (!checkExactObject(item, new Set(["eventType", "observedAt", "fingerprintSha256", "summary", "metadata"]), ["eventType", "observedAt"], itemLabel, problems)) return;
+    if (!checkExactObject(item, new Set(["evidenceId", "eventType", "observedAt", "fingerprintSha256", "summary", "metadata"]), ["evidenceId", "eventType", "observedAt"], itemLabel, problems)) return;
+    checkString(item.evidenceId, `${itemLabel}.evidenceId`, problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
     if (!EVENT_TYPE_VALUES.has(item.eventType)) problems.push(`${itemLabel}.eventType is invalid`);
     if (!isIsoDateTime(item.observedAt)) problems.push(`${itemLabel}.observedAt must be an ISO date-time string`);
     if (item.fingerprintSha256 !== undefined) checkNullableString(item.fingerprintSha256, `${itemLabel}.fingerprintSha256`, problems, { pattern: /^[a-f0-9]{64}$/ });
@@ -259,6 +261,24 @@ function validateStringArray(value, label, problems, maxItems, maxItemLength, pa
   }
   if (value.length > maxItems) problems.push(`${label} has more than ${maxItems} entries`);
   value.forEach((item, index) => checkString(item, `${label}[${index}]`, problems, { min: 1, max: maxItemLength, pattern }));
+}
+
+// B18: evidence items require a client-generated idempotency key so retried
+// submissions (e.g. after a transport failure) are safely no-op'd by the
+// control plane instead of creating duplicate evidence rows. The key is a
+// stable hash of the bounded, non-secret fields that identify the same
+// logical observation, so the same observation retried later reproduces the
+// same id. Callers that already supply evidenceId (e.g. replaying a batch)
+// are left untouched.
+function computeEvidenceId(jobId, item) {
+  const stable = {
+    jobId: jobId ?? null,
+    eventType: item?.eventType ?? null,
+    observedAt: item?.observedAt ?? null,
+    fingerprintSha256: item?.fingerprintSha256 ?? null,
+    summary: item?.summary ?? null,
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
 }
 
 function prepareOutboundEnvelope(envelope) {
@@ -688,9 +708,16 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   }
 
   async function reportEvidence({ jobId = null, evidenceItems } = {}) {
+    const itemsWithIds = Array.isArray(evidenceItems)
+      ? evidenceItems.map((item) =>
+          item && typeof item.evidenceId === "string" && item.evidenceId.length > 0
+            ? item
+            : { ...item, evidenceId: computeEvidenceId(jobId, item) },
+        )
+      : evidenceItems;
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
-      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence, body: { jobId, evidenceItems } })),
+      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence, body: { jobId, evidenceItems: itemsWithIds } })),
     );
     if (!ok) throw new AgentProtocolError(`reportEvidence failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};

@@ -133,6 +133,12 @@ const PLAN_JOB_STATUSES = [
   "failed",
   "blocked",
   "cancelled",
+  // Terminal outcome for mode === "dry_run" only (B4).
+  "dry_run_complete",
+  // Terminal outcome when a lease was renewed but the agent never reported
+  // a result: side effects are unknown and require operator reconciliation
+  // instead of a silent retry (B6/H12).
+  "orphaned_unknown_effect",
 ];
 
 const PLAN_EXECUTOR_EVENT_STATUSES = [

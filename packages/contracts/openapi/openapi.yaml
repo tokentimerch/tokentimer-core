@@ -5696,6 +5696,8 @@ components:
             - failed
             - blocked
             - cancelled
+            - dry_run_complete
+            - orphaned_unknown_effect
         source:
           type: string
           enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]

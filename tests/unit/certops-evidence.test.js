@@ -106,6 +106,8 @@ function createMemoryClient() {
           observed_at: params[10],
           created_by_user_id: params[11],
           created_by_api_token_id: params[12],
+          created_by_agent_id: params[13] ?? null,
+          client_evidence_id: params[14] ?? null,
           created_at: now(),
         };
         evidence.push(row);

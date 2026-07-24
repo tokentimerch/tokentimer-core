@@ -328,7 +328,47 @@ test("reportEvidence: sends correct envelope shape (messageType + evidenceBody f
   assert.equal(calls.length, 1);
   assert.equal(calls[0].parsedBody.messageType, "evidence");
   assert.equal(calls[0].parsedBody.body.jobId, "job-1");
-  assert.deepEqual(calls[0].parsedBody.body.evidenceItems, evidenceItems);
+  assert.equal(calls[0].parsedBody.body.evidenceItems.length, 1);
+  const [sentItem] = calls[0].parsedBody.body.evidenceItems;
+  assert.equal(sentItem.eventType, evidenceItems[0].eventType);
+  assert.equal(sentItem.observedAt, evidenceItems[0].observedAt);
+  assert.equal(typeof sentItem.evidenceId, "string");
+  assert.ok(sentItem.evidenceId.length > 0);
+});
+
+test("reportEvidence: backfilled evidenceId is stable for the same logical item and stays untouched when caller supplies one", async () => {
+  const observedAt = new Date().toISOString();
+  const baseItem = { eventType: "certificate.observed", observedAt };
+
+  const calls = stubFetch([
+    { status: 202, json: { accepted: true } },
+    { status: 202, json: { accepted: true } },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  await client.reportEvidence({ jobId: "job-1", evidenceItems: [{ ...baseItem }] });
+  await client.reportEvidence({ jobId: "job-1", evidenceItems: [{ ...baseItem }] });
+  const firstId = calls[0].parsedBody.body.evidenceItems[0].evidenceId;
+  const secondId = calls[1].parsedBody.body.evidenceItems[0].evidenceId;
+  assert.equal(secondId, firstId);
+
+  const explicitCalls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  const explicitClient = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  await explicitClient.reportEvidence({
+    jobId: "job-1",
+    evidenceItems: [{ ...baseItem, evidenceId: "caller-supplied-id" }],
+  });
+  assert.equal(explicitCalls[0].parsedBody.body.evidenceItems[0].evidenceId, "caller-supplied-id");
 });
 
 test("transport: strictly rejects unsafe server URLs and permits explicit local HTTP only", () => {

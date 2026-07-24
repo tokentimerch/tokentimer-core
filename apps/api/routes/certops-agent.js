@@ -60,8 +60,13 @@ const {
 } = require("../services/certops/agentDispatch");
 const {
   createCertificateEvidence,
-  createControllerObservationEvidence,
 } = require("../services/certops/evidence");
+const {
+  CERTOPS_AGENT_OBSERVATION_INVALID,
+  CERTOPS_AGENT_EVIDENCE_ID_REQUIRED,
+  persistAgentDiscoveryEvidenceBatch,
+  persistAgentJobEvidenceBatch,
+} = require("../services/certops/agentObservations");
 const { CERTOPS_JOB_NOT_FOUND } = require("../services/certops/jobs");
 
 // --- Frozen route paths (certops-route-compat.contract.json) ---
@@ -386,6 +391,14 @@ function validateEvidenceBody(envelope) {
     ) {
       throw messageError("evidence observedAt is invalid");
     }
+    if (
+      typeof item.evidenceId !== "string" ||
+      item.evidenceId.length < 1 ||
+      item.evidenceId.length > 128 ||
+      !AGENT_ID_PATTERN.test(item.evidenceId)
+    ) {
+      throw messageError("evidence evidenceId is invalid");
+    }
   }
   return body;
 }
@@ -537,6 +550,12 @@ function handleAgentRouteError(res, error) {
         error: "Result status is invalid",
         code: CERTOPS_AGENT_RESULT_STATUS_INVALID,
       });
+    case CERTOPS_AGENT_OBSERVATION_INVALID:
+    case CERTOPS_AGENT_EVIDENCE_ID_REQUIRED:
+      return res.status(400).json({
+        error: error.message,
+        code: error.code,
+      });
     case PRIVATE_KEY_MATERIAL_REJECTED:
       return res.status(422).json({
         error: "Private key material is not accepted on CertOps agent routes",
@@ -660,83 +679,44 @@ async function resultsHandler(req, res, options = {}) {
             "jobId is required for agent evidence messages other than certificate.observed",
           );
         }
-        await (options.enforceAgentSequence || enforceAgentSequence)({
-          client: options.dbPool,
-          agentRowId: req.certopsAgent.id,
+        const result = await (
+          options.persistAgentDiscoveryEvidenceBatch ||
+          persistAgentDiscoveryEvidenceBatch
+        )({
+          dbPool: options.dbPool,
+          agent: req.certopsAgent,
           envelope,
+          evidenceItems: body.evidenceItems,
+          deps: {
+            enforceAgentSequence:
+              options.enforceAgentSequence || enforceAgentSequence,
+          },
         });
-        const persistObservation =
-          options.createControllerObservationEvidence ||
-          createControllerObservationEvidence;
-        const observations = [];
-        for (const item of body.evidenceItems) {
-          const evidence = await persistObservation({
-            client: options.dbPool,
-            workspaceId: req.certopsAgent.workspaceId,
-            evidenceType: item.eventType,
-            metadata: {
-              summary: item.summary ?? null,
-              fingerprintSha256: item.fingerprintSha256 ?? null,
-              agentId: req.certopsAgent.agentId,
-              ...(Array.isArray(item.metadata)
-                ? Object.fromEntries(
-                    item.metadata.map((entry) => [entry.name, entry.value]),
-                  )
-                : {}),
-            },
-            observedAt: item.observedAt,
-          });
-          observations.push(evidence);
-        }
-        return res
-          .status(200)
-          .json({ ok: true, evidenceCount: observations.length });
+        return res.status(200).json({
+          ok: true,
+          evidenceCount: result.evidenceCount,
+          duplicateCount: result.duplicateCount || 0,
+        });
       }
-      // Sequence enforcement (post-auth; evidence carries no dispatch
-      // nonce, so this is the only anti-replay/ordering gate here). Runs
-      // before any evidence row is appended.
-      await (options.enforceAgentSequence || enforceAgentSequence)({
-        client: options.dbPool,
-        agentRowId: req.certopsAgent.id,
-        envelope,
-      });
-      // Claim-ownership binding: only the agent that claimed the job may
-      // append evidence to it (409 CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
-      // otherwise). Post-result evidence from the same agent stays valid
-      // because claimed_by_agent_id survives completion.
-      await (options.assertEvidenceClaimOwnership ||
-        assertEvidenceClaimOwnership)({
+      const result = await (
+        options.persistAgentJobEvidenceBatch || persistAgentJobEvidenceBatch
+      )({
         dbPool: options.dbPool,
         agent: req.certopsAgent,
+        envelope,
         jobId: body.jobId,
+        evidenceItems: body.evidenceItems,
+        deps: {
+          enforceAgentSequence:
+            options.enforceAgentSequence || enforceAgentSequence,
+          assertEvidenceClaimOwnership:
+            options.assertEvidenceClaimOwnership ||
+            assertEvidenceClaimOwnership,
+          createCertificateEvidence:
+            options.createCertificateEvidence || createCertificateEvidence,
+        },
       });
-      // Lock-free append (no job row lock, no ownership transition):
-      // ownership was proven above; createCertificateEvidence only
-      // verifies the job exists.
-      const persist =
-        options.createCertificateEvidence || createCertificateEvidence;
-      const created = [];
-      for (const item of body.evidenceItems) {
-        const evidence = await persist({
-          client: options.dbPool,
-          workspaceId: req.certopsAgent.workspaceId,
-          jobId: body.jobId,
-          evidenceType: item.eventType,
-          metadata: {
-            summary: item.summary ?? null,
-            fingerprintSha256: item.fingerprintSha256 ?? null,
-            agentId: req.certopsAgent.agentId,
-            ...(Array.isArray(item.metadata)
-              ? Object.fromEntries(
-                  item.metadata.map((entry) => [entry.name, entry.value]),
-                )
-              : {}),
-          },
-          observedAt: item.observedAt,
-        });
-        created.push(evidence);
-      }
-      return res.status(200).json({ ok: true, evidenceCount: created.length });
+      return res.status(200).json({ ok: true, evidenceCount: result.evidenceCount });
     }
 
     const envelope = validateEnvelope(req.body, "result");

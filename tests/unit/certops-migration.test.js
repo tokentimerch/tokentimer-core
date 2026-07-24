@@ -664,6 +664,10 @@ describe("CertOps inventory migration", () => {
       ["certops_controller_provisioning", 22],
       ["certops_controller_provisioning_event_timestamps", 23],
       ["certops_agent_protocol_schema", 24],
+      ["certops_job_approvals", 25],
+      ["certops_job_mode_and_dry_run_complete", 26],
+      ["certops_dispatch_executor_lanes_and_routing", 27],
+      ["certops_agent_inventory_evidence_integrity", 28],
     ]);
     for (const [name, version] of expectedVersions) {
       assert.equal(

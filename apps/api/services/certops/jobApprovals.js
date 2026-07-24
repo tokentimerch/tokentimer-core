@@ -38,6 +38,13 @@ const {
   canonicalizeJobPayload,
 } = require("../../../../packages/contracts/certops/canonical-json.cjs");
 const {
+  assertNoPrivateKeyMaterial,
+  containsGenericSecretMaterial,
+  containsPrivateKeyMaterial,
+  redactGenericSecrets,
+} = require("../../utils/secretMaterial");
+const { writeAudit } = require("../audit");
+const {
   CERTOPS_JOB_NOT_FOUND,
   appendCertificateJobLog,
   jobFromRow,
@@ -96,6 +103,7 @@ const SAFE_APPROVAL_SELECT_FIELDS = `
   decision,
   approved_by_user_id,
   payload_hash,
+  canonical_intent_hash,
   reason,
   created_at
 `;
@@ -116,6 +124,7 @@ function approvalFromRow(row) {
     decision: row.decision,
     approvedByUserId: row.approved_by_user_id ?? null,
     payloadHash: row.payload_hash ?? null,
+    canonicalIntentHash: row.canonical_intent_hash ?? null,
     reason: row.reason ?? null,
     createdAt: dateToIso(row.created_at),
   };
@@ -132,6 +141,35 @@ function computeJobPayloadApprovalHash(payload) {
       ? payload
       : {},
   );
+  return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+/**
+ * Canonical execution intent: operation + subject + target + profile snapshot
+ * + payload. Bound at approval time and re-checked at claim/dispatch so an
+ * approval cannot be silently reinterpreted against a different job.
+ */
+function buildCanonicalExecutionIntent(job) {
+  const payload =
+    job.payload && typeof job.payload === "object" && !Array.isArray(job.payload)
+      ? job.payload
+      : {};
+  return {
+    operation: job.operation || null,
+    subjectType: job.subjectType || null,
+    subjectId: job.subjectId || null,
+    targetId: payload.targetId || payload.target?.id || null,
+    profileId: payload.profileId || payload.profile?.id || null,
+    profileSnapshot: payload.profileSnapshot || payload.profile || null,
+    commandRef: payload.commandRef || null,
+    action: payload.action || null,
+    payload,
+  };
+}
+
+function computeCanonicalIntentHash(job) {
+  const intent = buildCanonicalExecutionIntent(job);
+  const canonical = canonicalizeJobPayload(intent);
   return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
@@ -177,7 +215,15 @@ function normalizeReason(value) {
       CERTOPS_APPROVAL_REASON_INVALID,
     );
   }
-  return trimmed;
+  assertNoPrivateKeyMaterial(trimmed);
+  if (containsPrivateKeyMaterial(trimmed) || containsGenericSecretMaterial(trimmed)) {
+    throw serviceError(
+      "Approval reason must not contain secret material",
+      CERTOPS_APPROVAL_REASON_INVALID,
+    );
+  }
+  // Defense in depth: scrub any residual secret-shaped substrings.
+  return redactGenericSecrets(trimmed);
 }
 
 /**
@@ -204,8 +250,10 @@ function assertNonRequester(job, approverUserId) {
 async function loadJobForApproval(db, workspaceId, jobId) {
   const result = await db.query(
     `SELECT id, workspace_id, operation, status, mode, payload,
+            subject_type, subject_id,
             requested_by_user_id, requested_by_api_token_id,
-            approved_by_user_id, approved_at, approved_payload_hash
+            approved_by_user_id, approved_at, approved_payload_hash,
+            approved_canonical_intent_hash
        FROM certificate_jobs
       WHERE workspace_id = $1
         AND id = $2
@@ -225,6 +273,7 @@ async function insertApprovalDecision(db, {
   decision,
   approvedByUserId = null,
   payloadHash = null,
+  canonicalIntentHash = null,
   reason = null,
 }) {
   const result = await db.query(
@@ -234,11 +283,20 @@ async function insertApprovalDecision(db, {
        decision,
        approved_by_user_id,
        payload_hash,
+       canonical_intent_hash,
        reason
      )
-     VALUES ($1, $2, $3, $4, $5, $6)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${SAFE_APPROVAL_SELECT_FIELDS}`,
-    [workspaceId, jobId, decision, approvedByUserId, payloadHash, reason],
+    [
+      workspaceId,
+      jobId,
+      decision,
+      approvedByUserId,
+      payloadHash,
+      canonicalIntentHash,
+      reason,
+    ],
   );
   return approvalFromRow(result.rows[0]);
 }
@@ -256,9 +314,12 @@ async function requestApprovalState(options) {
 
   const job = await loadJobForApproval(db, workspaceId, jobId);
   const currentPayloadHash = computeJobPayloadApprovalHash(job.payload);
+  const currentCanonicalIntentHash = computeCanonicalIntentHash(job);
   const approvalValid =
     job.approvedPayloadHash !== null &&
-    job.approvedPayloadHash === currentPayloadHash;
+    job.approvedPayloadHash === currentPayloadHash &&
+    (!job.approvedCanonicalIntentHash ||
+      job.approvedCanonicalIntentHash === currentCanonicalIntentHash);
 
   const history = await db.query(
     `SELECT ${SAFE_APPROVAL_SELECT_FIELDS}
@@ -278,7 +339,9 @@ async function requestApprovalState(options) {
     approvedByUserId: job.approvedByUserId,
     approvedAt: job.approvedAt,
     approvedPayloadHash: job.approvedPayloadHash,
+    approvedCanonicalIntentHash: job.approvedCanonicalIntentHash ?? null,
     currentPayloadHash,
+    currentCanonicalIntentHash,
     approvalValid,
     decisions: history.rows.map(approvalFromRow),
   };
@@ -320,6 +383,7 @@ async function approveJob(options) {
   }
 
   const payloadHash = computeJobPayloadApprovalHash(job.payload);
+  const canonicalIntentHash = computeCanonicalIntentHash(job);
 
   const updated = await db.query(
     `UPDATE certificate_jobs
@@ -327,14 +391,15 @@ async function approveJob(options) {
             approved_by_user_id = $3,
             approved_at = NOW(),
             approved_payload_hash = $4,
+            approved_canonical_intent_hash = $5,
             queued_at = COALESCE(queued_at, NOW()),
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2
         AND status = 'pending_approval'
       RETURNING id, status, approved_by_user_id, approved_at,
-                approved_payload_hash`,
-    [workspaceId, jobId, approverUserId, payloadHash],
+                approved_payload_hash, approved_canonical_intent_hash`,
+    [workspaceId, jobId, approverUserId, payloadHash, canonicalIntentHash],
   );
   const row = updated.rows[0];
   if (!row) {
@@ -351,6 +416,7 @@ async function approveJob(options) {
     decision: "approved",
     approvedByUserId: approverUserId,
     payloadHash,
+    canonicalIntentHash,
     reason,
   });
 
@@ -361,8 +427,28 @@ async function approveJob(options) {
     eventType: "approval.granted",
     status: "pending",
     message: reason,
-    metadata: { payloadHash, approvedByUserId: String(approverUserId) },
+    metadata: {
+      payloadHash,
+      canonicalIntentHash,
+      approvedByUserId: String(approverUserId),
+    },
     createdByUserId: approverUserId,
+  });
+
+  await writeAudit({
+    client: db,
+    actorUserId: approverUserId,
+    subjectUserId: approverUserId,
+    action: "CERTOPS_JOB_APPROVAL_GRANTED",
+    targetType: "certificate_job",
+    targetId: jobId,
+    workspaceId,
+    metadata: {
+      jobId,
+      status: row.status,
+      payloadHash: row.approved_payload_hash,
+      canonicalIntentHash: row.approved_canonical_intent_hash,
+    },
   });
 
   return {
@@ -371,6 +457,7 @@ async function approveJob(options) {
     approvedByUserId: row.approved_by_user_id,
     approvedAt: dateToIso(row.approved_at),
     payloadHash: row.approved_payload_hash,
+    canonicalIntentHash: row.approved_canonical_intent_hash,
     approval,
   };
   });
@@ -424,6 +511,7 @@ async function rejectJob(options) {
     decision: "rejected",
     approvedByUserId: approverUserId,
     payloadHash: null,
+    canonicalIntentHash: null,
     reason,
   });
 
@@ -436,6 +524,20 @@ async function rejectJob(options) {
     message: reason,
     metadata: { rejectedByUserId: String(approverUserId) },
     createdByUserId: approverUserId,
+  });
+
+  await writeAudit({
+    client: db,
+    actorUserId: approverUserId,
+    subjectUserId: approverUserId,
+    action: "CERTOPS_JOB_APPROVAL_REJECTED",
+    targetType: "certificate_job",
+    targetId: jobId,
+    workspaceId,
+    metadata: {
+      jobId,
+      status: row.status,
+    },
   });
 
   return {
@@ -469,6 +571,7 @@ async function invalidateApprovalForClaim({
             approved_by_user_id = NULL,
             approved_at = NULL,
             approved_payload_hash = NULL,
+            approved_canonical_intent_hash = NULL,
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2`,
@@ -481,6 +584,7 @@ async function invalidateApprovalForClaim({
     decision: "invalidated",
     approvedByUserId: null,
     payloadHash: currentHash,
+    canonicalIntentHash: null,
     reason:
       "Job payload changed after approval; the approval hash no longer matches",
   });
@@ -509,6 +613,8 @@ module.exports = {
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   MAX_APPROVAL_REASON_LENGTH,
   approveJob,
+  buildCanonicalExecutionIntent,
+  computeCanonicalIntentHash,
   computeJobPayloadApprovalHash,
   invalidateApprovalForClaim,
   rejectJob,
@@ -516,6 +622,8 @@ module.exports = {
   _test: {
     approvalFromRow,
     assertNonRequester,
+    buildCanonicalExecutionIntent,
+    computeCanonicalIntentHash,
     normalizeApproverUserId,
     normalizeReason,
   },

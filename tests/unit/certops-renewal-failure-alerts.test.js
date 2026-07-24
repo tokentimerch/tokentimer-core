@@ -494,7 +494,11 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
       {
         id: "job-renew",
         workspace_id: "ws-1",
-        status: "running",
+        // status 'claimed' with lease_renewed_at unset means no side effects
+        // were ever possible; with retries exhausted and the agent gone,
+        // this is the only path that terminally fails as agent_offline
+        // (a 'running' job is always effects_unknown; see reapExpiredLeases).
+        status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
         operation: "renew",

@@ -180,6 +180,7 @@ function validEvidenceBody() {
     jobId: "job-1",
     evidenceItems: [
       {
+        evidenceId: "evidence-1",
         eventType: "policy.checked",
         observedAt: "2026-07-20T12:00:00.000Z",
         summary: "Policy rejection recorded",

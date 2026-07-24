@@ -516,7 +516,9 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
      )
      ON CONFLICT (workspace_id, fingerprint_sha256)
        WHERE fingerprint_sha256 IS NOT NULL
-         AND source NOT IN ('endpoint_monitor', 'domain_checker', 'cert_manager')
+         AND source NOT IN (
+           'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+         )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE
@@ -638,7 +640,9 @@ async function upsertManagedCertificateByMonitorSource(
      )
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
-         AND source IN ('endpoint_monitor', 'domain_checker', 'cert_manager')
+         AND source IN (
+           'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+         )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
        status = CASE
@@ -673,6 +677,84 @@ async function upsertManagedCertificateByMonitorSource(
 }
 
 /**
+ * Upsert an agent-filesystem discovery target (host) keyed by agent + host.
+ * Mirrors cert-manager target upsert identity semantics.
+ */
+async function upsertAgentFilesystemTarget(client, options) {
+  const sourceRef = options.sourceRef || null;
+  if (!sourceRef) {
+    throw new Error("sourceRef is required for agent filesystem target upsert");
+  }
+  const result = await client.query(
+    `INSERT INTO certificate_targets (
+       workspace_id, name, target_type, status, source, source_ref,
+       hostname, deployment_reference, public_metadata
+     ) VALUES ($1, $2, 'agent-host', 'active', 'agent_filesystem', $3, $4, $5, $6::jsonb)
+     ON CONFLICT (workspace_id, source, source_ref)
+       WHERE source = 'agent_filesystem' AND source_ref IS NOT NULL
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       target_type = 'agent-host',
+       status = 'active',
+       hostname = EXCLUDED.hostname,
+       deployment_reference = EXCLUDED.deployment_reference,
+       public_metadata = EXCLUDED.public_metadata,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      options.name || options.hostname || sourceRef,
+      sourceRef,
+      options.hostname || null,
+      options.deploymentReference || null,
+      JSON.stringify(options.publicMetadata || {}),
+    ],
+  );
+  return result.rows[0];
+}
+
+/**
+ * Upsert an agent-observed certificate instance keyed by target + fingerprint.
+ */
+async function upsertAgentFilesystemInstance(client, options) {
+  if (!options.fingerprintSha256) return null;
+  const result = await client.query(
+    `INSERT INTO certificate_instances (
+       workspace_id, managed_certificate_id, target_id, status, source, source_ref,
+       observed_fingerprint_sha256, observed_serial_number, observed_subject,
+       observed_issuer, observed_not_before, observed_not_after,
+       deployment_reference, observed_at, public_metadata
+     ) VALUES ($1, $2, $3, $4, 'agent_filesystem', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+     ON CONFLICT (workspace_id, target_id, managed_certificate_id, observed_fingerprint_sha256)
+     DO UPDATE SET
+       status = EXCLUDED.status, source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
+       observed_serial_number = EXCLUDED.observed_serial_number,
+       observed_subject = EXCLUDED.observed_subject, observed_issuer = EXCLUDED.observed_issuer,
+       observed_not_before = EXCLUDED.observed_not_before, observed_not_after = EXCLUDED.observed_not_after,
+       deployment_reference = EXCLUDED.deployment_reference, observed_at = EXCLUDED.observed_at,
+       public_metadata = EXCLUDED.public_metadata, updated_at = NOW()
+     RETURNING *`,
+    [
+      options.workspaceId,
+      options.managedCertificateId,
+      options.targetId,
+      options.status || "discovered",
+      options.sourceRef || null,
+      options.fingerprintSha256,
+      options.serialNumber || null,
+      options.subject || null,
+      options.issuer || null,
+      options.notBefore || null,
+      options.notAfter || null,
+      options.deploymentReference || null,
+      options.observedAt || null,
+      JSON.stringify(options.publicMetadata || {}),
+    ],
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * Create or update only controller-provisioning-owned fields for a stable
  * cert-manager identity. Planning must never overwrite certificate material
  * or observation metadata that a cert-manager observer has already recorded.
@@ -689,7 +771,9 @@ async function upsertManagedCertificateForControllerProvisioning(client, options
      ) VALUES ($1, 'discovered', 'cert_manager', $2, $3, 'cert-manager-managed', $4, $5::jsonb)
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
-         AND source IN ('endpoint_monitor', 'domain_checker', 'cert_manager')
+         AND source IN (
+           'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+         )
      DO UPDATE SET
        name = EXCLUDED.name,
        key_mode = EXCLUDED.key_mode,
@@ -1012,6 +1096,8 @@ module.exports = {
   retireManagedCertificate,
   toInstanceRecord,
   toInventoryRecord,
+  upsertAgentFilesystemInstance,
+  upsertAgentFilesystemTarget,
   upsertManagedCertificate,
   upsertManagedCertificateByMonitorSource,
   upsertManagedCertificateForControllerProvisioning,

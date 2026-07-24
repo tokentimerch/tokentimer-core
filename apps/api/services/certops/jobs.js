@@ -56,6 +56,10 @@ const JOB_STATUSES = Object.freeze([
   // Terminal outcome for mode === "dry_run" only. Never use "succeeded" for
   // dry-run jobs (no keygen/renew/deploy/reload/verify actually ran).
   "dry_run_complete",
+  // Terminal outcome when a lease was renewed (a side effect may have
+  // occurred) but the agent never reported a result. Requires manual
+  // operator reconciliation instead of a silent retry or success/failure.
+  "orphaned_unknown_effect",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
@@ -69,6 +73,7 @@ const TERMINAL_JOB_STATUSES = new Set([
   "blocked",
   "cancelled",
   "dry_run_complete",
+  "orphaned_unknown_effect",
 ]);
 const ACTIVE_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
@@ -110,6 +115,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "blocked",
     "cancelled",
     "dry_run_complete",
+    "orphaned_unknown_effect",
   ]),
   running: new Set([
     "succeeded",
@@ -118,6 +124,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "blocked",
     "cancelled",
     "dry_run_complete",
+    "orphaned_unknown_effect",
   ]),
   rejected: new Set(),
   succeeded: new Set(),
@@ -125,6 +132,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
   blocked: new Set(),
   cancelled: new Set(),
   dry_run_complete: new Set(),
+  orphaned_unknown_effect: new Set(),
 });
 
 const JOB_OPERATIONS = Object.freeze(["renew", "deploy", "reload", "revoke", "noop"]);
@@ -215,6 +223,9 @@ const SAFE_JOB_SELECT_FIELDS = `
   approved_by_user_id,
   approved_at,
   approved_payload_hash,
+  approved_canonical_intent_hash,
+  needs_operator_reconciliation,
+  reconciliation_reason,
   created_at,
   updated_at,
   queued_at,
@@ -916,6 +927,9 @@ function jobFromRow(row) {
     approvedByUserId: row.approved_by_user_id ?? null,
     approvedAt: dateToIso(row.approved_at),
     approvedPayloadHash: row.approved_payload_hash ?? null,
+    approvedCanonicalIntentHash: row.approved_canonical_intent_hash ?? null,
+    needsOperatorReconciliation: Boolean(row.needs_operator_reconciliation),
+    reconciliationReason: row.reconciliation_reason ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     queuedAt: dateToIso(row.queued_at),

@@ -444,8 +444,7 @@ describe("Results handler", () => {
 
   it("evidence path appends lock-free without an ingestResult transition", async () => {
     const res = createResponse();
-    const evidenceCalls = [];
-    const ownershipCalls = [];
+    const batchCalls = [];
     let ingestCalled = false;
     await _test.resultsHandler(
       {
@@ -454,6 +453,7 @@ describe("Results handler", () => {
           jobId: "42",
           evidenceItems: [
             {
+              evidenceId: "ev_item_1",
               eventType: "certificate.observed",
               observedAt: "2026-07-22T10:00:00.000Z",
               summary: "observed cert",
@@ -463,37 +463,27 @@ describe("Results handler", () => {
       },
       res,
       {
-        enforceAgentSequence: async () => {},
         ingestResult: async () => {
           ingestCalled = true;
           throw new Error("must not be called for evidence");
         },
-        assertEvidenceClaimOwnership: async (options) => {
-          ownershipCalls.push(options);
-        },
-        createCertificateEvidence: async (options) => {
-          evidenceCalls.push(options);
-          return { id: "ev-1" };
+        persistAgentJobEvidenceBatch: async (options) => {
+          batchCalls.push(options);
+          return { ok: true, evidenceCount: 1, items: [{ id: "ev-1" }] };
         },
       },
     );
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body, { ok: true, evidenceCount: 1 });
     assert.equal(ingestCalled, false);
-    // Claim ownership is proven before anything is persisted.
-    assert.equal(ownershipCalls.length, 1);
-    assert.equal(ownershipCalls[0].jobId, "42");
-    assert.equal(evidenceCalls.length, 1);
-    assert.equal(evidenceCalls[0].jobId, "42");
-    assert.equal(evidenceCalls[0].evidenceType, "certificate.observed");
-    // Lock-free: the evidence service receives the pool directly (undefined
-    // here because no dbPool option was injected), never a locked tx client.
-    assert.equal(evidenceCalls[0].client, undefined);
+    assert.equal(batchCalls.length, 1);
+    assert.equal(batchCalls[0].jobId, "42");
+    assert.equal(batchCalls[0].evidenceItems[0].evidenceId, "ev_item_1");
   });
 
   it("evidence from a non-claiming agent is rejected before persistence", async () => {
     const res = createResponse();
-    let persisted = false;
+    let batchEntered = false;
     await _test.resultsHandler(
       {
         certopsAgent: agentFixture(),
@@ -501,6 +491,7 @@ describe("Results handler", () => {
           jobId: "42",
           evidenceItems: [
             {
+              evidenceId: "ev_item_2",
               eventType: "certificate.observed",
               observedAt: "2026-07-22T10:00:00.000Z",
             },
@@ -509,23 +500,19 @@ describe("Results handler", () => {
       },
       res,
       {
-        enforceAgentSequence: async () => {},
-        assertEvidenceClaimOwnership: async () => {
+        persistAgentJobEvidenceBatch: async () => {
+          batchEntered = true;
           const error = new Error(
             "Evidence does not match the claim for this job",
           );
           error.code = "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH";
           throw error;
         },
-        createCertificateEvidence: async () => {
-          persisted = true;
-          return { id: "ev-x" };
-        },
       },
     );
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.code, "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH");
-    assert.equal(persisted, false);
+    assert.equal(batchEntered, true);
   });
 
   it("evidence path enforces the sequence before appending and maps regression to 409", async () => {
@@ -535,6 +522,7 @@ describe("Results handler", () => {
       jobId: "42",
       evidenceItems: [
         {
+          evidenceId: "ev_item_3",
           eventType: "certificate.observed",
           observedAt: "2026-07-22T10:00:00.000Z",
         },
@@ -542,8 +530,7 @@ describe("Results handler", () => {
     });
     body.sequence = 5;
     await _test.resultsHandler({ certopsAgent: agentFixture(), body }, res, {
-      enforceAgentSequence: async ({ agentRowId, envelope: seen }) => {
-        assert.equal(agentRowId, "agent-row-1");
+      persistAgentJobEvidenceBatch: async ({ envelope: seen }) => {
         assert.equal(seen.sequence, 5);
         const error = new Error("regression");
         error.code = "CERTOPS_AGENT_SEQUENCE_REGRESSION";

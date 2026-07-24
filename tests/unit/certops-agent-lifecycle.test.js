@@ -142,6 +142,47 @@ function createMemoryDb() {
       }
 
       if (
+        normalized.includes("UPDATE certificate_jobs") &&
+        normalized.includes("SET status = 'cancelled'") &&
+        normalized.includes("CERTOPS_AGENT_FORCE_RETIRED'")
+      ) {
+        const matched = jobLeases.filter(
+          (job) =>
+            job.claimed_by_agent_id === params[0] &&
+            job.status === "claimed" &&
+            job.lease_expires_at instanceof Date &&
+            job.lease_expires_at.getTime() > Date.now(),
+        );
+        for (const job of matched) {
+          job.status = "cancelled";
+          job.error_code = "CERTOPS_AGENT_FORCE_RETIRED";
+          job.error_message = params[1];
+        }
+        return { rows: matched.map((job) => ({ id: job.id })) };
+      }
+
+      if (
+        normalized.includes("UPDATE certificate_jobs") &&
+        normalized.includes("SET status = 'orphaned_unknown_effect'")
+      ) {
+        const matched = jobLeases.filter(
+          (job) =>
+            job.claimed_by_agent_id === params[0] &&
+            job.status === "running" &&
+            job.lease_expires_at instanceof Date &&
+            job.lease_expires_at.getTime() > Date.now(),
+        );
+        for (const job of matched) {
+          job.status = "orphaned_unknown_effect";
+          job.needs_operator_reconciliation = true;
+          job.reconciliation_reason = params[1];
+          job.error_code = "CERTOPS_AGENT_FORCE_RETIRED_UNKNOWN_EFFECT";
+          job.error_message = params[1];
+        }
+        return { rows: matched.map((job) => ({ id: job.id })) };
+      }
+
+      if (
         normalized.includes("UPDATE certops_agents") &&
         normalized.includes("SET status = 'retired'")
       ) {
@@ -397,6 +438,9 @@ describe("CertOps agents list route", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       retiredAt: null,
       retireReason: null,
+      compatibilityState: "outdated",
+      clockDriftState: "ok",
+      clockDriftMs: 25,
     });
   });
 
@@ -436,8 +480,11 @@ describe("CertOps agents list route", () => {
 describe("CertOps agent retire route", () => {
   const retirePath = "/api/v1/workspaces/:id/certops/agents/:agentId/retire";
 
+  let nextLeaseJobId = 0;
   function leaseJob(overrides = {}) {
+    nextLeaseJobId += 1;
     return {
+      id: `lease-job-${nextLeaseJobId}`,
       claimed_by_agent_id: AGENT_ROW_ID,
       status: "claimed",
       lease_expires_at: new Date(Date.now() + 5 * 60 * 1000),
@@ -499,9 +546,11 @@ describe("CertOps agent retire route", () => {
     assert.equal(db.auditEvents.length, 0);
   });
 
-  it("force with reason retires despite leases, audits, and leaves jobs alone", async () => {
+  it("force with reason retires despite leases, audits, and fences in-flight work (H12)", async () => {
     db.agentRows.push(agentRow());
-    db.jobLeases.push(leaseJob(), leaseJob({ status: "running" }));
+    const claimedJob = leaseJob();
+    const runningJob = leaseJob({ status: "running" });
+    db.jobLeases.push(claimedJob, runningJob);
 
     const res = await invokeRoute("post", retirePath, {
       params: { agentId: AGENT_ROW_ID },
@@ -523,15 +572,17 @@ describe("CertOps agent retire route", () => {
       force: true,
       reason: "host compromised",
       leasedJobs: 2,
+      cancelledJobIds: [claimedJob.id],
+      orphanedJobIds: [runningJob.id],
     });
 
-    // Leased jobs are untouched; the lease reaper worker owns their expiry.
-    assert.equal(
-      db.jobLeases.every((job) =>
-        ["claimed", "running"].includes(job.status),
-      ),
-      true,
-    );
+    // H12: force retire fences in-flight work instead of leaving it for the
+    // reaper: a claimed (never-started) job is cancelled cleanly, while a
+    // running job (side effects unknown) is flagged for operator
+    // reconciliation instead of being silently retried or cancelled.
+    assert.equal(claimedJob.status, "cancelled");
+    assert.equal(runningJob.status, "orphaned_unknown_effect");
+    assert.equal(runningJob.needs_operator_reconciliation, true);
   });
 
   it("retires without force when no active leases exist and audits", async () => {
@@ -550,6 +601,8 @@ describe("CertOps agent retire route", () => {
       force: false,
       reason: null,
       leasedJobs: 0,
+      cancelledJobIds: [],
+      orphanedJobIds: [],
     });
   });
 
