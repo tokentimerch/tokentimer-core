@@ -215,6 +215,214 @@ async function getActiveKeyWithPrivate(db) {
   };
 }
 
+async function selectRetiringKeyRow(db) {
+  const result = await db.query(
+    `SELECT id, signing_key_id, public_key_pem, status, supersedes_signing_key_id,
+            rotation_started_at, rotation_forced_at, rotation_force_reason
+       FROM certops_signing_keys
+      WHERE status = 'retiring'
+      ORDER BY rotation_started_at DESC NULLS LAST, created_at DESC
+      LIMIT 1`,
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Begin overlapping signing-key rotation: create a new active key and move the
+ * previous active key to retiring so existing agents can still verify while
+ * they acknowledge the replacement via heartbeat.
+ */
+async function beginSigningKeyRotation(options = {}) {
+  const db = options.client || pool;
+  getEncryptionKey();
+
+  const current = await selectActiveKeyRow(db);
+  if (!current) {
+    return ensureActiveSigningKey({ client: db });
+  }
+
+  const retiring = await selectRetiringKeyRow(db);
+  if (retiring) {
+    throw serviceError(
+      "A signing-key rotation is already in progress",
+      CERTOPS_SIGNING_KEY_UNAVAILABLE,
+    );
+  }
+
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const publicKeyPem = publicKey
+    .export({ type: "spki", format: "pem" })
+    .toString();
+  const privateKeyPem = privateKey
+    .export({ type: "pkcs8", format: "pem" })
+    .toString();
+  const signingKeyId = generateSigningKeyId();
+  const privateKeyEncrypted = encryptPrivateKeyPem(privateKeyPem);
+
+  await db.query(
+    `UPDATE certops_signing_keys
+        SET status = 'retiring',
+            rotation_started_at = COALESCE(rotation_started_at, NOW()),
+            updated_at = NOW()
+      WHERE id = $1
+        AND status = 'active'`,
+    [current.id],
+  );
+
+  const inserted = await db.query(
+    `INSERT INTO certops_signing_keys (
+       signing_key_id, public_key_pem, private_key_encrypted,
+       encryption_version, status, supersedes_signing_key_id, rotation_started_at
+     )
+     VALUES ($1, $2, $3, $4, 'active', $5, NOW())
+     RETURNING id, signing_key_id, public_key_pem`,
+    [
+      signingKeyId,
+      publicKeyPem,
+      privateKeyEncrypted,
+      ENCRYPTION_VERSION,
+      current.signing_key_id,
+    ],
+  );
+
+  return {
+    signingKeyId: inserted.rows[0].signing_key_id,
+    publicKeyPem: inserted.rows[0].public_key_pem,
+    supersedesSigningKeyId: current.signing_key_id,
+    status: "active",
+  };
+}
+
+/**
+ * Heartbeat rotation notice for agents that have not yet pinned the new key.
+ * Field shape is documented in COORDINATION-H3.md.
+ */
+async function getSigningKeyRotationNotice(options = {}) {
+  const db = options.client || pool;
+  const active = await selectActiveKeyRow(db);
+  if (!active) return null;
+
+  const pinnedSigningKeyId =
+    typeof options.pinnedSigningKeyId === "string"
+      ? options.pinnedSigningKeyId
+      : null;
+  if (pinnedSigningKeyId && pinnedSigningKeyId === active.signing_key_id) {
+    return null;
+  }
+
+  const retiring = await selectRetiringKeyRow(db);
+  if (!retiring && !active.supersedes_signing_key_id) {
+    return null;
+  }
+
+  return {
+    pendingSigningKeyId: active.signing_key_id,
+    pendingPublicKeyPem: active.public_key_pem,
+    supersedesSigningKeyId:
+      active.supersedes_signing_key_id || retiring?.signing_key_id || null,
+    status: "pending_ack",
+  };
+}
+
+async function acknowledgeSigningKey(options = {}) {
+  const db = options.client || pool;
+  const signingKeyId =
+    typeof options.signingKeyId === "string" ? options.signingKeyId.trim() : "";
+  if (!signingKeyId || !SIGNING_KEY_ID_PATTERN.test(signingKeyId)) {
+    return { acknowledged: false };
+  }
+  if (!options.agentRowId || !options.workspaceId) {
+    return { acknowledged: false };
+  }
+
+  await db.query(
+    `INSERT INTO certops_signing_key_acks (
+       workspace_id, agent_id, signing_key_id
+     ) VALUES ($1, $2, $3)
+     ON CONFLICT (agent_id, signing_key_id) DO UPDATE
+       SET acknowledged_at = NOW()`,
+    [options.workspaceId, options.agentRowId, signingKeyId],
+  );
+  return { acknowledged: true, signingKeyId };
+}
+
+/**
+ * Retire the previous (retiring) signing key once the active fleet has
+ * acknowledged the replacement, or when an operator forces incomplete
+ * rotation after a grace period.
+ */
+async function completeSigningKeyRotation(options = {}) {
+  const db = options.client || pool;
+  const force = options.force === true;
+  const retiring = await selectRetiringKeyRow(db);
+  if (!retiring) {
+    return { completed: false, reason: "no_retiring_key" };
+  }
+
+  const active = await selectActiveKeyRow(db);
+  if (!active) {
+    throw serviceError(
+      "No active CertOps signing key is available",
+      CERTOPS_SIGNING_KEY_UNAVAILABLE,
+    );
+  }
+
+  const fleet = await db.query(
+    `SELECT COUNT(*)::int AS active_agents
+       FROM certops_agents
+      WHERE status = 'active'`,
+  );
+  const acks = await db.query(
+    `SELECT COUNT(DISTINCT agent_id)::int AS ack_count
+       FROM certops_signing_key_acks
+      WHERE signing_key_id = $1`,
+    [active.signing_key_id],
+  );
+  const activeAgents = Number(fleet.rows[0]?.active_agents || 0);
+  const ackCount = Number(acks.rows[0]?.ack_count || 0);
+  const fullyAcked = activeAgents === 0 || ackCount >= activeAgents;
+
+  if (!fullyAcked && !force) {
+    return {
+      completed: false,
+      reason: "fleet_incomplete",
+      activeAgents,
+      ackCount,
+    };
+  }
+
+  await db.query(
+    `UPDATE certops_signing_keys
+        SET status = 'retired',
+            retired_at = NOW(),
+            rotation_forced_at = CASE WHEN $2 THEN NOW() ELSE rotation_forced_at END,
+            rotation_force_reason = CASE
+              WHEN $2 THEN $3
+              ELSE rotation_force_reason
+            END,
+            updated_at = NOW()
+      WHERE id = $1
+        AND status = 'retiring'`,
+    [
+      retiring.id,
+      force,
+      force
+        ? options.reason ||
+          "Forced incomplete rotation: retiring key stopped before full fleet acknowledgement"
+        : null,
+    ],
+  );
+
+  return {
+    completed: true,
+    forced: force && !fullyAcked,
+    retiredSigningKeyId: retiring.signing_key_id,
+    activeSigningKeyId: active.signing_key_id,
+    activeAgents,
+    ackCount,
+  };
+}
+
 // --- Dispatch signing ---
 
 function generateNonce() {
@@ -405,8 +613,12 @@ module.exports = {
   CERTOPS_NONCE_REPLAYED,
   CERTOPS_NONCE_UNKNOWN_OR_EXPIRED,
   DEFAULT_NONCE_TTL_SECONDS,
+  acknowledgeSigningKey,
+  beginSigningKeyRotation,
+  completeSigningKeyRotation,
   ensureActiveSigningKey,
   getActiveSigningKeyPublicInfo,
+  getSigningKeyRotationNotice,
   signJobForDispatch,
   consumeNonce,
   sweepExpiredNonces,
