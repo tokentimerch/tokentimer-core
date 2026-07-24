@@ -393,6 +393,70 @@ function validateDnsProvidersObject(dnsProviders) {
 }
 
 /**
+ * Validates optional dnsPropagation config (timeout/interval/resolvers).
+ * Delegates shape rules to src/dns/propagate.normalizePropagationConfig
+ * semantics, duplicated here so config stays free of a dns import cycle.
+ *
+ * @param {*} raw
+ * @returns {object}
+ */
+function normalizeDnsPropagationConfig(raw) {
+  const DEFAULT_TIMEOUT_MS = 120 * 1000;
+  const DEFAULT_INTERVAL_MS = 2 * 1000;
+
+  if (raw === undefined || raw === null) {
+    return {
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      intervalMs: DEFAULT_INTERVAL_MS,
+      resolvers: [],
+      checkAuthoritative: true,
+    };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      "tokentimer-agent: dnsPropagation in config.json must be an object " +
+        "({ timeoutMs?, intervalMs?, resolvers?, checkAuthoritative? })",
+    );
+  }
+
+  const timeoutMs = raw.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : raw.timeoutMs;
+  const intervalMs = raw.intervalMs === undefined ? DEFAULT_INTERVAL_MS : raw.intervalMs;
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error(
+      `tokentimer-agent: dnsPropagation.timeoutMs must be a positive integer, got ${JSON.stringify(timeoutMs)}`,
+    );
+  }
+  if (!Number.isInteger(intervalMs) || intervalMs <= 0) {
+    throw new Error(
+      `tokentimer-agent: dnsPropagation.intervalMs must be a positive integer, got ${JSON.stringify(intervalMs)}`,
+    );
+  }
+
+  let resolvers = [];
+  if (raw.resolvers !== undefined) {
+    if (
+      !Array.isArray(raw.resolvers) ||
+      raw.resolvers.some((entry) => typeof entry !== "string" || entry.length === 0)
+    ) {
+      throw new Error(
+        "tokentimer-agent: dnsPropagation.resolvers must be an array of non-empty resolver IP strings",
+      );
+    }
+    resolvers = [...raw.resolvers];
+  }
+
+  const checkAuthoritative =
+    raw.checkAuthoritative === undefined ? true : raw.checkAuthoritative;
+  if (typeof checkAuthoritative !== "boolean") {
+    throw new Error(
+      "tokentimer-agent: dnsPropagation.checkAuthoritative must be a boolean when provided",
+    );
+  }
+
+  return { timeoutMs, intervalMs, resolvers, checkAuthoritative };
+}
+
+/**
  * Reads and JSON-parses the agent-local DNS credentials file for one
  * configured provider. Fail-loud on every problem: missing config entry,
  * unreadable file, non-JSON content, or (POSIX only, same posture as the
@@ -764,6 +828,9 @@ function loadAgentConfig({ configDir } = {}) {
   // files, read on demand via readDnsCredentialsFile.
   const dnsProviders = validateDnsProvidersObject(fileConfig.dnsProviders);
 
+  // DNS-01 propagation wait (authoritative + optional recursive polling).
+  const dnsPropagation = normalizeDnsPropagationConfig(fileConfig.dnsPropagation);
+
   return {
     serverUrl,
     agentId,
@@ -779,6 +846,7 @@ function loadAgentConfig({ configDir } = {}) {
     execution,
     pinnedSigningKey,
     dnsProviders,
+    dnsPropagation,
   };
 }
 
@@ -1232,4 +1300,5 @@ module.exports = {
   KNOWN_DNS_PROVIDER_IDS,
   CREDENTIAL_SHAPE_PATTERN,
   MAX_CA_BUNDLE_BYTES,
+  normalizeDnsPropagationConfig,
 };
