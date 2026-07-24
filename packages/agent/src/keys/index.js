@@ -44,8 +44,10 @@ const {
  */
 const SUPPORTED_ALGORITHMS = Object.freeze({
   "ec-p256": Object.freeze({ type: "ec", options: Object.freeze({ namedCurve: "P-256" }) }),
+  "ec-p384": Object.freeze({ type: "ec", options: Object.freeze({ namedCurve: "P-384" }) }),
   "rsa-2048": Object.freeze({ type: "rsa", options: Object.freeze({ modulusLength: 2048 }) }),
   "rsa-3072": Object.freeze({ type: "rsa", options: Object.freeze({ modulusLength: 3072 }) }),
+  "rsa-4096": Object.freeze({ type: "rsa", options: Object.freeze({ modulusLength: 4096 }) }),
   ed25519: Object.freeze({ type: "ed25519", options: Object.freeze({}) }),
 });
 
@@ -148,7 +150,7 @@ function classifyExistingKeyPath(keyPath) {
  *
  * @param {object} input
  * @param {string} input.keyPath absolute or relative path for the live private key file
- * @param {"ec-p256"|"rsa-2048"|"rsa-3072"|"ed25519"} [input.algorithm]
+ * @param {"ec-p256"|"ec-p384"|"rsa-2048"|"rsa-3072"|"rsa-4096"|"ed25519"} [input.algorithm]
  * @param {boolean} [input.overwrite] refuse to clobber an existing file unless true;
  *   when true and the file exists, writes to a staging path instead of keyPath
  * @returns {{ keyPath: string, stagedKeyPath: string, publicKeyPem: string, algorithm: string }}
@@ -409,6 +411,7 @@ const DN_FIELD_ORDER = Object.freeze([
 const OID_EXTENSION_REQUEST = "1.2.840.113549.1.9.14"; // pkcs-9-at-extensionRequest
 const OID_SUBJECT_ALT_NAME = "2.5.29.17";
 const OID_ECDSA_WITH_SHA256 = "1.2.840.10045.4.3.2";
+const OID_ECDSA_WITH_SHA384 = "1.2.840.10045.4.3.3";
 const OID_SHA256_WITH_RSA = "1.2.840.113549.1.1.11";
 
 /**
@@ -510,7 +513,15 @@ function derCsrAttributes(altNames) {
 function resolveSignatureAlgorithm(privateKey) {
   const keyType = privateKey.asymmetricKeyType;
   if (keyType === "ec") {
-    // ecdsa-with-SHA256; parameters MUST be absent for ECDSA.
+    // ecdsa-with-SHA*; parameters MUST be absent for ECDSA.
+    // Match hash to curve size (P-384 -> SHA-384; P-256 and others -> SHA-256).
+    const namedCurve = privateKey.asymmetricKeyDetails?.namedCurve;
+    if (namedCurve === "P-384" || namedCurve === "secp384r1") {
+      return {
+        signatureAlgorithm: derSequence([derOid(OID_ECDSA_WITH_SHA384)]),
+        hash: "sha384",
+      };
+    }
     return {
       signatureAlgorithm: derSequence([derOid(OID_ECDSA_WITH_SHA256)]),
       hash: "sha256",
@@ -557,9 +568,9 @@ function derToPem(der, label) {
  * after the KeyObject is created (KeyObject internals cannot be zeroized
  * from JS, see module doc comment).
  *
- * Supported signature algorithms: ECDSA-with-SHA256 (EC P-256 keys) and
- * sha256WithRSAEncryption (RSA keys). Ed25519 throws a clear "not
- * supported" error (documented deviation).
+ * Supported signature algorithms: ECDSA-with-SHA256 (EC P-256),
+ * ECDSA-with-SHA384 (EC P-384), and sha256WithRSAEncryption (RSA).
+ * Ed25519 throws a clear "not supported" error (documented deviation).
  *
  * @param {object} input
  * @param {string} input.keyPath path to the PKCS#8 private key PEM on disk

@@ -28,6 +28,8 @@ const ROUTES = Object.freeze({
   HEARTBEAT: "/api/v1/certops/agent/heartbeat",
   CLAIM: "/api/v1/certops/agent/jobs/claim",
   RESULTS: "/api/v1/certops/agent/jobs/results",
+  // B6: plain POST (no message envelope). Path is jobs/:jobId/lease.
+  LEASE: "/api/v1/certops/agent/jobs",
 });
 
 const MESSAGE_TYPES = Object.freeze({
@@ -54,6 +56,8 @@ const AGENT_PROTOCOL_ERROR_CODES = Object.freeze({
   RETIRED: "retired",
   INVALID_MESSAGE: "invalid_message",
   INVALID_RESPONSE: "invalid_response",
+  // B6: lease renew rejected because this agent/claim no longer owns the job.
+  CLAIM_OWNERSHIP_MISMATCH: "claim_ownership_mismatch",
 });
 
 const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
@@ -63,7 +67,17 @@ const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})
 const CREDENTIAL_PATTERN = /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-]{16,1024})$/;
 const MESSAGE_TYPE_VALUES = new Set(Object.values(MESSAGE_TYPES));
 const ACTION_VALUES = new Set(["renew", "deploy", "reload", "revoke", "noop"]);
-const RESULT_STATUS_VALUES = new Set(["succeeded", "failed", "rejected", "blocked"]);
+const RESULT_STATUS_VALUES = new Set([
+  "succeeded",
+  "failed",
+  "rejected",
+  "blocked",
+  // B4: successful terminal status for mode:"dry_run" jobs only.
+  "dry_run_complete",
+  // First-ever deploy installed a cert, then reload/verify failed with no
+  // prior backup to restore: the new cert may be live; operator must reconcile.
+  "orphaned_unknown_effect",
+]);
 const REJECTION_REASON_VALUES = new Set([
   "job_integrity_failed",
   "job_replay_rejected",
@@ -189,7 +203,7 @@ function validateEnvelopeBody(messageType, body, problems) {
   }
 
   if (messageType === MESSAGE_TYPES.REGISTER) {
-    if (!checkExactObject(body, new Set(["bootstrapTokenId", "agentVersion", "hostname", "platform", "nodeVersion", "declaredTargetSelectors", "declaredCommandProfileNames", "registrationId"]), ["bootstrapTokenId", "agentVersion"], label, problems)) return;
+    if (!checkExactObject(body, new Set(["bootstrapTokenId", "agentVersion", "hostname", "platform", "nodeVersion", "declaredTargetSelectors", "declaredCommandProfileNames", "registrationId", "supportedDnsProviders"]), ["bootstrapTokenId", "agentVersion"], label, problems)) return;
     checkString(body.bootstrapTokenId, "register body.bootstrapTokenId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
     checkString(body.agentVersion, "register body.agentVersion", problems, { min: 1, max: 32 });
     if (body.hostname !== undefined) checkNullableString(body.hostname, "register body.hostname", problems, { max: 255 });
@@ -202,25 +216,34 @@ function validateEnvelopeBody(messageType, body, problems) {
     if (body.registrationId !== undefined) {
       checkString(body.registrationId, "register body.registrationId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
     }
+    if (body.supportedDnsProviders !== undefined) {
+      validateStringArray(body.supportedDnsProviders, "register body.supportedDnsProviders", problems, 64, 64, AGENT_ID_PATTERN);
+    }
     return;
   }
 
   if (messageType === MESSAGE_TYPES.HEARTBEAT) {
-    if (!checkExactObject(body, new Set(["agentVersion", "ntpSynced", "uptimeSeconds", "pinnedSigningKeyId"]), ["agentVersion"], label, problems)) return;
+    if (!checkExactObject(body, new Set(["agentVersion", "ntpSynced", "uptimeSeconds", "pinnedSigningKeyId", "supportedDnsProviders"]), ["agentVersion"], label, problems)) return;
     checkString(body.agentVersion, "heartbeat body.agentVersion", problems, { min: 1, max: 32 });
     if (body.ntpSynced !== undefined && body.ntpSynced !== null && typeof body.ntpSynced !== "boolean") problems.push("heartbeat body.ntpSynced must be boolean or null");
     if (body.uptimeSeconds !== undefined && body.uptimeSeconds !== null && (!Number.isInteger(body.uptimeSeconds) || body.uptimeSeconds < 0)) problems.push("heartbeat body.uptimeSeconds must be a non-negative integer or null");
     if (body.pinnedSigningKeyId !== undefined) checkNullableString(body.pinnedSigningKeyId, "heartbeat body.pinnedSigningKeyId", problems, { max: 128, pattern: AGENT_ID_PATTERN });
+    if (body.supportedDnsProviders !== undefined) {
+      validateStringArray(body.supportedDnsProviders, "heartbeat body.supportedDnsProviders", problems, 64, 64, AGENT_ID_PATTERN);
+    }
     return;
   }
 
   if (messageType === MESSAGE_TYPES.CLAIM) {
-    if (!checkExactObject(body, new Set(["maxJobs", "supportedActions"]), [], label, problems)) return;
+    if (!checkExactObject(body, new Set(["maxJobs", "supportedActions", "supportedDnsProviders"]), [], label, problems)) return;
     if (body.maxJobs !== undefined && (!Number.isInteger(body.maxJobs) || body.maxJobs < 1 || body.maxJobs > 16)) problems.push("claim body.maxJobs must be an integer between 1 and 16");
     if (body.supportedActions !== undefined) {
       if (!Array.isArray(body.supportedActions) || body.supportedActions.length > 16 || body.supportedActions.some((action) => !ACTION_VALUES.has(action))) {
         problems.push("claim body.supportedActions must contain at most 16 known actions");
       }
+    }
+    if (body.supportedDnsProviders !== undefined) {
+      validateStringArray(body.supportedDnsProviders, "claim body.supportedDnsProviders", problems, 64, 64, AGENT_ID_PATTERN);
     }
     return;
   }
@@ -547,6 +570,56 @@ async function postJson(url, { token, envelope, signal, requestTimeoutMs = REQUE
   return { status: response.status, ok: response.ok, json, envelope: safeEnvelope };
 }
 
+/**
+ * Plain JSON POST for routes that do NOT use the agent-protocol message
+ * envelope (B6 lease renew). Same transport hardening as postJson
+ * (timeout, redirect refuse, bounded response, auth header) without the
+ * envelope schema gate.
+ */
+async function postPlainJson(url, { token, body, signal, requestTimeoutMs = REQUEST_TIMEOUT_MS, fetchImpl = fetch, onServerDate = null }) {
+  if (!isPlainObject(body)) {
+    throw new AgentProtocolError("plain POST body must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+  }
+  assertNoPrivateKeyMaterial(body);
+  const sanitized = redactGenericSecrets(body);
+  const serialized = JSON.stringify(sanitized);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_OUTBOUND_ENVELOPE_BYTES) {
+    throw new AgentProtocolError(
+      `refusing to send oversized plain body (max ${MAX_OUTBOUND_ENVELOPE_BYTES} bytes)`,
+      AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE,
+    );
+  }
+  const headers = { "content-type": "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: "POST",
+      headers,
+      body: serialized,
+      signal: combinedAbortSignal(signal, requestTimeoutMs),
+      redirect: "error",
+    });
+  } catch (err) {
+    throw new AgentProtocolError("network request to control plane failed", AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR, { cause: err });
+  }
+  if (response.status >= 300 && response.status < 400) {
+    throw new AgentProtocolError("control-plane redirect was refused", AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status: response.status });
+  }
+  if (response.ok && typeof onServerDate === "function") {
+    const dateHeaderValue = response.headers?.get?.("date");
+    if (dateHeaderValue) {
+      try {
+        onServerDate(dateHeaderValue, Date.now());
+      } catch (_err) {
+        // Clock sample must never fail the protocol request.
+      }
+    }
+  }
+  const json = await readBoundedResponseJson(response);
+  return { status: response.status, ok: response.ok, json, body: sanitized };
+}
+
 function validateRegistrationResponse(json, expectedProtocolVersion) {
   if (!isPlainObject(json)) {
     throw new AgentProtocolError("registration response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
@@ -596,6 +669,78 @@ function validateRegistrationResponse(json, expectedProtocolVersion) {
   return { agentId: json.agentId, credential: json.credential, protocolVersion: json.protocolVersion, signingKeyId, signingPublicKeyPem };
 }
 
+/**
+ * H3: normalize an optional heartbeat.signingKeyRotation notice. Malformed
+ * notices become null (never adopted) rather than failing the whole
+ * heartbeat — a bad rotation payload must not stop last_seen_at updates.
+ *
+ * @param {*} rotation
+ * @returns {object|null}
+ */
+function normalizeSigningKeyRotation(rotation) {
+  if (rotation === null || rotation === undefined) return null;
+  if (!isPlainObject(rotation)) return null;
+  const pendingSigningKeyId = rotation.pendingSigningKeyId;
+  const pendingPublicKeyPem = rotation.pendingPublicKeyPem;
+  if (
+    typeof pendingSigningKeyId !== "string" ||
+    !AGENT_ID_PATTERN.test(pendingSigningKeyId) ||
+    typeof pendingPublicKeyPem !== "string" ||
+    pendingPublicKeyPem.length === 0 ||
+    pendingPublicKeyPem.length > 8192 ||
+    !pendingPublicKeyPem.includes("BEGIN PUBLIC KEY") ||
+    pendingPublicKeyPem.includes("PRIVATE KEY")
+  ) {
+    return null;
+  }
+  const normalized = {
+    pendingSigningKeyId,
+    pendingPublicKeyPem,
+  };
+  if (rotation.supersedesSigningKeyId !== undefined && rotation.supersedesSigningKeyId !== null) {
+    if (
+      typeof rotation.supersedesSigningKeyId !== "string" ||
+      !AGENT_ID_PATTERN.test(rotation.supersedesSigningKeyId)
+    ) {
+      return null;
+    }
+    normalized.supersedesSigningKeyId = rotation.supersedesSigningKeyId;
+  }
+  if (rotation.status !== undefined && rotation.status !== null) {
+    if (typeof rotation.status !== "string" || rotation.status.length === 0 || rotation.status.length > 64) {
+      return null;
+    }
+    normalized.status = rotation.status;
+  }
+  return normalized;
+}
+
+/**
+ * Light validation for heartbeat responses. Unlike registration, the
+ * control plane may add fleet-ops fields over time; unknown keys are
+ * preserved. signingKeyRotation is shape-checked (H3) before the runtime
+ * may adopt it.
+ *
+ * @param {*} json
+ * @returns {object}
+ */
+function validateHeartbeatResponse(json) {
+  if (json === null || json === undefined) return {};
+  if (!isPlainObject(json)) {
+    throw new AgentProtocolError(
+      "heartbeat response must be an object",
+      AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE,
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(json, "signingKeyRotation")) {
+    return json;
+  }
+  return {
+    ...json,
+    signingKeyRotation: normalizeSigningKeyRotation(json.signingKeyRotation),
+  };
+}
+
 async function resolveCredential(getCredential) {
   return typeof getCredential === "function" ? await getCredential() : null;
 }
@@ -610,10 +755,12 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   }
   const routeUrl = (route) => `${baseUrl}${route}`;
   const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl, onServerDate });
+  const sendPlain = (route, token, body) => postPlainJson(routeUrl(route), { token, body, signal, requestTimeoutMs, fetchImpl, onServerDate });
 
   // Per-agent monotonically increasing message counter, included as the
   // envelope's `sequence` field on every outbound message (register,
-  // heartbeat, claim, result, evidence). The runtime injects a shared,
+  // heartbeat, claim, result, evidence) and as the plain-body `sequence`
+  // on lease renew (B6). The runtime injects a shared,
   // crash-safe persisted allocator (config.createSequenceAllocator) so
   // registration and steady-state clients draw from ONE stream and a
   // process restart NEVER reuses a value (the control plane hard-rejects
@@ -644,7 +791,18 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return run;
   }
 
-  async function register({ bootstrapToken, bootstrapTokenId, agentVersion, hostname = null, platform = null, nodeVersion = null, declaredTargetSelectors = [], declaredCommandProfileNames = [], registrationId = null } = {}) {
+  async function register({
+    bootstrapToken,
+    bootstrapTokenId,
+    agentVersion,
+    hostname = null,
+    platform = null,
+    nodeVersion = null,
+    declaredTargetSelectors = [],
+    declaredCommandProfileNames = [],
+    registrationId = null,
+    supportedDnsProviders = undefined,
+  } = {}) {
     if (typeof bootstrapToken !== "string" || bootstrapToken.length === 0) {
       throw new AgentProtocolError("register requires a bootstrapToken", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
     }
@@ -665,6 +823,9 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
           ...(registrationId !== null && registrationId !== undefined
             ? { registrationId }
             : {}),
+          ...(Array.isArray(supportedDnsProviders)
+            ? { supportedDnsProviders }
+            : {}),
         },
       })),
     );
@@ -672,26 +833,103 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return validateRegistrationResponse(json, protocolVersion);
   }
 
-  async function heartbeat({ agentVersion, ntpSynced = null, uptimeSeconds = null, pinnedSigningKeyId = null, clockOffsetMs = null } = {}) {
+  async function heartbeat({
+    agentVersion,
+    ntpSynced = null,
+    uptimeSeconds = null,
+    pinnedSigningKeyId = null,
+    clockOffsetMs = null,
+    supportedDnsProviders = undefined,
+  } = {}) {
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
-      send(ROUTES.HEARTBEAT, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.HEARTBEAT, clockOffsetMs, sequence, body: { agentVersion, ntpSynced, uptimeSeconds, pinnedSigningKeyId } })),
+      send(ROUTES.HEARTBEAT, token, buildEnvelope({
+        agentId,
+        protocolVersion,
+        messageType: MESSAGE_TYPES.HEARTBEAT,
+        clockOffsetMs,
+        sequence,
+        body: {
+          agentVersion,
+          ntpSynced,
+          uptimeSeconds,
+          pinnedSigningKeyId,
+          ...(Array.isArray(supportedDnsProviders)
+            ? { supportedDnsProviders }
+            : {}),
+        },
+      })),
     );
     if (status === 410) return { retired: true };
     if (!ok) throw new AgentProtocolError(`heartbeat failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
-    return json ?? {};
+    return validateHeartbeatResponse(json ?? {});
   }
 
-  async function claim({ maxJobs = 1, supportedActions = [] } = {}) {
+  async function claim({ maxJobs = 1, supportedActions = [], supportedDnsProviders = undefined } = {}) {
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
-      send(ROUTES.CLAIM, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.CLAIM, sequence, body: { maxJobs, supportedActions } })),
+      send(ROUTES.CLAIM, token, buildEnvelope({
+        agentId,
+        protocolVersion,
+        messageType: MESSAGE_TYPES.CLAIM,
+        sequence,
+        body: {
+          maxJobs,
+          supportedActions,
+          ...(Array.isArray(supportedDnsProviders)
+            ? { supportedDnsProviders }
+            : {}),
+        },
+      })),
     );
     if (!ok) throw new AgentProtocolError(`claim failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     if (json !== null && !isPlainObject(json)) throw new AgentProtocolError("claim response must be an object", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     if (json?.jobs !== undefined && !Array.isArray(json.jobs)) throw new AgentProtocolError("claim response jobs must be an array", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     if (Array.isArray(json?.jobs) && json.jobs.length > 16) throw new AgentProtocolError("claim response contains too many jobs", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
     return json?.jobs ?? [];
+  }
+
+  /**
+   * B6: renew the job lease (and transition claimed→running on first call).
+   * This route does NOT use the message envelope; body is { claimId, sequence }.
+   * Sequence is always allocated from the shared counter (once any sequenced
+   * message has been sent, omitting it is rejected server-side).
+   *
+   * 409 (ownership / sequence) and 410 (retired) return a distinguishable
+   * `{ ok: false, status, code }` so the runtime can abort the job cleanly
+   * without treating them as uncaught transport errors. Other non-2xx still
+   * throw AgentProtocolError.
+   *
+   * @param {{ jobId: string, claimId: string }} params
+   * @returns {Promise<object|{ ok: false, status: number, code: string|null }>}
+   */
+  async function renewLease({ jobId, claimId } = {}) {
+    if (typeof jobId !== "string" || jobId.length === 0 || !AGENT_ID_PATTERN.test(jobId)) {
+      throw new AgentProtocolError("renewLease requires a valid jobId", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    if (typeof claimId !== "string" || claimId.length === 0 || !AGENT_ID_PATTERN.test(claimId)) {
+      throw new AgentProtocolError("renewLease requires a valid claimId", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
+    }
+    const token = await resolveCredential(getCredential);
+    const leasePath = `${ROUTES.LEASE}/${encodeURIComponent(jobId)}/lease`;
+    const { status, ok, json } = await enqueueSequencedSend((sequence) =>
+      sendPlain(leasePath, token, { claimId, sequence }),
+    );
+    if (status === 409 || status === 410) {
+      return {
+        ok: false,
+        status,
+        code: isPlainObject(json) && typeof json.code === "string" ? json.code : null,
+      };
+    }
+    if (!ok) {
+      throw new AgentProtocolError(
+        `lease renew failed with HTTP ${status}`,
+        AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR,
+        { status },
+      );
+    }
+    return json ?? {};
   }
 
   /**
@@ -739,7 +977,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  return { register, heartbeat, claim, reportResult, reportEvidence };
+  return { register, heartbeat, claim, renewLease, reportResult, reportEvidence };
 }
 
 module.exports = {
@@ -753,6 +991,7 @@ module.exports = {
   validateEnvelopeShape,
   prepareOutboundEnvelope,
   validateRegistrationResponse,
+  validateHeartbeatResponse,
   parseServerUrl,
   createCaAwareFetch,
   jitteredDelay,

@@ -23,7 +23,10 @@ const {
   redactCredentialForLogging,
   MAX_CA_BUNDLE_BYTES,
   validateDnsProvidersObject,
+  listConfiguredDnsProviderIds,
   readDnsCredentialsFile,
+  validateAcmeAccountsObject,
+  resolveAcmeAccountCredentials,
   KNOWN_DNS_PROVIDER_IDS,
 } = require("./index.js");
 
@@ -925,6 +928,18 @@ describe("validateDnsProvidersObject", () => {
     assert.equal(validateDnsProvidersObject(block), block);
   });
 
+  it("listConfiguredDnsProviderIds excludes zoneProviderMap", () => {
+    assert.deepEqual(listConfiguredDnsProviderIds(null), []);
+    assert.deepEqual(
+      listConfiguredDnsProviderIds({
+        cloudflare: { credentialsFile: ABS },
+        route53: { credentialsFile: ABS },
+        zoneProviderMap: { "example.com": "cloudflare" },
+      }),
+      ["cloudflare", "route53"],
+    );
+  });
+
   it("rejects non-object blocks", () => {
     assert.throws(() => validateDnsProvidersObject([]), /must be an object/);
     assert.throws(() => validateDnsProvidersObject("cloudflare"), /must be an object/);
@@ -1029,6 +1044,83 @@ describe("readDnsCredentialsFile", () => {
     fs.chmodSync(credentialsPath, 0o644);
     assert.throws(
       () => readDnsCredentialsFile("cloudflare", configFor(credentialsPath)),
+      /readable by group\/other/,
+    );
+  });
+});
+
+describe("validateAcmeAccountsObject", () => {
+  const ABS = IS_WIN32 ? "C:\\certops\\acme\\eab.json" : "/etc/certops/acme/eab.json";
+
+  it("returns null when the block is absent", () => {
+    assert.equal(validateAcmeAccountsObject(undefined), null);
+    assert.equal(validateAcmeAccountsObject(null), null);
+  });
+
+  it("accepts a valid block", () => {
+    const block = { "le-eab": { credentialsFile: ABS } };
+    assert.equal(validateAcmeAccountsObject(block), block);
+  });
+
+  it("rejects a relative credentialsFile", () => {
+    assert.throws(
+      () => validateAcmeAccountsObject({ "le-eab": { credentialsFile: "eab.json" } }),
+      /credentialsFile must be an absolute path/,
+    );
+  });
+
+  it("rejects a non-object entry", () => {
+    assert.throws(
+      () => validateAcmeAccountsObject({ "le-eab": "oops" }),
+      /must be an object/,
+    );
+  });
+});
+
+describe("resolveAcmeAccountCredentials", () => {
+  function writeEabFile(contents) {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const credentialsPath = path.join(dir, "eab.json");
+    fs.writeFileSync(credentialsPath, contents, { mode: 0o600 });
+    if (!IS_WIN32) fs.chmodSync(credentialsPath, 0o600);
+    return credentialsPath;
+  }
+
+  function configFor(credentialsPath) {
+    return { acmeAccounts: { "le-eab": { credentialsFile: credentialsPath } } };
+  }
+
+  it("returns eabKid and eabHmacKey from a 0600 credentials file", () => {
+    const credentialsPath = writeEabFile(
+      JSON.stringify({ eabKid: "kid-1", eabHmacKey: "hmac-1" }),
+    );
+    const parsed = resolveAcmeAccountCredentials("le-eab", configFor(credentialsPath));
+    assert.deepEqual(parsed, { eabKid: "kid-1", eabHmacKey: "hmac-1" });
+  });
+
+  it("fails when the ref is not configured locally", () => {
+    assert.throws(
+      () => resolveAcmeAccountCredentials("missing", { acmeAccounts: null }),
+      /not configured locally/,
+    );
+  });
+
+  it("fails when eabKid is missing", () => {
+    const credentialsPath = writeEabFile(JSON.stringify({ eabHmacKey: "hmac-1" }));
+    assert.throws(
+      () => resolveAcmeAccountCredentials("le-eab", configFor(credentialsPath)),
+      /missing non-empty eabKid/,
+    );
+  });
+
+  it("refuses a group/other-readable credentials file (POSIX)", { skip: IS_WIN32 }, () => {
+    const credentialsPath = writeEabFile(
+      JSON.stringify({ eabKid: "kid-1", eabHmacKey: "hmac-1" }),
+    );
+    fs.chmodSync(credentialsPath, 0o644);
+    assert.throws(
+      () => resolveAcmeAccountCredentials("le-eab", configFor(credentialsPath)),
       /readable by group\/other/,
     );
   });

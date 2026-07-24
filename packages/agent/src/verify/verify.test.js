@@ -418,3 +418,53 @@ test("validateCertificateForDeploy rejects a broken chain signature link", () =>
   assert.equal(result.valid, false);
   assert.equal(result.code, "CHAIN_INVALID");
 });
+
+test("validateCertificateForDeploy with privateKeyPem null accepts a valid cert (key-match skipped)", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: LEAF_CERT_PEM,
+    privateKeyPem: null,
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, true, result.detail);
+});
+
+test("validateCertificateForDeploy with privateKeyPem null still rejects an expired cert", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: EXPIRED_CERT_PEM,
+    privateKeyPem: null,
+    requestedSans: ["expired.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "EXPIRED");
+});
+
+test("validateCertificateForDeploy with privateKeyPem null still rejects wrong SANs", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: WRONG_SAN_CERT_PEM,
+    privateKeyPem: null,
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "SAN_MISMATCH");
+});
+
+test("validateCertificateForDeploy with privateKeyPem null still rejects a broken chain", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: LEAF_CERT_PEM,
+    privateKeyPem: null,
+    requestedSans: ["valid.example.com"],
+    chainPems: [WRONG_SAN_CERT_PEM],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "CHAIN_INVALID");
+});
+
+test("validateCertificateForDeploy with empty-string privateKeyPem still hard-fails", () => {
+  const result = validateCertificateForDeploy({
+    certificatePem: LEAF_CERT_PEM,
+    privateKeyPem: "",
+    requestedSans: ["valid.example.com"],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.code, "PRIVATE_KEY_PARSE_FAILED");
+});

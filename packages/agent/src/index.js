@@ -35,22 +35,35 @@
  * claimId/nonce). handleClaimedJob still treats an unexpected claim as
  * "blocked"/"rejected" defense-in-depth if one ever arrives.
  *
- * Known base-payload deviations (job-payload.schema.json lacks signed-job execution
- * fields; documented for the control-plane backend contract):
- *   - No domains list => the CSR CN and ACME -d domain come from
- *     job.target.reference.
+ * Known base-payload deviations (job-payload.schema.json / signed-job contract;
+ * documented for the control-plane backend contract):
+ *   - No sans / domains list => the CSR CN and ACME -d domain(s) come from
+ *     job.target.reference as a single-name fallback. When job.sans (or
+ *     renewalProfile.sanPolicy.sans) is present, the agent uses the full
+ *     approved SAN list for CSR + ACME + post-issuance validation.
+ *   - No keyAlgorithm/keySize => renew uses the keys module default (ec-p256).
+ *     When both are present they map onto generateKeyPairToFile algorithm ids
+ *     (rsa-NNNN / ec-pNNN); unrecognized combinations fail the job (no silent remap).
  *   - No keyRotation flag => renew reuses an existing key at
  *     <keysDir>/<certificateId>.key.pem and generates one only when absent;
  *     keyRotated reports whether a new key was generated. A truthy
  *     job.keyRotation (forward-compatible) forces regeneration.
- *   - No certPath field => job.certPath is honored when present; otherwise
- *     target.reference is used as the deploy destination when it is an
- *     absolute path. Neither present/absolute => renew deploys nowhere it
- *     can name, so the job fails with a clear message.
+ *   - No certPath / deploymentTargets => job.certPath is honored when present;
+ *     otherwise target.reference is used as the deploy destination when it is
+ *     an absolute path. When job.deploymentTargets is a non-empty array, the
+ *     agent deploys (reload/verify) once per target; any target failure fails
+ *     the job (all-or-nothing), with per-target evidence. Neither present =>
+ *     renew deploys nowhere it can name, so the job fails with a clear message.
+ *   - No preferredChain / eabRef / accountRef => ACME uses CA defaults and no
+ *     External Account Binding. When eabRef (or accountRef) is set, the agent
+ *     resolves {eabKid,eabHmacKey} from local config.acmeAccounts only.
  *   - "deploy" jobs need certificatePem from the control plane; the base
  *     payload has no such field, so deploy without it reports "blocked"
  *     (awaiting the deploy job-type contract).
  *   - "revoke" execution is out of scope for this agent build => always "blocked".
+ *   - Wildcard policy (sanPolicy.allowWildcards) is enforced at profile
+ *     validation on the control plane; the agent does not re-check it unless
+ *     the nested renewalProfile happens to carry allowWildcards (best-effort).
  */
 
 const fs = require("node:fs");
@@ -70,6 +83,8 @@ const {
   readCaBundle,
   createSequenceAllocator,
   deleteBootstrapEnvFile,
+  listConfiguredDnsProviderIds,
+  resolveAcmeAccountCredentials,
 } = require("./config");
 const { loadPolicyConfig, createPolicyEngine } = require("./policy");
 const {
@@ -106,6 +121,7 @@ const {
   verifyDeployedCertificate,
   computeCertificateFingerprint,
   validateCertificateForDeploy,
+  splitCertificatePems,
 } = require("./verify");
 const {
   enqueueOutboxEntry,
@@ -238,6 +254,158 @@ function shouldPollForJobs(executionContext) {
 const AGENT_RETIRED_EXIT_CODE = 86;
 
 /**
+ * Resolves the authoritative job mode from a signed dispatch payload.
+ * Per COORDINATION-B4: prefer top-level `job.mode`, then `job.payload.mode`,
+ * default `"real"` when omitted (dry-run is never an ambient default).
+ *
+ * @param {object} job
+ * @returns {"real"|"dry_run"}
+ */
+function resolveJobMode(job) {
+  const raw =
+    typeof job?.mode === "string" && job.mode.length > 0
+      ? job.mode
+      : typeof job?.payload?.mode === "string" && job.payload.mode.length > 0
+        ? job.payload.mode
+        : "real";
+  return raw === "dry_run" ? "dry_run" : "real";
+}
+
+/**
+ * Renews the job lease before a side-effecting step (B6). First call after
+ * accept transitions claimed→running.
+ *
+ * Hard-abort signals (returned, never thrown):
+ *   - HTTP 409 ownership / lease conflict
+ *   - HTTP 410 agent retired
+ * Soft failures (network / other transport errors) are logged and do NOT
+ * abort: lease renew is a best-effort "side effects in progress" signal;
+ * the reaper's never-renewed → safe-requeue path is acceptable degradation.
+ *
+ * @param {object} params
+ * @param {object|null|undefined} params.leaseClient protocol client with renewLease
+ * @param {string} params.jobId
+ * @param {string|null} params.claimId
+ * @param {(msg: string) => void} [params.log]
+ * @returns {Promise<{ ok: true, skipped?: boolean, softFailure?: boolean, response?: object }|{ ok: false, retired: boolean, abort: { status: "blocked", errorMessage: string, retired?: boolean } }>}
+ */
+async function renewJobLeaseOrAbort({ leaseClient, jobId, claimId, log = console.error } = {}) {
+  if (!leaseClient || typeof leaseClient.renewLease !== "function") {
+    return { ok: true, skipped: true };
+  }
+  if (typeof claimId !== "string" || claimId.length === 0) {
+    // Observe-only / unsigned paths may lack a claim id; nothing to renew.
+    return { ok: true, skipped: true };
+  }
+  let response;
+  try {
+    response = await leaseClient.renewLease({ jobId, claimId });
+  } catch (err) {
+    // Best-effort: transport / 4xx-other / 5xx must not kill an in-flight job.
+    emitLog(
+      log,
+      `tokentimer-agent: lease renew for job ${jobId} failed (continuing): ${err.message}`,
+    );
+    return { ok: true, softFailure: true };
+  }
+  if (
+    response &&
+    response.ok === false &&
+    (response.status === 409 || response.status === 410)
+  ) {
+    const codeSuffix =
+      typeof response.code === "string" && response.code.length > 0
+        ? ` (${response.code})`
+        : "";
+    const retired = response.status === 410;
+    return {
+      ok: false,
+      retired,
+      abort: {
+        status: "blocked",
+        errorMessage: boundErrorMessage(
+          retired
+            ? `lease renew aborted: agent is retired (HTTP 410)${codeSuffix}`
+            : `lease renew aborted: claim ownership lost or lease conflict (HTTP 409)${codeSuffix}`,
+        ),
+        ...(retired ? { retired: true } : {}),
+      },
+    };
+  }
+  return { ok: true, response };
+}
+
+/**
+ * H3: adopt a pending signing-key rotation advertised on a heartbeat
+ * response. The only runtime path (besides initial registration) that
+ * passes allowRepin: true — the pending key MUST come from
+ * heartbeat.signingKeyRotation, never from arbitrary job data.
+ *
+ * @param {object} params
+ * @param {object|null|undefined} params.rotation heartbeat.signingKeyRotation
+ * @param {string} params.configDir
+ * @param {object|null|undefined} params.executionContext
+ * @param {(msg: string) => void} [params.log]
+ * @returns {{ adopted: boolean, reason?: string }}
+ */
+function adoptSigningKeyRotation({
+  rotation,
+  configDir,
+  executionContext,
+  log = console.error,
+}) {
+  if (rotation === null || rotation === undefined) {
+    return { adopted: false, reason: "absent" };
+  }
+  if (typeof rotation !== "object" || Array.isArray(rotation)) {
+    return { adopted: false, reason: "malformed" };
+  }
+  const pendingSigningKeyId = rotation.pendingSigningKeyId;
+  const pendingPublicKeyPem = rotation.pendingPublicKeyPem;
+  if (
+    typeof pendingSigningKeyId !== "string" ||
+    pendingSigningKeyId.length === 0 ||
+    typeof pendingPublicKeyPem !== "string" ||
+    pendingPublicKeyPem.length === 0
+  ) {
+    return { adopted: false, reason: "incomplete" };
+  }
+  const currentId = executionContext?.pinnedSigningKey?.signingKeyId ?? null;
+  if (currentId === pendingSigningKeyId) {
+    return { adopted: false, reason: "already_pinned" };
+  }
+  try {
+    // Controlled rotation adoption IS the explicit re-pin flow the pin
+    // writer guards for (alongside first-run registration).
+    writeSigningKeyPin(
+      configDir,
+      {
+        signingKeyId: pendingSigningKeyId,
+        signingPublicKeyPem: pendingPublicKeyPem,
+      },
+      { allowRepin: true },
+    );
+  } catch (err) {
+    emitLog(
+      log,
+      `tokentimer-agent: refusing signing-key rotation adoption: ${err.message}`,
+    );
+    return { adopted: false, reason: "invalid_pem" };
+  }
+  if (executionContext) {
+    executionContext.pinnedSigningKey = {
+      signingKeyId: pendingSigningKeyId,
+      publicKeyPem: pendingPublicKeyPem,
+    };
+  }
+  emitLog(
+    log,
+    `tokentimer-agent: adopted signing key rotation to ${pendingSigningKeyId}`,
+  );
+  return { adopted: true };
+}
+
+/**
  * POSIX-or-Windows absolute path check (same rationale as the acme
  * module's isAbsolutePathLike: agents primarily target POSIX hosts but
  * tests run on Windows too).
@@ -274,6 +442,204 @@ function boundErrorMessage(message) {
 function resolveJobCertPath(job) {
   if (isAbsolutePathLike(job?.certPath)) return job.certPath;
   if (isAbsolutePathLike(job?.target?.reference)) return job.target.reference;
+  return null;
+}
+
+/**
+ * Profile/job keyAlgorithm+keySize -> keys.generateKeyPairToFile algorithm id.
+ * Returns null when both fields are absent (caller keeps the module default).
+ * Returns { error } for an unrecognized / unmapped combination (fail closed;
+ * never silently pick a different algorithm than the approved profile).
+ *
+ * @param {object} job
+ * @returns {{ algorithm: string }|{ error: string }|null}
+ */
+function mapJobKeyAlgorithm(job) {
+  const algorithm = job?.keyAlgorithm ?? job?.renewalProfile?.keyAlgorithm;
+  const keySize = job?.keySize ?? job?.renewalProfile?.keySize;
+  if (algorithm === undefined && keySize === undefined) return null;
+  if (algorithm === undefined || keySize === undefined) {
+    return {
+      error:
+        "renew job carries only one of keyAlgorithm/keySize; both are required together",
+    };
+  }
+  const map = {
+    "ecdsa:256": "ec-p256",
+    "ecdsa:384": "ec-p384",
+    "rsa:2048": "rsa-2048",
+    "rsa:3072": "rsa-3072",
+    "rsa:4096": "rsa-4096",
+  };
+  const mapped = map[`${algorithm}:${keySize}`];
+  if (!mapped) {
+    return {
+      error:
+        `unsupported keyAlgorithm/keySize combination: ${JSON.stringify(algorithm)}/${JSON.stringify(keySize)} ` +
+        "(allowed: ecdsa 256|384, rsa 2048|3072|4096)",
+    };
+  }
+  return { algorithm: mapped };
+}
+
+/**
+ * Resolves the approved SAN list for renew. Prefers flattened job.sans
+ * (scheduler execution fields), then nested renewalProfile.sanPolicy.sans.
+ * Absent => null (caller falls back to single CN). Present but empty/malformed
+ * => { error } so the job fails cleanly instead of trusting a buggy payload.
+ *
+ * @param {object} job
+ * @returns {{ sans: string[] }|{ error: string }|null}
+ */
+function resolveJobSans(job) {
+  const fromFlat = job?.sans;
+  const fromProfile = job?.renewalProfile?.sanPolicy?.sans;
+  const raw = Array.isArray(fromFlat)
+    ? fromFlat
+    : Array.isArray(fromProfile)
+      ? fromProfile
+      : null;
+  if (raw === null) return null;
+  if (raw.length === 0) {
+    return { error: "renew job.sans is present but empty" };
+  }
+  const sans = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const entry = raw[i];
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      return {
+        error: `renew job.sans[${i}] must be a non-empty string`,
+      };
+    }
+    sans.push(entry.trim());
+  }
+
+  // Best-effort wildcard gate when the nested profile carries allowWildcards.
+  const allowWildcards = job?.renewalProfile?.sanPolicy?.allowWildcards;
+  if (
+    allowWildcards === false &&
+    sans.some((san) => san.includes("*"))
+  ) {
+    return {
+      error:
+        "renew job SAN list includes a wildcard but renewalProfile.sanPolicy.allowWildcards is false",
+    };
+  }
+  return { sans };
+}
+
+/**
+ * Splits a fullchain-style PEM into leaf + remaining chain blocks.
+ * @param {string} pem
+ * @returns {{ leafPem: string, chainPem: string|null }}
+ */
+function splitLeafAndChainPem(pem) {
+  const blocks = splitCertificatePems(pem);
+  if (blocks.length === 0) {
+    return { leafPem: pem, chainPem: null };
+  }
+  if (blocks.length === 1) {
+    return { leafPem: blocks[0], chainPem: null };
+  }
+  return {
+    leafPem: blocks[0],
+    chainPem: `${blocks.slice(1).join("\n")}\n`,
+  };
+}
+
+/**
+ * Resolves deploy destinations for a job. Non-empty job.deploymentTargets
+ * wins; otherwise a single destination from resolveJobCertPath.
+ *
+ * @param {object} job
+ * @returns {{ targets: Array<{ type: string, reference: string, certPath: string, reloadService: string|null, chainPath: string|null }> }|{ error: string }}
+ */
+function resolveJobDeployTargets(job) {
+  if (Array.isArray(job?.deploymentTargets) && job.deploymentTargets.length > 0) {
+    const targets = [];
+    for (let i = 0; i < job.deploymentTargets.length; i += 1) {
+      const item = job.deploymentTargets[i];
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return { error: `job.deploymentTargets[${i}] must be an object` };
+      }
+      const certPath = isAbsolutePathLike(item.certPath)
+        ? item.certPath
+        : isAbsolutePathLike(item.reference)
+          ? item.reference
+          : null;
+      if (certPath === null) {
+        return {
+          error:
+            `job.deploymentTargets[${i}] names no deploy destination ` +
+            "(need absolute certPath or absolute reference)",
+        };
+      }
+      targets.push({
+        type: typeof item.type === "string" ? item.type : job?.target?.type ?? "endpoint",
+        reference:
+          typeof item.reference === "string" && item.reference.length > 0
+            ? item.reference
+            : certPath,
+        certPath,
+        reloadService:
+          typeof item.reloadService === "string" && item.reloadService.length > 0
+            ? item.reloadService
+            : typeof job.reloadService === "string" && job.reloadService.length > 0
+              ? job.reloadService
+              : null,
+        chainPath: isAbsolutePathLike(item.chainPath)
+          ? item.chainPath
+          : isAbsolutePathLike(job.chainPath)
+            ? job.chainPath
+            : null,
+      });
+    }
+    return { targets };
+  }
+
+  const certPath = resolveJobCertPath(job);
+  if (certPath === null) {
+    return {
+      error:
+        "job names no deploy destination: neither job.certPath, " +
+        "job.deploymentTargets, nor an absolute-path target.reference is present",
+    };
+  }
+  return {
+    targets: [
+      {
+        type: job?.target?.type ?? "endpoint",
+        reference: job?.target?.reference ?? certPath,
+        certPath,
+        reloadService:
+          typeof job.reloadService === "string" && job.reloadService.length > 0
+            ? job.reloadService
+            : null,
+        chainPath: isAbsolutePathLike(job.chainPath) ? job.chainPath : null,
+      },
+    ],
+  };
+}
+
+/**
+ * Opaque EAB/account ref from flattened job fields or nested renewalProfile.ca.
+ * @param {object} job
+ * @returns {string|null}
+ */
+function resolveJobEabAccountRef(job) {
+  if (typeof job?.eabRef === "string" && job.eabRef.trim().length > 0) {
+    return job.eabRef.trim();
+  }
+  if (typeof job?.accountRef === "string" && job.accountRef.trim().length > 0) {
+    return job.accountRef.trim();
+  }
+  const ca = job?.renewalProfile?.ca;
+  if (typeof ca?.eabRef === "string" && ca.eabRef.trim().length > 0) {
+    return ca.eabRef.trim();
+  }
+  if (typeof ca?.accountRef === "string" && ca.accountRef.trim().length > 0) {
+    return ca.accountRef.trim();
+  }
   return null;
 }
 
@@ -637,7 +1003,35 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: consumeVerdict });
   }
 
-  // 6. Execute. Step evidence is buffered locally; the terminal outcome and
+  // 6. B6: first lease renew after accept transitions claimed→running.
+  // 409/410 abort as a reported "blocked" result (not an uncaught throw).
+  const acceptLease = await renewJobLeaseOrAbort({
+    leaseClient: client,
+    jobId,
+    claimId,
+    log,
+  });
+  if (acceptLease && acceptLease.ok === false) {
+    const blocked = await persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: {
+        jobId,
+        attemptId,
+        claimId,
+        nonce,
+        status: acceptLease.abort.status,
+        errorMessage: acceptLease.abort.errorMessage,
+      },
+      log,
+    });
+    return {
+      ...blocked,
+      retired: acceptLease.retired === true,
+    };
+  }
+
+  // 7. Execute. Step evidence is buffered locally; the terminal outcome and
   // evidence are persisted to the durable outbox BEFORE any network
   // transmission so a reportResult failure cannot reclassify a real-world
   // success as "failed" (B8).
@@ -647,8 +1041,10 @@ async function handleSignedJob({
     outcome = await executeJob({
       job,
       jobId,
+      claimId,
       policyEngine,
       client: evidenceBuffer,
+      leaseClient: client,
       executionContext,
       log,
     });
@@ -665,7 +1061,7 @@ async function handleSignedJob({
     assertEvidencePayloadSafe(body);
   }
 
-  return persistAndTransmitOutcome({
+  const transmitted = await persistAndTransmitOutcome({
     outboxDir: resolvedOutboxDir,
     client,
     result: {
@@ -682,6 +1078,10 @@ async function handleSignedJob({
     evidence: evidenceBodies,
     log,
   });
+  return {
+    ...transmitted,
+    retired: outcome.retired === true,
+  };
 }
 
 /**
@@ -689,19 +1089,24 @@ async function handleSignedJob({
  * terminal result itself (handleSignedJob does); it DOES report per-step
  * evidence. Returns the fields for reportResult.
  *
- * Dry-run (execution.dryRun true, the default): every gate has already
- * run; this produces a policy.checked "plan" evidence item per step that
- * WOULD run, with zero filesystem/exec side effects (keys/acme/deploy/
- * reload/verify modules are never called), then returns "succeeded" with
- * keyRotated null and a dry-run marker in the evidence metadata.
+ * Job mode (COORDINATION-B4) is AUTHORITATIVE:
+ *   - mode "dry_run" → preflight/plan only, status "dry_run_complete"
+ *   - mode "real" (or absent) → real side effects, status "succeeded" on ok
+ *
+ * Local `execution.dryRun` is a safety refusal knob only: when true, a
+ * mode:"real" job is blocked with an explicit reason (never silently
+ * downgraded to a plan-only "succeeded" report). It cannot turn a real
+ * job into a no-op while still reporting success.
  *
  * Exported for direct unit testing.
  *
  * @param {object} params
  * @param {object} params.job verified job payload
  * @param {string} params.jobId
+ * @param {string|null} [params.claimId]
  * @param {object} params.policyEngine
- * @param {object} params.client
+ * @param {object} params.client evidence-reporting client
+ * @param {object} [params.leaseClient] protocol client for B6 lease renew
  * @param {object} params.executionContext from buildExecutionContext
  * @param {(msg: string) => void} [params.log]
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated?: boolean|null, errorMessage?: string|null }>}
@@ -709,14 +1114,18 @@ async function handleSignedJob({
 async function executeJob({
   job,
   jobId,
+  claimId = null,
   policyEngine,
   client,
+  leaseClient = null,
   executionContext,
   log = console.error,
 }) {
   const { execution } = executionContext;
   const action = job.action;
   const observedAt = new Date().toISOString();
+  const jobMode = resolveJobMode(job);
+  const leaseOpts = { leaseClient, jobId, claimId, log };
 
   if (action === "noop") {
     await reportStepEvidence(client, jobId, [
@@ -727,6 +1136,10 @@ async function executeJob({
         metadata: [{ name: "action", value: "noop" }],
       }),
     ]);
+    // Dry-run noop still reports dry_run_complete (no real effects).
+    if (jobMode === "dry_run") {
+      return { status: "dry_run_complete", keyRotated: null };
+    }
     return { status: "succeeded", keyRotated: null };
   }
 
@@ -760,29 +1173,78 @@ async function executeJob({
     };
   }
 
-  if (execution.dryRun) {
-    return executeDryRunPlan({ jobId, action, client, observedAt });
+  // B4: signed job.mode wins. Local execution.dryRun may only refuse a
+  // real job outright — never silently swap in the dry-run code path.
+  if (jobMode === "dry_run") {
+    return executeDryRunPlan({
+      job,
+      jobId,
+      action,
+      client,
+      policyEngine,
+      observedAt,
+    });
+  }
+
+  if (execution.dryRun === true) {
+    return {
+      status: "blocked",
+      errorMessage:
+        "refusing mode:\"real\" job because local execution.dryRun is true; " +
+        "set execution.dryRun to false to perform real side effects, or ask " +
+        "the control plane for a mode:\"dry_run\" job",
+    };
   }
 
   if (action === "renew") {
-    return executeRenewJob({ job, jobId, policyEngine, client, executionContext, log });
+    return executeRenewJob({
+      job,
+      jobId,
+      policyEngine,
+      client,
+      executionContext,
+      log,
+      leaseOpts,
+    });
   }
   if (action === "deploy") {
-    return executeDeployJob({ job, jobId, policyEngine, client, log });
+    return executeDeployJob({
+      job,
+      jobId,
+      policyEngine,
+      client,
+      executionContext,
+      log,
+      leaseOpts,
+    });
   }
-  return executeReloadJob({ job, jobId, policyEngine, client, log });
+  return executeReloadJob({
+    job,
+    jobId,
+    policyEngine,
+    client,
+    log,
+    leaseOpts,
+  });
 }
 
 /**
- * Dry-run "plan" reporting: one policy.checked evidence item per step the
- * action WOULD run, public fields only, zero side effects. Returns a
- * succeeded result (the agent-protocol resultBody allows "succeeded" with
- * keyRotated/errorMessage null, so a plan-only run is schema-valid).
+ * Dry-run preflight/plan (job.mode === "dry_run"): validate the steps that
+ * WOULD run (CA endpoint, command ref, deploy path, etc.) without any
+ * mutation (no key generation, ACME order, DNS mutation, deploy write, or
+ * reload). Returns dry_run_complete — never succeeded (COORDINATION-B4).
  *
  * @param {object} params
- * @returns {Promise<{ status: "succeeded", keyRotated: null, errorMessage: null }>}
+ * @returns {Promise<{ status: "dry_run_complete"|"rejected"|"failed"|"blocked", keyRotated: null, errorMessage: null|string, rejectionReason?: string }>}
  */
-async function executeDryRunPlan({ jobId, action, client, observedAt }) {
+async function executeDryRunPlan({
+  job,
+  jobId,
+  action,
+  client,
+  policyEngine,
+  observedAt,
+}) {
   const plannedSteps = {
     renew: [
       "keys: reuse or generate the certificate key under the configured keysDir",
@@ -802,6 +1264,112 @@ async function executeDryRunPlan({ jobId, action, client, observedAt }) {
     ],
   }[action];
 
+  const preflightIssues = [];
+
+  if (action === "renew" || action === "deploy") {
+    const certPath = resolveJobCertPath(job);
+    if (certPath === null) {
+      preflightIssues.push(
+        "no deploy destination (neither job.certPath nor an absolute-path target.reference)",
+      );
+    } else {
+      const pathVerdict = policyEngine.checkPath(certPath);
+      if (!pathVerdict.allowed) {
+        return {
+          status: "rejected",
+          rejectionReason: pathVerdict.rejectionReason,
+          keyRotated: null,
+          errorMessage: boundErrorMessage(pathVerdict.detail),
+        };
+      }
+    }
+  }
+
+  if (action === "renew") {
+    if (typeof job?.target?.reference !== "string" || job.target.reference.length === 0) {
+      preflightIssues.push("renew job has no target.reference for the certificate CN");
+    }
+    if (typeof job.commandRef !== "string" || job.commandRef.length === 0) {
+      preflightIssues.push("renew job carries no commandRef");
+    } else {
+      const commandVerdict = policyEngine.checkCommandRef(job.commandRef);
+      if (!commandVerdict.allowed) {
+        return {
+          status: "rejected",
+          rejectionReason: commandVerdict.rejectionReason,
+          keyRotated: null,
+          errorMessage: boundErrorMessage(commandVerdict.detail),
+        };
+      }
+    }
+    if (typeof job.caEndpoint !== "string" || job.caEndpoint.length === 0) {
+      preflightIssues.push("renew job carries no caEndpoint");
+    } else {
+      const caVerdict = policyEngine.checkCaEndpoint(job.caEndpoint);
+      if (!caVerdict.allowed) {
+        return {
+          status: "rejected",
+          rejectionReason: caVerdict.rejectionReason,
+          keyRotated: null,
+          errorMessage: boundErrorMessage(caVerdict.detail),
+        };
+      }
+    }
+    if (typeof job.dnsProvider === "string" && job.dnsProvider.length > 0) {
+      const dnsVerdict = policyEngine.checkDnsProvider(job.dnsProvider);
+      if (!dnsVerdict.allowed) {
+        return {
+          status: "rejected",
+          rejectionReason: dnsVerdict.rejectionReason,
+          keyRotated: null,
+          errorMessage: boundErrorMessage(dnsVerdict.detail),
+        };
+      }
+    }
+    if (typeof job.dnsZone === "string" && job.dnsZone.length > 0) {
+      const zoneVerdict = policyEngine.checkDnsZone(job.dnsZone);
+      if (!zoneVerdict.allowed) {
+        return {
+          status: "rejected",
+          rejectionReason: zoneVerdict.rejectionReason,
+          keyRotated: null,
+          errorMessage: boundErrorMessage(zoneVerdict.detail),
+        };
+      }
+    }
+  }
+
+  if (action === "reload" || (action !== "reload" && typeof job.reloadService === "string" && job.reloadService.length > 0)) {
+    const refs = job.reloadCommandRefs;
+    if (refs && typeof refs === "object") {
+      for (const refName of ["validate", "reload"]) {
+        if (typeof refs[refName] === "string" && refs[refName].length > 0) {
+          const verdict = policyEngine.checkCommandRef(refs[refName]);
+          if (!verdict.allowed) {
+            return {
+              status: "rejected",
+              rejectionReason: verdict.rejectionReason,
+              keyRotated: null,
+              errorMessage: boundErrorMessage(verdict.detail),
+            };
+          }
+        }
+      }
+    } else if (action === "reload") {
+      preflightIssues.push("reload job carries no reloadCommandRefs");
+    }
+  }
+
+  if (preflightIssues.length > 0) {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `dry-run preflight failed: ${preflightIssues.join("; ")}`,
+      ),
+    };
+  }
+
   const items = plannedSteps.map((description, index) =>
     buildEvidenceItem({
       eventType: "policy.checked",
@@ -809,25 +1377,35 @@ async function executeDryRunPlan({ jobId, action, client, observedAt }) {
       summary: `Dry run plan for ${action} job ${jobId}, step ${index + 1}/${plannedSteps.length}: ${description}. No side effects were performed.`,
       metadata: [
         { name: "dryRun", value: true },
+        { name: "jobMode", value: "dry_run" },
         { name: "action", value: action },
         { name: "planStep", value: index + 1 },
       ],
     }),
   );
   await reportStepEvidence(client, jobId, items);
-  return { status: "succeeded", keyRotated: null, errorMessage: null };
+  return { status: "dry_run_complete", keyRotated: null, errorMessage: null };
 }
 
 /**
  * Full renew chain: keys -> csr -> acme -> deploy -> reload (optional) ->
- * verify. Semantics documented in the module docblock (base-payload
- * deviations: CN from target.reference, key reuse unless job.keyRotation
- * is truthy, certPath from job.certPath else absolute target.reference).
+ * verify. Honors flattened renewal-profile execution fields when present
+ * (sans, keyAlgorithm/keySize, preferredChain, eabRef/accountRef,
+ * deploymentTargets); falls back to single-CN / default key / single
+ * certPath for base payloads (see module docblock).
  *
  * @param {object} params
  * @returns {Promise<object>} reportResult fields
  */
-async function executeRenewJob({ job, jobId, policyEngine, client, executionContext, log }) {
+async function executeRenewJob({
+  job,
+  jobId,
+  policyEngine,
+  client,
+  executionContext,
+  log,
+  leaseOpts = null,
+}) {
   const { execution } = executionContext;
   const commonName = job?.target?.reference;
   if (typeof commonName !== "string" || commonName.length === 0) {
@@ -837,15 +1415,23 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
     };
   }
 
-  const certPath = resolveJobCertPath(job);
-  if (certPath === null) {
-    return {
-      status: "failed",
-      errorMessage:
-        "renew job names no deploy destination: neither job.certPath nor an " +
-        "absolute-path target.reference is present",
-    };
+  const sansResolved = resolveJobSans(job);
+  if (sansResolved && sansResolved.error) {
+    return { status: "failed", errorMessage: sansResolved.error };
   }
+  const domains =
+    sansResolved && Array.isArray(sansResolved.sans)
+      ? sansResolved.sans
+      : [commonName];
+  // CN is the first SAN by convention; prefer target.reference when it is
+  // already in the approved SAN list so inventory CN and SAN stay aligned.
+  const csrCommonName = domains.includes(commonName) ? commonName : domains[0];
+
+  const deployTargetsResolved = resolveJobDeployTargets(job);
+  if (deployTargetsResolved.error) {
+    return { status: "failed", errorMessage: deployTargetsResolved.error };
+  }
+  const deployTargets = deployTargetsResolved.targets;
 
   if (typeof job.commandRef !== "string" || job.commandRef.length === 0) {
     return {
@@ -869,12 +1455,39 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
     };
   }
 
+  const keyAlgMapped = mapJobKeyAlgorithm(job);
+  if (keyAlgMapped && keyAlgMapped.error) {
+    return { status: "failed", errorMessage: keyAlgMapped.error };
+  }
+
+  let eabCredentials = null;
+  const eabAccountRef = resolveJobEabAccountRef(job);
+  if (eabAccountRef !== null) {
+    try {
+      eabCredentials = resolveAcmeAccountCredentials(eabAccountRef, {
+        acmeAccounts: executionContext.acmeAccounts,
+      });
+    } catch (err) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          `renew job requires ACME account/EAB credentials for ref ${JSON.stringify(eabAccountRef)} ` +
+            `but they are not available locally: ${err.message}`,
+        ),
+      };
+    }
+  }
+
   const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
 
   // Step 1: keys. Reuse-if-exists unless job.keyRotation is truthy
   // (forward-compatible field, absent from the base schema). Rotation
   // stages the new key alongside the live path and never overwrites it
   // until deployCertificateAndKey promotes the matched pair.
+  {
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+  }
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
   const forceRotation = job.keyRotation === true;
@@ -882,7 +1495,14 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
   const keyRotated = forceRotation || !keyExisted;
   let stagedKeyPath = keyPath;
   if (keyRotated) {
-    const generated = generateKeyPairToFile({ keyPath, overwrite: forceRotation });
+    const generateOpts = {
+      keyPath,
+      overwrite: forceRotation,
+    };
+    if (keyAlgMapped && keyAlgMapped.algorithm) {
+      generateOpts.algorithm = keyAlgMapped.algorithm;
+    }
+    const generated = generateKeyPairToFile(generateOpts);
     stagedKeyPath = generated.stagedKeyPath;
   }
 
@@ -890,8 +1510,8 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
   // Always signed with the key that will be deployed (staged on rotation).
   const { csrPem } = generateCsr({
     keyPath: stagedKeyPath,
-    subject: { commonName },
-    altNames: [commonName],
+    subject: { commonName: csrCommonName },
+    altNames: domains,
   });
   const csrPath = path.join(execution.keysDir, `${jobId}.csr.pem`);
   fs.writeFileSync(csrPath, csrPem, { mode: 0o600 });
@@ -902,18 +1522,42 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
 
   try {
     // Step 3: ACME renewal via the policy-resolved command profile.
+    {
+      const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+      if (leaseGate && leaseGate.ok === false) {
+        discardStagedKey({ keyPath, stagedKeyPath });
+        return leaseGate.abort;
+      }
+    }
     const adapter = createAcmeAdapter({
       kind: acmeKind,
       commandProfile: { argv: commandVerdict.argv },
       execFileImpl: executionContext.acmeExecFileImpl,
     });
-    const renewal = await adapter.runRenewal({
+    // ACME account/state nests under the agent config/state dir. keysDir
+    // defaults to <configDir>/keys, so its parent is that state dir.
+    const stateDir = path.dirname(execution.keysDir);
+    const renewalOpts = {
       caEndpoint: job.caEndpoint,
-      domains: [commonName],
+      domains,
       csrPath,
       outCertPath: stagedCertPath,
+      stateDir,
       checkCaEndpoint: (endpoint) => policyEngine.checkCaEndpoint(endpoint),
-    });
+    };
+    if (typeof job.preferredChain === "string" && job.preferredChain.length > 0) {
+      renewalOpts.preferredChain = job.preferredChain;
+    } else if (
+      typeof job?.renewalProfile?.preferredChain === "string" &&
+      job.renewalProfile.preferredChain.length > 0
+    ) {
+      renewalOpts.preferredChain = job.renewalProfile.preferredChain;
+    }
+    if (eabCredentials) {
+      renewalOpts.eabKid = eabCredentials.eabKid;
+      renewalOpts.eabHmacKey = eabCredentials.eabHmacKey;
+    }
+    const renewal = await adapter.runRenewal(renewalOpts);
     if (renewal.allowed === false) {
       discardStagedKey({ keyPath, stagedKeyPath });
       return {
@@ -953,7 +1597,7 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
     fs.rmSync(csrPath, { force: true });
   }
 
-  // Steps 4-6 are shared with the deploy action.
+  // Steps 4-6 are shared with the deploy action (possibly multi-target).
   let certificatePem;
   try {
     certificatePem = fs.readFileSync(stagedCertPath, "utf8");
@@ -969,18 +1613,19 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
   } finally {
     fs.rmSync(stagedCertPath, { force: true });
   }
-  const tail = await runDeployReloadVerify({
+  const tail = await runDeployReloadVerifyForTargets({
     job,
     jobId,
     policyEngine,
     client,
     certificatePem,
-    certPath,
+    deployTargets,
     keyPath,
     stagedKeyPath,
     keyRotated,
-    requestedSans: [commonName],
+    requestedSans: domains,
     log,
+    leaseOpts,
   });
   if (tail.status !== "succeeded") {
     discardStagedKey({ keyPath, stagedKeyPath });
@@ -995,11 +1640,12 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
  * "failed" but the destination silently changed.
  *
  * Only applies when the deploy actually wrote (deployed: true) AND left a
- * backup of the previous content (backupPath). An idempotent skip changed
- * nothing (nothing to roll back), and a first-ever deploy has no previous
- * certificate to restore (deleting the fresh file would be worse: the
- * job's failure report plus the deployment.updated evidence trail already
- * tells the operator exactly what is on disk).
+ * backup of the previous content (backupPath / backupPaths.cert). An
+ * idempotent skip changed nothing (nothing to roll back). A first-ever
+ * deploy has no previous certificate to restore: deleting the fresh file
+ * would be worse (the service may already have loaded it), so the cert is
+ * retained and the return value sets `orphanedFirstDeploy` so the caller
+ * can report `orphaned_unknown_effect` instead of an ordinary failure.
  *
  * The restore goes through deployCertificate itself, so it gets the same
  * policy re-check, atomic write, and metrics as any deploy. After a
@@ -1009,7 +1655,7 @@ async function executeRenewJob({ job, jobId, policyEngine, client, executionCont
  * never changes the job's (already failed) result.
  *
  * @param {object} params
- * @returns {Promise<{ rolledBack: boolean, reason: string|null }>}
+ * @returns {Promise<{ rolledBack: boolean, reason: string|null, orphanedFirstDeploy?: boolean }>}
  */
 async function rollbackAfterFailedTail({
   job,
@@ -1023,13 +1669,45 @@ async function rollbackAfterFailedTail({
   if (deployResult?.deployed !== true) {
     return { rolledBack: false, reason: "deploy step made no change (idempotent skip)" };
   }
-  if (typeof deployResult.backupPath !== "string" || deployResult.backupPath.length === 0) {
-    return { rolledBack: false, reason: "no previous certificate existed to restore" };
+
+  const certBackup =
+    typeof deployResult.backupPath === "string" && deployResult.backupPath.length > 0
+      ? deployResult.backupPath
+      : deployResult.backupPaths &&
+          typeof deployResult.backupPaths.cert === "string" &&
+          deployResult.backupPaths.cert.length > 0
+        ? deployResult.backupPaths.cert
+        : null;
+
+  if (certBackup === null) {
+    // First-ever deploy: nothing to restore. Retain the new cert and flag
+    // the ambiguous live state for operator reconciliation.
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType: "deployment.updated",
+        observedAt: new Date().toISOString(),
+        summary:
+          `Orphaned first-ever deployment for job ${jobId} after the ${failedStep} step failed: ` +
+          `no previous certificate existed to restore. The new certificate may be live on disk ` +
+          `and the service may already have loaded it; operator reconciliation is required.`,
+        metadata: [
+          { name: "step", value: "rollback" },
+          { name: "failedStep", value: String(failedStep) },
+          { name: "restored", value: false },
+          { name: "orphanedFirstDeploy", value: true },
+        ],
+      }),
+    ]);
+    return {
+      rolledBack: false,
+      reason: "no previous certificate existed to restore",
+      orphanedFirstDeploy: true,
+    };
   }
 
   let previousPem;
   try {
-    previousPem = fs.readFileSync(deployResult.backupPath, "utf8");
+    previousPem = fs.readFileSync(certBackup, "utf8");
   } catch (err) {
     emitLog(log, `tokentimer-agent: rollback for job ${jobId} could not read the backup: ${err.message}`);
     return { rolledBack: false, reason: "backup file could not be read" };
@@ -1126,19 +1804,149 @@ async function rollbackAfterFailedTail({
 
 /**
  * Appends a rollback disposition note to a failed/rejected tail outcome's
- * errorMessage so the reported result states what is on disk.
+ * errorMessage so the reported result states what is on disk. First-ever
+ * deploys with no backup are promoted to `orphaned_unknown_effect`.
  *
  * @param {object} outcome reportResult fields
- * @param {{ rolledBack: boolean, reason: string|null }} rollback
+ * @param {{ rolledBack: boolean, reason: string|null, orphanedFirstDeploy?: boolean }} rollback
  * @returns {object}
  */
 function withRollbackNote(outcome, rollback) {
+  if (rollback?.orphanedFirstDeploy === true) {
+    const failedDetail =
+      typeof outcome.errorMessage === "string" && outcome.errorMessage.length > 0
+        ? outcome.errorMessage
+        : "a post-deploy step failed";
+    return {
+      ...outcome,
+      status: "orphaned_unknown_effect",
+      // Orphaned is a distinct terminal status, not a policy rejection.
+      rejectionReason: undefined,
+      errorMessage: boundErrorMessage(
+        `${failedDetail} (first-ever deployment: no previous certificate existed to restore; ` +
+          `the new certificate may be live on disk and the service may already have loaded it; ` +
+          `operator reconciliation is required)`,
+      ),
+    };
+  }
   const note = rollback.rolledBack
     ? "rolled back to the previous certificate"
     : `not rolled back: ${rollback.reason}`;
   return {
     ...outcome,
     errorMessage: boundErrorMessage(`${outcome.errorMessage} (${note})`),
+  };
+}
+
+/**
+ * Multi-target deploy/reload/verify. Runs the shared tail once per resolved
+ * destination. Semantics: all-or-nothing — any target failure fails the job
+ * overall; if any target reaches orphaned_unknown_effect, that status wins.
+ * Per-target outcomes are recorded in evidence metadata (targetIndex /
+ * targetReference / targetStatus).
+ *
+ * @param {object} params
+ * @returns {Promise<object>}
+ */
+async function runDeployReloadVerifyForTargets({
+  job,
+  jobId,
+  policyEngine,
+  client,
+  certificatePem,
+  deployTargets,
+  keyPath,
+  stagedKeyPath,
+  keyRotated = false,
+  requestedSans = [],
+  log,
+  leaseOpts = null,
+}) {
+  const targetOutcomes = [];
+  let liveStagedKeyPath = stagedKeyPath;
+  let remainingKeyRotation = keyRotated === true;
+
+  for (let i = 0; i < deployTargets.length; i += 1) {
+    const target = deployTargets[i];
+    const jobView = {
+      ...job,
+      target: {
+        type: target.type,
+        reference: target.reference,
+      },
+      certPath: target.certPath,
+      chainPath: target.chainPath || undefined,
+      reloadService: target.reloadService || undefined,
+    };
+
+    const result = await runDeployReloadVerify({
+      job: jobView,
+      jobId,
+      policyEngine,
+      client,
+      certificatePem,
+      certPath: target.certPath,
+      chainPath: target.chainPath,
+      keyPath,
+      stagedKeyPath: liveStagedKeyPath,
+      keyRotated: remainingKeyRotation,
+      requestedSans,
+      log,
+      leaseOpts,
+    });
+
+    targetOutcomes.push({
+      index: i,
+      reference: target.reference,
+      certPath: target.certPath,
+      status: result.status,
+      errorMessage: result.errorMessage || null,
+    });
+
+    // Paired key deploy promotes the staged key on the first target only.
+    if (remainingKeyRotation && result.status === "succeeded") {
+      remainingKeyRotation = false;
+      liveStagedKeyPath = keyPath;
+    }
+
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType:
+          result.status === "succeeded" ? "deployment.updated" : "validation.failed",
+        observedAt: new Date().toISOString(),
+        summary:
+          `Deployment target ${i + 1}/${deployTargets.length} ` +
+          `(${target.reference}) finished with status ${result.status}.`,
+        metadata: [
+          { name: "step", value: "multi-target" },
+          { name: "targetIndex", value: i },
+          { name: "targetCount", value: deployTargets.length },
+          { name: "targetReference", value: String(target.reference) },
+          { name: "targetStatus", value: String(result.status) },
+        ],
+      }),
+    ]);
+
+    if (result.status !== "succeeded") {
+      const orphaned = targetOutcomes.some(
+        (o) => o.status === "orphaned_unknown_effect",
+      );
+      return {
+        ...result,
+        status: orphaned ? "orphaned_unknown_effect" : result.status,
+        errorMessage: boundErrorMessage(
+          `deployment target ${i + 1}/${deployTargets.length} ` +
+            `(${target.reference}) failed: ${result.errorMessage || result.status}`,
+        ),
+        targetOutcomes,
+      };
+    }
+  }
+
+  return {
+    status: "succeeded",
+    errorMessage: null,
+    targetOutcomes,
   };
 }
 
@@ -1159,21 +1967,26 @@ async function runDeployReloadVerify({
   client,
   certificatePem,
   certPath,
+  chainPath = null,
   keyPath,
   stagedKeyPath,
   keyRotated = false,
   requestedSans = [],
   log,
+  leaseOpts = null,
 }) {
-  // Pre-deploy X.509 validation: parse, key match, SANs, validity, chain.
+  // Pre-deploy X.509 validation always runs. When a local key path is
+  // available, full validation includes key-match; otherwise privateKeyPem
+  // is null so validateCertificateForDeploy still enforces parse / SAN /
+  // validity / chain without requiring a key (standalone deploy path).
   const keyForValidation =
     typeof stagedKeyPath === "string" && stagedKeyPath.length > 0
       ? stagedKeyPath
       : typeof keyPath === "string" && keyPath.length > 0
         ? keyPath
         : null;
+  let privateKeyPem = null;
   if (keyForValidation) {
-    let privateKeyPem;
     try {
       privateKeyPem = fs.readFileSync(keyForValidation, "utf8");
     } catch (err) {
@@ -1184,41 +1997,67 @@ async function runDeployReloadVerify({
         ),
       };
     }
-    const sans =
-      Array.isArray(requestedSans) && requestedSans.length > 0
-        ? requestedSans
-        : typeof job?.target?.reference === "string" && job.target.reference.length > 0
-          ? [job.target.reference]
-          : [];
-    const preDeploy = validateCertificateForDeploy({
-      certificatePem,
-      privateKeyPem,
-      requestedSans: sans,
-    });
-    if (preDeploy.valid !== true) {
-      await reportStepEvidence(client, jobId, [
-        buildEvidenceItem({
-          eventType: "validation.failed",
-          observedAt: new Date().toISOString(),
-          summary: `Pre-deploy certificate validation failed for job ${jobId}: ${preDeploy.code}.`,
-          metadata: [
-            { name: "step", value: "pre-deploy-validate" },
-            { name: "code", value: String(preDeploy.code) },
-          ],
-        }),
-      ]);
-      return {
-        status: "failed",
-        errorMessage: boundErrorMessage(
-          `pre-deploy validation failed (${preDeploy.code}): ${preDeploy.detail}`,
-        ),
-      };
-    }
+  }
+  const sans =
+    Array.isArray(requestedSans) && requestedSans.length > 0
+      ? requestedSans
+      : typeof job?.target?.reference === "string" && job.target.reference.length > 0
+        ? [job.target.reference]
+        : [];
+  const preDeploy = validateCertificateForDeploy({
+    certificatePem,
+    privateKeyPem,
+    requestedSans: sans,
+  });
+  if (preDeploy.valid !== true) {
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType: "validation.failed",
+        observedAt: new Date().toISOString(),
+        summary: `Pre-deploy certificate validation failed for job ${jobId}: ${preDeploy.code}.`,
+        metadata: [
+          { name: "step", value: "pre-deploy-validate" },
+          { name: "code", value: String(preDeploy.code) },
+        ],
+      }),
+    ]);
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        `pre-deploy validation failed (${preDeploy.code}): ${preDeploy.detail}`,
+      ),
+    };
   }
 
   // Deploy step. When a key was rotated (or freshly generated), install the
   // matched key+certificate pair atomically; otherwise cert-only deploy.
+  {
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+  }
   const checkPath = (candidate) => policyEngine.checkPath(candidate);
+  const resolvedChainPath =
+    typeof chainPath === "string" && chainPath.length > 0
+      ? chainPath
+      : isAbsolutePathLike(job?.chainPath)
+        ? job.chainPath
+        : null;
+
+  let deployCertificatePem = certificatePem;
+  let deployChainPem;
+  if (resolvedChainPath) {
+    const split = splitLeafAndChainPem(certificatePem);
+    if (!split.chainPem) {
+      return {
+        status: "failed",
+        errorMessage:
+          "deploy target.chainPath is configured but the certificate PEM has no intermediate chain blocks to write",
+      };
+    }
+    deployCertificatePem = split.leafPem;
+    deployChainPem = split.chainPem;
+  }
+
   const usePairedDeploy =
     keyRotated === true &&
     typeof keyPath === "string" &&
@@ -1226,25 +2065,26 @@ async function runDeployReloadVerify({
     typeof stagedKeyPath === "string" &&
     stagedKeyPath.length > 0;
 
+  const deployTarget = {
+    type: job?.target?.type ?? "endpoint",
+    reference: job?.target?.reference ?? certPath,
+    certPath,
+    ...(resolvedChainPath ? { chainPath: resolvedChainPath } : {}),
+    ...(usePairedDeploy ? { keyPath } : {}),
+  };
+
   const deployResult = usePairedDeploy
     ? await deployCertificateAndKey({
-        target: {
-          type: job?.target?.type ?? "endpoint",
-          reference: job?.target?.reference ?? certPath,
-          certPath,
-          keyPath,
-        },
-        certificatePem,
+        target: deployTarget,
+        certificatePem: deployCertificatePem,
         privateKeyPath: stagedKeyPath,
+        chainPem: deployChainPem,
         checkPath,
       })
     : await deployCertificate({
-        target: {
-          type: job?.target?.type ?? "endpoint",
-          reference: job?.target?.reference ?? certPath,
-          certPath,
-        },
-        certificatePem,
+        target: deployTarget,
+        certificatePem: deployCertificatePem,
+        chainPem: deployChainPem,
         checkPath,
       });
 
@@ -1295,7 +2135,14 @@ async function runDeployReloadVerify({
 
   // Optional reload step: only when the job names a service AND both
   // command profile refs resolve through the agent-local allowlist.
-  const reloadOutcome = await maybeReloadForJob({ job, jobId, policyEngine, client, log });
+  const reloadOutcome = await maybeReloadForJob({
+    job,
+    jobId,
+    policyEngine,
+    client,
+    log,
+    leaseOpts,
+  });
   if (reloadOutcome !== null && reloadOutcome.status !== "succeeded") {
     const rollback = await rollbackAfterFailedTail({
       job,
@@ -1420,7 +2267,7 @@ async function runDeployReloadVerify({
  * @param {object} params
  * @returns {Promise<object|null>}
  */
-async function maybeReloadForJob({ job, jobId, policyEngine, client, log }) {
+async function maybeReloadForJob({ job, jobId, policyEngine, client, log, leaseOpts = null }) {
   if (typeof job.reloadService !== "string" || job.reloadService.length === 0) {
     return null;
   }
@@ -1455,6 +2302,10 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log }) {
     };
   }
 
+  {
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+  }
   const outcome = await reloadService({
     service: job.reloadService,
     commandProfiles: {
@@ -1494,28 +2345,70 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log }) {
 /**
  * Deploy action: deploy + optional reload + verify. certificatePem comes
  * from the job (its presence is checked by executeJob before this runs).
+ * When an agent-local key exists at keysDir/<certificateId>.key.pem, it is
+ * passed through for full pre-deploy key-match validation; otherwise
+ * validation still runs key-less (parse/SAN/validity/chain only).
  *
  * @param {object} params
  * @returns {Promise<object>}
  */
-async function executeDeployJob({ job, jobId, policyEngine, client, log }) {
-  const certPath = resolveJobCertPath(job);
-  if (certPath === null) {
+async function executeDeployJob({
+  job,
+  jobId,
+  policyEngine,
+  client,
+  log,
+  leaseOpts = null,
+  executionContext = null,
+}) {
+  const deployTargetsResolved = resolveJobDeployTargets(job);
+  if (deployTargetsResolved.error) {
     return {
       status: "failed",
-      errorMessage:
-        "deploy job names no destination: neither job.certPath nor an " +
-        "absolute-path target.reference is present",
+      errorMessage: deployTargetsResolved.error.replace(
+        /^job names/,
+        "deploy job names",
+      ),
     };
   }
-  return await runDeployReloadVerify({
+
+  // Same key-path convention as renew. Presence enables full key-match;
+  // absence is the common standalone-deploy case (key-less validation).
+  let keyPath = null;
+  const keysDir = executionContext?.execution?.keysDir;
+  if (
+    typeof keysDir === "string" &&
+    keysDir.length > 0 &&
+    typeof job.certificateId === "string" &&
+    job.certificateId.length > 0
+  ) {
+    const candidate = path.join(keysDir, `${job.certificateId}.key.pem`);
+    if (fs.existsSync(candidate)) {
+      keyPath = candidate;
+    }
+  }
+
+  const sansResolved = resolveJobSans(job);
+  const requestedSans =
+    sansResolved && Array.isArray(sansResolved.sans)
+      ? sansResolved.sans
+      : typeof job?.target?.reference === "string" && job.target.reference.length > 0
+        ? [job.target.reference]
+        : [];
+
+  return await runDeployReloadVerifyForTargets({
     job,
     jobId,
     policyEngine,
     client,
     certificatePem: job.certificatePem,
-    certPath,
+    deployTargets: deployTargetsResolved.targets,
+    keyPath,
+    stagedKeyPath: keyPath,
+    keyRotated: false,
+    requestedSans,
     log,
+    leaseOpts,
   });
 }
 
@@ -1525,8 +2418,15 @@ async function executeDeployJob({ job, jobId, policyEngine, client, log }) {
  * @param {object} params
  * @returns {Promise<object>}
  */
-async function executeReloadJob({ job, jobId, policyEngine, client, log }) {
-  const outcome = await maybeReloadForJob({ job, jobId, policyEngine, client, log });
+async function executeReloadJob({ job, jobId, policyEngine, client, log, leaseOpts = null }) {
+  const outcome = await maybeReloadForJob({
+    job,
+    jobId,
+    policyEngine,
+    client,
+    log,
+    leaseOpts,
+  });
   if (outcome === null) {
     return {
       status: "failed",
@@ -1543,8 +2443,9 @@ async function executeReloadJob({ job, jobId, policyEngine, client, log }) {
  * Runs one observe-only discovery scan over the configured directories and
  * reports parsed certificates as `certificate.observed` evidence. Only
  * public fields ever leave the host: the discovery module never reads key
- * bytes, and metadata here is limited to schema-safe names/values. Evidence
- * bodies are chunked to the schema's 16-item maximum.
+ * bytes, and metadata here is limited to schema-safe names/values matching
+ * the control-plane observation ingestion contract (filePath required).
+ * Evidence bodies are chunked to the schema's 16-item maximum.
  *
  * Exported for direct unit testing.
  *
@@ -1562,20 +2463,35 @@ async function runDiscoveryScan({ directories, client, log = null }) {
     emitLog(log, "discovery scan hit a bound and was truncated");
   }
 
+  const targetHost = os.hostname();
   const items = [];
   const observedAt = new Date().toISOString();
   for (const cert of certificates) {
     if (!cert.parsed) continue;
+    // Structured metadata for control-plane ingestion. subjectAltName from
+    // Node's X509Certificate is already a comma-separated string (or null
+    // when the extension is absent); omit the entry when null rather than
+    // sending an empty/null value the ingest path does not need.
+    const metadata = [
+      { name: "filePath", value: cert.path },
+      { name: "targetHost", value: targetHost },
+      { name: "subject", value: cert.subject },
+      { name: "issuer", value: cert.issuer },
+      { name: "serialNumber", value: cert.serialNumber },
+      { name: "validFrom", value: cert.validFrom },
+      { name: "validTo", value: cert.validTo },
+      { name: "coLocatedKeyDetected", value: cert.coLocatedKeyDetected === true },
+    ];
+    if (typeof cert.subjectAltName === "string" && cert.subjectAltName.length > 0) {
+      metadata.splice(5, 0, { name: "subjectAltNames", value: cert.subjectAltName });
+    }
     items.push(
       buildEvidenceItem({
         eventType: "certificate.observed",
         observedAt,
         fingerprintSha256: cert.fingerprintSha256,
         summary: `Observed certificate at ${cert.path} (subject: ${cert.subject})`,
-        metadata: [
-          { name: "validTo", value: cert.validTo },
-          { name: "coLocatedKeyDetected", value: cert.coLocatedKeyDetected === true },
-        ],
+        metadata,
       }),
     );
   }
@@ -1664,6 +2580,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     declaredTargetSelectors: config.declaredTargetSelectors,
     declaredCommandProfileNames: config.declaredCommandProfileNames,
     registrationId,
+    supportedDnsProviders: listConfiguredDnsProviderIds(config.dnsProviders),
   }), config.protocolVersion);
 
   persistRegistration(configDir, {
@@ -1770,6 +2687,7 @@ function buildExecutionContext({ config, acmeExecFileImpl } = {}) {
     replayCache,
     clockEstimator,
     pinnedSigningKey: config.pinnedSigningKey,
+    acmeAccounts: config.acmeAccounts || null,
     acmeExecFileImpl,
   };
 }
@@ -1882,6 +2800,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   }
 
   const startedAtMs = Date.now();
+  const supportedDnsProviders = listConfiguredDnsProviderIds(config.dnsProviders);
 
   const heartbeatLoop = startPollLoop({
     intervalMs: config.heartbeatIntervalMs,
@@ -1891,6 +2810,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
+        supportedDnsProviders,
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and
         // key-rotation lag. in observe-only bootstrap mode these stay null.
@@ -1908,6 +2828,18 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // respawning a decommissioned agent into a heartbeat 410 loop.
         process.exitCode = AGENT_RETIRED_EXIT_CODE;
         stop();
+        return;
+      }
+      // H3: adopt a pending signing-key rotation when advertised. The next
+      // heartbeat will naturally ack via pinnedSigningKeyId once the
+      // in-memory + on-disk pin reflects the new key.
+      if (executionContext && response && Object.prototype.hasOwnProperty.call(response, "signingKeyRotation")) {
+        adoptSigningKeyRotation({
+          rotation: response.signingKeyRotation,
+          configDir,
+          executionContext,
+          log: (msg) => defaultAgentLogger.error(msg),
+        });
       }
     },
   });
@@ -1938,10 +2870,21 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           const jobs = await client.claim({
             maxJobs: 1,
             supportedActions: resolveClaimSupportedActions(executionContext),
+            supportedDnsProviders,
           });
           for (const job of jobs) {
             if (controller.signal.aborted) break;
-            await handleClaimedJob({ job, policyEngine, client, executionContext });
+            const outcome = await handleClaimedJob({
+              job,
+              policyEngine,
+              client,
+              executionContext,
+            });
+            if (outcome && outcome.retired === true) {
+              process.exitCode = AGENT_RETIRED_EXIT_CODE;
+              stop();
+              break;
+            }
           }
         },
       }),
@@ -1976,15 +2919,24 @@ module.exports = {
   runAgent,
   handleClaimedJob,
   executeJob,
+  executeDeployJob,
+  runDeployReloadVerify,
+  runDeployReloadVerifyForTargets,
   buildExecutionContext,
   buildJobPolicyDescriptor,
   resolveJobCertPath,
+  resolveJobDeployTargets,
+  resolveJobSans,
+  mapJobKeyAlgorithm,
+  resolveJobMode,
   runDiscoveryScan,
   registerIfNeeded,
   createCandidateAgentId,
   resolveClaimSupportedActions,
   shouldPollForJobs,
   persistAndTransmitOutcome,
+  adoptSigningKeyRotation,
+  renewJobLeaseOrAbort,
   AGENT_VERSION,
   AGENT_RETIRED_EXIT_CODE,
   EXECUTABLE_JOB_ACTIONS,

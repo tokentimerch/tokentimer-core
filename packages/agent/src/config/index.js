@@ -398,6 +398,21 @@ function validateDnsProvidersObject(dnsProviders) {
 }
 
 /**
+ * Returns the configured DNS provider ids from a validated dnsProviders
+ * block (excluding the reserved zoneProviderMap key). Used to advertise
+ * supportedDnsProviders on register/heartbeat/claim.
+ *
+ * @param {object|null|undefined} dnsProviders
+ * @returns {string[]}
+ */
+function listConfiguredDnsProviderIds(dnsProviders) {
+  if (!dnsProviders || typeof dnsProviders !== "object" || Array.isArray(dnsProviders)) {
+    return [];
+  }
+  return Object.keys(dnsProviders).filter((key) => key !== "zoneProviderMap");
+}
+
+/**
  * Validates optional dnsPropagation config (timeout/interval/resolvers).
  * Delegates shape rules to src/dns/propagate.normalizePropagationConfig
  * semantics, duplicated here so config stays free of a dns import cycle.
@@ -553,6 +568,155 @@ function readDnsCredentialsFile(providerId, config) {
     );
   }
   return parsed;
+}
+
+/**
+ * Validates the optional "acmeAccounts" config block. Maps opaque non-secret
+ * account/EAB reference names (from renewal-profile ca.accountRef / ca.eabRef)
+ * to absolute paths of agent-local 0600 credential files. Secrets never live
+ * in config.json — only the credentialsFile path does (same posture as
+ * dnsProviders).
+ *
+ * Shape: { "<ref>": { credentialsFile: "<absolute path>" }, ... }
+ *
+ * @param {*} acmeAccounts raw config.json "acmeAccounts" value
+ * @returns {object|null}
+ */
+function validateAcmeAccountsObject(acmeAccounts) {
+  if (acmeAccounts === undefined || acmeAccounts === null) return null;
+  if (typeof acmeAccounts !== "object" || Array.isArray(acmeAccounts)) {
+    throw new Error(
+      "tokentimer-agent: acmeAccounts in config.json must be an object " +
+        "mapping account/EAB ref -> { credentialsFile }",
+    );
+  }
+
+  for (const [ref, entry] of Object.entries(acmeAccounts)) {
+    if (typeof ref !== "string" || ref.trim().length === 0) {
+      throw new Error(
+        "tokentimer-agent: acmeAccounts contains an empty reference key",
+      );
+    }
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(
+        `tokentimer-agent: acmeAccounts.${ref} must be an object ` +
+          "({ credentialsFile })",
+      );
+    }
+    if (
+      typeof entry.credentialsFile !== "string" ||
+      entry.credentialsFile.length === 0 ||
+      !path.isAbsolute(entry.credentialsFile)
+    ) {
+      throw new Error(
+        `tokentimer-agent: acmeAccounts.${ref}.credentialsFile must be ` +
+          `an absolute path string, got: ${JSON.stringify(entry.credentialsFile)}`,
+      );
+    }
+  }
+
+  return acmeAccounts;
+}
+
+/**
+ * Resolves an opaque EAB/account ref to { eabKid, eabHmacKey } from the
+ * agent-local acmeAccounts credentials file. Fail-loud on missing config,
+ * unreadable/overly-permissive files, or credentials lacking both fields.
+ * Contents are never logged, including in errors.
+ *
+ * @param {string} accountRef opaque non-secret reference from the job payload
+ * @param {{ acmeAccounts?: object|null }} config loaded agent config
+ * @returns {{ eabKid: string, eabHmacKey: string }}
+ */
+function resolveAcmeAccountCredentials(accountRef, config) {
+  if (typeof accountRef !== "string" || accountRef.trim().length === 0) {
+    throw new Error(
+      "tokentimer-agent: acmeAccounts resolve requires a non-empty account/EAB ref",
+    );
+  }
+  const ref = accountRef.trim();
+  const acmeAccounts = config && config.acmeAccounts;
+  const entry = acmeAccounts ? acmeAccounts[ref] : undefined;
+  if (!entry || typeof entry.credentialsFile !== "string") {
+    throw new Error(
+      `tokentimer-agent: acmeAccounts.${ref} is not configured locally ` +
+        "(no credentialsFile)",
+    );
+  }
+
+  const credentialsPath = entry.credentialsFile;
+
+  if (process.platform !== "win32") {
+    let stats;
+    try {
+      stats = fs.lstatSync(credentialsPath);
+    } catch (err) {
+      throw new Error(
+        `tokentimer-agent: failed to stat ACME account credentials file ${credentialsPath}: ${err.message}`,
+      );
+    }
+    if (stats.isSymbolicLink() || !stats.isFile()) {
+      throw new Error(
+        `tokentimer-agent: ACME account credentials file ${credentialsPath} must be a regular non-symlink file`,
+      );
+    }
+    if ((stats.mode & 0o077) !== 0) {
+      throw new Error(
+        `tokentimer-agent: refusing to read ACME account credentials file ${credentialsPath}: ` +
+          "it is readable by group/other (chmod 600 it)",
+      );
+    }
+    if (typeof process.getuid === "function") {
+      const uid = process.getuid();
+      if (stats.uid !== uid && stats.uid !== 0) {
+        throw new Error(
+          `tokentimer-agent: refusing to read ACME account credentials file ${credentialsPath}: ` +
+            "it is not owned by the agent user or root",
+        );
+      }
+    }
+  }
+
+  let raw;
+  try {
+    raw = readBoundedRegularFile(
+      credentialsPath,
+      MAX_DNS_CREDENTIALS_BYTES,
+      "ACME account credentials file",
+    ).toString("utf8");
+  } catch (err) {
+    throw new Error(
+      `tokentimer-agent: failed to read ACME account credentials file ${credentialsPath}: ${err.message}`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      `tokentimer-agent: ACME account credentials file ${credentialsPath} is not valid JSON`,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `tokentimer-agent: ACME account credentials file ${credentialsPath} must contain a JSON object`,
+    );
+  }
+
+  const eabKid = parsed.eabKid;
+  const eabHmacKey = parsed.eabHmacKey;
+  if (typeof eabKid !== "string" || eabKid.length === 0) {
+    throw new Error(
+      `tokentimer-agent: ACME account credentials for ${ref} missing non-empty eabKid`,
+    );
+  }
+  if (typeof eabHmacKey !== "string" || eabHmacKey.length === 0) {
+    throw new Error(
+      `tokentimer-agent: ACME account credentials for ${ref} missing non-empty eabHmacKey`,
+    );
+  }
+  return { eabKid, eabHmacKey };
 }
 
 function validateDiscoveryObject(discovery) {
@@ -760,6 +924,8 @@ function validateExecutionObject(execution, configDir) {
  *   }|null,
  *   pinnedSigningKey: {signingKeyId: string, publicKeyPem: string}|null,
  *   dnsProviders: object|null,
+ *   acmeAccounts: object|null,
+ *   dnsPropagation: object,
  * }}
  */
 function loadAgentConfig({ configDir } = {}) {
@@ -847,6 +1013,10 @@ function loadAgentConfig({ configDir } = {}) {
   // files, read on demand via readDnsCredentialsFile.
   const dnsProviders = validateDnsProvidersObject(fileConfig.dnsProviders);
 
+  // Opaque ACME account / EAB credential refs (ca.accountRef / ca.eabRef).
+  // Paths only here; secrets stay in 0600 files via resolveAcmeAccountCredentials.
+  const acmeAccounts = validateAcmeAccountsObject(fileConfig.acmeAccounts);
+
   // DNS-01 propagation wait (authoritative + optional recursive polling).
   const dnsPropagation = normalizeDnsPropagationConfig(fileConfig.dnsPropagation);
 
@@ -865,6 +1035,7 @@ function loadAgentConfig({ configDir } = {}) {
     execution,
     pinnedSigningKey,
     dnsProviders,
+    acmeAccounts,
     dnsPropagation,
   };
 }
@@ -904,7 +1075,8 @@ function writeAgentIdentity(configDir, { agentId }) {
  *   - an existing pin path that is a symlink or non-regular file is
  *     refused (integrity of the pin is the whole point of the file);
  *   - overwriting an existing pin with a DIFFERENT key requires an
- *     explicit allowRepin flag (re-registration is the only flow allowed
+ *     explicit allowRepin flag (initial registration OR controlled
+ *     heartbeat signingKeyRotation adoption are the only flows allowed
  *     to rotate the pin; a silent overwrite would let any code path
  *     re-pin an attacker-supplied key). Rewriting the identical pin is a
  *     no-op-equivalent and stays allowed.
@@ -994,7 +1166,8 @@ function writeSigningKeyPin(
         "tokentimer-agent: a different signing key is already pinned " +
           `(pinned id ${JSON.stringify(existingPin?.signingKeyId)}, new id ` +
           `${JSON.stringify(signingKeyId)}); refusing to silently re-pin. ` +
-          "Pass allowRepin: true only from an explicit re-registration flow.",
+          "Pass allowRepin: true only from an explicit re-registration or " +
+          "controlled signing-key rotation adoption flow.",
       );
     }
   }
@@ -1397,7 +1570,10 @@ module.exports = {
   readSigningKeyPin,
   validateExecutionObject,
   validateDnsProvidersObject,
+  listConfiguredDnsProviderIds,
   readDnsCredentialsFile,
+  validateAcmeAccountsObject,
+  resolveAcmeAccountCredentials,
   readCredential,
   writeCredential,
   rotateCredential,

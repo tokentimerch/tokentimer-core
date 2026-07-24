@@ -632,3 +632,88 @@ describe("deployCertificateAndKey", () => {
     assert.equal(fs.existsSync(certPath), false);
   });
 });
+
+describe("deployCertificate chainPath", () => {
+  const FULLCHAIN_PEM = fs.readFileSync(
+    path.join(FIXTURES_DIR, "leaf-fullchain.crt.pem"),
+    "utf8",
+  );
+  const LEAF_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "leaf.crt.pem"), "utf8");
+  const INTERMEDIATE_PEM = fs.readFileSync(
+    path.join(FIXTURES_DIR, "intermediate.crt.pem"),
+    "utf8",
+  );
+
+  it("writes leaf and chain atomically when chainPath is configured", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "cert.pem");
+    const chainPath = path.join(dir, "chain.pem");
+    const result = await deployCertificate({
+      target: {
+        type: "endpoint",
+        reference: "chain-test",
+        certPath,
+        chainPath,
+      },
+      certificatePem: LEAF_PEM,
+      chainPem: INTERMEDIATE_PEM,
+      checkPath: makeCheckPath(dir),
+    });
+    assert.equal(result.deployed, true);
+    assert.equal(fs.readFileSync(certPath, "utf8"), LEAF_PEM);
+    assert.equal(fs.readFileSync(chainPath, "utf8"), INTERMEDIATE_PEM);
+    assert.equal(result.chainDestination, path.resolve(chainPath));
+  });
+
+  it("fails when chainPath is configured but chainPem is missing", async () => {
+    const dir = makeTempDir();
+    const result = await deployCertificate({
+      target: {
+        type: "endpoint",
+        reference: "chain-missing",
+        certPath: path.join(dir, "cert.pem"),
+        chainPath: path.join(dir, "chain.pem"),
+      },
+      certificatePem: FULLCHAIN_PEM,
+      checkPath: makeCheckPath(dir),
+    });
+    assert.equal(result.deployed, false);
+    assert.equal(result.stage, "validate");
+    assert.match(result.error, /no chain PEM content/);
+  });
+
+  it("rolls back cert and chain together on write failure", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "cert.pem");
+    const chainPath = path.join(dir, "chain.pem");
+    fs.writeFileSync(certPath, OTHER_CERT_PEM, { mode: 0o600 });
+    fs.writeFileSync(chainPath, INTERMEDIATE_PEM, { mode: 0o600 });
+
+    let renameCount = 0;
+    const result = await deployCertificate({
+      target: {
+        type: "endpoint",
+        reference: "chain-rollback",
+        certPath,
+        chainPath,
+      },
+      certificatePem: LEAF_PEM,
+      chainPem: `${INTERMEDIATE_PEM}\n`,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: async (...args) => {
+          renameCount += 1;
+          if (renameCount >= 2) {
+            throw new Error("injected chain rename failure");
+          }
+          return fs.promises.rename(...args);
+        },
+      },
+    });
+
+    assert.equal(result.deployed, false);
+    assert.equal(result.rolledBack, true);
+    assert.equal(fs.readFileSync(certPath, "utf8"), OTHER_CERT_PEM);
+    assert.equal(fs.readFileSync(chainPath, "utf8"), INTERMEDIATE_PEM);
+  });
+});

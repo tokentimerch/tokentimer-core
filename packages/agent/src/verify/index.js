@@ -7,12 +7,14 @@
  *
  * 1. Pre-deploy validation (`validateCertificateForDeploy`): real X.509
  *    parsing via node:crypto's X509Certificate. Confirms the leaf parses,
- *    the private key matches (`checkPrivateKey`), every requested SAN is
- *    present, the validity window covers "now" (with clock-skew tolerance),
- *    and -- when intermediate PEMs are supplied -- the leaf-to-intermediate
- *    signature chain verifies. Full chain-of-trust against a host root store
- *    is deliberately out of scope (private/staging CAs are normal); callers
- *    that need that check do it out of band.
+ *    the private key matches when supplied (`checkPrivateKey`; explicit
+ *    null/undefined skips only key-match for key-less standalone deploys),
+ *    every requested SAN is present, the validity window covers "now"
+ *    (with clock-skew tolerance), and -- when intermediate PEMs are
+ *    supplied -- the leaf-to-intermediate signature chain verifies. Full
+ *    chain-of-trust against a host root store is deliberately out of scope
+ *    (private/staging CAs are normal); callers that need that check do it
+ *    out of band.
  *
  * 2. Post-deploy fingerprint pinning (`verifyDeployedCertificate`): after
  *    deploy + reload, connect to the endpoint, take the peer certificate's
@@ -41,8 +43,9 @@
  * package are self-contained and accept plain data only).
  *
  * Private-key custody (D5 / ADR-0001): validateCertificateForDeploy accepts
- * private key PEM / KeyObject transiently solely for `checkPrivateKey`. The
- * key is never returned, logged, or retained. Post-deploy fingerprint
+ * private key PEM / KeyObject transiently solely for `checkPrivateKey`, or
+ * null/undefined to skip key-match while still validating everything else.
+ * The key is never returned, logged, or retained. Post-deploy fingerprint
  * pinning never touches private key material.
  */
 
@@ -141,7 +144,9 @@ function parseCertDate(value) {
  *
  * Checks, in order:
  *   1. leaf PEM parses as X.509
- *   2. private key parses and matches the leaf (`checkPrivateKey`)
+ *   2. when a private key is supplied: key parses and matches the leaf
+ *      (`checkPrivateKey`). Explicit `null`/`undefined` skips ONLY this
+ *      step (see privateKeyPem contract below); every other check still runs.
  *   3. every requested SAN/domain is present in subjectAltName (DNS)
  *   4. validity window covers `now` within clockSkewSeconds
  *   5. when intermediate PEMs are provided (via `chainPems` or additional
@@ -152,11 +157,22 @@ function parseCertDate(value) {
  * Does NOT verify chain-of-trust to a host root store (private/staging CAs
  * are in scope for CertOps; that check is out of band).
  *
+ * Private-key contract (security-sensitive):
+ *   - Non-empty string / Buffer / KeyObject: full validation including
+ *     key-match. Behavior is identical to the historical required-key path.
+ *   - `null` or `undefined`: deliberate "no local key available" signal used
+ *     by standalone deploy jobs. Key-match is skipped; PEM parse, SAN,
+ *     validity-window, and chain checks still run and can still reject.
+ *   - Empty string (`""`): hard `PRIVATE_KEY_PARSE_FAILED`. Callers that
+ *     accidentally pass an empty string are treated as buggy, not as
+ *     key-less deploy — do not conflate with `null`.
+ *
  * @param {object} input
  * @param {string} input.certificatePem leaf PEM, or leaf+intermediates fullchain
- * @param {string|Buffer|crypto.KeyObject} input.privateKeyPem private key material
- *   for the leaf (PEM string, DER Buffer, or KeyObject). Used only for
- *   checkPrivateKey; never returned.
+ * @param {string|Buffer|crypto.KeyObject|null|undefined} input.privateKeyPem
+ *   private key material for the leaf (PEM string, DER Buffer, or KeyObject),
+ *   or null/undefined to skip key-match only. Used only for checkPrivateKey;
+ *   never returned.
  * @param {string[]} [input.requestedSans] domains that MUST appear as DNS SANs
  * @param {string[]} [input.chainPems] optional intermediate certificate PEMs
  *   (used when not already present after the leaf in certificatePem)
@@ -181,11 +197,10 @@ function validateCertificateForDeploy({
       "verify: certificatePem must be a non-empty PEM string",
     );
   }
-  if (
-    privateKeyPem === undefined ||
-    privateKeyPem === null ||
-    (typeof privateKeyPem === "string" && privateKeyPem.length === 0)
-  ) {
+  // null/undefined => skip key-match only. Empty string remains a hard failure
+  // so a caller that forgot to load a key cannot silently weaken validation.
+  const skipKeyMatch = privateKeyPem === null || privateKeyPem === undefined;
+  if (!skipKeyMatch && typeof privateKeyPem === "string" && privateKeyPem.length === 0) {
     return invalidCert(
       "PRIVATE_KEY_PARSE_FAILED",
       "verify: privateKeyPem is required for key/certificate matching",
@@ -222,36 +237,38 @@ function validateCertificateForDeploy({
     );
   }
 
-  let privateKey;
-  try {
-    privateKey =
-      typeof privateKeyPem === "object" &&
-      privateKeyPem !== null &&
-      typeof privateKeyPem.type === "string" &&
-      privateKeyPem.type === "private"
-        ? privateKeyPem
-        : crypto.createPrivateKey(privateKeyPem);
-  } catch (err) {
-    return invalidCert(
-      "PRIVATE_KEY_PARSE_FAILED",
-      `verify: private key could not be parsed: ${err?.message || err}`,
-    );
-  }
+  if (!skipKeyMatch) {
+    let privateKey;
+    try {
+      privateKey =
+        typeof privateKeyPem === "object" &&
+        privateKeyPem !== null &&
+        typeof privateKeyPem.type === "string" &&
+        privateKeyPem.type === "private"
+          ? privateKeyPem
+          : crypto.createPrivateKey(privateKeyPem);
+    } catch (err) {
+      return invalidCert(
+        "PRIVATE_KEY_PARSE_FAILED",
+        `verify: private key could not be parsed: ${err?.message || err}`,
+      );
+    }
 
-  let keyMatches = false;
-  try {
-    keyMatches = leaf.checkPrivateKey(privateKey);
-  } catch (err) {
-    return invalidCert(
-      "PRIVATE_KEY_MISMATCH",
-      `verify: private key does not match certificate public key: ${err?.message || err}`,
-    );
-  }
-  if (!keyMatches) {
-    return invalidCert(
-      "PRIVATE_KEY_MISMATCH",
-      "verify: private key does not match the leaf certificate public key",
-    );
+    let keyMatches = false;
+    try {
+      keyMatches = leaf.checkPrivateKey(privateKey);
+    } catch (err) {
+      return invalidCert(
+        "PRIVATE_KEY_MISMATCH",
+        `verify: private key does not match certificate public key: ${err?.message || err}`,
+      );
+    }
+    if (!keyMatches) {
+      return invalidCert(
+        "PRIVATE_KEY_MISMATCH",
+        "verify: private key does not match the leaf certificate public key",
+      );
+    }
   }
 
   const presentSans = parseDnsSans(leaf.subjectAltName);

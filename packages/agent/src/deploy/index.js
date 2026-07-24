@@ -402,14 +402,15 @@ function backupPathFor(destinationPath, backupDir, now) {
  * material in the payload, non-string payload).
  *
  * Result shapes:
- *   { deployed: true,  skipped: false, destination, backupPath|null }
- *   { deployed: false, skipped: true,  reason: "idempotent", destination }
+ *   { deployed: true,  skipped: false, destination, backupPath|null, chainDestination?, backupPaths? }
+ *   { deployed: false, skipped: true,  reason: "idempotent", destination, chainDestination? }
  *   { deployed: false, skipped: false, error, stage }                       // failed before touching the file
  *   { deployed: false, skipped: false, rolledBack: true|false, error, stage } // failed during write
  *
  * @param {{
  *   target: object,           // see validateTargetConfig
- *   certificatePem: string,   // public certificate PEM (cert or cert+chain)
+ *   certificatePem: string,   // public certificate PEM written to certPath (leaf or fullchain)
+ *   chainPem?: string,        // intermediate chain PEM written to target.chainPath when set
  *   checkPath: (filePath: string) => { allowed: boolean, rejectionReason?: string, detail?: string },
  *   now?: () => Date,         // injectable clock for deterministic backup names
  *   _fsOverrides?: object,    // TEST-ONLY: shadows node:fs/promises methods
@@ -421,6 +422,7 @@ function backupPathFor(destinationPath, backupDir, now) {
 async function deployCertificate({
   target,
   certificatePem,
+  chainPem,
   checkPath,
   now = () => new Date(),
   _fsOverrides,
@@ -432,6 +434,12 @@ async function deployCertificate({
     throw new Error(
       "deploy: payload contains a private-key PEM marker; this module deploys " +
         "public certificates only and never handles key material (D5 zero key custody)",
+    );
+  }
+  if (typeof chainPem === "string" && PRIVATE_KEY_PEM_HEADER_PATTERN.test(chainPem)) {
+    throw new Error(
+      "deploy: chainPem contains a private-key PEM marker; this module deploys " +
+        "public certificates only",
     );
   }
   if (typeof checkPath !== "function") {
@@ -462,11 +470,27 @@ async function deployCertificate({
     return failure("validate", validation.detail);
   }
 
+  const wantsChain =
+    typeof target.chainPath === "string" && target.chainPath.length > 0;
+  if (wantsChain && (typeof chainPem !== "string" || chainPem.length === 0)) {
+    return failure(
+      "validate",
+      "deploy: target.chainPath is configured but no chain PEM content was provided",
+    );
+  }
+
   const destination = path.normalize(path.resolve(target.certPath));
+  const chainDestination = wantsChain
+    ? path.normalize(path.resolve(target.chainPath))
+    : null;
+  const lockKey =
+    chainDestination !== null
+      ? [destination, chainDestination].sort().join("\0")
+      : destination;
 
   // The mutex key is the resolved destination path so two descriptors
   // spelling the same file differently still serialize.
-  return await withDestinationLock(destination, async () => {
+  return await withDestinationLock(lockKey, async () => {
     // (2) realpath containment re-check, symlink-aware. The policy module's
     // checkPath is lexical only; here, immediately before writing, resolve
     // symlinks on the deepest existing ancestor (the destination file
@@ -474,31 +498,39 @@ async function deployCertificate({
     // real path. A symlinked parent dir pointing outside the allowlisted
     // roots is rejected even though the lexical path looked fine.
     let realDestination;
+    let realChainDestination = null;
     try {
-      const parentReal = await fspImpl.realpath(path.dirname(destination));
-      realDestination = path.join(parentReal, path.basename(destination));
-      // If the destination itself exists and is a symlink, resolve it too.
-      try {
-        realDestination = await fspImpl.realpath(realDestination);
-      } catch (err) {
-        if (err?.code !== "ENOENT") throw err;
+      realDestination = await resolveRealDestination(fspImpl, destination);
+      if (chainDestination !== null) {
+        realChainDestination = await resolveRealDestination(
+          fspImpl,
+          chainDestination,
+        );
       }
     } catch (err) {
       return failure("realpath", `deploy: could not resolve destination realpath: ${err?.message || err}`);
     }
 
-    const realPathPolicy = checkPath(realDestination);
-    if (!realPathPolicy || realPathPolicy.allowed !== true) {
-      return failure(
-        "realpath-policy",
-        `deploy: resolved destination ${JSON.stringify(realDestination)} escapes the ` +
-          `allowlisted roots (${realPathPolicy?.rejectionReason || "path_not_allowlisted"}): ` +
-          `${realPathPolicy?.detail || "no detail provided"}`,
-      );
+    for (const [label, realPath] of [
+      ["certificate", realDestination],
+      ...(realChainDestination
+        ? [["chain", realChainDestination]]
+        : []),
+    ]) {
+      const realPathPolicy = checkPath(realPath);
+      if (!realPathPolicy || realPathPolicy.allowed !== true) {
+        return failure(
+          "realpath-policy",
+          `deploy: resolved ${label} destination ${JSON.stringify(realPath)} escapes the ` +
+            `allowlisted roots (${realPathPolicy?.rejectionReason || "path_not_allowlisted"}): ` +
+            `${realPathPolicy?.detail || "no detail provided"}`,
+        );
+      }
     }
 
     // (3) Idempotency: byte-identical content is a recorded no-op.
     let existingContent = null;
+    let existingChain = null;
     try {
       existingContent = await fspImpl.readFile(realDestination);
     } catch (err) {
@@ -506,47 +538,97 @@ async function deployCertificate({
         return failure("read-existing", `deploy: could not read existing destination: ${err?.message || err}`);
       }
     }
-    if (existingContent !== null && existingContent.equals(Buffer.from(certificatePem, "utf8"))) {
+    if (realChainDestination !== null) {
+      try {
+        existingChain = await fspImpl.readFile(realChainDestination);
+      } catch (err) {
+        if (err?.code !== "ENOENT") {
+          return failure(
+            "read-existing",
+            `deploy: could not read existing chain destination: ${err?.message || err}`,
+          );
+        }
+      }
+    }
+    const certUnchanged =
+      existingContent !== null &&
+      existingContent.equals(Buffer.from(certificatePem, "utf8"));
+    const chainUnchanged =
+      realChainDestination === null ||
+      (existingChain !== null &&
+        existingChain.equals(Buffer.from(chainPem, "utf8")));
+    if (certUnchanged && chainUnchanged) {
       counters.idempotentSkips += 1;
       return {
         deployed: false,
         skipped: true,
         reason: "idempotent",
         destination: realDestination,
+        ...(realChainDestination
+          ? { chainDestination: realChainDestination }
+          : {}),
       };
     }
 
     // (4) Timestamped backup of the existing file (if any), same
     // restrictive mode as the deployed file.
+    const stamp = now();
     let backupPath = null;
-    if (existingContent !== null) {
-      backupPath = backupPathFor(realDestination, target.backupDir, now());
-      try {
+    let chainBackupPath = null;
+    try {
+      if (existingContent !== null) {
+        backupPath = backupPathFor(realDestination, target.backupDir, stamp);
         await fspImpl.writeFile(backupPath, existingContent, {
           mode: DEPLOYED_FILE_MODE,
         });
-      } catch (err) {
-        return failure("backup", `deploy: could not write backup: ${err?.message || err}`);
       }
+      if (realChainDestination !== null && existingChain !== null) {
+        chainBackupPath = backupPathFor(
+          realChainDestination,
+          target.backupDir,
+          stamp,
+        );
+        await fspImpl.writeFile(chainBackupPath, existingChain, {
+          mode: DEPLOYED_FILE_MODE,
+        });
+      }
+    } catch (err) {
+      return failure("backup", `deploy: could not write backup: ${err?.message || err}`);
+    }
+
+    async function rollbackFiles() {
+      let rolledBack = false;
+      try {
+        if (backupPath !== null && existingContent !== null) {
+          await fspImpl.writeFile(realDestination, existingContent, {
+            mode: DEPLOYED_FILE_MODE,
+          });
+          rolledBack = true;
+        }
+        if (
+          chainBackupPath !== null &&
+          existingChain !== null &&
+          realChainDestination !== null
+        ) {
+          await fspImpl.writeFile(realChainDestination, existingChain, {
+            mode: DEPLOYED_FILE_MODE,
+          });
+          rolledBack = true;
+        }
+      } catch (_rollbackErr) {
+        return false;
+      }
+      return rolledBack;
     }
 
     // (5) Atomic write; (6) rollback from backup on failure.
     try {
       await atomicWrite(fspImpl, realDestination, certificatePem);
-    } catch (err) {
-      let rolledBack = false;
-      if (backupPath !== null) {
-        try {
-          await fspImpl.writeFile(realDestination, existingContent, {
-            mode: DEPLOYED_FILE_MODE,
-          });
-          rolledBack = true;
-        } catch (_rollbackErr) {
-          // Rollback itself failed; surface the original error with
-          // rolledBack: false so the operator knows the backup file still
-          // holds the previous content.
-        }
+      if (realChainDestination !== null) {
+        await atomicWrite(fspImpl, realChainDestination, chainPem);
       }
+    } catch (err) {
+      const rolledBack = await rollbackFiles();
       return failure("write", `deploy: atomic write failed: ${err?.message || err}`, rolledBack);
     }
 
@@ -554,6 +636,9 @@ async function deployCertificate({
     // config module's convention).
     try {
       await fspImpl.chmod(realDestination, DEPLOYED_FILE_MODE);
+      if (realChainDestination !== null) {
+        await fspImpl.chmod(realChainDestination, DEPLOYED_FILE_MODE);
+      }
     } catch (_err) {
       // best-effort on win32
     }
@@ -564,6 +649,12 @@ async function deployCertificate({
       skipped: false,
       destination: realDestination,
       backupPath,
+      ...(realChainDestination
+        ? {
+            chainDestination: realChainDestination,
+            backupPaths: { cert: backupPath, chain: chainBackupPath },
+          }
+        : {}),
     };
   });
 }
@@ -604,6 +695,7 @@ async function resolveRealDestination(fspImpl, destination) {
  *   target: object,             // validateTargetConfig shape; keyPath REQUIRED
  *   certificatePem: string,
  *   privateKeyPath: string,     // staging path holding the new private key PEM
+ *   chainPem?: string,          // intermediate chain PEM when target.chainPath is set
  *   checkPath: (filePath: string) => { allowed: boolean, rejectionReason?: string, detail?: string },
  *   now?: () => Date,
  *   _fsOverrides?: object,
@@ -614,6 +706,7 @@ async function deployCertificateAndKey({
   target,
   certificatePem,
   privateKeyPath,
+  chainPem,
   checkPath,
   now = () => new Date(),
   _fsOverrides,
@@ -624,6 +717,11 @@ async function deployCertificateAndKey({
   if (PRIVATE_KEY_PEM_HEADER_PATTERN.test(certificatePem)) {
     throw new Error(
       "deploy: certificatePem contains a private-key PEM marker; pass the key via privateKeyPath only",
+    );
+  }
+  if (typeof chainPem === "string" && PRIVATE_KEY_PEM_HEADER_PATTERN.test(chainPem)) {
+    throw new Error(
+      "deploy: chainPem contains a private-key PEM marker; this module deploys public material only for chainPath",
     );
   }
   if (typeof privateKeyPath !== "string" || privateKeyPath.length === 0) {
@@ -657,16 +755,41 @@ async function deployCertificateAndKey({
     return failure("validate", validation.detail);
   }
 
+  const wantsChain =
+    typeof target.chainPath === "string" && target.chainPath.length > 0;
+  if (wantsChain && (typeof chainPem !== "string" || chainPem.length === 0)) {
+    return failure(
+      "validate",
+      "deploy: target.chainPath is configured but no chain PEM content was provided",
+    );
+  }
+
   const certDestination = path.normalize(path.resolve(target.certPath));
   const keyDestination = path.normalize(path.resolve(target.keyPath));
-  const lockKey = [certDestination, keyDestination].sort().join("\0");
+  const chainDestination = wantsChain
+    ? path.normalize(path.resolve(target.chainPath))
+    : null;
+  const lockKey = [
+    certDestination,
+    keyDestination,
+    ...(chainDestination ? [chainDestination] : []),
+  ]
+    .sort()
+    .join("\0");
 
   return await withDestinationLock(lockKey, async () => {
     let realCertDestination;
     let realKeyDestination;
+    let realChainDestination = null;
     try {
       realCertDestination = await resolveRealDestination(fspImpl, certDestination);
       realKeyDestination = await resolveRealDestination(fspImpl, keyDestination);
+      if (chainDestination !== null) {
+        realChainDestination = await resolveRealDestination(
+          fspImpl,
+          chainDestination,
+        );
+      }
     } catch (err) {
       return failure(
         "realpath",
@@ -677,6 +800,9 @@ async function deployCertificateAndKey({
     for (const [label, realPath] of [
       ["certificate", realCertDestination],
       ["key", realKeyDestination],
+      ...(realChainDestination
+        ? [["chain", realChainDestination]]
+        : []),
     ]) {
       const policyResult = checkPath(realPath);
       if (!policyResult || policyResult.allowed !== true) {
@@ -709,6 +835,7 @@ async function deployCertificateAndKey({
 
     let existingCert = null;
     let existingKey = null;
+    let existingChain = null;
     try {
       existingCert = await fspImpl.readFile(realCertDestination);
     } catch (err) {
@@ -731,13 +858,30 @@ async function deployCertificateAndKey({
         );
       }
     }
+    if (realChainDestination !== null) {
+      try {
+        existingChain = await fspImpl.readFile(realChainDestination);
+      } catch (err) {
+        if (err?.code !== "ENOENT") {
+          if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+          return failure(
+            "read-existing",
+            `deploy: could not read existing chain: ${err?.message || err}`,
+          );
+        }
+      }
+    }
 
     const certBuf = Buffer.from(certificatePem, "utf8");
     const certUnchanged =
       existingCert !== null && existingCert.equals(certBuf);
     const keyUnchanged =
       existingKey !== null && existingKey.equals(keyContent);
-    if (certUnchanged && keyUnchanged) {
+    const chainUnchanged =
+      realChainDestination === null ||
+      (existingChain !== null &&
+        existingChain.equals(Buffer.from(chainPem, "utf8")));
+    if (certUnchanged && keyUnchanged && chainUnchanged) {
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
       counters.idempotentSkips += 1;
       return {
@@ -746,13 +890,17 @@ async function deployCertificateAndKey({
         reason: "idempotent",
         destination: realCertDestination,
         keyDestination: realKeyDestination,
-        backupPaths: { cert: null, key: null },
+        ...(realChainDestination
+          ? { chainDestination: realChainDestination }
+          : {}),
+        backupPaths: { cert: null, key: null, chain: null },
       };
     }
 
     const stamp = now();
     let certBackupPath = null;
     let keyBackupPath = null;
+    let chainBackupPath = null;
     try {
       if (existingCert !== null) {
         certBackupPath = backupPathFor(realCertDestination, target.backupDir, stamp);
@@ -763,6 +911,16 @@ async function deployCertificateAndKey({
       if (existingKey !== null) {
         keyBackupPath = backupPathFor(realKeyDestination, target.backupDir, stamp);
         await fspImpl.writeFile(keyBackupPath, existingKey, {
+          mode: DEPLOYED_FILE_MODE,
+        });
+      }
+      if (realChainDestination !== null && existingChain !== null) {
+        chainBackupPath = backupPathFor(
+          realChainDestination,
+          target.backupDir,
+          stamp,
+        );
+        await fspImpl.writeFile(chainBackupPath, existingChain, {
           mode: DEPLOYED_FILE_MODE,
         });
       }
@@ -786,6 +944,16 @@ async function deployCertificateAndKey({
           });
           rolledBack = true;
         }
+        if (
+          chainBackupPath !== null &&
+          existingChain !== null &&
+          realChainDestination !== null
+        ) {
+          await fspImpl.writeFile(realChainDestination, existingChain, {
+            mode: DEPLOYED_FILE_MODE,
+          });
+          rolledBack = true;
+        }
       } catch (_rollbackErr) {
         return false;
       }
@@ -795,6 +963,9 @@ async function deployCertificateAndKey({
     try {
       await atomicWrite(fspImpl, realCertDestination, certificatePem);
       await atomicWrite(fspImpl, realKeyDestination, keyContent);
+      if (realChainDestination !== null) {
+        await atomicWrite(fspImpl, realChainDestination, chainPem);
+      }
     } catch (err) {
       const rolledBack = await rollbackPair();
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
@@ -808,6 +979,9 @@ async function deployCertificateAndKey({
     try {
       await fspImpl.chmod(realCertDestination, DEPLOYED_FILE_MODE);
       await fspImpl.chmod(realKeyDestination, DEPLOYED_FILE_MODE);
+      if (realChainDestination !== null) {
+        await fspImpl.chmod(realChainDestination, DEPLOYED_FILE_MODE);
+      }
     } catch (_err) {
       // best-effort on win32
     }
@@ -832,8 +1006,15 @@ async function deployCertificateAndKey({
       skipped: false,
       destination: realCertDestination,
       keyDestination: realKeyDestination,
+      ...(realChainDestination
+        ? { chainDestination: realChainDestination }
+        : {}),
       backupPath: certBackupPath,
-      backupPaths: { cert: certBackupPath, key: keyBackupPath },
+      backupPaths: {
+        cert: certBackupPath,
+        key: keyBackupPath,
+        chain: chainBackupPath,
+      },
     };
   });
 }
@@ -843,7 +1024,7 @@ async function deployCertificateAndKey({
  * confirmed the new key+certificate pair is live. Safe to call with null
  * paths. Never touches the live destination files.
  *
- * @param {{ backupPaths?: { cert?: string|null, key?: string|null }, backupPath?: string|null }} input
+ * @param {{ backupPaths?: { cert?: string|null, key?: string|null, chain?: string|null }, backupPath?: string|null }} input
  * @param {{ _fsOverrides?: object }} [options]
  * @returns {Promise<{ discarded: string[] }>}
  */
@@ -856,6 +1037,7 @@ async function discardDeployBackups(
   if (backupPaths && typeof backupPaths === "object") {
     if (typeof backupPaths.cert === "string") candidates.push(backupPaths.cert);
     if (typeof backupPaths.key === "string") candidates.push(backupPaths.key);
+    if (typeof backupPaths.chain === "string") candidates.push(backupPaths.chain);
   }
   if (typeof backupPath === "string") candidates.push(backupPath);
 

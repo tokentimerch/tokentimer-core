@@ -226,6 +226,157 @@ test("claim: missing jobs field in response returns empty array", async () => {
   assert.deepEqual(jobs, []);
 });
 
+test("reportResult: accepts dry_run_complete as a valid result status (B4)", async () => {
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "dry_run_complete",
+  });
+
+  assert.equal(calls[0].parsedBody.body.status, "dry_run_complete");
+});
+
+test("reportResult: accepts orphaned_unknown_effect as a valid result status", async () => {
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "orphaned_unknown_effect",
+    errorMessage: "first-ever deployment: operator reconciliation required",
+  });
+
+  assert.equal(calls[0].parsedBody.body.status, "orphaned_unknown_effect");
+});
+
+test("renewLease: POSTs plain body to jobs/:jobId/lease with claimId and sequence (B6)", async () => {
+  const calls = stubFetch([
+    {
+      status: 200,
+      json: {
+        ok: true,
+        jobId: "job-1",
+        status: "running",
+        claimId: "claim-1",
+        leaseExpiresAt: "2026-07-24T12:15:00.000Z",
+        leaseRenewedAt: "2026-07-24T12:00:00.000Z",
+        nonceExpiresAt: "2026-07-24T13:20:00.000Z",
+      },
+    },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  const result = await client.renewLease({ jobId: "job-1", claimId: "claim-1" });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "running");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `https://example.test${ROUTES.LEASE}/job-1/lease`);
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${CREDENTIAL}`);
+  assert.equal(calls[0].parsedBody.claimId, "claim-1");
+  assert.equal(calls[0].parsedBody.sequence, 1);
+  assert.equal("messageType" in calls[0].parsedBody, false);
+});
+
+test("renewLease: 409 and 410 return distinguishable soft failures without throwing", async () => {
+  stubFetch([
+    {
+      status: 409,
+      json: {
+        error: "Lease renew does not match the current claim for this job",
+        code: "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH",
+      },
+    },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  assert.deepEqual(
+    await client.renewLease({ jobId: "job-1", claimId: "claim-wrong" }),
+    {
+      ok: false,
+      status: 409,
+      code: "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH",
+    },
+  );
+
+  stubFetch([{ status: 410, json: { code: "CERTOPS_AGENT_RETIRED" } }]);
+  const retiredClient = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  assert.deepEqual(
+    await retiredClient.renewLease({ jobId: "job-1", claimId: "claim-1" }),
+    { ok: false, status: 410, code: "CERTOPS_AGENT_RETIRED" },
+  );
+});
+
+test("register/heartbeat/claim: accept and forward supportedDnsProviders", async () => {
+  const calls = stubFetch([
+    {
+      status: 201,
+      json: { agentId: "agent-1", credential: CREDENTIAL, protocolVersion: "1.0.0" },
+    },
+    { status: 200, json: { ok: true } },
+    { status: 200, json: { jobs: [] } },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "candidate-agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  await client.register({
+    bootstrapToken: "raw-bootstrap-token",
+    bootstrapTokenId: "bst_abc123",
+    agentVersion: "0.1.0",
+    declaredTargetSelectors: [],
+    declaredCommandProfileNames: [],
+    supportedDnsProviders: ["cloudflare", "route53"],
+  });
+  await client.heartbeat({
+    agentVersion: "0.1.0",
+    supportedDnsProviders: ["cloudflare", "route53"],
+  });
+  await client.claim({
+    maxJobs: 1,
+    supportedActions: ["renew"],
+    supportedDnsProviders: ["cloudflare", "route53"],
+  });
+
+  assert.deepEqual(calls[0].parsedBody.body.supportedDnsProviders, ["cloudflare", "route53"]);
+  assert.deepEqual(calls[1].parsedBody.body.supportedDnsProviders, ["cloudflare", "route53"]);
+  assert.deepEqual(calls[2].parsedBody.body.supportedDnsProviders, ["cloudflare", "route53"]);
+});
+
 test("reportResult: sends correct envelope shape (messageType + resultBody fields)", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 
@@ -1040,4 +1191,73 @@ test("createCaAwareFetch: https request against an untrusted-by-bundle endpoint 
   await assert.rejects(
     caFetch("https://127.0.0.1:1/never-listens", { method: "POST", body: "{}" }),
   );
+});
+
+test("renewLease: other non-2xx still throws AgentProtocolError", async () => {
+  stubFetch([{ status: 500, json: { code: "INTERNAL" } }]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  await assert.rejects(
+    () => client.renewLease({ jobId: "job-1", claimId: "claim-1" }),
+    (err) => {
+      assert.ok(err instanceof AgentProtocolError);
+      assert.equal(err.code, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR);
+      assert.equal(err.status, 500);
+      return true;
+    },
+  );
+});
+
+test("heartbeat: validates signingKeyRotation and nulls malformed notices", async () => {
+  const { generateSigningKeyPair } = require("../signing");
+  const key = generateSigningKeyPair();
+  stubFetch([
+    {
+      status: 200,
+      json: {
+        ok: true,
+        signingKeyRotation: {
+          pendingSigningKeyId: key.signingKeyId,
+          pendingPublicKeyPem: key.publicKeyPem,
+          supersedesSigningKeyId: "ttsk_old",
+          status: "pending_ack",
+        },
+      },
+    },
+    {
+      status: 200,
+      json: {
+        ok: true,
+        signingKeyRotation: {
+          pendingSigningKeyId: "ttsk_bad",
+          pendingPublicKeyPem: "not-a-pem",
+          status: "pending_ack",
+        },
+      },
+    },
+    {
+      status: 200,
+      json: { ok: true, signingKeyRotation: null },
+    },
+  ]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  const good = await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal(good.signingKeyRotation.pendingSigningKeyId, key.signingKeyId);
+  assert.equal(good.signingKeyRotation.pendingPublicKeyPem, key.publicKeyPem);
+
+  const bad = await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal(bad.signingKeyRotation, null);
+
+  const absent = await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal(absent.signingKeyRotation, null);
 });
