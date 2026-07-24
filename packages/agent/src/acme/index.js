@@ -34,12 +34,12 @@
  *     and CSR on the host; this module only points the ACME tool at the CSR
  *     file. certbot's `--csr` mode (and acme.sh's `--signcsr`) sign an
  *     externally supplied CSR and therefore never need the private key.
- *   - DNS credentials never appear in argv either: per the DNS-01
- *     credential-locality invariant, they live in the ACME tool's own configuration
- *     files on the host (e.g. certbot's --dns-*-credentials ini, acme.sh's
- *     account.conf), referenced at most by path through the allowlisted
- *     command profile. argvUsed in the result is therefore safe to include
- *     in evidence by construction.
+ *   - DNS credentials never appear in argv or the subprocess environment:
+ *     the adapter wires certbot/acme.sh to `certops-dns-hook` (and the
+ *     acme.sh `dns_certops.sh` dnsapi wrapper). The hook loads credentials
+ *     from agent-local 0600 files referenced only by path in config.json.
+ *     argvUsed in the result is therefore safe to include in evidence by
+ *     construction.
  *
  * Adapter argv contract (documented here as the source of truth; the exact
  * flags may be tuned when real-world testing against live CAs happens, but
@@ -47,6 +47,11 @@
  *
  *   certbot  : profile.argv ++ [
  *                "certonly", "--non-interactive",
+ *                "--preferred-challenges", "dns",
+ *                "--manual",
+ *                "--manual-auth-hook", "<hookPath> present",
+ *                "--manual-cleanup-hook", "<hookPath> cleanup",
+ *                "--manual-public-ip-logging-ok",
  *                "--csr", csrPath,
  *                "--server", caEndpoint,
  *                "-d", domain      (repeated per domain, in input order),
@@ -59,6 +64,7 @@
  *                "--csr", csrPath,
  *                "--server", caEndpoint,
  *                "-d", domain      (repeated per domain, in input order),
+ *                "--dns", acmeDnsApiPath,   // absolute path to dns_certops.sh
  *                "--cert-file", outCertPath,
  *                "--test"          (only when dryRun),
  *              ] ++ extraArgs
@@ -70,6 +76,7 @@
  */
 
 const childProcess = require("node:child_process");
+const path = require("node:path");
 const { buildMinimalSubprocessEnv } = require("../exec-env");
 
 /**
@@ -77,7 +84,8 @@ const { buildMinimalSubprocessEnv } = require("../exec-env");
  * imported, to keep this module self-contained): ; | & $ ` > < CR LF.
  * Commands run without a shell, so this is defense in depth against
  * misconfigured profiles / hostile job input, not a shell-injection vector
- * by itself.
+ * by itself. Spaces are intentionally allowed so certbot can receive a
+ * single `--manual-auth-hook` argument of the form "<hook> present".
  */
 const SHELL_METACHARACTER_PATTERN = /[;|&$`><\r\n]/;
 
@@ -95,6 +103,22 @@ const PRIVATE_KEY_MARKER = "PRIVATE KEY";
 const REDACTED_EXCERPT_PLACEHOLDER = "[redacted]";
 
 const SUPPORTED_ADAPTER_KINDS = Object.freeze(["certbot", "acme.sh"]);
+
+/**
+ * Absolute path to the certops-dns-hook executable shipped with this package.
+ * @returns {string}
+ */
+function defaultDnsHookPath() {
+  return path.resolve(__dirname, "..", "..", "bin", "certops-dns-hook.js");
+}
+
+/**
+ * Absolute path to the acme.sh dnsapi wrapper shipped with this package.
+ * @returns {string}
+ */
+function defaultAcmeDnsApiPath() {
+  return path.resolve(__dirname, "..", "..", "bin", "dns_certops.sh");
+}
 
 /**
  * @returns {string[]} adapter kinds accepted by createAcmeAdapter.
@@ -178,16 +202,46 @@ function boundAndRedactExcerpt(output) {
  * "Adapter argv contract" table.
  *
  * @param {"certbot"|"acme.sh"} kind
- * @param {{ caEndpoint: string, domains: string[], csrPath: string, outCertPath: string, dryRun: boolean }} inputs
+ * @param {{
+ *   caEndpoint: string,
+ *   domains: string[],
+ *   csrPath: string,
+ *   outCertPath: string,
+ *   dryRun: boolean,
+ *   dnsHookPath: string,
+ *   acmeDnsApiPath: string,
+ * }} inputs
  * @returns {string[]}
  */
-function buildAdapterArgs(kind, { caEndpoint, domains, csrPath, outCertPath, dryRun }) {
+function buildAdapterArgs(kind, {
+  caEndpoint,
+  domains,
+  csrPath,
+  outCertPath,
+  dryRun,
+  dnsHookPath,
+  acmeDnsApiPath,
+}) {
   const domainFlags = domains.flatMap((domain) => ["-d", domain]);
 
   if (kind === "certbot") {
+    // certbot runs the hook string via a shell-like invocation; keep the
+    // mode ("present"/"cleanup") in the SAME argv element as the hook path
+    // so it is not parsed as a separate certbot flag. Credentials are never
+    // part of this string — only the hook binary path + mode.
+    const authHook = `${dnsHookPath} present`;
+    const cleanupHook = `${dnsHookPath} cleanup`;
     return [
       "certonly",
       "--non-interactive",
+      "--preferred-challenges",
+      "dns",
+      "--manual",
+      "--manual-auth-hook",
+      authHook,
+      "--manual-cleanup-hook",
+      cleanupHook,
+      "--manual-public-ip-logging-ok",
       "--csr",
       csrPath,
       "--server",
@@ -199,7 +253,10 @@ function buildAdapterArgs(kind, { caEndpoint, domains, csrPath, outCertPath, dry
     ];
   }
 
-  // kind === "acme.sh" (createAcmeAdapter has already validated kind)
+  // kind === "acme.sh" — use the shipped dnsapi wrapper (dns_certops_add /
+  // dns_certops_rm). Absolute path so acme.sh does not need a copy under
+  // ~/.acme.sh/dnsapi/. CERTOPS_DNS_HOOK in the child env points at the
+  // Node hook; no credentials travel via argv or env.
   return [
     "--signcsr",
     "--csr",
@@ -207,6 +264,8 @@ function buildAdapterArgs(kind, { caEndpoint, domains, csrPath, outCertPath, dry
     "--server",
     caEndpoint,
     ...domainFlags,
+    "--dns",
+    acmeDnsApiPath,
     "--cert-file",
     outCertPath,
     ...(dryRun ? ["--test"] : []),
@@ -222,9 +281,10 @@ function buildAdapterArgs(kind, { caEndpoint, domains, csrPath, outCertPath, dry
  * @param {Function} execFileImpl (file, args, options, callback) => void
  * @param {string[]} argv full argv; argv[0] is the file to execute
  * @param {number} timeoutMs
+ * @param {Record<string, string>} env
  * @returns {Promise<{ exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null }>}
  */
-function execWithoutShell(execFileImpl, argv, timeoutMs) {
+function execWithoutShell(execFileImpl, argv, timeoutMs, env) {
   const [file, ...args] = argv;
 
   return new Promise((resolve) => {
@@ -239,8 +299,9 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
         maxBuffer: 10 * 1024 * 1024,
         // Explicit minimal environment: the agent's own env can hold the
         // bootstrap token and other secrets that must never reach the ACME
-        // tool (or the hook children it spawns).
-        env: buildMinimalSubprocessEnv(),
+        // tool (or the hook children it spawns). CERTOPS_DNS_HOOK is a
+        // non-secret absolute path to the hook binary.
+        env,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -268,13 +329,17 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
  * @param {Function} [options.execFileImpl] injection point for tests;
  *   defaults to node:child_process.execFile. Must have the same signature.
  * @param {number} [options.timeoutMs] exec timeout, default 10 minutes.
- * @returns {{ kind: string, runRenewal: Function }}
+ * @param {string} [options.dnsHookPath] absolute path to certops-dns-hook.js.
+ * @param {string} [options.acmeDnsApiPath] absolute path to dns_certops.sh.
+ * @returns {{ kind: string, runRenewal: Function, dnsHookPath: string, acmeDnsApiPath: string }}
  */
 function createAcmeAdapter({
   kind,
   commandProfile,
   execFileImpl = childProcess.execFile,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  dnsHookPath = defaultDnsHookPath(),
+  acmeDnsApiPath = defaultAcmeDnsApiPath(),
 } = {}) {
   if (!SUPPORTED_ADAPTER_KINDS.includes(kind)) {
     throw new Error(
@@ -308,9 +373,30 @@ function createAcmeAdapter({
     );
   }
 
+  if (!isNonEmptyString(dnsHookPath) || !isAbsolutePathLike(dnsHookPath)) {
+    throw new Error(
+      `acme: dnsHookPath must be an absolute path, got ${JSON.stringify(dnsHookPath)}`,
+    );
+  }
+  if (!isNonEmptyString(acmeDnsApiPath) || !isAbsolutePathLike(acmeDnsApiPath)) {
+    throw new Error(
+      `acme: acmeDnsApiPath must be an absolute path, got ${JSON.stringify(acmeDnsApiPath)}`,
+    );
+  }
+  assertSafeArgvElements("dnsHookPath", [dnsHookPath]);
+  assertSafeArgvElements("acmeDnsApiPath", [acmeDnsApiPath]);
+  // Hook command strings include a space + mode; validate they remain free
+  // of shell metacharacters beyond the allowed space.
+  assertSafeArgvElements("dnsHookCommands", [
+    `${dnsHookPath} present`,
+    `${dnsHookPath} cleanup`,
+  ]);
+
   // Freeze a copy so a caller mutating its profile object after adapter
   // creation cannot alter what actually gets exec'd.
   const profileArgv = Object.freeze([...commandProfile.argv]);
+  const resolvedDnsHookPath = dnsHookPath;
+  const resolvedAcmeDnsApiPath = acmeDnsApiPath;
 
   /**
    * Runs one CSR-based renewal via the configured ACME tool.
@@ -405,20 +491,29 @@ function createAcmeAdapter({
         csrPath,
         outCertPath,
         dryRun,
+        dnsHookPath: resolvedDnsHookPath,
+        acmeDnsApiPath: resolvedAcmeDnsApiPath,
       }),
       ...extraArgs,
     ];
 
     // (4) Exec without a shell, with timeout, capturing bounded excerpts.
+    // CERTOPS_DNS_HOOK is a non-secret path so the acme.sh dnsapi wrapper
+    // (and any nested children) can locate the Node hook without relying
+    // on PATH. Never forward credentials.
+    const env = buildMinimalSubprocessEnv();
+    env.CERTOPS_DNS_HOOK = resolvedDnsHookPath;
+
     const { exitCode, stdout, stderr } = await execWithoutShell(
       execFileImpl,
       argvUsed,
       timeoutMs,
+      env,
     );
 
     // (5) Result. argvUsed is included for evidence: it contains no secrets
     // by construction (no key material exists here; DNS credentials live in
-    // the tool's own config files, never in argv).
+    // agent-local 0600 files, never in argv).
     return {
       renewed: exitCode === 0,
       exitCode,
@@ -428,12 +523,19 @@ function createAcmeAdapter({
     };
   }
 
-  return { kind, runRenewal };
+  return {
+    kind,
+    runRenewal,
+    dnsHookPath: resolvedDnsHookPath,
+    acmeDnsApiPath: resolvedAcmeDnsApiPath,
+  };
 }
 
 module.exports = {
   createAcmeAdapter,
   listSupportedAdapters,
+  defaultDnsHookPath,
+  defaultAcmeDnsApiPath,
   SHELL_METACHARACTER_PATTERN,
   OUTPUT_EXCERPT_MAX_CHARS,
   DEFAULT_TIMEOUT_MS,

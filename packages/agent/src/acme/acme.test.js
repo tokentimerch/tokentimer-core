@@ -6,6 +6,8 @@ const assert = require("node:assert/strict");
 const {
   createAcmeAdapter,
   listSupportedAdapters,
+  defaultDnsHookPath,
+  defaultAcmeDnsApiPath,
   SHELL_METACHARACTER_PATTERN,
   OUTPUT_EXCERPT_MAX_CHARS,
 } = require("./index.js");
@@ -14,6 +16,8 @@ const CA_ENDPOINT = "https://acme-v02.api.letsencrypt.org/directory";
 const CSR_PATH = "/etc/tokentimer-agent/csr/web-01.csr.pem";
 const OUT_CERT_PATH = "/etc/nginx/tls/web-01.crt.pem";
 const DOMAINS = ["example.com", "www.example.com"];
+const DNS_HOOK_PATH = "/opt/tokentimer/bin/certops-dns-hook.js";
+const ACME_DNS_API_PATH = "/opt/tokentimer/bin/dns_certops.sh";
 
 const allowAll = () => ({ allowed: true });
 
@@ -37,6 +41,8 @@ function certbotAdapter(execFileImpl, extra = {}) {
     kind: "certbot",
     commandProfile: { argv: ["certbot"] },
     execFileImpl,
+    dnsHookPath: DNS_HOOK_PATH,
+    acmeDnsApiPath: ACME_DNS_API_PATH,
     ...extra,
   });
 }
@@ -46,6 +52,8 @@ function acmeShAdapter(execFileImpl, extra = {}) {
     kind: "acme.sh",
     commandProfile: { argv: ["/root/.acme.sh/acme.sh"] },
     execFileImpl,
+    dnsHookPath: DNS_HOOK_PATH,
+    acmeDnsApiPath: ACME_DNS_API_PATH,
     ...extra,
   });
 }
@@ -136,6 +144,14 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.deepEqual(execStub.calls[0].args, [
     "certonly",
     "--non-interactive",
+    "--preferred-challenges",
+    "dns",
+    "--manual",
+    "--manual-auth-hook",
+    `${DNS_HOOK_PATH} present`,
+    "--manual-cleanup-hook",
+    `${DNS_HOOK_PATH} cleanup`,
+    "--manual-public-ip-logging-ok",
     "--csr",
     CSR_PATH,
     "--server",
@@ -150,6 +166,7 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.deepEqual(result.argvUsed, ["certbot", ...execStub.calls[0].args]);
   assert.equal(result.renewed, true);
   assert.equal(result.exitCode, 0);
+  assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
 });
 
 test("certbot adapter appends --dry-run when dryRun: true, before extraArgs", async () => {
@@ -164,6 +181,14 @@ test("certbot adapter appends --dry-run when dryRun: true, before extraArgs", as
     "certbot",
     "certonly",
     "--non-interactive",
+    "--preferred-challenges",
+    "dns",
+    "--manual",
+    "--manual-auth-hook",
+    `${DNS_HOOK_PATH} present`,
+    "--manual-cleanup-hook",
+    `${DNS_HOOK_PATH} cleanup`,
+    "--manual-public-ip-logging-ok",
     "--csr",
     CSR_PATH,
     "--server",
@@ -202,6 +227,8 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
     "example.com",
     "-d",
     "www.example.com",
+    "--dns",
+    ACME_DNS_API_PATH,
     "--cert-file",
     OUT_CERT_PATH,
   ]);
@@ -210,6 +237,7 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
     ...execStub.calls[0].args,
   ]);
   assert.equal(result.renewed, true);
+  assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
 });
 
 test("acme.sh adapter appends --test when dryRun: true", async () => {
@@ -229,10 +257,22 @@ test("acme.sh adapter appends --test when dryRun: true", async () => {
     "example.com",
     "-d",
     "www.example.com",
+    "--dns",
+    ACME_DNS_API_PATH,
     "--cert-file",
     OUT_CERT_PATH,
     "--test",
   ]);
+});
+
+test("createAcmeAdapter defaults resolve shipped hook and dnsapi paths", () => {
+  const adapter = createAcmeAdapter({
+    kind: "certbot",
+    commandProfile: { argv: ["certbot"] },
+    execFileImpl: makeExecStub(),
+  });
+  assert.equal(adapter.dnsHookPath, defaultDnsHookPath());
+  assert.equal(adapter.acmeDnsApiPath, defaultAcmeDnsApiPath());
 });
 
 // ---------------------------------------------------------------------------
