@@ -69,6 +69,9 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   failed: "failed",
   rejected: "rejected",
   blocked: "blocked",
+  // B4: dry-run terminal. Agent engineers must report this (never
+  // "succeeded") when the claimed job's mode is "dry_run".
+  dry_run_complete: "dry_run_complete",
 });
 
 function serviceError(message, code) {
@@ -432,7 +435,7 @@ async function claimJobs({
 
     const selected = await client.query(
       `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
-              approved_payload_hash
+              approved_payload_hash, mode
          FROM certificate_jobs
         WHERE workspace_id = $1
           AND status = 'pending'
@@ -481,7 +484,7 @@ async function claimJobs({
                 updated_at = NOW()
           WHERE id = $1
           RETURNING id, claim_id, lease_expires_at, attempt_count, operation,
-                    subject_type, subject_id, payload`,
+                    subject_type, subject_id, payload, mode`,
         [row.id, agent.id, leaseSeconds],
       );
       const job = claimed.rows[0];
@@ -495,11 +498,15 @@ async function claimJobs({
       // attemptId mirrors claim_id so a schema-minimal result report
       // (jobId/attemptId/status only) still re-proves claim ownership:
       // the results route falls back to attemptId when claimId is absent.
+      // mode is a first-class immutable job attribute (B4); always include
+      // it on the signed dispatch payload even if the stored payload lacks
+      // it (pre-migration rows default to "real").
       const basePayload = {
         ...payload,
         jobId: String(job.id),
         workspaceId: agent.workspaceId,
         action: job.operation,
+        mode: job.mode || payload.mode || "real",
         claimId: job.claim_id,
         attemptId: job.claim_id,
         leaseExpiresAt: dateToIso(job.lease_expires_at),
@@ -565,7 +572,7 @@ async function ingestResult({
   return await withTransaction(dbPool, async (client) => {
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
-              subject_type, subject_id, error_code, completed_at
+              subject_type, subject_id, error_code, completed_at, mode
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -588,6 +595,21 @@ async function ingestResult({
       throw serviceError(
         "Result does not match the current claim for this job",
         CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+      );
+    }
+
+    // B4: dry_run jobs must never terminate as succeeded.
+    const jobMode = job.mode || "real";
+    if (jobMode === "dry_run" && jobStatus === "succeeded") {
+      throw serviceError(
+        "dry_run jobs must report dry_run_complete, never succeeded",
+        CERTOPS_AGENT_RESULT_STATUS_INVALID,
+      );
+    }
+    if (jobMode === "real" && jobStatus === "dry_run_complete") {
+      throw serviceError(
+        "dry_run_complete is only valid for dry_run jobs",
+        CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
 
@@ -642,7 +664,8 @@ async function ingestResult({
       );
     }
 
-    const isFailure = jobStatus !== "succeeded";
+    const isFailure =
+      jobStatus !== "succeeded" && jobStatus !== "dry_run_complete";
     // Terminal renew failures must persist error_code for the alerts stage.
     const errorCode = isFailure
       ? body.rejectionReason || `AGENT_RESULT_${jobStatus.toUpperCase()}`
