@@ -24,6 +24,31 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  dependency_audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "11.13.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for security vulnerabilities
+        run: pnpm audit --prod --audit-level=moderate
+
   frontend_quality:
     name: Frontend Quality Checks
     runs-on: ubuntu-latest
@@ -82,9 +107,6 @@ jobs:
 
       - name: Lint worker code
         run: pnpm --filter @tokentimer/worker lint
-
-      - name: Check for security vulnerabilities (worker)
-        run: pnpm audit --prod --audit-level=moderate
 
   controller_quality:
     name: Kubernetes Controller Quality Checks
@@ -170,9 +192,6 @@ jobs:
 
       - name: Run agent package tests
         run: pnpm run test:agent
-
-      - name: Check for security vulnerabilities
-        run: pnpm audit --prod --audit-level=moderate
 
       - name: Validate package.json
         run: pnpm --filter @tokentimer/api validate || echo "No validate script found"
@@ -377,7 +396,7 @@ jobs:
   docker_build_and_scan:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest
-    needs: [frontend_quality, worker_quality, controller_quality, backend_quality, build_and_test, helm_chart]
+    needs: [dependency_audit, frontend_quality, worker_quality, controller_quality, backend_quality, build_and_test, helm_chart]
     if: github.event_name != 'pull_request'
     timeout-minutes: 20
     permissions:

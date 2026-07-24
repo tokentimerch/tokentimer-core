@@ -114,8 +114,16 @@ const {
   deployCertificate,
   deployCertificateAndKey,
   discardDeployBackups,
+  removeDeployedArtifacts,
   getDeployMetrics,
 } = require("./deploy");
+const {
+  markSideEffectReached,
+  scanUnresolvedJournalEntries,
+  hasUnresolvedJournalForJob,
+  clearJournalOnTerminal,
+  formatUnresolvedJournalReport,
+} = require("./job-journal");
 const { reloadService } = require("./reload");
 const {
   verifyDeployedCertificate,
@@ -272,56 +280,202 @@ function resolveJobMode(job) {
 }
 
 /**
- * Renews the job lease before a side-effecting step (B6). First call after
- * accept transitions claimed→running.
+ * Default assumed lease TTL when the control plane omits leaseExpiresAt
+ * (mirrors apps/api/services/certops/leaseTiming.DEFAULT_JOB_LEASE_SECONDS).
+ */
+const DEFAULT_JOB_LEASE_MS = 900 * 1000;
+/** Max consecutive transient renew failures before abort (subsequent renews). */
+const MAX_LEASE_TRANSIENT_RETRIES = 3;
+/** Base backoff between transient renew retries (ms). */
+const LEASE_TRANSIENT_BACKOFF_MS = 200;
+/**
+ * Periodic lease heartbeat interval while a side-effecting stage runs.
+ * ACME DEFAULT_TIMEOUT_MS is 10 minutes; default lease TTL is 15 minutes.
+ * Stage-boundary renews alone are not enough if a single ACME/DNS stage
+ * approaches the TTL with no mid-stage renew, hence a lightweight timer.
+ */
+const LEASE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
+/**
+ * Mutable lease session shared across accept + execute for one job attempt.
+ * @returns {{ lastConfirmedExpiresAtMs: number|null, consecutiveTransientFailures: number, abort: object|null }}
+ */
+function createLeaseState() {
+  return {
+    lastConfirmedExpiresAtMs: null,
+    consecutiveTransientFailures: 0,
+    abort: null,
+  };
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function extractLeaseExpiresAtMs(response, nowMs) {
+  if (response && typeof response.leaseExpiresAt === "string") {
+    const parsed = Date.parse(response.leaseExpiresAt);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return nowMs + DEFAULT_JOB_LEASE_MS;
+}
+
+/**
+ * B6 lease renew with fail-closed semantics.
  *
- * Hard-abort signals (returned, never thrown):
- *   - HTTP 409 ownership / lease conflict
- *   - HTTP 410 agent retired
- * Soft failures (network / other transport errors) are logged and do NOT
- * abort: lease renew is a best-effort "side effects in progress" signal;
- * the reaper's never-renewed → safe-requeue path is acceptable degradation.
+ * - `required: true` (first accept confirmation): ANY failure aborts:
+ *   network/transient, 5xx, 409/410, ownership mismatch. Execution must not
+ *   proceed past a failed first confirmation.
+ * - Subsequent renews (`required: false`): 409/410/ownership loss abort
+ *   immediately with no retry. Transient network/5xx may retry a bounded
+ *   number of times only while the next attempt is still before the last
+ *   confirmed lease expiry (grace deadline). Never sleeps past that deadline.
+ *
+ * Soft-continue on first confirmation is intentionally removed.
  *
  * @param {object} params
  * @param {object|null|undefined} params.leaseClient protocol client with renewLease
  * @param {string} params.jobId
  * @param {string|null} params.claimId
  * @param {(msg: string) => void} [params.log]
+ * @param {object} [params.leaseState] from createLeaseState()
+ * @param {boolean} [params.required] when true, any failure aborts
+ * @param {() => number} [params.now]
  * @returns {Promise<{ ok: true, skipped?: boolean, softFailure?: boolean, response?: object }|{ ok: false, retired: boolean, abort: { status: "blocked", errorMessage: string, retired?: boolean } }>}
  */
-async function renewJobLeaseOrAbort({ leaseClient, jobId, claimId, log = console.error } = {}) {
+async function renewJobLeaseOrAbort({
+  leaseClient,
+  jobId,
+  claimId,
+  log = console.error,
+  leaseState = null,
+  required = false,
+  now = () => Date.now(),
+} = {}) {
   if (!leaseClient || typeof leaseClient.renewLease !== "function") {
+    if (required) {
+      return {
+        ok: false,
+        retired: false,
+        abort: {
+          status: "blocked",
+          errorMessage: boundErrorMessage(
+            "lease renew aborted: lease client unavailable for mandatory confirmation",
+          ),
+        },
+      };
+    }
     return { ok: true, skipped: true };
   }
   if (typeof claimId !== "string" || claimId.length === 0) {
     // Observe-only / unsigned paths may lack a claim id; nothing to renew.
+    // Mandatory confirmation applies only when a claimId is present to renew.
     return { ok: true, skipped: true };
   }
-  let response;
-  try {
-    response = await leaseClient.renewLease({ jobId, claimId });
-  } catch (err) {
-    // Best-effort: transport / 4xx-other / 5xx must not kill an in-flight job.
-    emitLog(
-      log,
-      `tokentimer-agent: lease renew for job ${jobId} failed (continuing): ${err.message}`,
-    );
-    return { ok: true, softFailure: true };
-  }
-  if (
-    response &&
-    response.ok === false &&
-    (response.status === 409 || response.status === 410)
-  ) {
-    const codeSuffix =
-      typeof response.code === "string" && response.code.length > 0
-        ? ` (${response.code})`
-        : "";
-    const retired = response.status === 410;
-    return {
-      ok: false,
-      retired,
-      abort: {
+
+  while (true) {
+    let response;
+    try {
+      response = await leaseClient.renewLease({ jobId, claimId });
+    } catch (err) {
+      if (required) {
+        emitLog(
+          log,
+          `tokentimer-agent: mandatory lease confirmation for job ${jobId} failed: ${err.message}`,
+        );
+        const abort = {
+          status: "blocked",
+          errorMessage: boundErrorMessage(
+            `lease renew aborted: mandatory confirmation failed (${err.message})`,
+          ),
+        };
+        if (leaseState) leaseState.abort = abort;
+        return { ok: false, retired: false, abort };
+      }
+
+      const nowMs = now();
+      const graceDeadline =
+        leaseState && Number.isFinite(leaseState.lastConfirmedExpiresAtMs)
+          ? leaseState.lastConfirmedExpiresAtMs
+          : null;
+      if (graceDeadline === null || nowMs >= graceDeadline) {
+        emitLog(
+          log,
+          `tokentimer-agent: lease renew for job ${jobId} failed at/after confirmed expiry: ${err.message}`,
+        );
+        const abort = {
+          status: "blocked",
+          errorMessage: boundErrorMessage(
+            `lease renew aborted: transient failure at or past confirmed lease expiry (${err.message})`,
+          ),
+        };
+        if (leaseState) leaseState.abort = abort;
+        return { ok: false, retired: false, abort };
+      }
+
+      const failures =
+        leaseState && typeof leaseState.consecutiveTransientFailures === "number"
+          ? leaseState.consecutiveTransientFailures + 1
+          : 1;
+      if (leaseState) leaseState.consecutiveTransientFailures = failures;
+
+      if (failures > MAX_LEASE_TRANSIENT_RETRIES) {
+        const abort = {
+          status: "blocked",
+          errorMessage: boundErrorMessage(
+            `lease renew aborted: exceeded ${MAX_LEASE_TRANSIENT_RETRIES} consecutive transient failures (${err.message})`,
+          ),
+        };
+        if (leaseState) leaseState.abort = abort;
+        return { ok: false, retired: false, abort };
+      }
+
+      const backoff = LEASE_TRANSIENT_BACKOFF_MS * 2 ** (failures - 1);
+      if (nowMs + backoff >= graceDeadline) {
+        const abort = {
+          status: "blocked",
+          errorMessage: boundErrorMessage(
+            `lease renew aborted: next retry would exceed confirmed lease expiry (${err.message})`,
+          ),
+        };
+        if (leaseState) leaseState.abort = abort;
+        return { ok: false, retired: false, abort };
+      }
+
+      emitLog(
+        log,
+        `tokentimer-agent: lease renew for job ${jobId} transient failure ` +
+          `${failures}/${MAX_LEASE_TRANSIENT_RETRIES} (retrying before expiry): ${err.message}`,
+      );
+      const beforeSleep = now();
+      await sleepMs(backoff);
+      // Guard against frozen-clock loops (tests injecting a constant now()).
+      if (now() <= beforeSleep && failures >= MAX_LEASE_TRANSIENT_RETRIES) {
+        const abort = {
+          status: "blocked",
+          errorMessage: boundErrorMessage(
+            `lease renew aborted: exceeded ${MAX_LEASE_TRANSIENT_RETRIES} consecutive transient failures (${err.message})`,
+          ),
+        };
+        if (leaseState) leaseState.abort = abort;
+        return { ok: false, retired: false, abort };
+      }
+      continue;
+    }
+
+    if (
+      response &&
+      response.ok === false &&
+      (response.status === 409 || response.status === 410)
+    ) {
+      const codeSuffix =
+        typeof response.code === "string" && response.code.length > 0
+          ? ` (${response.code})`
+          : "";
+      const retired = response.status === 410;
+      const abort = {
         status: "blocked",
         errorMessage: boundErrorMessage(
           retired
@@ -329,10 +483,92 @@ async function renewJobLeaseOrAbort({ leaseClient, jobId, claimId, log = console
             : `lease renew aborted: claim ownership lost or lease conflict (HTTP 409)${codeSuffix}`,
         ),
         ...(retired ? { retired: true } : {}),
-      },
-    };
+      };
+      if (leaseState) leaseState.abort = abort;
+      return { ok: false, retired, abort };
+    }
+
+    const nowMs = now();
+    if (leaseState) {
+      leaseState.lastConfirmedExpiresAtMs = extractLeaseExpiresAtMs(
+        response,
+        nowMs,
+      );
+      leaseState.consecutiveTransientFailures = 0;
+      leaseState.abort = null;
+    }
+    return { ok: true, response };
   }
-  return { ok: true, response };
+}
+
+/**
+ * Starts a lightweight periodic lease renew while execution is active.
+ * Cleared via stopPeriodicLeaseRenewal — never leave timers leaked.
+ *
+ * @param {object} leaseOpts renewJobLeaseOrAbort params (incl. leaseState)
+ * @param {{ intervalMs?: number, onAbort?: (abort: object) => void }} [options]
+ * @returns {{ stop: () => void, getAbort: () => object|null }}
+ */
+function startPeriodicLeaseRenewal(leaseOpts, { intervalMs = LEASE_HEARTBEAT_INTERVAL_MS, onAbort } = {}) {
+  let stopped = false;
+  let inFlight = null;
+  let lastAbort = null;
+
+  const timer = setInterval(() => {
+    if (stopped) return;
+    if (inFlight) return;
+    inFlight = renewJobLeaseOrAbort({
+      ...leaseOpts,
+      required: false,
+    })
+      .then((result) => {
+        if (result && result.ok === false) {
+          lastAbort = result.abort;
+          if (typeof onAbort === "function") onAbort(result.abort);
+        }
+      })
+      .catch((err) => {
+        emitLog(
+          leaseOpts.log || console.error,
+          `tokentimer-agent: periodic lease renew error: ${err.message}`,
+        );
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+  }, intervalMs);
+  if (typeof timer.unref === "function") timer.unref();
+
+  return {
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+    getAbort() {
+      return lastAbort || (leaseOpts.leaseState && leaseOpts.leaseState.abort) || null;
+    },
+  };
+}
+
+function stopPeriodicLeaseRenewal(handle) {
+  if (handle && typeof handle.stop === "function") handle.stop();
+}
+
+/**
+ * Resolves the agent state directory from execution context (parent of keysDir).
+ * @param {object|null|undefined} executionContext
+ * @returns {string|null}
+ */
+function resolveAgentStateDir(executionContext) {
+  const keysDir = executionContext?.execution?.keysDir;
+  if (typeof keysDir === "string" && keysDir.length > 0) {
+    return path.dirname(keysDir);
+  }
+  const outboxDir = executionContext?.outboxDir || executionContext?.execution?.outboxDir;
+  if (typeof outboxDir === "string" && outboxDir.length > 0) {
+    return path.dirname(outboxDir);
+  }
+  return null;
 }
 
 /**
@@ -551,10 +787,52 @@ function splitLeafAndChainPem(pem) {
  * Resolves deploy destinations for a job. Non-empty job.deploymentTargets
  * wins; otherwise a single destination from resolveJobCertPath.
  *
+ * Per-target fields (keyPath, chainPath, modes, owner/group, backupDir) are
+ * preserved when present. Job-level keyPath/chainPath act as fallbacks.
+ *
  * @param {object} job
- * @returns {{ targets: Array<{ type: string, reference: string, certPath: string, reloadService: string|null, chainPath: string|null }> }|{ error: string }}
+ * @returns {{ targets: Array<object> }|{ error: string }}
  */
 function resolveJobDeployTargets(job) {
+  const jobKeyPath = isAbsolutePathLike(job?.keyPath) ? job.keyPath : null;
+  const jobChainPath = isAbsolutePathLike(job?.chainPath) ? job.chainPath : null;
+
+  function pickTargetFields(item, fallbackCertPath) {
+    const certPath = isAbsolutePathLike(item?.certPath)
+      ? item.certPath
+      : fallbackCertPath;
+    const keyPath = isAbsolutePathLike(item?.keyPath)
+      ? item.keyPath
+      : jobKeyPath;
+    const chainPath = isAbsolutePathLike(item?.chainPath)
+      ? item.chainPath
+      : jobChainPath;
+    return {
+      type: typeof item?.type === "string" ? item.type : job?.target?.type ?? "endpoint",
+      reference:
+        typeof item?.reference === "string" && item.reference.length > 0
+          ? item.reference
+          : certPath,
+      certPath,
+      keyPath,
+      chainPath,
+      reloadService:
+        typeof item?.reloadService === "string" && item.reloadService.length > 0
+          ? item.reloadService
+          : typeof job.reloadService === "string" && job.reloadService.length > 0
+            ? job.reloadService
+            : null,
+      certMode: item?.certMode ?? null,
+      keyMode: item?.keyMode ?? null,
+      chainMode: item?.chainMode ?? null,
+      owner: item?.owner ?? null,
+      group: item?.group ?? null,
+      backupDir: isAbsolutePathLike(item?.backupDir) ? item.backupDir : null,
+      backupRetentionCount:
+        Number.isInteger(item?.backupRetentionCount) ? item.backupRetentionCount : null,
+    };
+  }
+
   if (Array.isArray(job?.deploymentTargets) && job.deploymentTargets.length > 0) {
     const targets = [];
     for (let i = 0; i < job.deploymentTargets.length; i += 1) {
@@ -562,11 +840,10 @@ function resolveJobDeployTargets(job) {
       if (!item || typeof item !== "object" || Array.isArray(item)) {
         return { error: `job.deploymentTargets[${i}] must be an object` };
       }
+      const fallbackCert = isAbsolutePathLike(item.reference) ? item.reference : null;
       const certPath = isAbsolutePathLike(item.certPath)
         ? item.certPath
-        : isAbsolutePathLike(item.reference)
-          ? item.reference
-          : null;
+        : fallbackCert;
       if (certPath === null) {
         return {
           error:
@@ -574,25 +851,7 @@ function resolveJobDeployTargets(job) {
             "(need absolute certPath or absolute reference)",
         };
       }
-      targets.push({
-        type: typeof item.type === "string" ? item.type : job?.target?.type ?? "endpoint",
-        reference:
-          typeof item.reference === "string" && item.reference.length > 0
-            ? item.reference
-            : certPath,
-        certPath,
-        reloadService:
-          typeof item.reloadService === "string" && item.reloadService.length > 0
-            ? item.reloadService
-            : typeof job.reloadService === "string" && job.reloadService.length > 0
-              ? job.reloadService
-              : null,
-        chainPath: isAbsolutePathLike(item.chainPath)
-          ? item.chainPath
-          : isAbsolutePathLike(job.chainPath)
-            ? job.chainPath
-            : null,
-      });
+      targets.push(pickTargetFields(item, certPath));
     }
     return { targets };
   }
@@ -607,16 +866,17 @@ function resolveJobDeployTargets(job) {
   }
   return {
     targets: [
-      {
-        type: job?.target?.type ?? "endpoint",
-        reference: job?.target?.reference ?? certPath,
+      pickTargetFields(
+        {
+          type: job?.target?.type,
+          reference: job?.target?.reference,
+          certPath,
+          keyPath: jobKeyPath,
+          chainPath: jobChainPath,
+          reloadService: job.reloadService,
+        },
         certPath,
-        reloadService:
-          typeof job.reloadService === "string" && job.reloadService.length > 0
-            ? job.reloadService
-            : null,
-        chainPath: isAbsolutePathLike(job.chainPath) ? job.chainPath : null,
-      },
+      ),
     ],
   };
 }
@@ -1003,13 +1263,42 @@ async function handleSignedJob({
     return reportJobRejection({ ...rejectionArgs, verdict: consumeVerdict });
   }
 
+  // 5b. Refuse auto re-execution when unresolved local side-effect journal
+  // exists for this jobId (crash-safety; operator reconciliation required).
+  const stateDir = resolveAgentStateDir(executionContext);
+  if (stateDir && hasUnresolvedJournalForJob(stateDir, jobId)) {
+    const msg =
+      `unresolved local side-effect journal exists for job ${jobId}; ` +
+      `refusing automatic re-execution pending operator reconciliation`;
+    emitLog(log, `tokentimer-agent: ${msg}`);
+    return persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: {
+        jobId,
+        attemptId,
+        claimId,
+        nonce,
+        status: "orphaned_unknown_effect",
+        errorMessage: boundErrorMessage(
+          `${msg} (needsOperatorReconciliation=true)`,
+        ),
+      },
+      log,
+    });
+  }
+
   // 6. B6: first lease renew after accept transitions claimed→running.
-  // 409/410 abort as a reported "blocked" result (not an uncaught throw).
+  // Mandatory fail-closed confirmation: any failure (including network)
+  // aborts before execution. 409/410 abort as a reported "blocked" result.
+  const leaseState = createLeaseState();
   const acceptLease = await renewJobLeaseOrAbort({
     leaseClient: client,
     jobId,
     claimId,
     log,
+    leaseState,
+    required: true,
   });
   if (acceptLease && acceptLease.ok === false) {
     const blocked = await persistAndTransmitOutcome({
@@ -1034,26 +1323,48 @@ async function handleSignedJob({
   // 7. Execute. Step evidence is buffered locally; the terminal outcome and
   // evidence are persisted to the durable outbox BEFORE any network
   // transmission so a reportResult failure cannot reclassify a real-world
-  // success as "failed" (B8).
+  // success as "failed" (B8). Periodic lease heartbeat covers long ACME/DNS
+  // stages that can approach the 15-minute lease TTL without stage-boundary
+  // renews.
   const evidenceBuffer = createEvidenceBuffer();
+  const leaseOpts = {
+    leaseClient: client,
+    jobId,
+    claimId,
+    log,
+    leaseState,
+  };
+  const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
   let outcome;
   try {
     outcome = await executeJob({
       job,
       jobId,
+      attemptId,
       claimId,
       policyEngine,
       client: evidenceBuffer,
       leaseClient: client,
+      leaseState,
       executionContext,
       log,
     });
+    const heartbeatAbort = leaseHeartbeat.getAbort();
+    if (
+      heartbeatAbort &&
+      outcome &&
+      (outcome.status === "succeeded" || outcome.status === "dry_run_complete")
+    ) {
+      outcome = heartbeatAbort;
+    }
   } catch (err) {
     log(`tokentimer-agent: job ${jobId} execution error: ${err.message}`);
     outcome = {
       status: "failed",
       errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
     };
+  } finally {
+    stopPeriodicLeaseRenewal(leaseHeartbeat);
   }
 
   const evidenceBodies = evidenceBuffer.takeEvidence();
@@ -1078,6 +1389,23 @@ async function handleSignedJob({
     evidence: evidenceBodies,
     log,
   });
+
+  if (stateDir && outcome && typeof outcome.status === "string") {
+    try {
+      clearJournalOnTerminal({
+        stateDir,
+        jobId,
+        attemptId,
+        status: outcome.status,
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `tokentimer-agent: could not clear job journal for ${jobId}: ${err.message}`,
+      );
+    }
+  }
+
   return {
     ...transmitted,
     retired: outcome.retired === true,
@@ -1114,10 +1442,12 @@ async function handleSignedJob({
 async function executeJob({
   job,
   jobId,
+  attemptId = null,
   claimId = null,
   policyEngine,
   client,
   leaseClient = null,
+  leaseState = null,
   executionContext,
   log = console.error,
 }) {
@@ -1125,7 +1455,17 @@ async function executeJob({
   const action = job.action;
   const observedAt = new Date().toISOString();
   const jobMode = resolveJobMode(job);
-  const leaseOpts = { leaseClient, jobId, claimId, log };
+  const leaseOpts = { leaseClient, jobId, claimId, log, leaseState };
+  const stateDir = resolveAgentStateDir(executionContext);
+  const journalCtx =
+    stateDir && typeof attemptId === "string" && attemptId.length > 0
+      ? { stateDir, jobId, attemptId, claimId }
+      : null;
+
+  function markMutation(stage) {
+    if (!journalCtx) return;
+    markSideEffectReached({ ...journalCtx, stage });
+  }
 
   if (action === "noop") {
     await reportStepEvidence(client, jobId, [
@@ -1205,6 +1545,7 @@ async function executeJob({
       executionContext,
       log,
       leaseOpts,
+      onBeforeMutation: markMutation,
     });
   }
   if (action === "deploy") {
@@ -1216,6 +1557,7 @@ async function executeJob({
       executionContext,
       log,
       leaseOpts,
+      onBeforeMutation: markMutation,
     });
   }
   return executeReloadJob({
@@ -1225,6 +1567,7 @@ async function executeJob({
     client,
     log,
     leaseOpts,
+    onBeforeMutation: markMutation,
   });
 }
 
@@ -1405,6 +1748,7 @@ async function executeRenewJob({
   executionContext,
   log,
   leaseOpts = null,
+  onBeforeMutation = null,
 }) {
   const { execution } = executionContext;
   const commonName = job?.target?.reference;
@@ -1488,6 +1832,7 @@ async function executeRenewJob({
     const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
+  if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
   const forceRotation = job.keyRotation === true;
@@ -1529,6 +1874,7 @@ async function executeRenewJob({
         return leaseGate.abort;
       }
     }
+    if (typeof onBeforeMutation === "function") onBeforeMutation("acme");
     const adapter = createAcmeAdapter({
       kind: acmeKind,
       commandProfile: { argv: commandVerdict.argv },
@@ -1626,6 +1972,7 @@ async function executeRenewJob({
     requestedSans: domains,
     log,
     leaseOpts,
+    onBeforeMutation,
   });
   if (tail.status !== "succeeded") {
     discardStagedKey({ keyPath, stagedKeyPath });
@@ -1839,11 +2186,19 @@ function withRollbackNote(outcome, rollback) {
 }
 
 /**
- * Multi-target deploy/reload/verify. Runs the shared tail once per resolved
- * destination. Semantics: all-or-nothing — any target failure fails the job
- * overall; if any target reaches orphaned_unknown_effect, that status wins.
- * Per-target outcomes are recorded in evidence metadata (targetIndex /
- * targetReference / targetStatus).
+ * Multi-target deploy/reload/verify as a transactional coordinator.
+ *
+ * Phases:
+ *   1. Preflight ALL targets (no writes): resolve paths, validate cert/SANs/
+ *      key-match, path policy, modes/ownership shape, reload refs; renew lease.
+ *   2. Apply+verify each target in turn (renew lease before each mutation),
+ *      retaining ALL backups until the whole operation commits.
+ *   3. On any apply/verify failure: stop; roll back previously-changed
+ *      targets in reverse order (restore backup or remove first-deploy files);
+ *      reload each restored target. If every changed target is restored =>
+ *      `failed`. If any rollback is uncertain => `orphaned_unknown_effect`
+ *      (reconciliation details in errorMessage / evidence; no new schema fields).
+ *   4. Commit: discard all retained backups only after every target succeeds.
  *
  * @param {object} params
  * @returns {Promise<object>}
@@ -1861,10 +2216,207 @@ async function runDeployReloadVerifyForTargets({
   requestedSans = [],
   log,
   leaseOpts = null,
+  onBeforeMutation = null,
 }) {
+  // Single-target keeps the existing per-target rollback / first-deploy
+  // orphaned_unknown_effect semantics. Multi-target uses the transactional
+  // coordinator below (retain backups across targets; reverse rollback).
+  if (!Array.isArray(deployTargets) || deployTargets.length <= 1) {
+    const target = deployTargets[0];
+    const jobView = target
+      ? {
+          ...job,
+          target: { type: target.type, reference: target.reference },
+          certPath: target.certPath,
+          chainPath: target.chainPath || undefined,
+          reloadService: target.reloadService || undefined,
+          keyPath: target.keyPath || undefined,
+          certMode: target.certMode,
+          keyMode: target.keyMode,
+          chainMode: target.chainMode,
+          owner: target.owner,
+          group: target.group,
+          backupDir: target.backupDir,
+        }
+      : job;
+    const targetKeyPath =
+      target && typeof target.keyPath === "string" && target.keyPath.length > 0
+        ? target.keyPath
+        : keyPath;
+    return runDeployReloadVerify({
+      job: jobView,
+      jobId,
+      policyEngine,
+      client,
+      certificatePem,
+      certPath: target ? target.certPath : job.certPath,
+      chainPath: target ? target.chainPath : job.chainPath,
+      keyPath: targetKeyPath,
+      stagedKeyPath,
+      keyRotated:
+        keyRotated === true ||
+        (typeof targetKeyPath === "string" &&
+          targetKeyPath.length > 0 &&
+          typeof stagedKeyPath === "string" &&
+          stagedKeyPath.length > 0 &&
+          path.normalize(path.resolve(targetKeyPath)) !==
+            path.normalize(path.resolve(stagedKeyPath))),
+      requestedSans,
+      log,
+      leaseOpts,
+      retainBackups: false,
+      onBeforeMutation,
+    });
+  }
+
+  const checkPath = (candidate) => policyEngine.checkPath(candidate);
+  const sans =
+    Array.isArray(requestedSans) && requestedSans.length > 0
+      ? requestedSans
+      : typeof job?.target?.reference === "string" && job.target.reference.length > 0
+        ? [job.target.reference]
+        : [];
+
+  // --- Preflight (all-or-nothing; no writes) ---------------------------------
+  {
+    const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
+    if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+  }
+
+  const keyForValidation =
+    typeof stagedKeyPath === "string" && stagedKeyPath.length > 0
+      ? stagedKeyPath
+      : typeof keyPath === "string" && keyPath.length > 0
+        ? keyPath
+        : null;
+  let privateKeyPem = null;
+  const anyTargetNeedsKey = deployTargets.some(
+    (t) => typeof t.keyPath === "string" && t.keyPath.length > 0,
+  );
+  if (anyTargetNeedsKey || keyRotated === true) {
+    if (!keyForValidation) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          "preflight failed: deployment requires a permitted local key reference " +
+            "but none was resolved (keysDir staging is not an implicit production destination)",
+        ),
+      };
+    }
+    try {
+      privateKeyPem = fs.readFileSync(keyForValidation, "utf8");
+    } catch (err) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          `preflight failed: could not read private key for validation: ${err.message}`,
+        ),
+      };
+    }
+  } else if (keyForValidation) {
+    try {
+      privateKeyPem = fs.readFileSync(keyForValidation, "utf8");
+    } catch (err) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          `preflight failed: could not read private key for validation: ${err.message}`,
+        ),
+      };
+    }
+  }
+
+  const preDeploy = validateCertificateForDeploy({
+    certificatePem,
+    privateKeyPem,
+    requestedSans: sans,
+  });
+  if (preDeploy.valid !== true) {
+    await reportStepEvidence(client, jobId, [
+      buildEvidenceItem({
+        eventType: "validation.failed",
+        observedAt: new Date().toISOString(),
+        summary: `Multi-target preflight certificate validation failed for job ${jobId}: ${preDeploy.code}.`,
+        metadata: [
+          { name: "step", value: "preflight" },
+          { name: "code", value: String(preDeploy.code) },
+        ],
+      }),
+    ]);
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        `preflight validation failed (${preDeploy.code}): ${preDeploy.detail}`,
+      ),
+    };
+  }
+
+  for (let i = 0; i < deployTargets.length; i += 1) {
+    const target = deployTargets[i];
+    const pathVerdict = checkPath(target.certPath);
+    if (!pathVerdict || pathVerdict.allowed !== true) {
+      return {
+        status: "rejected",
+        rejectionReason: pathVerdict?.rejectionReason || "path_not_allowlisted",
+        errorMessage: boundErrorMessage(
+          `preflight: target ${i + 1} certPath rejected by policy`,
+        ),
+      };
+    }
+    if (typeof target.keyPath === "string" && target.keyPath.length > 0) {
+      const keyVerdict = checkPath(target.keyPath);
+      if (!keyVerdict || keyVerdict.allowed !== true) {
+        return {
+          status: "rejected",
+          rejectionReason: keyVerdict?.rejectionReason || "path_not_allowlisted",
+          errorMessage: boundErrorMessage(
+            `preflight: target ${i + 1} keyPath rejected by policy`,
+          ),
+        };
+      }
+    }
+    if (typeof target.chainPath === "string" && target.chainPath.length > 0) {
+      const chainVerdict = checkPath(target.chainPath);
+      if (!chainVerdict || chainVerdict.allowed !== true) {
+        return {
+          status: "rejected",
+          rejectionReason: chainVerdict?.rejectionReason || "path_not_allowlisted",
+          errorMessage: boundErrorMessage(
+            `preflight: target ${i + 1} chainPath rejected by policy`,
+          ),
+        };
+      }
+    }
+    if (typeof target.reloadService === "string" && target.reloadService.length > 0) {
+      const refs = job.reloadCommandRefs;
+      if (
+        refs &&
+        typeof refs === "object" &&
+        typeof refs.validate === "string" &&
+        typeof refs.reload === "string"
+      ) {
+        const validateVerdict = policyEngine.checkCommandRef(refs.validate);
+        const reloadVerdict = policyEngine.checkCommandRef(refs.reload);
+        if (!validateVerdict.allowed || !reloadVerdict.allowed) {
+          return {
+            status: "rejected",
+            rejectionReason:
+              (!validateVerdict.allowed && validateVerdict.rejectionReason) ||
+              reloadVerdict.rejectionReason ||
+              "command_not_allowlisted",
+            errorMessage: boundErrorMessage(
+              `preflight: target ${i + 1} reload command refs not allowlisted`,
+            ),
+          };
+        }
+      }
+    }
+  }
+
+  // --- Apply / verify with retained backups ----------------------------------
+  const applied = [];
   const targetOutcomes = [];
-  let liveStagedKeyPath = stagedKeyPath;
-  let remainingKeyRotation = keyRotated === true;
+  const liveStagedKeyPath = stagedKeyPath;
 
   for (let i = 0; i < deployTargets.length; i += 1) {
     const target = deployTargets[i];
@@ -1877,7 +2429,21 @@ async function runDeployReloadVerifyForTargets({
       certPath: target.certPath,
       chainPath: target.chainPath || undefined,
       reloadService: target.reloadService || undefined,
+      keyPath: target.keyPath || undefined,
+      certMode: target.certMode,
+      keyMode: target.keyMode,
+      chainMode: target.chainMode,
+      owner: target.owner,
+      group: target.group,
+      backupDir: target.backupDir,
     };
+
+    const targetKeyPath =
+      typeof target.keyPath === "string" && target.keyPath.length > 0
+        ? target.keyPath
+        : typeof keyPath === "string" && keyPath.length > 0
+          ? keyPath
+          : null;
 
     const result = await runDeployReloadVerify({
       job: jobView,
@@ -1887,12 +2453,22 @@ async function runDeployReloadVerifyForTargets({
       certificatePem,
       certPath: target.certPath,
       chainPath: target.chainPath,
-      keyPath,
+      keyPath: targetKeyPath,
       stagedKeyPath: liveStagedKeyPath,
-      keyRotated: remainingKeyRotation,
-      requestedSans,
+      keyRotated:
+        keyRotated === true ||
+        (typeof targetKeyPath === "string" &&
+          targetKeyPath.length > 0 &&
+          typeof liveStagedKeyPath === "string" &&
+          liveStagedKeyPath.length > 0 &&
+          path.normalize(path.resolve(targetKeyPath)) !==
+            path.normalize(path.resolve(liveStagedKeyPath))),
+      requestedSans: sans,
       log,
       leaseOpts,
+      retainBackups: true,
+      onBeforeMutation,
+      retainPrivateKeyStaging: i < deployTargets.length - 1,
     });
 
     targetOutcomes.push({
@@ -1903,10 +2479,13 @@ async function runDeployReloadVerifyForTargets({
       errorMessage: result.errorMessage || null,
     });
 
-    // Paired key deploy promotes the staged key on the first target only.
-    if (remainingKeyRotation && result.status === "succeeded") {
-      remainingKeyRotation = false;
-      liveStagedKeyPath = keyPath;
+    if (result.deployResult && result.deployResult.deployed === true) {
+      applied.push({
+        index: i,
+        target,
+        jobView,
+        deployResult: result.deployResult,
+      });
     }
 
     await reportStepEvidence(client, jobId, [
@@ -1928,18 +2507,35 @@ async function runDeployReloadVerifyForTargets({
     ]);
 
     if (result.status !== "succeeded") {
-      const orphaned = targetOutcomes.some(
-        (o) => o.status === "orphaned_unknown_effect",
-      );
+      const rollbackOutcome = await rollbackAppliedTargets({
+        applied,
+        job,
+        jobId,
+        policyEngine,
+        client,
+        log,
+        failedIndex: i,
+        failedResult: result,
+      });
       return {
-        ...result,
-        status: orphaned ? "orphaned_unknown_effect" : result.status,
-        errorMessage: boundErrorMessage(
-          `deployment target ${i + 1}/${deployTargets.length} ` +
-            `(${target.reference}) failed: ${result.errorMessage || result.status}`,
-        ),
+        ...rollbackOutcome,
         targetOutcomes,
       };
+    }
+  }
+
+  // --- Commit: discard all retained backups ----------------------------------
+  for (const entry of applied) {
+    try {
+      await discardDeployBackups({
+        backupPaths: entry.deployResult.backupPaths,
+        backupPath: entry.deployResult.backupPath,
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `tokentimer-agent: could not discard deploy backups for job ${jobId} target ${entry.index}: ${err.message}`,
+      );
     }
   }
 
@@ -1951,15 +2547,121 @@ async function runDeployReloadVerifyForTargets({
 }
 
 /**
- * Shared deploy -> optional reload -> verify tail used by both renew and
- * deploy actions. Reports per-step evidence (deployment.updated with the
- * deploy module's metrics counters, validation.passed/failed for reload
- * and fingerprint verification). Returns reportResult fields (without
- * keyRotated, which only renew owns).
- *
- * @param {object} params
- * @returns {Promise<object>}
+ * Rolls back previously-applied multi-target deploys in reverse order.
+ * First-deploy targets (no backup) have newly written files removed.
  */
+async function rollbackAppliedTargets({
+  applied,
+  job: _job,
+  jobId,
+  policyEngine,
+  client,
+  log,
+  failedIndex,
+  failedResult,
+}) {
+  let uncertain = false;
+  const notes = [];
+
+  for (let r = applied.length - 1; r >= 0; r -= 1) {
+    const entry = applied[r];
+    const deployResult = entry.deployResult;
+    const isFirstDeploy =
+      deployResult.firstDeploy === true ||
+      (!(
+        (typeof deployResult.backupPath === "string" && deployResult.backupPath.length > 0) ||
+        (deployResult.backupPaths &&
+          typeof deployResult.backupPaths.cert === "string" &&
+          deployResult.backupPaths.cert.length > 0)
+      ));
+
+    if (isFirstDeploy && deployResult.deployed === true) {
+      const destinations = [
+        deployResult.destination,
+        deployResult.keyDestination,
+        deployResult.chainDestination,
+      ];
+      const removal = await removeDeployedArtifacts({
+        destinations,
+        checkPath: (candidate) => policyEngine.checkPath(candidate),
+      });
+      if (removal.failed.length > 0) {
+        uncertain = true;
+        notes.push(
+          `target ${entry.index + 1} first-deploy rollback incomplete (files retained for operator recovery)`,
+        );
+      } else {
+        notes.push(`target ${entry.index + 1} first-deploy files removed`);
+      }
+      // Best-effort reload after removal.
+      if (typeof entry.jobView.reloadService === "string") {
+        try {
+          await maybeReloadForJob({
+            job: entry.jobView,
+            jobId,
+            policyEngine,
+            client,
+            log,
+            leaseOpts: null,
+          });
+        } catch (_err) {
+          // best-effort
+        }
+      }
+      continue;
+    }
+
+    const rollback = await rollbackAfterFailedTail({
+      job: entry.jobView,
+      jobId,
+      policyEngine,
+      client,
+      deployResult,
+      failedStep: `multi-target-rollback-after-target-${failedIndex + 1}`,
+      log,
+    });
+    if (rollback.rolledBack !== true) {
+      uncertain = true;
+      notes.push(
+        `target ${entry.index + 1} rollback failed (${rollback.reason || "unknown"}); backup retained`,
+      );
+    } else {
+      notes.push(`target ${entry.index + 1} rolled back`);
+    }
+  }
+
+  const baseMessage =
+    failedResult.errorMessage ||
+    `deployment target ${failedIndex + 1} failed with status ${failedResult.status}`;
+
+  if (uncertain) {
+    return {
+      status: "orphaned_unknown_effect",
+      errorMessage: boundErrorMessage(
+        `${baseMessage} (multi-target rollback uncertain: ${notes.join("; ")}; ` +
+          `needsOperatorReconciliation=true; reconciliationReason=multi_target_rollback_uncertain)`,
+      ),
+    };
+  }
+
+  if (applied.length === 0) {
+    return {
+      status: failedResult.status === "orphaned_unknown_effect"
+        ? "orphaned_unknown_effect"
+        : failedResult.status || "failed",
+      rejectionReason: failedResult.rejectionReason,
+      errorMessage: boundErrorMessage(baseMessage),
+    };
+  }
+
+  return {
+    status: "failed",
+    errorMessage: boundErrorMessage(
+      `${baseMessage} (prior targets rolled back successfully: ${notes.join("; ")})`,
+    ),
+  };
+}
+
 async function runDeployReloadVerify({
   job,
   jobId,
@@ -1974,11 +2676,16 @@ async function runDeployReloadVerify({
   requestedSans = [],
   log,
   leaseOpts = null,
+  retainBackups = false,
+  onBeforeMutation = null,
+  retainPrivateKeyStaging = false,
+  skipPreDeployValidation = false,
 }) {
-  // Pre-deploy X.509 validation always runs. When a local key path is
-  // available, full validation includes key-match; otherwise privateKeyPem
-  // is null so validateCertificateForDeploy still enforces parse / SAN /
-  // validity / chain without requiring a key (standalone deploy path).
+  // Pre-deploy X.509 validation always runs unless the multi-target
+  // coordinator already preflighted. When a local key path is available,
+  // full validation includes key-match; otherwise privateKeyPem is null so
+  // validateCertificateForDeploy still enforces parse / SAN / validity /
+  // chain without requiring a key (standalone deploy path without keyPath).
   const keyForValidation =
     typeof stagedKeyPath === "string" && stagedKeyPath.length > 0
       ? stagedKeyPath
@@ -1986,55 +2693,59 @@ async function runDeployReloadVerify({
         ? keyPath
         : null;
   let privateKeyPem = null;
-  if (keyForValidation) {
-    try {
-      privateKeyPem = fs.readFileSync(keyForValidation, "utf8");
-    } catch (err) {
+  if (!skipPreDeployValidation) {
+    if (keyForValidation) {
+      try {
+        privateKeyPem = fs.readFileSync(keyForValidation, "utf8");
+      } catch (err) {
+        return {
+          status: "failed",
+          errorMessage: boundErrorMessage(
+            `pre-deploy validation could not read private key: ${err.message}`,
+          ),
+        };
+      }
+    }
+    const sans =
+      Array.isArray(requestedSans) && requestedSans.length > 0
+        ? requestedSans
+        : typeof job?.target?.reference === "string" && job.target.reference.length > 0
+          ? [job.target.reference]
+          : [];
+    const preDeploy = validateCertificateForDeploy({
+      certificatePem,
+      privateKeyPem,
+      requestedSans: sans,
+    });
+    if (preDeploy.valid !== true) {
+      await reportStepEvidence(client, jobId, [
+        buildEvidenceItem({
+          eventType: "validation.failed",
+          observedAt: new Date().toISOString(),
+          summary: `Pre-deploy certificate validation failed for job ${jobId}: ${preDeploy.code}.`,
+          metadata: [
+            { name: "step", value: "pre-deploy-validate" },
+            { name: "code", value: String(preDeploy.code) },
+          ],
+        }),
+      ]);
       return {
         status: "failed",
         errorMessage: boundErrorMessage(
-          `pre-deploy validation could not read private key: ${err.message}`,
+          `pre-deploy validation failed (${preDeploy.code}): ${preDeploy.detail}`,
         ),
       };
     }
   }
-  const sans =
-    Array.isArray(requestedSans) && requestedSans.length > 0
-      ? requestedSans
-      : typeof job?.target?.reference === "string" && job.target.reference.length > 0
-        ? [job.target.reference]
-        : [];
-  const preDeploy = validateCertificateForDeploy({
-    certificatePem,
-    privateKeyPem,
-    requestedSans: sans,
-  });
-  if (preDeploy.valid !== true) {
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "validation.failed",
-        observedAt: new Date().toISOString(),
-        summary: `Pre-deploy certificate validation failed for job ${jobId}: ${preDeploy.code}.`,
-        metadata: [
-          { name: "step", value: "pre-deploy-validate" },
-          { name: "code", value: String(preDeploy.code) },
-        ],
-      }),
-    ]);
-    return {
-      status: "failed",
-      errorMessage: boundErrorMessage(
-        `pre-deploy validation failed (${preDeploy.code}): ${preDeploy.detail}`,
-      ),
-    };
-  }
 
-  // Deploy step. When a key was rotated (or freshly generated), install the
-  // matched key+certificate pair atomically; otherwise cert-only deploy.
+  // Deploy step. When a production keyPath is named and a staging key is
+  // available, install the matched key+certificate pair atomically for
+  // EVERY such target (not only the first). keysDir remains staging only.
   {
     const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
+  if (typeof onBeforeMutation === "function") onBeforeMutation("deploy");
   const checkPath = (candidate) => policyEngine.checkPath(candidate);
   const resolvedChainPath =
     typeof chainPath === "string" && chainPath.length > 0
@@ -2059,11 +2770,13 @@ async function runDeployReloadVerify({
   }
 
   const usePairedDeploy =
-    keyRotated === true &&
     typeof keyPath === "string" &&
     keyPath.length > 0 &&
     typeof stagedKeyPath === "string" &&
-    stagedKeyPath.length > 0;
+    stagedKeyPath.length > 0 &&
+    (keyRotated === true ||
+      path.normalize(path.resolve(keyPath)) !==
+        path.normalize(path.resolve(stagedKeyPath)));
 
   const deployTarget = {
     type: job?.target?.type ?? "endpoint",
@@ -2071,6 +2784,12 @@ async function runDeployReloadVerify({
     certPath,
     ...(resolvedChainPath ? { chainPath: resolvedChainPath } : {}),
     ...(usePairedDeploy ? { keyPath } : {}),
+    ...(job?.backupDir ? { backupDir: job.backupDir } : {}),
+    ...(job?.certMode != null ? { certMode: job.certMode } : {}),
+    ...(job?.keyMode != null ? { keyMode: job.keyMode } : {}),
+    ...(job?.chainMode != null ? { chainMode: job.chainMode } : {}),
+    ...(job?.owner ? { owner: job.owner } : {}),
+    ...(job?.group ? { group: job.group } : {}),
   };
 
   const deployResult = usePairedDeploy
@@ -2080,6 +2799,7 @@ async function runDeployReloadVerify({
         privateKeyPath: stagedKeyPath,
         chainPem: deployChainPem,
         checkPath,
+        retainPrivateKeyStaging,
       })
     : await deployCertificate({
         target: deployTarget,
@@ -2106,6 +2826,7 @@ async function runDeployReloadVerify({
       errorMessage: boundErrorMessage(
         `deploy step failed at stage ${deployResult.stage}: ${deployResult.error}`,
       ),
+      deployResult,
     };
   }
 
@@ -2144,6 +2865,12 @@ async function runDeployReloadVerify({
     leaseOpts,
   });
   if (reloadOutcome !== null && reloadOutcome.status !== "succeeded") {
+    if (retainBackups === true) {
+      return {
+        ...reloadOutcome,
+        deployResult,
+      };
+    }
     const rollback = await rollbackAfterFailedTail({
       job,
       jobId,
@@ -2153,7 +2880,7 @@ async function runDeployReloadVerify({
       failedStep: "reload",
       log,
     });
-    return withRollbackNote(reloadOutcome, rollback);
+    return { ...withRollbackNote(reloadOutcome, rollback), deployResult };
   }
 
   // Verify step: always fingerprint the deployed PEM; probe the live
@@ -2178,6 +2905,13 @@ async function runDeployReloadVerify({
           metadata: [{ name: "step", value: "verify" }],
         }),
       ]);
+      const failedOutcome = {
+        status: "rejected",
+        rejectionReason: destinationVerdict.rejectionReason,
+        errorMessage: boundErrorMessage(destinationVerdict.detail),
+        deployResult,
+      };
+      if (retainBackups === true) return failedOutcome;
       const rollback = await rollbackAfterFailedTail({
         job,
         jobId,
@@ -2187,14 +2921,7 @@ async function runDeployReloadVerify({
         failedStep: "verify-authorization",
         log,
       });
-      return withRollbackNote(
-        {
-          status: "rejected",
-          rejectionReason: destinationVerdict.rejectionReason,
-          errorMessage: boundErrorMessage(destinationVerdict.detail),
-        },
-        rollback,
-      );
+      return { ...withRollbackNote(failedOutcome, rollback), deployResult };
     }
 
     const probe = await verifyDeployedCertificate({
@@ -2212,6 +2939,14 @@ async function runDeployReloadVerify({
           metadata: [{ name: "step", value: "verify" }],
         }),
       ]);
+      const failedOutcome = {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          "verify step failed: live endpoint does not serve the deployed certificate",
+        ),
+        deployResult,
+      };
+      if (retainBackups === true) return failedOutcome;
       const rollback = await rollbackAfterFailedTail({
         job,
         jobId,
@@ -2221,15 +2956,7 @@ async function runDeployReloadVerify({
         failedStep: "verify",
         log,
       });
-      return withRollbackNote(
-        {
-          status: "failed",
-          errorMessage: boundErrorMessage(
-            "verify step failed: live endpoint does not serve the deployed certificate",
-          ),
-        },
-        rollback,
-      );
+      return { ...withRollbackNote(failedOutcome, rollback), deployResult };
     }
     verifySummary = `Verified deployed certificate fingerprint for job ${jobId} against live endpoint.`;
   }
@@ -2243,20 +2970,23 @@ async function runDeployReloadVerify({
     }),
   ]);
 
-  // Post-verify: only now is it safe to discard the previous key/cert backups.
-  try {
-    await discardDeployBackups({
-      backupPaths: deployResult.backupPaths,
-      backupPath: deployResult.backupPath,
-    });
-  } catch (err) {
-    emitLog(
-      log,
-      `tokentimer-agent: could not discard deploy backups for job ${jobId}: ${err.message}`,
-    );
+  // Post-verify: only now is it safe to discard the previous key/cert backups
+  // (unless the multi-target coordinator retains them until full commit).
+  if (retainBackups !== true) {
+    try {
+      await discardDeployBackups({
+        backupPaths: deployResult.backupPaths,
+        backupPath: deployResult.backupPath,
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `tokentimer-agent: could not discard deploy backups for job ${jobId}: ${err.message}`,
+      );
+    }
   }
 
-  return { status: "succeeded", errorMessage: null };
+  return { status: "succeeded", errorMessage: null, deployResult };
 }
 
 /**
@@ -2360,6 +3090,7 @@ async function executeDeployJob({
   log,
   leaseOpts = null,
   executionContext = null,
+  onBeforeMutation = null,
 }) {
   const deployTargetsResolved = resolveJobDeployTargets(job);
   if (deployTargetsResolved.error) {
@@ -2372,10 +3103,16 @@ async function executeDeployJob({
     };
   }
 
-  // Same key-path convention as renew. Presence enables full key-match;
-  // absence is the common standalone-deploy case (key-less validation).
+  // keysDir is staging/custody only — never an implicit production destination.
+  // Resolve a permitted agent-local key for validation / paired install when
+  // any target (or the job) names a keyPath, or when a certificateId key exists.
   let keyPath = null;
   const keysDir = executionContext?.execution?.keysDir;
+  const needsKey =
+    deployTargetsResolved.targets.some(
+      (t) => typeof t.keyPath === "string" && t.keyPath.length > 0,
+    ) || isAbsolutePathLike(job?.keyPath);
+
   if (
     typeof keysDir === "string" &&
     keysDir.length > 0 &&
@@ -2386,6 +3123,16 @@ async function executeDeployJob({
     if (fs.existsSync(candidate)) {
       keyPath = candidate;
     }
+  }
+
+  if (needsKey && !keyPath) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "deploy job requires key-matching validation / keyPath install but no " +
+          "permitted local key reference exists under keysDir",
+      ),
+    };
   }
 
   const sansResolved = resolveJobSans(job);
@@ -2409,6 +3156,7 @@ async function executeDeployJob({
     requestedSans,
     log,
     leaseOpts,
+    onBeforeMutation,
   });
 }
 
@@ -2418,7 +3166,16 @@ async function executeDeployJob({
  * @param {object} params
  * @returns {Promise<object>}
  */
-async function executeReloadJob({ job, jobId, policyEngine, client, log, leaseOpts = null }) {
+async function executeReloadJob({
+  job,
+  jobId,
+  policyEngine,
+  client,
+  log,
+  leaseOpts = null,
+  onBeforeMutation = null,
+}) {
+  if (typeof onBeforeMutation === "function") onBeforeMutation("reload");
   const outcome = await maybeReloadForJob({
     job,
     jobId,
@@ -2432,9 +3189,6 @@ async function executeReloadJob({ job, jobId, policyEngine, client, log, leaseOp
       status: "failed",
       errorMessage: "reload job carries no reloadService field",
     };
-  }
-  if (outcome.status === "succeeded") {
-    return { status: "succeeded", errorMessage: null };
   }
   return outcome;
 }
@@ -2712,6 +3466,21 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   // any network call so a corrupted replay store fails startup immediately.
   const executionContext = buildExecutionContext({ config });
 
+  // Crash-safety: surface unresolved side-effect journals for operator
+  // reconciliation. Do not auto-re-execute those jobIds.
+  try {
+    const unresolved = scanUnresolvedJournalEntries(configDir);
+    if (unresolved.length > 0) {
+      console.error(
+        `tokentimer-agent: ${formatUnresolvedJournalReport(unresolved)}`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `tokentimer-agent: job-journal scan failed at startup: ${err.message}`,
+    );
+  }
+
   const controller = new AbortController();
   const stop = () => controller.abort();
   if (externalSignal) {
@@ -2937,8 +3706,14 @@ module.exports = {
   persistAndTransmitOutcome,
   adoptSigningKeyRotation,
   renewJobLeaseOrAbort,
+  createLeaseState,
+  startPeriodicLeaseRenewal,
+  stopPeriodicLeaseRenewal,
   AGENT_VERSION,
   AGENT_RETIRED_EXIT_CODE,
   EXECUTABLE_JOB_ACTIONS,
   OBSERVE_ONLY_CLAIM_ACTIONS,
+  DEFAULT_JOB_LEASE_MS,
+  MAX_LEASE_TRANSIENT_RETRIES,
+  LEASE_HEARTBEAT_INTERVAL_MS,
 };

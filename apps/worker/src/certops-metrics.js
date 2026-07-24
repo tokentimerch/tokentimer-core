@@ -30,6 +30,12 @@ export const gCertopsNoncesSwept = new client.Gauge({
   registers: [metricsRegister],
 });
 
+export const gCertopsRegistrationReplaysSwept = new client.Gauge({
+  name: "certops_registration_replays_swept",
+  help: "Expired registration replay rows deleted in the last sweep",
+  registers: [metricsRegister],
+});
+
 export const gCertopsRenewalJobsCreated = new client.Gauge({
   name: "certops_renewal_jobs_created",
   help: "Renew jobs created by the last renewal-scheduler run",

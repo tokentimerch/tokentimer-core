@@ -24,6 +24,12 @@ overrides:
   ip-address: 10.2.0
   form-data: 4.0.6
   ws: 8.21.0
+  # Low-severity DoS when an invalid limit silently disables size enforcement
+  # (GHSA-v422-hmwv-36x6). express@5.2.1 allows ^2.2.1; pin the patched release.
+  body-parser: 2.3.0
+  # AJV pulls fast-uri; pin past GHSA-q3j6-qgpj-74h6 / GHSA-v39h-62p7-jpjc /
+  # GHSA-4c8g-83qw-93j6 / GHSA-v2hh-gcrm-f6hx (path traversal + host confusion).
+  fast-uri: 3.1.4
 
 allowBuilds:
   esbuild: true

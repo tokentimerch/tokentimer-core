@@ -266,6 +266,12 @@
             "type": ["string", "null"],
             "maxLength": 512
           },
+          "keyPath": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "pattern": "^/",
+            "description": "Absolute POSIX destination for the matching private key PEM. Path/mode metadata only — never key content."
+          },
           "reloadService": {
             "type": ["string", "null"],
             "maxLength": 128,
@@ -275,9 +281,54 @@
             "type": ["string", "null"],
             "maxLength": 512,
             "description": "Optional absolute destination for the intermediate chain PEM (agent-local / forward-compatible)."
+          },
+          "certMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for certPath (octal string like \"0644\" or integer). World-writable modes are rejected at runtime."
+          },
+          "keyMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for keyPath (octal string like \"0600\" or integer). World-writable modes are rejected at runtime."
+          },
+          "chainMode": {
+            "type": ["string", "integer", "null"],
+            "description": "POSIX file mode for chainPath (octal string like \"0644\" or integer). World-writable modes are rejected at runtime."
+          },
+          "owner": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
+            "description": "Optional POSIX username for deployed cert/key/chain ownership."
+          },
+          "group": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
+            "description": "Optional POSIX group name for deployed cert/key/chain ownership."
+          },
+          "backupDir": {
+            "type": ["string", "null"],
+            "maxLength": 512,
+            "pattern": "^/",
+            "description": "Optional absolute directory for timestamped backups of replaced files."
+          },
+          "backupRetentionCount": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 64,
+            "description": "Optional bounded count of retained backups per destination basename."
           }
         }
       }
+    },
+    "keyPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^/",
+      "description": "Optional absolute filesystem destination for the matching private key PEM (job-level fallback when a target omits keyPath). Path only — never key content."
     },
     "chainPath": {
       "type": "string",

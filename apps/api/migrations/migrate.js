@@ -2136,6 +2136,35 @@ const migrations = [
         ON certops_agent_registration_replays(workspace_id, created_at DESC);
     `,
   },
+  {
+    version: 30,
+    name: "certops_registration_replay_credential_encryption",
+    sql: `
+      -- Encrypt H1 registration-replay credentials at rest. Pre-existing
+      -- plaintext rows are wiped (short-lived crash-retry window only); a
+      -- retry after wipe uses a fresh bootstrap token / registration.
+      ALTER TABLE certops_agent_registration_replays
+        ADD COLUMN IF NOT EXISTS credential_ciphertext TEXT NULL
+          CHECK (
+            credential_ciphertext IS NULL OR
+            (
+              char_length(credential_ciphertext) BETWEEN 1 AND 2048 AND
+              credential_ciphertext ~ '^[a-f0-9]+:[a-f0-9]+:[a-f0-9]+$'
+            )
+          );
+      ALTER TABLE certops_agent_registration_replays
+        ADD COLUMN IF NOT EXISTS encryption_version INTEGER NOT NULL DEFAULT 1
+          CHECK (encryption_version >= 1);
+
+      DELETE FROM certops_agent_registration_replays;
+
+      ALTER TABLE certops_agent_registration_replays
+        DROP COLUMN IF EXISTS credential;
+
+      ALTER TABLE certops_agent_registration_replays
+        ALTER COLUMN credential_ciphertext SET NOT NULL;
+    `,
+  },
 ];
 
 async function runMigrations() {

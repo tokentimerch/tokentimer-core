@@ -120,6 +120,20 @@ plane's job-signing public key in `signing-key-pin.json` (trust-on-first-use,
 ADR-0003). A stored credential with no `agentId` in `config.json` is an
 inconsistent config directory and aborts startup.
 
+#### Encrypted registration recovery
+
+A lost register response can be replayed within a short window by presenting
+the same authenticated bootstrap token plus the original `registrationId`.
+The control plane stores that replay credential as an AES-256-GCM encrypted
+envelope in `certops_agent_registration_replays` (never plaintext). Decrypt
+happens only on that authenticated replay path
+(`apps/api/services/certops/registrationCredentialCrypto.js`). The API process
+requires `CERTOPS_REGISTRATION_ENCRYPTION_KEY` (64 hex chars = 32 bytes) and
+fails closed if it is missing or malformed. Replay TTL defaults to 15 minutes
+and is overridable via `CERTOPS_REGISTRATION_REPLAY_TTL_MS` (positive
+milliseconds). Expired replay rows are deleted by the CertOps maintenance
+worker's `registration-replay-sweep`.
+
 ### Config reference (`config.json`)
 
 Validation is fail-loud: a malformed value aborts startup with a descriptive
@@ -175,7 +189,8 @@ Top level:
 
 The agent speaks the envelope defined in
 `packages/contracts/certops/agent-protocol.schema.json` over four frozen
-routes (`src/protocol/index.js` `ROUTES`):
+routes (`src/protocol/index.js` `ROUTES`), plus a plain (non-envelope) lease
+renewal POST used during job execution:
 
 | Message | Route |
 |---------|-------|
@@ -183,6 +198,7 @@ routes (`src/protocol/index.js` `ROUTES`):
 | `heartbeat` | `POST /api/v1/certops/agent/heartbeat` |
 | `claim` | `POST /api/v1/certops/agent/jobs/claim` |
 | `result`, `evidence` | `POST /api/v1/certops/agent/jobs/results` |
+| lease renew (B6) | `POST /api/v1/certops/agent/jobs/:jobId/lease` |
 
 Result and evidence share one route; the envelope's `messageType`
 disambiguates server-side. Every envelope carries `schemaVersion` (1),
@@ -190,6 +206,19 @@ disambiguates server-side. Every envelope carries `schemaVersion` (1),
 `workspaceId`, `clockOffsetMs`, and `sequence`. Messages must never carry
 private key material (schema-level rule, enforced again by the evidence
 builder).
+
+### Protocol validation parity
+
+Register, heartbeat, claim, result, and evidence envelope/body shapes are
+validated by AJV compiled directly from the canonical
+`packages/contracts/certops/agent-protocol.schema.json` on both sides: the
+agent (`packages/agent/src/protocol/schemaValidation.js`, schema vendored
+under `packages/agent/vendor/contracts/`) and the API
+(`apps/api/services/certops/protocolSchemaValidation.js`). That eliminates
+drift between hand-written validators. Semantic and authorization checks
+(job `mode` vs result `status`, lease/nonce ownership, claim ownership,
+sequence) remain in the service layer (`agentDispatch`), not in the AJV
+compile.
 
 Message sequence: the protocol client stamps every outbound envelope with
 `sequence`, a per-agent monotonically increasing counter, and the control
@@ -223,8 +252,10 @@ Flow:
 - **claim**: every `pollIntervalMs`, requests up to `maxJobs` (the main loop
   uses 1) and processes each returned job.
 - **result/evidence**: terminal job outcome (`succeeded`, `failed`,
-  `rejected`, `blocked`, plus `rejectionReason`, `keyRotated`,
-  `errorMessage`, `clockOffsetMs`) and per-step evidence bodies.
+  `rejected`, `blocked`, `dry_run_complete`, `orphaned_unknown_effect`,
+  plus `rejectionReason`, `keyRotated`, `errorMessage`, `clockOffsetMs`)
+  and per-step evidence bodies. See "Dry-run and reconciliation statuses"
+  below for mode gating on the two newer terminals.
 
 Backoff and jitter: poll loops apply +/-20% jitter to every interval
 (`jitteredDelay`) to avoid fleet thundering herd. `withRetry` provides
@@ -239,6 +270,36 @@ server. The estimator keeps a rolling window of the last 5 samples and
 reports the median, because the Date header has 1-second resolution and
 individual samples are contaminated by network latency. This is a coarse
 drift detector for the signed-job time window, not an NTP replacement.
+
+### Dry-run and reconciliation statuses
+
+Job `mode` is an immutable control-plane field on the claimed job. Result
+ingestion (`ingestResult`) enforces:
+
+| Status | Valid when | Control-plane effect |
+|--------|------------|----------------------|
+| `dry_run_complete` | job `mode` is `dry_run` only (real jobs reporting it are rejected) | Terminal success-equivalent for plan-only work; does **not** set `needs_operator_reconciliation` |
+| `orphaned_unknown_effect` | real jobs only (dry-run jobs reporting it are rejected) | Sets `needs_operator_reconciliation=true` and a bounded `reconciliation_reason` (from the agent `errorMessage` markers, or the fallback `agent_reported_orphaned_unknown_effect`) |
+
+`orphaned_unknown_effect` is an operational failure that requires manual
+reconciliation, not a policy rejection (`rejectionReason` is not used for
+this path). The agent embeds `needsOperatorReconciliation=true` and optional
+`reconciliationReason=<slug>` in `errorMessage` when it self-reports
+uncertainty (for example multi-target rollback uncertain, or an unresolved
+local side-effect journal on restart).
+
+The worker lease reaper also reaches `orphaned_unknown_effect` when a lease
+expires after renewal (or while status is already `running`) in the
+side-effect-risk window and the agent is no longer expected to report: it
+sets `needs_operator_reconciliation` with reason
+`lease_expired_after_side_effect_window_agent_unresponsive`. Never-renewed
+`claimed` leases may still be requeued; renewed/`running` leases are never
+silently requeued.
+
+Dry-run jobs must never terminate as `succeeded`; the agent reports
+`dry_run_complete` instead. Local `execution.dryRun: true` is a separate
+safety refusal: it **blocks** a `mode:"real"` job outright and never
+silently downgrades it to a successful plan-only report.
 
 ## 4. Job security model
 
@@ -330,11 +391,41 @@ escape the allowlisted roots.
 `handleSignedJob` in `src/index.js` runs the fixed order:
 
 ```
-signature verify -> replay check -> clock window -> policy -> replay consume -> execute
+signature verify -> replay check -> clock window -> policy -> replay consume
+  -> unresolved-journal check -> mandatory lease start (claimed→running)
+  -> execute (with periodic lease renew + per-mutation renew)
 ```
 
 Any `{ allowed: false }` verdict reports `policy.checked` evidence plus a
 `rejected` result with that `rejectionReason` and stops the chain.
+
+### Fail-closed lease start
+
+The first lease renew after accept is mandatory and fail-closed: it is the
+`claimed` → `running` confirmation. No external side effect begins until the
+server confirms ownership. During execution the agent:
+
+- runs a periodic lease heartbeat while the job is active;
+- renews the lease immediately before each side-effecting stage (key
+  generation/rotation, ACME including DNS-01 challenge work driven by the
+  ACME adapter, deploy, reload).
+
+On HTTP `409` (ownership/lease conflict), `410` (agent retired), confirmed
+lease loss, or a mandatory confirmation failure, execution aborts. A lost
+mandatory start is reported as a terminal `blocked`/`failed` outcome rather
+than proceeding optimistically.
+
+### Side-effect journal and crash recovery
+
+Before the first external mutation of a job attempt, the agent persists a
+claim-scoped side-effect journal entry under
+`<configDir>/job-journal/<jobId>-<attemptId>.json` (dir 0700, file 0600;
+ids and stage names only — never private keys). Stages recorded include
+`keygen`, `acme`, `deploy`, and `reload`. On restart, if an unresolved
+journal entry exists for the job id, the agent refuses automatic
+re-execution and reports `orphaned_unknown_effect` with
+`needsOperatorReconciliation=true` so an operator can reconcile host state.
+Terminal outcomes clear the journal entry when reporting completes.
 
 Supported actions: `renew`, `deploy`, `reload`, `noop`. `revoke` is always
 `blocked` (out of scope for this agent build). `deploy` without a `certificatePem` field
@@ -378,19 +469,41 @@ For `renew` (`executeRenewJob`):
    No private key and no DNS/EAB credentials ever appear in argv; credentials
    stay in agent-local 0600 files referenced by path in `config.json`.
    Default exec timeout is 10 minutes.
-4. **Deploy** (`src/deploy`): atomic install to each resolved destination.
-   When `job.deploymentTargets` is a non-empty array, deploy/reload/verify
-   runs once per target (all-or-nothing: any target failure fails the job;
-   `orphaned_unknown_effect` wins if any target is orphaned). Otherwise a
-   single `certPath` / absolute `target.reference` is used. Optional
-   `chainPath` receives intermediate PEM blocks split from a fullchain-style
-   blob (leaf stays at `certPath`). Deploy includes
-   target-config re-validation, realpath containment re-check via the policy
-   `checkPath` callback, idempotent skip for byte-identical content,
-   timestamped backup before overwrite, temp-file-plus-rename atomic write
-   with fsync, automatic rollback on failure, and a per-destination async
-   mutex. Deployed files get mode 0600. The module throws if the payload
-   contains a PEM private-key marker, regardless of what the caller claims.
+4. **Deploy** (`src/deploy` + multi-target coordinator in `src/index.js`):
+   installs public certificate material (and, when configured, the matching
+   private key) to explicit destinations. Destination fields on each
+   `deploymentTargets[]` entry (and job-level fallbacks) include `certPath`,
+   optional `keyPath`, optional `chainPath` (intermediate PEM split from a
+   fullchain-style blob; leaf stays at `certPath`), per-file POSIX modes
+   (`certMode` / `keyMode` / `chainMode`), optional `owner`/`group`, and
+   optional `backupDir` plus validated `backupRetentionCount` (integer
+   1–64). `execution.keysDir` is staging/custody state for agent-generated
+   keys, **not** an implicit production destination — a deploy that needs a
+   live key without an explicit `keyPath` fails preflight. Private-key
+   bytes never traverse protocol envelopes, evidence, results, logs, audit,
+   or control-plane storage (paths and modes only).
+
+   When `job.deploymentTargets` has more than one entry, deploy is
+   transactional:
+
+   1. Preflight every target with no writes (path/policy/mode/ownership
+      shape, cert/SAN/key-match validation, lease renew).
+   2. Apply+verify each target in turn, renewing the lease before each
+      mutation and retaining all backups until commit.
+   3. On any failure: stop; roll back previously changed targets in reverse
+      order (restore backups or remove first-deploy files); reload restored
+      targets when configured. Every restored target → `failed`. Any
+      uncertain live state after a failed rollback →
+      `orphaned_unknown_effect` with reconciliation markers in
+      `errorMessage`.
+   4. Commit only after every target succeeds: discard retained backups,
+      then return `succeeded`.
+
+   A single target (or legacy single `certPath` / absolute
+   `target.reference`) keeps the same atomic write, timestamped backup,
+   realpath containment re-check, per-destination mutex, and
+   first-deploy-orphan promotion semantics. The module throws if any
+   payload contains a PEM private-key marker.
 5. **Reload** (`src/reload`, only when the job carries `reloadService`):
    validate-then-reload for `nginx`, `apache`, or `haproxy`. The job must
    name `reloadCommandRefs.validate` and `.reload`, both resolved through
@@ -410,11 +523,15 @@ For `renew` (`executeRenewJob`):
 jobs run step 5 only; `noop` reports a `validation.passed` evidence item and
 succeeds.
 
-Dry-run mode (`execution.dryRun`, default true): all trust gates still run,
-then instead of executing, the agent reports one `policy.checked` evidence
-item per step the action would run (with `dryRun: true` metadata) and
-returns `succeeded` with `keyRotated` null. Zero filesystem or exec side
-effects; the keys/acme/deploy/reload/verify modules are never called.
+Dry-run mode is driven by the signed job's immutable `mode` field (see
+"Dry-run and reconciliation statuses" in section 3). When `mode` is
+`dry_run`, all trust gates still run, then instead of executing the agent
+reports one `policy.checked` evidence item per step the action would run
+(with `dryRun: true` metadata) and returns `dry_run_complete` with
+`keyRotated` null. Zero filesystem or exec side effects; the
+keys/acme/deploy/reload/verify modules are never called. Local
+`execution.dryRun` (default true) remains a safety refusal for
+`mode:"real"` jobs only — it reports `blocked`, never a silent success.
 
 ### DNS-01 providers
 
@@ -596,11 +713,15 @@ Current behavior:
   what the control plane's claim route produces.
 - When `job.sans` is absent: the CSR CN and the ACME `-d` domain come
   from `job.target.reference`. When present, the full SAN list is used.
-- `certPath` resolution: an explicit `job.certPath` wins; otherwise
+- `certPath` / `keyPath` / `chainPath` resolution: an explicit
+  `job.certPath` (or per-target `certPath`) wins; otherwise
   `target.reference` is used as the deploy destination when it is an
-  absolute path (POSIX or Windows form); `job.deploymentTargets` deploys to
-  every listed destination. Neither present means the job fails
-  with a clear message.
+  absolute path (POSIX or Windows form). `job.deploymentTargets` deploys to
+  every listed destination with optional per-target `keyPath`, `chainPath`,
+  modes, ownership, and backup settings (see section 5). Neither a
+  resolvable cert destination nor a usable target list means the job fails
+  with a clear message. `keysDir` never substitutes for a missing
+  production `keyPath`.
 - `deploy` without `certificatePem` is `blocked`. The contract defines
   `certificatePem` as public leaf-plus-chain material attached by the
   control plane at signed dispatch time, never stored in the job payload
@@ -641,6 +762,17 @@ Windows:
 
 Common terminal states and what to look for:
 
+- **`orphaned_unknown_effect` / `needsOperatorReconciliation`**: live host
+  state is uncertain (failed multi-target rollback, first-ever deploy with
+  no prior backup after a post-deploy failure, unresolved local side-effect
+  journal on restart, or lease reaper expiry after renewal in the
+  side-effect-risk window). Inspect the host paths and the job's
+  `reconciliation_reason`, reconcile manually, then clear the operator
+  reconciliation flag before re-dispatching work for the same
+  certificate/target. This is not a policy rejection.
+- **`dry_run_complete`**: expected terminal for `mode:"dry_run"` jobs. If a
+  real job somehow reports it, the control plane rejects the result
+  (`CERTOPS_AGENT_RESULT_STATUS_INVALID`).
 - **Job `blocked`, "no control-plane signing key is pinned yet"**: execution
   is enabled but `signing-key-pin.json` is absent (the register response did
   not carry `signingKeyId`/`signingPublicKeyPem`). Re-register the agent

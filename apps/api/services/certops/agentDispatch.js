@@ -28,6 +28,13 @@ const {
   extendJobNonceExpiry,
 } = require("./jobSigning");
 const {
+  CERTOPS_REGISTRATION_CREDENTIAL_UNAVAILABLE,
+  CERTOPS_REGISTRATION_ENCRYPTION_KEY_MISSING,
+  ENCRYPTION_VERSION: REGISTRATION_CREDENTIAL_ENCRYPTION_VERSION,
+  decryptRegistrationCredential,
+  encryptRegistrationCredential,
+} = require("./registrationCredentialCrypto");
+const {
   lockWorkspaceForCertOpsSideEffect,
 } = require("./workspaceKillSwitch");
 const {
@@ -71,9 +78,18 @@ const CERTOPS_AGENT_LEASE_INVALID = "CERTOPS_AGENT_LEASE_INVALID";
 const CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE =
   "CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE";
 
-// RegistrationId → credential replay window (H1). Long enough for crash
-// recovery; short enough that plaintext credentials are not retained forever.
-const REGISTRATION_REPLAY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// RegistrationId → credential replay window (H1). Short crash-retry window;
+// override via CERTOPS_REGISTRATION_REPLAY_TTL_MS (milliseconds).
+const DEFAULT_REGISTRATION_REPLAY_TTL_MS = 15 * 60 * 1000;
+
+function registrationReplayTtlMs(env = process.env) {
+  const raw = Number.parseInt(env.CERTOPS_REGISTRATION_REPLAY_TTL_MS, 10);
+  if (Number.isSafeInteger(raw) && raw > 0) return raw;
+  return DEFAULT_REGISTRATION_REPLAY_TTL_MS;
+}
+
+// Back-compat alias for callers/tests that read the constant default.
+const REGISTRATION_REPLAY_TTL_MS = DEFAULT_REGISTRATION_REPLAY_TTL_MS;
 
 const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   succeeded: "succeeded",
@@ -83,7 +99,41 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   // B4: dry-run terminal. Agent engineers must report this (never
   // "succeeded") when the claimed job's mode is "dry_run".
   dry_run_complete: "dry_run_complete",
+  // Agent self-reported: side effects may have occurred and rollback is
+  // uncertain. Requires operator reconciliation (distinct from failed).
+  orphaned_unknown_effect: "orphaned_unknown_effect",
 });
+
+// Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
+// `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
+const NEEDS_OPERATOR_RECONCILIATION_RE = /needsOperatorReconciliation=true/;
+const RECONCILIATION_REASON_RE = /reconciliationReason=([a-z0-9_]+)/;
+const RECONCILIATION_REASON_MAX_LENGTH = 1024;
+const FALLBACK_ORPHANED_RECONCILIATION_REASON =
+  "agent_reported_orphaned_unknown_effect";
+
+/**
+ * Extract operator-reconciliation markers from an agent result errorMessage.
+ * Returns a bounded reason slug when present; never throws.
+ */
+function parseReconciliationFromErrorMessage(errorMessage) {
+  if (typeof errorMessage !== "string" || errorMessage.length === 0) {
+    return {
+      needsOperatorReconciliation: false,
+      reconciliationReason: null,
+    };
+  }
+  const needsOperatorReconciliation =
+    NEEDS_OPERATOR_RECONCILIATION_RE.test(errorMessage);
+  const match = errorMessage.match(RECONCILIATION_REASON_RE);
+  const reconciliationReason = match ? match[1] : null;
+  return { needsOperatorReconciliation, reconciliationReason };
+}
+
+function boundReconciliationReason(reason) {
+  if (typeof reason !== "string" || reason.length === 0) return null;
+  return reason.slice(0, RECONCILIATION_REASON_MAX_LENGTH);
+}
 
 // Re-export shared lease default for existing callers/tests.
 const { DEFAULT_JOB_LEASE_SECONDS } = require("./leaseTiming");
@@ -205,9 +255,13 @@ async function enforceAgentSequence({ client = pool, agentRowId, envelope }) {
  * { agentId, credential, protocolVersion, signingKeyId, signingPublicKeyPem }.
  */
 function registrationReplayResponse(row) {
+  const credential = decryptRegistrationCredential(
+    row.credential_ciphertext,
+    row.encryption_version,
+  );
   return {
     agentId: row.agent_id,
-    credential: row.credential,
+    credential,
     protocolVersion: row.protocol_version,
     signingKeyId: row.signing_key_id ?? null,
     signingPublicKeyPem: row.signing_public_key_pem ?? null,
@@ -217,7 +271,8 @@ function registrationReplayResponse(row) {
 async function findRegistrationReplay(client, bootstrapTokenId, registrationId) {
   const result = await client.query(
     `SELECT agent_id,
-            credential,
+            credential_ciphertext,
+            encryption_version,
             protocol_version,
             signing_key_id,
             signing_public_key_pem
@@ -268,7 +323,18 @@ async function registerAgent({
       registrationId,
     );
     if (existingReplay) {
-      return registrationReplayResponse(existingReplay);
+      try {
+        return registrationReplayResponse(existingReplay);
+      } catch (error) {
+        // Corrupt/unreadable envelope: treat as replay-not-available so a
+        // still-active token can mint fresh, and a spent token hard-rejects.
+        if (
+          error?.code !== CERTOPS_REGISTRATION_CREDENTIAL_UNAVAILABLE &&
+          error?.code !== CERTOPS_REGISTRATION_ENCRYPTION_KEY_MISSING
+        ) {
+          throw error;
+        }
+      }
     }
 
     // Spent token + unknown registrationId remains a hard rejection (H1).
@@ -283,6 +349,10 @@ async function registerAgent({
     // constraint failure cannot leave a half-registered agent.
     const signingKey = await ensureKey({ client });
     const credential = generateCredential();
+    // Fail closed BEFORE persisting: never store plaintext credentials.
+    const credentialCiphertext = encryptRegistrationCredential(
+      credential.plaintextCredential,
+    );
 
     const inserted = await client.query(
       `INSERT INTO certops_agents (
@@ -369,24 +439,26 @@ async function registerAgent({
          bootstrap_token_id,
          registration_id,
          agent_id,
-         credential,
+         credential_ciphertext,
+         encryption_version,
          protocol_version,
          signing_key_id,
          signing_public_key_pem,
          expires_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + make_interval(secs => $9))
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW() + make_interval(secs => $10))
        ON CONFLICT (bootstrap_token_id, registration_id) DO NOTHING`,
       [
         bootstrapToken.workspaceId,
         bootstrapToken.id,
         registrationId,
         response.agentId,
-        response.credential,
+        credentialCiphertext,
+        REGISTRATION_CREDENTIAL_ENCRYPTION_VERSION,
         response.protocolVersion,
         response.signingKeyId,
         response.signingPublicKeyPem,
-        Math.floor(REGISTRATION_REPLAY_TTL_MS / 1000),
+        Math.floor(registrationReplayTtlMs() / 1000),
       ],
     );
 
@@ -1077,7 +1149,9 @@ async function ingestResult({
       );
     }
 
-    // B4: dry_run jobs must never terminate as succeeded.
+    // B4: dry_run jobs must never terminate as succeeded; real jobs must
+    // never terminate as dry_run_complete. Dry-run jobs also cannot report
+    // orphaned_unknown_effect (they never mutate real-world state).
     const jobMode = job.mode || "real";
     if (jobMode === "dry_run" && jobStatus === "succeeded") {
       throw serviceError(
@@ -1088,6 +1162,12 @@ async function ingestResult({
     if (jobMode === "real" && jobStatus === "dry_run_complete") {
       throw serviceError(
         "dry_run_complete is only valid for dry_run jobs",
+        CERTOPS_AGENT_RESULT_STATUS_INVALID,
+      );
+    }
+    if (jobMode === "dry_run" && jobStatus === "orphaned_unknown_effect") {
+      throw serviceError(
+        "orphaned_unknown_effect is only valid for real jobs",
         CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
@@ -1158,6 +1238,18 @@ async function ingestResult({
           ).slice(0, 1024)
         : null;
 
+    // Only ever SET needs_operator_reconciliation to true here — never clear
+    // an existing true from fencing (clearing is an explicit operator action).
+    let setNeedsReconciliation = false;
+    let reconciliationReason = null;
+    if (jobStatus === "orphaned_unknown_effect") {
+      setNeedsReconciliation = true;
+      const parsed = parseReconciliationFromErrorMessage(body.errorMessage);
+      reconciliationReason = boundReconciliationReason(
+        parsed.reconciliationReason || FALLBACK_ORPHANED_RECONCILIATION_REASON,
+      );
+    }
+
     const updated = await client.query(
       `UPDATE certificate_jobs
           SET status = $2,
@@ -1165,10 +1257,26 @@ async function ingestResult({
               error_message = $4,
               completed_at = COALESCE(completed_at, NOW()),
               lease_expires_at = NULL,
+              needs_operator_reconciliation = CASE
+                WHEN $5::boolean THEN TRUE
+                ELSE needs_operator_reconciliation
+              END,
+              reconciliation_reason = CASE
+                WHEN $5::boolean THEN $6
+                ELSE reconciliation_reason
+              END,
               updated_at = NOW()
         WHERE id = $1
-        RETURNING id, status, error_code, completed_at`,
-      [job.id, jobStatus, errorCode, errorMessage],
+        RETURNING id, status, error_code, completed_at,
+                  needs_operator_reconciliation, reconciliation_reason`,
+      [
+        job.id,
+        jobStatus,
+        errorCode,
+        errorMessage,
+        setNeedsReconciliation,
+        reconciliationReason,
+      ],
     );
 
     const row = updated.rows[0];
@@ -1287,13 +1395,18 @@ module.exports = {
   renewJobLease,
   resolveDeployPublicCertificate,
   _test: {
+    DEFAULT_REGISTRATION_REPLAY_TTL_MS,
+    FALLBACK_ORPHANED_RECONCILIATION_REASON,
     REGISTRATION_REPLAY_TTL_MS,
     RESULT_STATUS_TO_JOB_STATUS,
+    boundReconciliationReason,
     dateToIso,
     envelopeSequence,
     findRegistrationReplay,
     normalizeStringList,
+    parseReconciliationFromErrorMessage,
     registrationReplayResponse,
+    registrationReplayTtlMs,
     safeParseJson,
     serviceError,
     withTransaction,

@@ -137,6 +137,78 @@ describe("certops renewal profile", () => {
     assert.ok(payload.renewalProfile);
   });
 
+  it("flattens per-target keyPath/mode/owner/backup fields onto the job payload", () => {
+    const sourceProfile = validProfile({
+      deploymentTargets: [
+        {
+          type: "endpoint",
+          reference: "host/web",
+          certPath: "/etc/ssl/certs/app.pem",
+          keyPath: "/etc/ssl/private/app.key",
+          chainPath: "/etc/ssl/certs/app-chain.pem",
+          certMode: "0644",
+          keyMode: "0600",
+          chainMode: "0644",
+          owner: "www-data",
+          group: "ssl-cert",
+          backupDir: "/var/backups/certs",
+          backupRetentionCount: 3,
+          reloadService: "nginx",
+        },
+      ],
+      target: {
+        type: "endpoint",
+        reference: "host/web",
+        certPath: "/etc/ssl/certs/app.pem",
+        keyPath: "/etc/ssl/private/app.key",
+        chainPath: "/etc/ssl/certs/app-chain.pem",
+      },
+    });
+    const profile = validateRenewalProfile(sourceProfile);
+    assert.equal(profile.deploymentTargets[0].keyPath, "/etc/ssl/private/app.key");
+    assert.equal(profile.deploymentTargets[0].certMode, 0o644);
+    assert.equal(profile.deploymentTargets[0].keyMode, 0o600);
+    assert.equal(profile.deploymentTargets[0].owner, "www-data");
+    assert.equal(profile.deploymentTargets[0].backupRetentionCount, 3);
+
+    const certificate = {
+      id: "cert-2",
+      profile_id: "profile-1",
+      profile_name: "web-tls",
+      common_name: "app.example.com",
+      subject_alt_names: ["app.example.com"],
+      key_mode: "agent-local",
+      not_after: new Date("2026-08-01T00:00:00.000Z"),
+      profile_public_metadata: { renewalProfile: sourceProfile },
+    };
+    const payload = buildRenewalJobPayload({ certificate });
+    assert.equal(payload.keyPath, "/etc/ssl/private/app.key");
+    assert.equal(payload.chainPath, "/etc/ssl/certs/app-chain.pem");
+    assert.equal(payload.deploymentTargets[0].keyPath, "/etc/ssl/private/app.key");
+    assert.equal(payload.deploymentTargets[0].owner, "www-data");
+    assert.equal(payload.deploymentTargets[0].backupDir, "/var/backups/certs");
+  });
+
+  it("rejects world-writable file modes on deployment targets", () => {
+    assert.throws(
+      () =>
+        validateRenewalProfile(
+          validProfile({
+            deploymentTargets: [
+              {
+                type: "endpoint",
+                reference: "host/web",
+                certPath: "/etc/ssl/certs/app.pem",
+                certMode: "0666",
+                reloadService: "nginx",
+              },
+            ],
+          }),
+        ),
+      /world-writable/,
+    );
+  });
+
   it("refuses certificates without a linked renewal profile", () => {
     assert.throws(
       () =>

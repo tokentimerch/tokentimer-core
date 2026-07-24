@@ -229,7 +229,7 @@ describe("certops maintenance worker", () => {
     assert.ok(update, "never-renewed past grace must requeue safely");
   });
 
-  it("fails renewed jobs as effects_unknown without requeue (B6)", async () => {
+  it("marks renewed expired leases as orphaned_unknown_effect with reconciliation fields", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
@@ -256,10 +256,29 @@ describe("certops maintenance worker", () => {
       deferred: 0,
     });
     const update = client.queries.find((q) =>
-      q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
+      q.sql.startsWith(
+        "UPDATE certificate_jobs SET status = 'orphaned_unknown_effect'",
+      ),
     );
-    assert.ok(update, "expected a fail UPDATE");
-    assert.deepStrictEqual(update.params, ["job-renewed", "effects_unknown"]);
+    assert.ok(update, "expected an orphaned_unknown_effect UPDATE");
+    assert.match(update.sql, /needs_operator_reconciliation = TRUE/);
+    assert.match(update.sql, /reconciliation_reason = \$3/);
+    assert.deepStrictEqual(update.params, [
+      "job-renewed",
+      "effects_unknown",
+      "lease_expired_after_side_effect_window_agent_unresponsive",
+    ]);
+
+    const logInsert = client.queries.find((q) =>
+      q.sql.startsWith("INSERT INTO certificate_job_log"),
+    );
+    assert.strictEqual(logInsert.params[3], "orphaned_unknown_effect");
+    const metadata = JSON.parse(logInsert.params[5]);
+    assert.strictEqual(metadata.outcome, "orphaned_unknown_effect");
+    assert.strictEqual(
+      metadata.reconciliationReason,
+      "lease_expired_after_side_effect_window_agent_unresponsive",
+    );
   });
 
   it("fails claimed jobs without retry budget as agent_offline", async () => {
@@ -305,7 +324,7 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(metadata.errorCode, "agent_offline");
   });
 
-  it("never requeues running jobs because side effects may have happened", async () => {
+  it("never requeues running jobs; marks them orphaned_unknown_effect instead", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
@@ -332,10 +351,84 @@ describe("certops maintenance worker", () => {
       deferred: 0,
     });
     const update = client.queries.find((q) =>
+      q.sql.startsWith(
+        "UPDATE certificate_jobs SET status = 'orphaned_unknown_effect'",
+      ),
+    );
+    assert.ok(update, "running job must orphan, not requeue");
+    assert.deepStrictEqual(update.params, [
+      "job-3",
+      "effects_unknown",
+      "lease_expired_after_side_effect_window_agent_unresponsive",
+    ]);
+  });
+
+  it("regression: still defers alive agents within hard grace unchanged", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-alive-regression",
+        workspace_id: "ws-1",
+        status: "running",
+        attempt_count: 1,
+        max_attempts: 3,
+        lease_renewed_at: new Date("2026-07-22T10:00:00.000Z"),
+        agent_alive: true,
+        past_hard_grace: false,
+      },
+    ]);
+
+    const summary = await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+    });
+
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 0,
+      deferred: 1,
+    });
+    assert.ok(
+      !client.queries.some((q) => q.sql.startsWith("UPDATE certificate_jobs")),
+      "grace-deferred renewed jobs must remain untouched",
+    );
+  });
+
+  it("regression: still fails exhausted never-renewed claims as agent_offline", async () => {
+    const worker = await import(workerUrl);
+    const client = createReaperClient([
+      {
+        id: "job-offline-regression",
+        workspace_id: "ws-1",
+        status: "claimed",
+        attempt_count: 3,
+        max_attempts: 3,
+        lease_renewed_at: null,
+        agent_alive: false,
+        past_hard_grace: false,
+      },
+    ]);
+
+    const summary = await worker.reapExpiredLeases({
+      client,
+      log: silentLogger,
+    });
+
+    assert.deepStrictEqual(summary, {
+      scanned: 1,
+      requeued: 0,
+      failed: 1,
+      deferred: 0,
+    });
+    const update = client.queries.find((q) =>
       q.sql.startsWith("UPDATE certificate_jobs SET status = 'failed'"),
     );
-    assert.ok(update, "running job must fail, not requeue");
-    assert.deepStrictEqual(update.params, ["job-3", "effects_unknown"]);
+    assert.ok(update);
+    assert.deepStrictEqual(update.params, [
+      "job-offline-regression",
+      "agent_offline",
+    ]);
   });
 
   it("rolls back when a reaper update fails", async () => {
@@ -439,6 +532,10 @@ describe("certops maintenance worker", () => {
         assert.strictEqual(client.marker, "pool");
         return 7;
       },
+      registrationReplaySweeper: async ({ client }) => {
+        assert.strictEqual(client.marker, "pool");
+        return 0;
+      },
       renewalSweeper: async ({ dbPool }) => {
         renewalCalls += 1;
         assert.strictEqual(dbPool.marker, "pool");
@@ -451,6 +548,7 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(results.staleAgents.status, "failed");
     assert.strictEqual(results.nonceSweep.status, "success");
     assert.strictEqual(results.nonceSweep.result.deleted, 7);
+    assert.strictEqual(results.registrationReplaySweep.status, "success");
     assert.strictEqual(results.renewalScheduler.status, "success");
     assert.strictEqual(nonceCalls, 1);
     assert.strictEqual(renewalCalls, 1);
@@ -467,6 +565,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "0",
         CERTOPS_SWEEP_NONCE_ENABLED: "true",
+        CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
       },
       log: silentLogger,
@@ -489,6 +588,7 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(results.leaseReaper.status, "skipped");
     assert.strictEqual(results.staleAgents.status, "skipped");
     assert.strictEqual(results.nonceSweep.status, "success");
+    assert.strictEqual(results.registrationReplaySweep.status, "skipped");
     assert.strictEqual(results.renewalScheduler.status, "skipped");
     assert.strictEqual(nonceCalls, 1);
     assert.strictEqual(renewalCalls, 0);
@@ -504,6 +604,7 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_LEASE_REAPER_TIMEOUT_MS: "20",
         CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
         CERTOPS_SWEEP_NONCE_ENABLED: "false",
+        CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
       },
       log: silentLogger,
       withClientFn: async () => {
@@ -559,6 +660,7 @@ describe("certops maintenance worker", () => {
         seenClients.push(client);
         return 3;
       },
+      registrationReplaySweeper: async () => 0,
       renewalSweeper: async () => ({
         scanned: 0,
         created: 0,
@@ -573,5 +675,57 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(results.nonceSweep.result.deleted, 3);
     assert.strictEqual(seenClients.length, 1);
     assert.strictEqual(seenClients[0].marker, "the-pool");
+  });
+
+  it("invokes the registration-replay sweeper against the worker pool", async () => {
+    const worker = await import(workerUrl);
+    const seenClients = [];
+
+    const results = await worker.runCertOpsMaintenance({
+      env: {
+        CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+        CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
+        CERTOPS_SWEEP_NONCE_ENABLED: "false",
+        CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
+      },
+      log: silentLogger,
+      withClientFn: async (fn) => fn({ async query() { return { rows: [] }; } }),
+      dbPool: { marker: "replay-pool" },
+      registrationReplaySweeper: async ({ client }) => {
+        seenClients.push(client);
+        return 4;
+      },
+      pushMetricsFn: async () => {},
+    });
+
+    assert.strictEqual(results.registrationReplaySweep.status, "success");
+    assert.strictEqual(results.registrationReplaySweep.result.deleted, 4);
+    assert.strictEqual(seenClients.length, 1);
+    assert.strictEqual(seenClients[0].marker, "replay-pool");
+  });
+
+  it("honors the registration-replay sweep enable flag", async () => {
+    const worker = await import(workerUrl);
+    let replayCalls = 0;
+
+    const results = await worker.runCertOpsMaintenance({
+      env: {
+        CERTOPS_SWEEP_LEASE_REAPER_ENABLED: "false",
+        CERTOPS_SWEEP_STALE_AGENTS_ENABLED: "false",
+        CERTOPS_SWEEP_NONCE_ENABLED: "false",
+        CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
+        CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false",
+      },
+      log: silentLogger,
+      withClientFn: async (fn) => fn({ async query() { return { rows: [] }; } }),
+      registrationReplaySweeper: async () => {
+        replayCalls += 1;
+        return 1;
+      },
+      pushMetricsFn: async () => {},
+    });
+
+    assert.strictEqual(results.registrationReplaySweep.status, "skipped");
+    assert.strictEqual(replayCalls, 0);
   });
 });

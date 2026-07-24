@@ -373,7 +373,7 @@ describe("Results handler", () => {
           jobId: "42",
           attemptId: "claim-1",
           claimId: "claim-1",
-          nonce: "n-1",
+          nonce: "nonce-dispatch-01",
           status: "succeeded",
         }),
       },
@@ -399,7 +399,7 @@ describe("Results handler", () => {
           jobId: "42",
           attemptId: "claim-1",
           claimId: "claim-1",
-          nonce: "n-1",
+          nonce: "nonce-dispatch-01",
           status: "failed",
         }),
       },
@@ -426,7 +426,7 @@ describe("Results handler", () => {
         body: envelope("result", {
           jobId: "42",
           attemptId: "claim-1",
-          nonce: "n-1",
+          nonce: "nonce-dispatch-01",
           status: "succeeded",
         }),
       },
@@ -553,7 +553,7 @@ describe("Results handler", () => {
       jobId: "42",
       attemptId: "claim-1",
       claimId: "claim-1",
-      nonce: "n-1",
+      nonce: "nonce-dispatch-01",
       status: "succeeded",
     });
     body.sequence = 8;
@@ -565,6 +565,41 @@ describe("Results handler", () => {
     });
     assert.equal(res.statusCode, 200);
     assert.equal(seenEnvelope.sequence, 8);
+  });
+
+  it("accepts dry_run_complete and orphaned_unknown_effect result bodies", () => {
+    for (const status of ["dry_run_complete", "orphaned_unknown_effect"]) {
+      const body = _test.validateResultBody(
+        envelope("result", {
+          jobId: "42",
+          attemptId: "claim-1",
+          claimId: "claim-1",
+          nonce: "nonce-dispatch-01",
+          status,
+          errorMessage:
+            status === "orphaned_unknown_effect"
+              ? "rollback uncertain; needsOperatorReconciliation=true; reconciliationReason=multi_target_rollback_uncertain"
+              : undefined,
+        }),
+      );
+      assert.equal(body.status, status);
+    }
+  });
+
+  it("still rejects unknown result statuses at the route layer", () => {
+    assert.throws(
+      () =>
+        _test.validateResultBody(
+          envelope("result", {
+            jobId: "42",
+            attemptId: "claim-1",
+            status: "not_a_real_status",
+          }),
+        ),
+      (error) =>
+        error.code === "CERTOPS_AGENT_MESSAGE_INVALID" &&
+        /status is invalid/.test(error.message),
+    );
   });
 });
 

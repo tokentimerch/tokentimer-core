@@ -11,6 +11,7 @@ These vendor copies keep the shipped package self-contained:
 | --- | --- |
 | `log-scrub/secret-material.js` | `packages/log-scrub/secret-material.js` (`@tokentimer/log-scrub`) |
 | `contracts/canonical-json.cjs` | `packages/contracts/certops/canonical-json.cjs` (`@tokentimer/contracts`) |
+| `contracts/agent-protocol.schema.json` | `packages/contracts/certops/agent-protocol.schema.json` (`@tokentimer/contracts`; byte-identical, no attribution header) |
 
 Refresh with:
 

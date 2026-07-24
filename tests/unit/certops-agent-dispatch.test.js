@@ -1,6 +1,6 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
@@ -11,6 +11,7 @@ const {
   CERTOPS_AGENT_LEASE_INVALID,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
+  CERTOPS_AGENT_RESULT_STATUS_INVALID,
   CERTOPS_AGENT_SEQUENCE_REGRESSION,
   claimJobs,
   enforceAgentSequence,
@@ -18,11 +19,23 @@ const {
   recordHeartbeat,
   registerAgent,
   renewJobLease,
+  _test: dispatchTest,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
+const {
+  ENCRYPTION_VERSION,
+  encryptRegistrationCredential,
+  _test: cryptoTest,
+} = require(
+  path.resolve(
+    __dirname,
+    "../../apps/api/services/certops/registrationCredentialCrypto.js",
+  ),
+);
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
+const VALID_REGISTRATION_ENCRYPTION_KEY = "a".repeat(64);
 
 function createMockPool(handler) {
   const state = {
@@ -107,6 +120,7 @@ function registrationQueryHandler({
     protocol_version: "1.0.0",
   },
   onReplayInsert = null,
+  expireReplayLookup = false,
 } = {}) {
   const replays = replayRow ? [replayRow] : [];
   return (sql, params) => {
@@ -119,6 +133,7 @@ function registrationQueryHandler({
       };
     }
     if (sql.includes("FROM certops_agent_registration_replays")) {
+      if (expireReplayLookup) return { rows: [] };
       const match = replays.find(
         (row) =>
           row.bootstrap_token_id === params[0] &&
@@ -135,10 +150,11 @@ function registrationQueryHandler({
         bootstrap_token_id: params[1],
         registration_id: params[2],
         agent_id: params[3],
-        credential: params[4],
-        protocol_version: params[5],
-        signing_key_id: params[6],
-        signing_public_key_pem: params[7],
+        credential_ciphertext: params[4],
+        encryption_version: params[5],
+        protocol_version: params[6],
+        signing_key_id: params[7],
+        signing_public_key_pem: params[8],
       };
       replays.push(row);
       if (onReplayInsert) onReplayInsert(row, params);
@@ -221,7 +237,22 @@ describe("agentDispatch.enforceAgentSequence", () => {
 });
 
 describe("agentDispatch.registerAgent", () => {
-  it("registers happy path: inserts row, consumes token, persists replay, returns credential once", async () => {
+  let savedRegistrationKey;
+
+  beforeEach(() => {
+    savedRegistrationKey = process.env[cryptoTest.ENV_KEY_NAME];
+    process.env[cryptoTest.ENV_KEY_NAME] = VALID_REGISTRATION_ENCRYPTION_KEY;
+  });
+
+  afterEach(() => {
+    if (savedRegistrationKey === undefined) {
+      delete process.env[cryptoTest.ENV_KEY_NAME];
+    } else {
+      process.env[cryptoTest.ENV_KEY_NAME] = savedRegistrationKey;
+    }
+  });
+
+  it("registers happy path: inserts row, consumes token, persists encrypted replay, returns credential once", async () => {
     const persisted = [];
     const dbPool = createMockPool(
       registrationQueryHandler({
@@ -262,13 +293,49 @@ describe("agentDispatch.registerAgent", () => {
     assert.equal(consumed[0].agentRowId, "agent-row-1");
     assert.equal(persisted.length, 1);
     assert.equal(persisted[0].registration_id, registerBody().registrationId);
-    assert.equal(persisted[0].credential, credential);
+    assert.notEqual(persisted[0].credential_ciphertext, credential);
+    assert.equal(persisted[0].credential_ciphertext.includes("ttagent_"), false);
+    assert.match(
+      persisted[0].credential_ciphertext,
+      /^[a-f0-9]+:[a-f0-9]+:[a-f0-9]+$/,
+    );
+    assert.equal(persisted[0].encryption_version, ENCRYPTION_VERSION);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
     assert.equal(dbPool.state.released, true);
   });
 
+  it("fails closed when the registration encryption key is missing", async () => {
+    delete process.env[cryptoTest.ENV_KEY_NAME];
+    const dbPool = createMockPool(registrationQueryHandler());
+    await assert.rejects(
+      registerAgent({
+        dbPool,
+        bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A },
+        envelope: registerEnvelope(),
+        body: registerBody(),
+        deps: {
+          ensureActiveSigningKey: async () => ({
+            signingKeyId: "key-1",
+            publicKeyPem: "pem",
+          }),
+          generateAgentCredential: () => ({
+            credentialPrefix: "ttagent_0123456789abcdef",
+            credentialHash: "hash",
+            plaintextCredential: `ttagent_0123456789abcdef_${"e".repeat(64)}`,
+          }),
+          consumeBootstrapToken: async () => ({ id: "boot-1" }),
+        },
+      }),
+      (error) =>
+        error.code === "CERTOPS_REGISTRATION_ENCRYPTION_KEY_MISSING" &&
+        !String(error.message).includes("ttagent_"),
+    );
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
   it("replays the same response for a retry with the same registrationId after the token is spent", async () => {
     const credential = `ttagent_0123456789abcdef_${"c".repeat(64)}`;
+    const ciphertext = encryptRegistrationCredential(credential);
     const dbPool = createMockPool(
       registrationQueryHandler({
         tokenStatus: "used",
@@ -276,7 +343,8 @@ describe("agentDispatch.registerAgent", () => {
           bootstrap_token_id: "boot-1",
           registration_id: "550e8400-e29b-41d4-a716-446655440000",
           agent_id: "agent-01",
-          credential,
+          credential_ciphertext: ciphertext,
+          encryption_version: ENCRYPTION_VERSION,
           protocol_version: "1.0.0",
           signing_key_id: "key-1",
           signing_public_key_pem: "pem-1",
@@ -332,7 +400,7 @@ describe("agentDispatch.registerAgent", () => {
           generateAgentCredential: () => ({
             credentialPrefix: "ttagent_0123456789abcdef",
             credentialHash: "hash",
-            plaintextCredential: "ttagent_x",
+            plaintextCredential: `ttagent_0123456789abcdef_${"a".repeat(64)}`,
           }),
           consumeBootstrapToken: async () => null,
         },
@@ -340,6 +408,85 @@ describe("agentDispatch.registerAgent", () => {
       (error) => error.code === CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
     );
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  it("rejects replay after the encrypted row expires", async () => {
+    const credential = `ttagent_0123456789abcdef_${"f".repeat(64)}`;
+    const dbPool = createMockPool(
+      registrationQueryHandler({
+        tokenStatus: "used",
+        expireReplayLookup: true,
+        replayRow: {
+          bootstrap_token_id: "boot-1",
+          registration_id: "550e8400-e29b-41d4-a716-446655440000",
+          agent_id: "agent-01",
+          credential_ciphertext: encryptRegistrationCredential(credential),
+          encryption_version: ENCRYPTION_VERSION,
+          protocol_version: "1.0.0",
+          signing_key_id: "key-1",
+          signing_public_key_pem: "pem-1",
+        },
+      }),
+    );
+    await assert.rejects(
+      registerAgent({
+        dbPool,
+        bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A, status: "used" },
+        envelope: registerEnvelope(),
+        body: registerBody(),
+        deps: {
+          ensureActiveSigningKey: async () => ({
+            signingKeyId: "key-1",
+            publicKeyPem: "pem",
+          }),
+          generateAgentCredential: () => ({
+            credentialPrefix: "ttagent_0123456789abcdef",
+            credentialHash: "hash",
+            plaintextCredential: credential,
+          }),
+          consumeBootstrapToken: async () => null,
+        },
+      }),
+      (error) => error.code === CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
+    );
+  });
+
+  it("treats a corrupt ciphertext as replay-not-available (spent token hard-rejects)", async () => {
+    const dbPool = createMockPool(
+      registrationQueryHandler({
+        tokenStatus: "used",
+        replayRow: {
+          bootstrap_token_id: "boot-1",
+          registration_id: "550e8400-e29b-41d4-a716-446655440000",
+          agent_id: "agent-01",
+          credential_ciphertext: "deadbeef:00:ff",
+          encryption_version: ENCRYPTION_VERSION,
+          protocol_version: "1.0.0",
+          signing_key_id: "key-1",
+          signing_public_key_pem: "pem-1",
+        },
+      }),
+    );
+    await assert.rejects(
+      registerAgent({
+        dbPool,
+        bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A, status: "used" },
+        envelope: registerEnvelope(),
+        body: registerBody(),
+        deps: {
+          ensureActiveSigningKey: async () => {
+            throw new Error("must not mint");
+          },
+          generateAgentCredential: () => {
+            throw new Error("must not mint");
+          },
+          consumeBootstrapToken: async () => null,
+        },
+      }),
+      (error) =>
+        error.code === CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED &&
+        !String(error.message).includes("ttagent_"),
+    );
   });
 
   it("answers the consumed-race with the generic 401 code and rolls back", async () => {
@@ -358,7 +505,7 @@ describe("agentDispatch.registerAgent", () => {
           generateAgentCredential: () => ({
             credentialPrefix: "ttagent_0123456789abcdef",
             credentialHash: "hash",
-            plaintextCredential: "ttagent_x",
+            plaintextCredential: `ttagent_0123456789abcdef_${"a".repeat(64)}`,
           }),
           // Lost the single-use race.
           consumeBootstrapToken: async () => null,
@@ -389,7 +536,7 @@ describe("agentDispatch.registerAgent", () => {
       generateAgentCredential: () => ({
         credentialPrefix: "ttagent_0123456789abcdef",
         credentialHash: "hash",
-        plaintextCredential: "ttagent_x",
+        plaintextCredential: `ttagent_0123456789abcdef_${"a".repeat(64)}`,
       }),
       consumeBootstrapToken: async () => ({ id: "boot-1" }),
     };
@@ -456,10 +603,11 @@ describe("agentDispatch.registerAgent", () => {
           bootstrap_token_id: params[1],
           registration_id: params[2],
           agent_id: params[3],
-          credential: params[4],
-          protocol_version: params[5],
-          signing_key_id: params[6],
-          signing_public_key_pem: params[7],
+          credential_ciphertext: params[4],
+          encryption_version: params[5],
+          protocol_version: params[6],
+          signing_key_id: params[7],
+          signing_public_key_pem: params[8],
         };
         sharedReplays.push(row);
         tokenStatus = "used";
@@ -502,6 +650,24 @@ describe("agentDispatch.registerAgent", () => {
     assert.deepEqual(first, second);
     assert.equal(sharedReplays.length, 1);
     assert.equal(agentInserted, true);
+    assert.equal(sharedReplays[0].credential_ciphertext.includes("ttagent_"), false);
+  });
+
+  it("uses a configurable short replay TTL defaulting to 15 minutes", () => {
+    assert.equal(dispatchTest.DEFAULT_REGISTRATION_REPLAY_TTL_MS, 15 * 60 * 1000);
+    assert.equal(dispatchTest.registrationReplayTtlMs({}), 15 * 60 * 1000);
+    assert.equal(
+      dispatchTest.registrationReplayTtlMs({
+        CERTOPS_REGISTRATION_REPLAY_TTL_MS: "60000",
+      }),
+      60000,
+    );
+    assert.equal(
+      dispatchTest.registrationReplayTtlMs({
+        CERTOPS_REGISTRATION_REPLAY_TTL_MS: "nope",
+      }),
+      15 * 60 * 1000,
+    );
   });
 });
 
@@ -1445,5 +1611,240 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(result.status, "failed");
     assert.deepEqual(casParams, ["agent-row-1", 11]);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("maps orphaned_unknown_effect and persists reconciliation fields from errorMessage", async () => {
+    let updateParams = null;
+    let updateSql = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) {
+        return { rows: [lockedJobRow({ status: "running", mode: "real" })] };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        updateSql = sql;
+        updateParams = params;
+        return {
+          rows: [
+            {
+              id: 42,
+              status: "orphaned_unknown_effect",
+              error_code: params[2],
+              completed_at: new Date("2026-07-22T10:20:00.000Z"),
+              needs_operator_reconciliation: true,
+              reconciliation_reason: params[5],
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await ingestResult({
+      dbPool,
+      agent: agentFixture(),
+      body: resultBody({
+        status: "orphaned_unknown_effect",
+        errorMessage:
+          "target 2 failed (multi-target rollback uncertain: target 1 rollback failed; " +
+          "needsOperatorReconciliation=true; reconciliationReason=multi_target_rollback_uncertain)",
+      }),
+      deps: { consumeNonce: async () => ({ consumed: true }) },
+    });
+
+    assert.equal(result.status, "orphaned_unknown_effect");
+    assert.equal(updateParams[1], "orphaned_unknown_effect");
+    assert.equal(updateParams[4], true);
+    assert.equal(updateParams[5], "multi_target_rollback_uncertain");
+    assert.match(updateSql, /needs_operator_reconciliation/);
+    assert.match(updateSql, /reconciliation_reason/);
+  });
+
+  it("sets fallback reconciliation_reason when orphaned markers are missing", async () => {
+    let updateParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) {
+        return { rows: [lockedJobRow({ status: "running", mode: "real" })] };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        updateParams = params;
+        return {
+          rows: [
+            {
+              id: 42,
+              status: "orphaned_unknown_effect",
+              error_code: params[2],
+              completed_at: new Date(),
+              needs_operator_reconciliation: true,
+              reconciliation_reason: params[5],
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await ingestResult({
+      dbPool,
+      agent: agentFixture(),
+      body: resultBody({
+        status: "orphaned_unknown_effect",
+        errorMessage: "first-ever deploy may be live; operator reconciliation is required",
+      }),
+      deps: { consumeNonce: async () => ({ consumed: true }) },
+    });
+
+    assert.equal(updateParams[4], true);
+    assert.equal(
+      updateParams[5],
+      dispatchTest.FALLBACK_ORPHANED_RECONCILIATION_REASON,
+    );
+  });
+
+  it("does not set needs_operator_reconciliation for dry_run_complete", async () => {
+    let updateParams = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) {
+        return {
+          rows: [lockedJobRow({ status: "running", mode: "dry_run" })],
+        };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        updateParams = params;
+        return {
+          rows: [
+            {
+              id: 42,
+              status: "dry_run_complete",
+              error_code: null,
+              completed_at: new Date(),
+              needs_operator_reconciliation: false,
+              reconciliation_reason: null,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await ingestResult({
+      dbPool,
+      agent: agentFixture(),
+      body: resultBody({
+        status: "dry_run_complete",
+        errorMessage: undefined,
+      }),
+      deps: { consumeNonce: async () => ({ consumed: true }) },
+    });
+
+    assert.equal(result.status, "dry_run_complete");
+    assert.equal(updateParams[4], false);
+    assert.equal(updateParams[5], null);
+  });
+
+  it("rejects dry_run jobs that report succeeded", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) {
+        return { rows: [lockedJobRow({ mode: "dry_run" })] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(
+      ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({ status: "succeeded", errorMessage: undefined }),
+        deps: { consumeNonce: async () => ({ consumed: true }) },
+      }),
+      (error) => error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID,
+    );
+  });
+
+  it("rejects real jobs that report dry_run_complete", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) {
+        return { rows: [lockedJobRow({ mode: "real" })] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(
+      ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({
+          status: "dry_run_complete",
+          errorMessage: undefined,
+        }),
+        deps: { consumeNonce: async () => ({ consumed: true }) },
+      }),
+      (error) => error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID,
+    );
+  });
+
+  it("rejects dry_run jobs that report orphaned_unknown_effect", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) {
+        return { rows: [lockedJobRow({ mode: "dry_run" })] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(
+      ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody({ status: "orphaned_unknown_effect" }),
+        deps: { consumeNonce: async () => ({ consumed: true }) },
+      }),
+      (error) => error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID,
+    );
+  });
+
+  it("treats duplicate terminal result delivery as idempotent", async () => {
+    const completedAt = new Date("2026-07-22T10:20:00.000Z");
+    let updateCount = 0;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) {
+        return {
+          rows: [
+            lockedJobRow({
+              status: "orphaned_unknown_effect",
+              mode: "real",
+              error_code: "AGENT_RESULT_ORPHANED_UNKNOWN_EFFECT",
+              completed_at: completedAt,
+            }),
+          ],
+        };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        updateCount += 1;
+        throw new Error("duplicate terminal results must not re-write");
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await ingestResult({
+      dbPool,
+      agent: agentFixture(),
+      body: resultBody({ status: "orphaned_unknown_effect" }),
+      deps: {
+        consumeNonce: async () => ({
+          consumed: false,
+          code: "CERTOPS_NONCE_REPLAYED",
+        }),
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.duplicate, true);
+    assert.equal(result.status, "orphaned_unknown_effect");
+    assert.equal(updateCount, 0);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("parses agent reconciliation markers from errorMessage", () => {
+    const parsed = dispatchTest.parseReconciliationFromErrorMessage(
+      "boom (needsOperatorReconciliation=true; reconciliationReason=multi_target_rollback_uncertain)",
+    );
+    assert.equal(parsed.needsOperatorReconciliation, true);
+    assert.equal(parsed.reconciliationReason, "multi_target_rollback_uncertain");
   });
 });

@@ -46,6 +46,9 @@ const ACME_KIND_SET = new Set(ACME_KINDS);
 const COMMAND_REF_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const DNS_PROVIDER_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const RELOAD_SERVICE_PATTERN = /^[A-Za-z0-9_.:@-]{1,128}$/;
+const ABSOLUTE_POSIX_PATH_PATTERN = /^\//;
+const OWNER_GROUP_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,31}$/;
+const FILE_MODE_STRING_PATTERN = /^0?[0-7]{3}$/;
 
 function profileError(message, code = CERTOPS_RENEWAL_PROFILE_INVALID) {
   const error = new Error(message);
@@ -104,6 +107,34 @@ function validateKeySize(algorithm, keySize) {
   return keySize;
 }
 
+function parseFileMode(value, fieldName) {
+  if (value === undefined || value === null) return null;
+  let modeInt;
+  if (typeof value === "number" && Number.isInteger(value)) {
+    modeInt = value;
+  } else if (typeof value === "string" && FILE_MODE_STRING_PATTERN.test(value.trim())) {
+    modeInt = Number.parseInt(value.trim(), 8);
+  } else {
+    throw profileError(`renewalProfile.${fieldName} is invalid`);
+  }
+  if (modeInt < 0 || modeInt > 0o777) {
+    throw profileError(`renewalProfile.${fieldName} is invalid`);
+  }
+  // Reject world-writable (other-write) modes as unsafe.
+  if ((modeInt & 0o002) !== 0) {
+    throw profileError(
+      `renewalProfile.${fieldName} must not be world-writable`,
+    );
+  }
+  return modeInt;
+}
+
+function optionalAbsolutePath(value, fieldName) {
+  if (value === undefined || value === null) return null;
+  const pathValue = requireString(value, fieldName, 512, ABSOLUTE_POSIX_PATH_PATTERN);
+  return pathValue;
+}
+
 function validateTarget(value, fieldName) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw profileError(`renewalProfile.${fieldName} is invalid`);
@@ -131,6 +162,57 @@ function validateTarget(value, fieldName) {
             128,
             RELOAD_SERVICE_PATTERN,
           );
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "keyPath")) {
+    result.keyPath = optionalAbsolutePath(value.keyPath, `${fieldName}.keyPath`);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "chainPath")) {
+    result.chainPath =
+      value.chainPath === undefined || value.chainPath === null
+        ? null
+        : requireString(value.chainPath, `${fieldName}.chainPath`, 512);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "certMode")) {
+    result.certMode = parseFileMode(value.certMode, `${fieldName}.certMode`);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "keyMode")) {
+    result.keyMode = parseFileMode(value.keyMode, `${fieldName}.keyMode`);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "chainMode")) {
+    result.chainMode = parseFileMode(value.chainMode, `${fieldName}.chainMode`);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "owner")) {
+    result.owner =
+      value.owner === undefined || value.owner === null
+        ? null
+        : requireString(value.owner, `${fieldName}.owner`, 32, OWNER_GROUP_PATTERN);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "group")) {
+    result.group =
+      value.group === undefined || value.group === null
+        ? null
+        : requireString(value.group, `${fieldName}.group`, 32, OWNER_GROUP_PATTERN);
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "backupDir")) {
+    result.backupDir = optionalAbsolutePath(
+      value.backupDir,
+      `${fieldName}.backupDir`,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "backupRetentionCount")) {
+    if (value.backupRetentionCount === undefined || value.backupRetentionCount === null) {
+      result.backupRetentionCount = null;
+    } else if (
+      !Number.isInteger(value.backupRetentionCount) ||
+      value.backupRetentionCount < 1 ||
+      value.backupRetentionCount > 64
+    ) {
+      throw profileError(
+        `renewalProfile.${fieldName}.backupRetentionCount is invalid`,
+      );
+    } else {
+      result.backupRetentionCount = value.backupRetentionCount;
+    }
   }
   return result;
 }
@@ -471,6 +553,18 @@ function executionFieldsFromRenewalProfile(profile) {
   } else {
     const withPath = profile.deploymentTargets.find((t) => t.certPath);
     if (withPath?.certPath) fields.certPath = withPath.certPath;
+  }
+  if (profile.target.keyPath) {
+    fields.keyPath = profile.target.keyPath;
+  } else {
+    const withKey = profile.deploymentTargets.find((t) => t.keyPath);
+    if (withKey?.keyPath) fields.keyPath = withKey.keyPath;
+  }
+  if (profile.target.chainPath) {
+    fields.chainPath = profile.target.chainPath;
+  } else {
+    const withChain = profile.deploymentTargets.find((t) => t.chainPath);
+    if (withChain?.chainPath) fields.chainPath = withChain.chainPath;
   }
   const reload = profile.deploymentTargets.find((t) => t.reloadService);
   if (reload?.reloadService) fields.reloadService = reload.reloadService;

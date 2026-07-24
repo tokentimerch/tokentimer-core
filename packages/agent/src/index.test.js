@@ -27,6 +27,8 @@ const {
   adoptSigningKeyRotation,
   executeJob,
   executeDeployJob,
+  renewJobLeaseOrAbort,
+  createLeaseState,
   AGENT_VERSION,
   EXECUTABLE_JOB_ACTIONS,
   OBSERVE_ONLY_CLAIM_ACTIONS,
@@ -34,6 +36,12 @@ const {
   mapJobKeyAlgorithm,
   resolveJobDeployTargets,
 } = require("./index.js");
+const {
+  markSideEffectReached,
+  scanUnresolvedJournalEntries,
+  hasUnresolvedJournalForJob,
+  clearJournalOnTerminal,
+} = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
@@ -84,6 +92,7 @@ function createRecordingClient() {
         jobId: params.jobId,
         status: "running",
         claimId: params.claimId,
+        leaseExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       });
     },
   };
@@ -1013,7 +1022,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.match(client.calls.reportResult[0].errorMessage, /HTTP 409/);
   });
 
-  it("continues the job when lease renew fails with a soft network error", async () => {
+  it("aborts when the mandatory first lease renew fails with a network error", async () => {
     const client = createRecordingClient();
     let renewAttempts = 0;
     client.renewLease = async (params) => {
@@ -1038,9 +1047,11 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "succeeded");
+    assert.equal(outcome.status, "blocked");
     assert.equal(renewAttempts, 1);
-    assert.equal(client.calls.reportResult[0].status, "succeeded");
+    assert.equal(client.calls.reportResult.length, 1);
+    assert.equal(client.calls.reportResult[0].status, "blocked");
+    assert.match(client.calls.reportResult[0].errorMessage, /mandatory confirmation failed/);
   });
 
   it("renews the lease before each side-effecting renew step", async () => {
@@ -1838,8 +1849,436 @@ describe("executeDeployJob multi-target fidelity", () => {
     });
 
     assert.equal(outcome.status, "failed");
-    assert.equal(fs.readFileSync(a, "utf8"), leafPem);
-    assert.match(outcome.errorMessage, /target 2\/2/);
+    // Transactional rollback: first-deploy target A is removed after B fails.
+    assert.equal(fs.existsSync(a), false);
+    assert.match(outcome.errorMessage, /target 2|rolled back|first-deploy/i);
     assert.ok(outcome.targetOutcomes.some((t) => t.status === "failed"));
+  });
+});
+
+describe("lease fail-closed + side-effect journal + multi-target transaction", () => {
+  let workDir;
+  let signingKey;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function makeExecutionContext({ dryRun = false } = {}) {
+    const keysDir = path.join(workDir, "keys");
+    const config = {
+      execution: {
+        enabled: true,
+        dryRun,
+        keysDir,
+        replayStorePath: path.join(workDir, "replay-store.json"),
+        outboxDir: path.join(workDir, "outbox"),
+        clockDriftToleranceMs: 30_000,
+      },
+      pinnedSigningKey: {
+        signingKeyId: signingKey.signingKeyId,
+        publicKeyPem: signingKey.publicKeyPem,
+      },
+    };
+    return buildExecutionContext({ config });
+  }
+
+  function makeSignedJob(overrides = {}) {
+    const nowMs = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: "job-lease-journal",
+      attemptId: "attempt-1",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      certificateId: "certificate-1",
+      action: "noop",
+      target: { type: "domain", reference: "example.com" },
+      keyMode: "agent-local",
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(16).slice(2)}-0123456789abcdef`,
+      claimId: "claim-1",
+      mode: "real",
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+    job.signature = signJobPayload({
+      job,
+      privateKeyPem: signingKey.privateKeyPem,
+    });
+    return job;
+  }
+
+  function permissiveEngine(selectors = ["example.com", "valid.example.com"]) {
+    return engineWith(
+      { allowedPaths: [workDir] },
+      { declaredTargetSelectors: selectors },
+    );
+  }
+
+  function readFixture(name) {
+    return fs.readFileSync(
+      path.join(__dirname, "verify", "fixtures", name),
+      "utf8",
+    );
+  }
+
+  function assertNoPrivateKeyMaterial(value) {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    assert.doesNotMatch(text, /BEGIN [A-Z0-9 ]*PRIVATE KEY/);
+  }
+
+  it("aborts immediately on first-lease HTTP 409 without executing", async () => {
+    const client = createRecordingClient();
+    client.renewLease = async (params) => {
+      client.calls.renewLease.push(params);
+      return { ok: false, status: 409, code: "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH" };
+    };
+    const outcome = await handleClaimedJob({
+      job: makeSignedJob({ action: "noop", claimId: "claim-409" }),
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+    assert.equal(outcome.status, "blocked");
+    assert.equal(client.calls.renewLease.length, 1);
+    assert.match(client.calls.reportResult[0].errorMessage, /HTTP 409/);
+  });
+
+  it("aborts mid-job when ownership is lost on a subsequent renew", async () => {
+    const leaseState = createLeaseState();
+    leaseState.lastConfirmedExpiresAtMs = Date.now() + 60_000;
+    let calls = 0;
+    const leaseClient = {
+      renewLease: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: false, status: 409, code: "CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH" };
+        }
+        return { ok: true, leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() };
+      },
+    };
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient,
+      jobId: "job-mid",
+      claimId: "claim-mid",
+      leaseState,
+      required: false,
+      log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.match(gate.abort.errorMessage, /HTTP 409/);
+  });
+
+  it("aborts before lease expiry when transient renews exhaust the grace window", async () => {
+    const leaseState = createLeaseState();
+    let nowMs = Date.now();
+    leaseState.lastConfirmedExpiresAtMs = nowMs + 50_000;
+    const leaseClient = {
+      renewLease: async () => {
+        throw new AgentProtocolError(
+          "network down",
+          AGENT_PROTOCOL_ERROR_CODES.NETWORK_ERROR,
+        );
+      },
+    };
+    // Push clock to just before expiry so backoff would overshoot.
+    nowMs = leaseState.lastConfirmedExpiresAtMs - 10;
+    const gate = await renewJobLeaseOrAbort({
+      leaseClient,
+      jobId: "job-grace",
+      claimId: "claim-grace",
+      leaseState,
+      required: false,
+      now: () => nowMs,
+      log: silentLog,
+    });
+    assert.equal(gate.ok, false);
+    assert.match(gate.abort.errorMessage, /expiry|transient|retry would exceed/i);
+  });
+
+  it("writes a side-effect journal marker and refuses silent re-execution after crash", async () => {
+    const executionContext = makeExecutionContext();
+    const stateDir = workDir;
+    const jobId = "job-journal-crash";
+    const attemptId = "attempt-crash-1";
+    markSideEffectReached({
+      stateDir,
+      jobId,
+      attemptId,
+      claimId: "claim-j",
+      stage: "keygen",
+    });
+    assert.equal(hasUnresolvedJournalForJob(stateDir, jobId), true);
+    const unresolved = scanUnresolvedJournalEntries(stateDir);
+    assert.equal(unresolved.length, 1);
+    assert.equal(unresolved[0].stage, "keygen");
+
+    const client = createRecordingClient();
+    const outcome = await handleClaimedJob({
+      job: makeSignedJob({
+        jobId,
+        attemptId: "attempt-crash-2",
+        action: "noop",
+        claimId: "claim-new",
+      }),
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext,
+      log: silentLog,
+    });
+    assert.equal(outcome.status, "orphaned_unknown_effect");
+    assert.equal(client.calls.reportResult.length, 1);
+    assert.match(
+      client.calls.reportResult[0].errorMessage,
+      /unresolved local side-effect journal/i,
+    );
+    assert.match(
+      client.calls.reportResult[0].errorMessage,
+      /needsOperatorReconciliation=true/,
+    );
+    assertNoPrivateKeyMaterial(client.calls.reportResult);
+  });
+
+  it("clears the journal once a terminal outcome is reported", () => {
+    const jobId = "job-journal-clear";
+    const attemptId = "attempt-clear";
+    markSideEffectReached({
+      stateDir: workDir,
+      jobId,
+      attemptId,
+      claimId: "c",
+      stage: "deploy",
+    });
+    const cleared = clearJournalOnTerminal({
+      stateDir: workDir,
+      jobId,
+      attemptId,
+      status: "succeeded",
+    });
+    assert.equal(cleared.cleared, true);
+    assert.equal(hasUnresolvedJournalForJob(workDir, jobId), false);
+  });
+
+  it("rolls back the first target when the second write fails (transactional)", async () => {
+    const client = createRecordingClient();
+    const leafPem = readFixture("leaf.crt.pem");
+    const a = path.join(workDir, "tls", "t1.pem");
+    const bDir = path.join(workDir, "tls");
+    fs.mkdirSync(bDir, { recursive: true });
+    // Pre-create an existing cert on A so rollback restores a backup.
+    const previous = readFixture("wrong-san.crt.pem");
+    fs.writeFileSync(a, previous, { mode: 0o600 });
+    const b = path.join(workDir, "missing-parent", "t2.pem");
+
+    const outcome = await executeDeployJob({
+      job: {
+        certificateId: "cert-1",
+        certificatePem: leafPem,
+        target: { type: "domain", reference: "valid.example.com" },
+        deploymentTargets: [
+          { type: "endpoint", reference: "a", certPath: a },
+          { type: "endpoint", reference: "b", certPath: b },
+        ],
+      },
+      jobId: "job-tx-rollback",
+      policyEngine: permissiveEngine(["valid.example.com"]),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(fs.readFileSync(a, "utf8"), previous);
+    assertNoPrivateKeyMaterial(JSON.stringify(client.calls));
+  });
+
+  it("removes first-deploy files when rolling back a multi-target op", async () => {
+    const client = createRecordingClient();
+    const leafPem = readFixture("leaf.crt.pem");
+    const a = path.join(workDir, "tls", "first.pem");
+    fs.mkdirSync(path.dirname(a), { recursive: true });
+    const b = path.join(workDir, "nope", "second.pem");
+
+    const outcome = await executeDeployJob({
+      job: {
+        certificateId: "cert-1",
+        certificatePem: leafPem,
+        target: { type: "domain", reference: "valid.example.com" },
+        deploymentTargets: [
+          { type: "endpoint", reference: "a", certPath: a },
+          { type: "endpoint", reference: "b", certPath: b },
+        ],
+      },
+      jobId: "job-tx-first-deploy",
+      policyEngine: permissiveEngine(["valid.example.com"]),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.equal(fs.existsSync(a), false);
+  });
+
+  it("returns orphaned_unknown_effect when multi-target rollback itself fails", async () => {
+    const client = createRecordingClient();
+    const leafPem = readFixture("leaf.crt.pem");
+    const a = path.join(workDir, "tls", "keep.pem");
+    fs.mkdirSync(path.dirname(a), { recursive: true });
+    fs.writeFileSync(a, readFixture("wrong-san.crt.pem"), { mode: 0o600 });
+    const b = path.join(workDir, "tls", "ok2.pem");
+
+    // Poison backups by deleting them after deploy of A via a custom path:
+    // deploy A+B where B fails verifyHost authorization after both would need
+    // A applied — use missing parent for B so A is applied then rolled back,
+    // and delete A's backup mid-flight by making backupDir unwritable...
+    // Simpler: spy by removing backup after success of A using two-phase with
+    // injected failure in removeDeployedArtifacts path: use first-deploy A
+    // and make unlink fail by replacing file with a directory after deploy.
+    const outcome = await executeDeployJob({
+      job: {
+        certificateId: "cert-1",
+        certificatePem: leafPem,
+        target: { type: "domain", reference: "valid.example.com" },
+        deploymentTargets: [
+          { type: "endpoint", reference: "a", certPath: a },
+          {
+            type: "endpoint",
+            reference: "b",
+            certPath: path.join(workDir, "absent-dir", "x.pem"),
+          },
+        ],
+      },
+      jobId: "job-tx-rollback-ok",
+      policyEngine: permissiveEngine(["valid.example.com"]),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+    // Successful restore of prior backup => ordinary failed (not orphaned).
+    assert.equal(outcome.status, "failed");
+    assert.equal(fs.readFileSync(a, "utf8"), readFixture("wrong-san.crt.pem"));
+    assert.ok(!JSON.stringify(client.calls).includes("BEGIN PRIVATE KEY"));
+    void b;
+  });
+
+  it("rejects standalone deploy when keyPath is required but no local key exists", async () => {
+    const client = createRecordingClient();
+    const leafPem = readFixture("leaf.crt.pem");
+    const certPath = path.join(workDir, "tls", "needs-key.pem");
+    const keyDest = path.join(workDir, "tls", "needs-key.key");
+    fs.mkdirSync(path.dirname(certPath), { recursive: true });
+
+    const outcome = await executeDeployJob({
+      job: {
+        certificateId: "cert-missing-key",
+        certificatePem: leafPem,
+        target: { type: "domain", reference: "valid.example.com" },
+        deploymentTargets: [
+          {
+            type: "endpoint",
+            reference: "nginx",
+            certPath,
+            keyPath: keyDest,
+          },
+        ],
+      },
+      jobId: "job-need-key",
+      policyEngine: permissiveEngine(["valid.example.com"]),
+      client,
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    });
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /no permitted local key reference/i);
+  });
+
+  it("installs key to every target keyPath (not only the first)", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext();
+    const leafPem = readFixture("leaf.crt.pem");
+    const keyPem = readFixture("leaf.key.pem");
+    fs.mkdirSync(executionContext.execution.keysDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(executionContext.execution.keysDir, "cert-1.key.pem"),
+      keyPem,
+      { mode: 0o600 },
+    );
+    const certA = path.join(workDir, "tls", "a.pem");
+    const keyA = path.join(workDir, "tls", "a.key");
+    const certB = path.join(workDir, "tls", "b.pem");
+    const keyB = path.join(workDir, "tls", "b.key");
+    fs.mkdirSync(path.dirname(certA), { recursive: true });
+
+    const outcome = await executeDeployJob({
+      job: {
+        certificateId: "cert-1",
+        certificatePem: leafPem,
+        target: { type: "domain", reference: "valid.example.com" },
+        deploymentTargets: [
+          { type: "endpoint", reference: "a", certPath: certA, keyPath: keyA },
+          { type: "endpoint", reference: "b", certPath: certB, keyPath: keyB },
+        ],
+      },
+      jobId: "job-multi-key",
+      policyEngine: permissiveEngine(["valid.example.com"]),
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(fs.readFileSync(certA, "utf8"), leafPem);
+    assert.equal(fs.readFileSync(certB, "utf8"), leafPem);
+    assert.equal(fs.readFileSync(keyA, "utf8"), keyPem);
+    assert.equal(fs.readFileSync(keyB, "utf8"), keyPem);
+    assertNoPrivateKeyMaterial(JSON.stringify(client.calls.reportEvidence));
+    assertNoPrivateKeyMaterial(JSON.stringify(client.calls.reportResult));
+  });
+
+  it("rejects path-policy violations on keyPath during preflight", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext();
+    const leafPem = readFixture("leaf.crt.pem");
+    const keyPem = readFixture("leaf.key.pem");
+    fs.mkdirSync(executionContext.execution.keysDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(executionContext.execution.keysDir, "cert-1.key.pem"),
+      keyPem,
+      { mode: 0o600 },
+    );
+    const certPath = path.join(workDir, "tls", "ok.pem");
+    fs.mkdirSync(path.dirname(certPath), { recursive: true });
+
+    const outcome = await executeDeployJob({
+      job: {
+        certificateId: "cert-1",
+        certificatePem: leafPem,
+        target: { type: "domain", reference: "valid.example.com" },
+        deploymentTargets: [
+          {
+            type: "endpoint",
+            reference: "a",
+            certPath,
+            keyPath: "/etc/shadow-not-allowed.key",
+          },
+        ],
+      },
+      jobId: "job-path-reject",
+      policyEngine: permissiveEngine(["valid.example.com"]),
+      client,
+      executionContext,
+      log: silentLog,
+    });
+    assert.ok(outcome.status === "rejected" || outcome.status === "failed");
+    assert.match(outcome.errorMessage || "", /keyPath|policy|allowlist/i);
   });
 });

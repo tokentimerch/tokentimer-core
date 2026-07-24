@@ -674,6 +674,26 @@ describe("CertOps inventory migration", () => {
     assert.match(migration.sql, /expires_at TIMESTAMPTZ NOT NULL/);
   });
 
+  it("encrypts registration replay credentials and drops the plaintext column", () => {
+    const migration = migrations.find(
+      (entry) =>
+        entry.name === "certops_registration_replay_credential_encryption",
+    );
+    assert.ok(
+      migration,
+      "expected certops_registration_replay_credential_encryption migration",
+    );
+    assert.equal(migration.version, 30);
+    assert.match(migration.sql, /ADD COLUMN IF NOT EXISTS credential_ciphertext/);
+    assert.match(migration.sql, /ADD COLUMN IF NOT EXISTS encryption_version/);
+    assert.match(migration.sql, /DELETE FROM certops_agent_registration_replays/);
+    assert.match(migration.sql, /DROP COLUMN IF EXISTS credential/);
+    assert.match(
+      migration.sql,
+      /ALTER COLUMN credential_ciphertext SET NOT NULL/,
+    );
+  });
+
   it("keeps released migration 18 and the controller migration tail unique and ordered", () => {
     const expectedVersions = new Map([
       ["tokens_certops_api_token_link", 18],
@@ -688,6 +708,7 @@ describe("CertOps inventory migration", () => {
       ["certops_dispatch_executor_lanes_and_routing", 27],
       ["certops_agent_inventory_evidence_integrity", 28],
       ["certops_agent_registration_idempotency", 29],
+      ["certops_registration_replay_credential_encryption", 30],
     ]);
     for (const [name, version] of expectedVersions) {
       assert.equal(

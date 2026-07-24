@@ -183,9 +183,13 @@ function createMemoryClient() {
         }
         if (params[2] === "running") row.started_at = row.started_at || now();
         if (
-          ["succeeded", "failed", "blocked", "dry_run_complete"].includes(
-            params[2],
-          )
+          [
+            "succeeded",
+            "failed",
+            "blocked",
+            "dry_run_complete",
+            "orphaned_unknown_effect",
+          ].includes(params[2])
         ) {
           row.completed_at = row.completed_at || now();
         }
@@ -1496,6 +1500,34 @@ describe("CertOps jobs service", () => {
       status: "dry_run_complete",
     });
     assert.equal(completed.status, "dry_run_complete");
+  });
+
+  it("sets completed_at when transitioning to orphaned_unknown_effect", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      payload: { target: "host/web" },
+    });
+    assert.equal(job.completedAt, null);
+
+    const claimed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "claimed",
+    });
+    assert.equal(claimed.completedAt, null);
+
+    const orphaned = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "orphaned_unknown_effect",
+    });
+    assert.equal(orphaned.status, "orphaned_unknown_effect");
+    assert.ok(orphaned.completedAt, "orphaned_unknown_effect must set completed_at");
   });
 
   it("requires a valid renewalProfile for automation renew jobs", async () => {

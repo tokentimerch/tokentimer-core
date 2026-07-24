@@ -18,7 +18,9 @@
  *      older than CERTOPS_AGENT_OFFLINE_AFTER_MS (observational; never
  *      retires agents).
  *   3. Nonce sweep: delete expired dispatch nonces (jobSigning.js).
- *   4. Renewal scheduler: plan renew jobs for expiring certificates
+ *   4. Registration-replay sweep: delete expired H1 registration replay
+ *      rows (registrationCredentialCrypto.js).
+ *   5. Renewal scheduler: plan renew jobs for expiring certificates
  *      (apps/api/services/certops/renewalScheduler.js).
  *
  * Zero-custody: nothing here reads or writes private key material.
@@ -33,6 +35,7 @@ import {
   gCertopsLeaseReaped,
   gCertopsStaleAgents,
   gCertopsNoncesSwept,
+  gCertopsRegistrationReplaysSwept,
   gCertopsRenewalJobsCreated,
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
@@ -41,6 +44,9 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const { sweepExpiredNonces } = require(
   "../../api/services/certops/jobSigning.js",
+);
+const { sweepExpiredRegistrationReplays } = require(
+  "../../api/services/certops/registrationCredentialCrypto.js",
 );
 const { runRenewalSchedulerSweep } = require(
   "../../api/services/certops/renewalScheduler.js",
@@ -82,6 +88,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "nonce-sweep": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_NONCE_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_NONCE_TIMEOUT_MS",
+  }),
+  "registration-replay-sweep": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_REGISTRATION_REPLAY_TIMEOUT_MS",
   }),
   "renewal-scheduler": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED",
@@ -171,8 +181,9 @@ async function insertJobLog(
  *   hard grace has elapsed.
  * - Renewed (lease_renewed_at set) or status 'running': side effects may
  *   have happened → NEVER silent requeue. Defer while the agent is alive
- *   within hard grace (late result may still land); otherwise fail as
- *   effects_unknown for manual reconciliation.
+ *   within hard grace (late result may still land); otherwise mark
+ *   orphaned_unknown_effect with needs_operator_reconciliation for
+ *   manual reconciliation (not an ordinary failed/policy rejection).
  * Requeue does not touch attempt_count: the claim path already counted this
  * dispatch attempt.
  */
@@ -262,32 +273,37 @@ export async function reapExpiredLeases({
         summary.requeued += 1;
       } else if (sideEffectsPossible) {
         // Renewed close to a side-effect boundary: effects unknown. Never
-        // silently requeue; leave for manual reconciliation.
+        // silently requeue; mark orphaned for operator reconciliation.
         const errorCode = "effects_unknown";
+        const reconciliationReason =
+          "lease_expired_after_side_effect_window_agent_unresponsive";
         await client.query(
           `UPDATE certificate_jobs
-              SET status = 'failed',
+              SET status = 'orphaned_unknown_effect',
                   error_code = $2,
                   error_message =
                     'Lease expired after renew; side effects are unknown and require manual reconciliation',
+                  needs_operator_reconciliation = TRUE,
+                  reconciliation_reason = $3,
                   claimed_by_agent_id = NULL,
                   claim_id = NULL,
                   lease_expires_at = NULL,
                   completed_at = COALESCE(completed_at, NOW()),
                   updated_at = NOW()
             WHERE id = $1`,
-          [row.id, errorCode],
+          [row.id, errorCode, reconciliationReason],
         );
         await insertJobLog(client, row, {
           eventType: "job.failed",
-          status: "failed",
+          status: "orphaned_unknown_effect",
           message:
-            "Lease expired after renew; job failed as effects_unknown for " +
-            "manual reconciliation by the certops maintenance worker",
+            "Lease expired after renew; job marked orphaned_unknown_effect " +
+            "for manual reconciliation by the certops maintenance worker",
           metadata: {
             sweep: "lease-reaper",
-            outcome: "failed",
+            outcome: "orphaned_unknown_effect",
             errorCode,
+            reconciliationReason,
             attemptCount,
             maxAttempts,
             previousStatus: row.status,
@@ -515,6 +531,7 @@ export async function runCertOpsMaintenance({
   withClientFn = withClient,
   dbPool = pool,
   nonceSweeper = sweepExpiredNonces,
+  registrationReplaySweeper = sweepExpiredRegistrationReplays,
   renewalSweeper = runRenewalSchedulerSweep,
   pushMetricsFn = pushMetrics,
 } = {}) {
@@ -578,6 +595,25 @@ export async function runCertOpsMaintenance({
     safeGaugeSet(gCertopsNoncesSwept, results.nonceSweep.result.deleted);
   }
 
+  results.registrationReplaySweep = await runIsolated(
+    "registration-replay-sweep",
+    log,
+    async () => {
+      const deleted = await registrationReplaySweeper({ client: dbPool });
+      return { deleted };
+    },
+    {
+      enabled: isSweepEnabled("registration-replay-sweep", env),
+      timeoutMs: resolveSweepTimeoutMs("registration-replay-sweep", env),
+    },
+  );
+  if (results.registrationReplaySweep.status === "success") {
+    safeGaugeSet(
+      gCertopsRegistrationReplaysSwept,
+      results.registrationReplaySweep.result.deleted,
+    );
+  }
+
   results.renewalScheduler = await runIsolated(
     "renewal-scheduler",
     log,
@@ -607,6 +643,10 @@ export async function runCertOpsMaintenance({
       results.nonceSweep.status === "success"
         ? results.nonceSweep.result.deleted
         : results.nonceSweep.status,
+    registrationReplaysSwept:
+      results.registrationReplaySweep.status === "success"
+        ? results.registrationReplaySweep.result.deleted
+        : results.registrationReplaySweep.status,
     renewalScheduler:
       results.renewalScheduler.status === "success"
         ? results.renewalScheduler.result

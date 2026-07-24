@@ -3,6 +3,12 @@
 #
 # All resources deploy into the Helm release namespace (--namespace <ns>).
 # Only ServiceMonitor/PrometheusRule support a separate namespace override.
+#
+# Image tags default to Chart.appVersion (pinned per release), not :latest.
+# The mutable GHCR :latest tags are a convenience/dev channel only; a mid-promotion
+# failure can leave a mixed :latest set. For reproducible deploys, pin
+# image.digest from release-manifest.json on the GitHub Release (digest takes
+# precedence over tag via tokentimer.image).
 
 nameOverride: ""
 fullnameOverride: ""
@@ -20,7 +26,7 @@ api:
     registry: ""
     repository: tokentimer-core-api
     tag: "0.11.0"  # align with Chart.appVersion; release workflow updates this per tag
-    digest: ""    # takes precedence over tag
+    digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
     pullPolicy: IfNotPresent
 
   service:

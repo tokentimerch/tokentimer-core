@@ -40,6 +40,24 @@ const VENDOR_MAP = [
       "",
     ].join("\n"),
   },
+  {
+    // JSON schemas cannot carry a JS attribution header; copy byte-identical
+    // and keep the contracts package file as the single editable source.
+    from: path.join(
+      repoRoot,
+      "packages",
+      "contracts",
+      "certops",
+      "agent-protocol.schema.json",
+    ),
+    to: path.join(
+      packageRoot,
+      "vendor",
+      "contracts",
+      "agent-protocol.schema.json",
+    ),
+    raw: true,
+  },
 ];
 
 function stripExistingAttribution(source) {
@@ -61,8 +79,12 @@ for (const entry of VENDOR_MAP) {
     process.exit(1);
   }
   const upstream = fs.readFileSync(entry.from, "utf8");
-  const body = stripExistingAttribution(upstream);
   fs.mkdirSync(path.dirname(entry.to), { recursive: true });
-  fs.writeFileSync(entry.to, `${entry.attribution}${body}`);
+  if (entry.raw) {
+    fs.writeFileSync(entry.to, upstream);
+  } else {
+    const body = stripExistingAttribution(upstream);
+    fs.writeFileSync(entry.to, `${entry.attribution}${body}`);
+  }
   process.stdout.write(`Synced ${path.relative(packageRoot, entry.to)}\n`);
 }

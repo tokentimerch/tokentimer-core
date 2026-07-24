@@ -69,6 +69,10 @@ const {
   persistAgentJobEvidenceBatch,
 } = require("../services/certops/agentObservations");
 const { CERTOPS_JOB_NOT_FOUND } = require("../services/certops/jobs");
+const {
+  CERTOPS_AGENT_MESSAGE_INVALID,
+  assertValidAgentProtocolEnvelope,
+} = require("../services/certops/protocolSchemaValidation");
 
 // --- Frozen route paths (certops-route-compat.contract.json) ---
 const CERTOPS_AGENT_REGISTER_PATH = "/api/v1/certops/agent/register";
@@ -78,9 +82,9 @@ const CERTOPS_AGENT_JOBS_LEASE_PATH = "/api/v1/certops/agent/jobs/:jobId/lease";
 const CERTOPS_AGENT_JOBS_RESULTS_PATH = "/api/v1/certops/agent/jobs/results";
 const JOB_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const CLAIM_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 
 // --- Frozen error codes ---
-const CERTOPS_AGENT_MESSAGE_INVALID = "CERTOPS_AGENT_MESSAGE_INVALID";
 const CERTOPS_AGENT_RETIRED_RESPONSE = Object.freeze({
   error: "CertOps agent is retired",
   code: CERTOPS_AGENT_RETIRED,
@@ -90,115 +94,28 @@ const AGENT_UNAUTHORIZED_RESPONSE = Object.freeze({
   code: "CERTOPS_AGENT_BOOTSTRAP_UNAUTHORIZED",
 });
 
-const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
-const PLATFORM_VALUES = new Set(["linux", "darwin", "win32"]);
-const RESULT_STATUS_VALUES = new Set([
-  "succeeded",
-  "failed",
-  "rejected",
-  "blocked",
-]);
-const EVIDENCE_EVENT_TYPES = new Set([
-  "certificate.observed",
-  "deployment.checked",
-  "deployment.updated",
-  "validation.passed",
-  "validation.failed",
-  "policy.checked",
-]);
-
 function messageError(message) {
   const error = new Error(message);
   error.code = CERTOPS_AGENT_MESSAGE_INVALID;
   return error;
 }
 
-// Structural envelope validation following agent-protocol.schema.json
-// (envelope required fields + per-messageType body), matching the existing
-// hand-rolled route validation style (apps/api does not depend on ajv).
+/**
+ * Structural validation via AJV against agent-protocol.schema.json.
+ * Returns the validated envelope (claim may normalize a missing body to {}).
+ */
 function validateEnvelope(body, expectedMessageType) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw messageError("Message envelope must be a JSON object");
-  }
-  if (body.schemaVersion !== 1) {
-    throw messageError("schemaVersion must be 1");
-  }
-  if (
-    typeof body.protocolVersion !== "string" ||
-    body.protocolVersion.length > 32 ||
-    !PROTOCOL_VERSION_PATTERN.test(body.protocolVersion)
-  ) {
-    throw messageError("protocolVersion must be a semver string");
-  }
-  if (body.messageType !== expectedMessageType) {
-    throw messageError(`messageType must be ${expectedMessageType}`);
-  }
-  if (
-    typeof body.agentId !== "string" ||
-    body.agentId.length < 1 ||
-    body.agentId.length > 128 ||
-    !AGENT_ID_PATTERN.test(body.agentId)
-  ) {
-    throw messageError("agentId is invalid");
-  }
-  if (
-    typeof body.sentAt !== "string" ||
-    Number.isNaN(Date.parse(body.sentAt))
-  ) {
-    throw messageError("sentAt must be an ISO date-time string");
-  }
-  if (
-    body.clockOffsetMs !== undefined &&
-    body.clockOffsetMs !== null &&
-    !Number.isInteger(body.clockOffsetMs)
-  ) {
-    throw messageError("clockOffsetMs must be an integer or null");
-  }
-  // Optional per-agent monotonic message counter (plain integer in the
-  // schema, never null); enforcement itself lives in agentDispatch.
-  if (
-    body.sequence !== undefined &&
-    (!Number.isInteger(body.sequence) || body.sequence < 1)
-  ) {
-    throw messageError("sequence must be an integer >= 1 when present");
-  }
+  assertValidAgentProtocolEnvelope(body, expectedMessageType);
   return body;
 }
 
-function requireBodyObject(envelope) {
-  const body = envelope.body;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw messageError("Message body must be a JSON object");
-  }
-  return body;
-}
-
-function optionalBoundedString(value, name, maxLength) {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string" || value.length > maxLength) {
-    throw messageError(`${name} is invalid`);
-  }
-  return value;
-}
-
+/**
+ * H1: registrationId is required at the HTTP boundary even though the
+ * schema still marks it optional for older agent builds. Keep this as a
+ * service-adjacent semantic gate, not a schema enum.
+ */
 function validateRegisterBody(envelope) {
-  const body = requireBodyObject(envelope);
-  if (
-    typeof body.bootstrapTokenId !== "string" ||
-    body.bootstrapTokenId.length < 1 ||
-    body.bootstrapTokenId.length > 128 ||
-    !AGENT_ID_PATTERN.test(body.bootstrapTokenId)
-  ) {
-    throw messageError("bootstrapTokenId is invalid");
-  }
-  if (
-    typeof body.agentVersion !== "string" ||
-    body.agentVersion.length < 1 ||
-    body.agentVersion.length > 32
-  ) {
-    throw messageError("agentVersion is invalid");
-  }
+  const body = assertValidAgentProtocolEnvelope(envelope, "register");
   if (
     typeof body.registrationId !== "string" ||
     body.registrationId.length < 1 ||
@@ -207,111 +124,15 @@ function validateRegisterBody(envelope) {
   ) {
     throw messageError("registrationId is invalid");
   }
-  optionalBoundedString(body.hostname, "hostname", 255);
-  if (
-    body.platform !== undefined &&
-    body.platform !== null &&
-    !PLATFORM_VALUES.has(body.platform)
-  ) {
-    throw messageError("platform is invalid");
-  }
-  optionalBoundedString(body.nodeVersion, "nodeVersion", 32);
-  for (const [field, maxLen, pattern] of [
-    ["declaredTargetSelectors", 256, null],
-    ["declaredCommandProfileNames", 128, AGENT_ID_PATTERN],
-  ]) {
-    const list = body[field];
-    if (list === undefined) continue;
-    if (!Array.isArray(list) || list.length > 64) {
-      throw messageError(`${field} is invalid`);
-    }
-    for (const item of list) {
-      if (
-        typeof item !== "string" ||
-        item.length < 1 ||
-        item.length > maxLen ||
-        (pattern && !pattern.test(item))
-      ) {
-        throw messageError(`${field} contains an invalid entry`);
-      }
-    }
-  }
   return body;
 }
 
 function validateHeartbeatBody(envelope) {
-  const body = requireBodyObject(envelope);
-  if (
-    typeof body.agentVersion !== "string" ||
-    body.agentVersion.length < 1 ||
-    body.agentVersion.length > 32
-  ) {
-    throw messageError("agentVersion is invalid");
-  }
-  if (
-    body.ntpSynced !== undefined &&
-    body.ntpSynced !== null &&
-    typeof body.ntpSynced !== "boolean"
-  ) {
-    throw messageError("ntpSynced is invalid");
-  }
-  if (
-    body.uptimeSeconds !== undefined &&
-    body.uptimeSeconds !== null &&
-    (!Number.isInteger(body.uptimeSeconds) || body.uptimeSeconds < 0)
-  ) {
-    throw messageError("uptimeSeconds is invalid");
-  }
-  if (
-    body.pinnedSigningKeyId !== undefined &&
-    body.pinnedSigningKeyId !== null &&
-    (typeof body.pinnedSigningKeyId !== "string" ||
-      body.pinnedSigningKeyId.length > 128 ||
-      !AGENT_ID_PATTERN.test(body.pinnedSigningKeyId))
-  ) {
-    throw messageError("pinnedSigningKeyId is invalid");
-  }
-  return body;
+  return assertValidAgentProtocolEnvelope(envelope, "heartbeat");
 }
 
 function validateClaimBody(envelope) {
-  const body = envelope.body ?? {};
-  if (typeof body !== "object" || Array.isArray(body)) {
-    throw messageError("Message body must be a JSON object");
-  }
-  if (
-    body.maxJobs !== undefined &&
-    (!Number.isInteger(body.maxJobs) || body.maxJobs < 1 || body.maxJobs > 16)
-  ) {
-    throw messageError("maxJobs is invalid");
-  }
-  if (body.supportedActions !== undefined) {
-    if (
-      !Array.isArray(body.supportedActions) ||
-      body.supportedActions.length > 16
-    ) {
-      throw messageError("supportedActions is invalid");
-    }
-  }
-  if (body.supportedDnsProviders !== undefined) {
-    if (
-      !Array.isArray(body.supportedDnsProviders) ||
-      body.supportedDnsProviders.length > 64
-    ) {
-      throw messageError("supportedDnsProviders is invalid");
-    }
-    for (const item of body.supportedDnsProviders) {
-      if (
-        typeof item !== "string" ||
-        item.length < 1 ||
-        item.length > 64 ||
-        !AGENT_ID_PATTERN.test(item)
-      ) {
-        throw messageError("supportedDnsProviders contains an invalid entry");
-      }
-    }
-  }
-  return body;
+  return assertValidAgentProtocolEnvelope(envelope, "claim");
 }
 
 /**
@@ -342,74 +163,11 @@ function validateLeaseBody(body) {
 }
 
 function validateResultBody(envelope) {
-  const body = requireBodyObject(envelope);
-  for (const field of ["jobId", "attemptId"]) {
-    if (
-      typeof body[field] !== "string" ||
-      body[field].length < 1 ||
-      body[field].length > 128 ||
-      !AGENT_ID_PATTERN.test(body[field])
-    ) {
-      throw messageError(`${field} is invalid`);
-    }
-  }
-  if (!RESULT_STATUS_VALUES.has(body.status)) {
-    throw messageError("status is invalid");
-  }
-  if (
-    body.errorMessage !== undefined &&
-    body.errorMessage !== null &&
-    (typeof body.errorMessage !== "string" || body.errorMessage.length > 1024)
-  ) {
-    throw messageError("errorMessage is invalid");
-  }
-  // claimId/nonce ride alongside the schema resultBody fields: the signed
-  // dispatch payload carries both and the server needs them for ownership
-  // re-proof and single-use nonce consumption (ADR-0003). attemptId doubles
-  // as the claimId when a client sends only the schema-required fields.
-  optionalBoundedString(body.claimId, "claimId", 128);
-  optionalBoundedString(body.nonce, "nonce", 128);
-  return body;
+  return assertValidAgentProtocolEnvelope(envelope, "result");
 }
 
 function validateEvidenceBody(envelope) {
-  const body = requireBodyObject(envelope);
-  if (
-    body.jobId !== undefined &&
-    body.jobId !== null &&
-    (typeof body.jobId !== "string" ||
-      body.jobId.length > 128 ||
-      !AGENT_ID_PATTERN.test(body.jobId))
-  ) {
-    throw messageError("jobId is invalid");
-  }
-  const items = body.evidenceItems;
-  if (!Array.isArray(items) || items.length < 1 || items.length > 16) {
-    throw messageError("evidenceItems is invalid");
-  }
-  for (const item of items) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw messageError("evidence item is invalid");
-    }
-    if (!EVIDENCE_EVENT_TYPES.has(item.eventType)) {
-      throw messageError("evidence eventType is invalid");
-    }
-    if (
-      typeof item.observedAt !== "string" ||
-      Number.isNaN(Date.parse(item.observedAt))
-    ) {
-      throw messageError("evidence observedAt is invalid");
-    }
-    if (
-      typeof item.evidenceId !== "string" ||
-      item.evidenceId.length < 1 ||
-      item.evidenceId.length > 128 ||
-      !AGENT_ID_PATTERN.test(item.evidenceId)
-    ) {
-      throw messageError("evidence evidenceId is invalid");
-    }
-  }
-  return body;
+  return assertValidAgentProtocolEnvelope(envelope, "evidence");
 }
 
 // --- Private-material rejection (422 wins over auth-shaped errors) ---

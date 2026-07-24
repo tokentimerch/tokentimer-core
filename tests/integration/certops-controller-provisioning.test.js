@@ -521,8 +521,8 @@ describe("CertOps controller provisioning", function () {
     }
   });
 
-  it("never turns generic or forged jobs into provisioning commands", async () => {
-    const fixture = await createWorkspace("controller-provisioning-provenance");
+  it("ignores a generic non-controller job and does not turn it into a provisioning command", async () => {
+    const fixture = await createWorkspace("controller-provisioning-generic-job");
     const humanApp = createHumanProvisioningApp(fixture.ownerId);
     const executorApp = createControllerExecutorApp();
     try {
@@ -539,7 +539,17 @@ describe("CertOps controller provisioning", function () {
       expect(manual.body.job.source).to.equal("api");
       const token = await createControllerToken(fixture);
       await commandRequest(executorApp, token.plaintextToken).expect(204);
+    } finally {
+      await cleanupWorkspace(fixture);
+    }
+  });
 
+  it("blocks a forged controller-lane job then still delivers the valid controller command", async () => {
+    const fixture = await createWorkspace("controller-provisioning-forged-job");
+    const humanApp = createHumanProvisioningApp(fixture.ownerId);
+    const executorApp = createControllerExecutorApp();
+    try {
+      const token = await createControllerToken(fixture);
       const valid = await postProvisionIntent(humanApp, fixture.workspaceId, `valid-${crypto.randomUUID()}`, provisionRequest()).expect(201);
       const forgedJobId = crypto.randomUUID();
       const forgedDesired = {
@@ -547,11 +557,13 @@ describe("CertOps controller provisioning", function () {
         jobId: forgedJobId,
         managedCertificateId: crypto.randomUUID(),
       };
+      // Forged row must sit on the controller lane (executor_kind='controller')
+      // so takeNext selects it; source alone is not enough after B2 lane split.
       await TestUtils.execQuery(
         `INSERT INTO certificate_jobs (
-           id, workspace_id, operation, status, source, subject_type, subject_id,
+           id, workspace_id, operation, status, source, executor_kind, subject_type, subject_id,
            payload, created_at, updated_at
-         ) VALUES ($1, $2, 'deploy', 'pending', 'controller_provisioning',
+         ) VALUES ($1, $2, 'deploy', 'pending', 'controller_provisioning', 'controller',
            'managed_certificate', $3, $4::jsonb, NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')`,
         [
           forgedJobId, fixture.workspaceId, forgedDesired.managedCertificateId,

@@ -17,6 +17,7 @@ const {
   redactGenericSecrets,
 } = require("../../vendor/log-scrub/secret-material.js");
 const { defaultAgentLogger } = require("../logging");
+const { validateAgentProtocolMessage } = require("./schemaValidation");
 
 const SCHEMA_VERSION = 1;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -62,233 +63,22 @@ const AGENT_PROTOCOL_ERROR_CODES = Object.freeze({
 
 const PROTOCOL_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const CREDENTIAL_PATTERN = /^ttagent_([A-Za-z0-9_.:-]{1,128})_([A-Za-z0-9._~+\/-]{16,1024})$/;
-const MESSAGE_TYPE_VALUES = new Set(Object.values(MESSAGE_TYPES));
-const ACTION_VALUES = new Set(["renew", "deploy", "reload", "revoke", "noop"]);
-const RESULT_STATUS_VALUES = new Set([
-  "succeeded",
-  "failed",
-  "rejected",
-  "blocked",
-  // B4: successful terminal status for mode:"dry_run" jobs only.
-  "dry_run_complete",
-  // First-ever deploy installed a cert, then reload/verify failed with no
-  // prior backup to restore: the new cert may be live; operator must reconcile.
-  "orphaned_unknown_effect",
-]);
-const REJECTION_REASON_VALUES = new Set([
-  "job_integrity_failed",
-  "job_replay_rejected",
-  "target_out_of_scope",
-  "command_not_allowlisted",
-  "path_not_allowlisted",
-  "ca_endpoint_not_allowlisted",
-  "dns_zone_not_allowlisted",
-  "dns_provider_not_allowlisted",
-  "key_export_requested",
-  "clock_drift_suspected",
-]);
-const EVENT_TYPE_VALUES = new Set([
-  "certificate.observed",
-  "deployment.checked",
-  "deployment.updated",
-  "validation.passed",
-  "validation.failed",
-  "policy.checked",
-]);
-const METADATA_NAME_PATTERN = /^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$/;
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isIsoDateTime(value) {
-  return typeof value === "string" && ISO_DATE_TIME_PATTERN.test(value) && !Number.isNaN(Date.parse(value));
-}
-
-function checkExactObject(value, allowedKeys, requiredKeys, label, problems) {
-  if (!isPlainObject(value)) {
-    problems.push(`${label} must be an object`);
-    return false;
-  }
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) problems.push(`${label} has unknown field "${key}"`);
-  }
-  for (const key of requiredKeys) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) {
-      problems.push(`${label} is missing required field "${key}"`);
-    }
-  }
-  return true;
-}
-
-function checkString(value, label, problems, { min = 0, max, pattern } = {}) {
-  if (typeof value !== "string") {
-    problems.push(`${label} must be a string`);
-    return;
-  }
-  if (value.length < min) problems.push(`${label} must have at least ${min} characters`);
-  if (max !== undefined && value.length > max) problems.push(`${label} exceeds ${max} characters`);
-  if (pattern && !pattern.test(value)) problems.push(`${label} has an invalid format`);
-}
-
-function checkNullableString(value, label, problems, options = {}) {
-  if (value === null) return;
-  checkString(value, label, problems, options);
-}
-
-function validateMetadata(metadata, problems, label) {
-  if (!Array.isArray(metadata)) {
-    problems.push(`${label} must be an array`);
-    return;
-  }
-  if (metadata.length > 32) problems.push(`${label} has more than 32 entries`);
-  metadata.forEach((entry, index) => {
-    const entryLabel = `${label}[${index}]`;
-    if (!checkExactObject(entry, new Set(["name", "value"]), ["name", "value"], entryLabel, problems)) return;
-    checkString(entry.name, `${entryLabel}.name`, problems, { min: 1, max: 64, pattern: METADATA_NAME_PATTERN });
-    const value = entry.value;
-    if (value !== null && typeof value !== "string" && typeof value !== "boolean" && (typeof value !== "number" || !Number.isFinite(value))) {
-      problems.push(`${entryLabel}.value must be string, finite number, boolean, or null`);
-    }
-    if (typeof value === "string" && value.length > 512) {
-      problems.push(`${entryLabel}.value exceeds 512 characters`);
-    }
-  });
-}
-
+/**
+ * Shape/enum/type validation for outbound envelopes. Delegates to the
+ * AJV-compiled agent-protocol schema (single source of truth).
+ *
+ * @param {*} message
+ * @returns {string[]} human-readable problems (empty when valid)
+ */
 function validateEnvelopeShape(message) {
-  const problems = [];
-  const envelopeKeys = new Set([
-    "schemaVersion",
-    "protocolVersion",
-    "messageType",
-    "agentId",
-    "workspaceId",
-    "sentAt",
-    "clockOffsetMs",
-    "sequence",
-    "body",
-  ]);
-  if (!checkExactObject(message, envelopeKeys, ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"], "message", problems)) {
-    return problems;
-  }
-  if (message.schemaVersion !== SCHEMA_VERSION) problems.push(`schemaVersion must be ${SCHEMA_VERSION}`);
-  checkString(message.protocolVersion, "protocolVersion", problems, { min: 1, max: 32, pattern: PROTOCOL_VERSION_PATTERN });
-  if (!MESSAGE_TYPE_VALUES.has(message.messageType)) problems.push("messageType is invalid");
-  checkString(message.agentId, "agentId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-  if (!isIsoDateTime(message.sentAt)) problems.push("sentAt must be an ISO date-time string");
-  if (message.workspaceId !== undefined && message.workspaceId !== null) {
-    checkString(message.workspaceId, "workspaceId", problems, { pattern: UUID_PATTERN });
-  }
-  if (message.clockOffsetMs !== undefined && message.clockOffsetMs !== null && !Number.isInteger(message.clockOffsetMs)) {
-    problems.push("clockOffsetMs must be an integer or null");
-  }
-  if (message.sequence !== undefined && (!Number.isInteger(message.sequence) || message.sequence < 1)) {
-    problems.push("sequence must be an integer >= 1 when present");
-  }
-
-  if (!MESSAGE_TYPE_VALUES.has(message.messageType)) return problems;
-  validateEnvelopeBody(message.messageType, message.body, problems);
-  return problems;
-}
-
-function validateEnvelopeBody(messageType, body, problems) {
-  const label = `${messageType} body`;
-  if (!isPlainObject(body)) {
-    problems.push(`${label} must be an object`);
-    return;
-  }
-
-  if (messageType === MESSAGE_TYPES.REGISTER) {
-    if (!checkExactObject(body, new Set(["bootstrapTokenId", "agentVersion", "hostname", "platform", "nodeVersion", "declaredTargetSelectors", "declaredCommandProfileNames", "registrationId", "supportedDnsProviders"]), ["bootstrapTokenId", "agentVersion"], label, problems)) return;
-    checkString(body.bootstrapTokenId, "register body.bootstrapTokenId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-    checkString(body.agentVersion, "register body.agentVersion", problems, { min: 1, max: 32 });
-    if (body.hostname !== undefined) checkNullableString(body.hostname, "register body.hostname", problems, { max: 255 });
-    if (body.platform !== undefined && body.platform !== null && !["linux", "darwin", "win32"].includes(body.platform)) problems.push("register body.platform is invalid");
-    if (body.nodeVersion !== undefined) checkNullableString(body.nodeVersion, "register body.nodeVersion", problems, { max: 32 });
-    validateStringArray(body.declaredTargetSelectors, "register body.declaredTargetSelectors", problems, 64, 256);
-    validateStringArray(body.declaredCommandProfileNames, "register body.declaredCommandProfileNames", problems, 64, 128, AGENT_ID_PATTERN);
-    // H1: client-generated idempotency key; persisted before send so a crash
-    // between token consumption and local credential write can retry safely.
-    if (body.registrationId !== undefined) {
-      checkString(body.registrationId, "register body.registrationId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-    }
-    if (body.supportedDnsProviders !== undefined) {
-      validateStringArray(body.supportedDnsProviders, "register body.supportedDnsProviders", problems, 64, 64, AGENT_ID_PATTERN);
-    }
-    return;
-  }
-
-  if (messageType === MESSAGE_TYPES.HEARTBEAT) {
-    if (!checkExactObject(body, new Set(["agentVersion", "ntpSynced", "uptimeSeconds", "pinnedSigningKeyId", "supportedDnsProviders"]), ["agentVersion"], label, problems)) return;
-    checkString(body.agentVersion, "heartbeat body.agentVersion", problems, { min: 1, max: 32 });
-    if (body.ntpSynced !== undefined && body.ntpSynced !== null && typeof body.ntpSynced !== "boolean") problems.push("heartbeat body.ntpSynced must be boolean or null");
-    if (body.uptimeSeconds !== undefined && body.uptimeSeconds !== null && (!Number.isInteger(body.uptimeSeconds) || body.uptimeSeconds < 0)) problems.push("heartbeat body.uptimeSeconds must be a non-negative integer or null");
-    if (body.pinnedSigningKeyId !== undefined) checkNullableString(body.pinnedSigningKeyId, "heartbeat body.pinnedSigningKeyId", problems, { max: 128, pattern: AGENT_ID_PATTERN });
-    if (body.supportedDnsProviders !== undefined) {
-      validateStringArray(body.supportedDnsProviders, "heartbeat body.supportedDnsProviders", problems, 64, 64, AGENT_ID_PATTERN);
-    }
-    return;
-  }
-
-  if (messageType === MESSAGE_TYPES.CLAIM) {
-    if (!checkExactObject(body, new Set(["maxJobs", "supportedActions", "supportedDnsProviders"]), [], label, problems)) return;
-    if (body.maxJobs !== undefined && (!Number.isInteger(body.maxJobs) || body.maxJobs < 1 || body.maxJobs > 16)) problems.push("claim body.maxJobs must be an integer between 1 and 16");
-    if (body.supportedActions !== undefined) {
-      if (!Array.isArray(body.supportedActions) || body.supportedActions.length > 16 || body.supportedActions.some((action) => !ACTION_VALUES.has(action))) {
-        problems.push("claim body.supportedActions must contain at most 16 known actions");
-      }
-    }
-    if (body.supportedDnsProviders !== undefined) {
-      validateStringArray(body.supportedDnsProviders, "claim body.supportedDnsProviders", problems, 64, 64, AGENT_ID_PATTERN);
-    }
-    return;
-  }
-
-  if (messageType === MESSAGE_TYPES.RESULT) {
-    if (!checkExactObject(body, new Set(["jobId", "attemptId", "status", "rejectionReason", "keyRotated", "errorMessage", "claimId", "nonce"]), ["jobId", "attemptId", "status"], label, problems)) return;
-    checkString(body.jobId, "result body.jobId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-    checkString(body.attemptId, "result body.attemptId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-    if (!RESULT_STATUS_VALUES.has(body.status)) problems.push("result body.status is invalid");
-    if (body.rejectionReason !== undefined && body.rejectionReason !== null && !REJECTION_REASON_VALUES.has(body.rejectionReason)) problems.push("result body.rejectionReason is invalid");
-    if (body.keyRotated !== undefined && body.keyRotated !== null && typeof body.keyRotated !== "boolean") problems.push("result body.keyRotated must be boolean or null");
-    if (body.errorMessage !== undefined) checkNullableString(body.errorMessage, "result body.errorMessage", problems, { max: 1024 });
-    // claimId/nonce: non-secret opaque references from the signed dispatch
-    // payload, echoed back so the control plane can re-prove claim ownership
-    // and consume the nonce in its replay ledger (ADR-0003).
-    if (body.claimId !== undefined && body.claimId !== null) checkString(body.claimId, "result body.claimId", problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-    if (body.nonce !== undefined && body.nonce !== null) checkString(body.nonce, "result body.nonce", problems, { min: 16, max: 128, pattern: AGENT_ID_PATTERN });
-    return;
-  }
-
-  if (!checkExactObject(body, new Set(["jobId", "evidenceItems"]), ["evidenceItems"], label, problems)) return;
-  if (body.jobId !== undefined) checkNullableString(body.jobId, "evidence body.jobId", problems, { max: 128, pattern: AGENT_ID_PATTERN });
-  if (!Array.isArray(body.evidenceItems) || body.evidenceItems.length < 1 || body.evidenceItems.length > 16) {
-    problems.push("evidence body.evidenceItems must contain 1 to 16 entries");
-    return;
-  }
-  body.evidenceItems.forEach((item, index) => {
-    const itemLabel = `evidence body.evidenceItems[${index}]`;
-    if (!checkExactObject(item, new Set(["evidenceId", "eventType", "observedAt", "fingerprintSha256", "summary", "metadata"]), ["evidenceId", "eventType", "observedAt"], itemLabel, problems)) return;
-    checkString(item.evidenceId, `${itemLabel}.evidenceId`, problems, { min: 1, max: 128, pattern: AGENT_ID_PATTERN });
-    if (!EVENT_TYPE_VALUES.has(item.eventType)) problems.push(`${itemLabel}.eventType is invalid`);
-    if (!isIsoDateTime(item.observedAt)) problems.push(`${itemLabel}.observedAt must be an ISO date-time string`);
-    if (item.fingerprintSha256 !== undefined) checkNullableString(item.fingerprintSha256, `${itemLabel}.fingerprintSha256`, problems, { pattern: /^[a-f0-9]{64}$/ });
-    if (item.summary !== undefined) checkNullableString(item.summary, `${itemLabel}.summary`, problems, { max: 1024 });
-    if (item.metadata !== undefined) validateMetadata(item.metadata, problems, `${itemLabel}.metadata`);
-  });
-}
-
-function validateStringArray(value, label, problems, maxItems, maxItemLength, pattern) {
-  if (!Array.isArray(value)) {
-    problems.push(`${label} must be an array`);
-    return;
-  }
-  if (value.length > maxItems) problems.push(`${label} has more than ${maxItems} entries`);
-  value.forEach((item, index) => checkString(item, `${label}[${index}]`, problems, { min: 1, max: maxItemLength, pattern }));
+  const { valid, errors } = validateAgentProtocolMessage(message);
+  return valid ? [] : errors;
 }
 
 // B18: evidence items require a client-generated idempotency key so retried

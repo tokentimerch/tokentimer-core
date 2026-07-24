@@ -43,6 +43,9 @@ const DB_ENV = {
 const SIGNING_ENCRYPTION_KEY =
   process.env.CERTOPS_SIGNING_ENCRYPTION_KEY ||
   crypto.randomBytes(32).toString("hex");
+const REGISTRATION_ENCRYPTION_KEY =
+  process.env.CERTOPS_REGISTRATION_ENCRYPTION_KEY ||
+  crypto.randomBytes(32).toString("hex");
 
 const RUN_ID = crypto.randomBytes(6).toString("hex");
 const PROTOCOL_VERSION = "1.0.0";
@@ -132,6 +135,7 @@ async function startApiServer() {
       SESSION_SECRET: "certops-agent-e2e-session-secret",
       CERTOPS_ENABLED: "true",
       CERTOPS_SIGNING_ENCRYPTION_KEY: SIGNING_ENCRYPTION_KEY,
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: REGISTRATION_ENCRYPTION_KEY,
       DISABLE_ADMIN_BOOTSTRAP: "true",
       ENABLE_METRICS: "false",
     },
@@ -250,6 +254,7 @@ function loadServices() {
   // jobSigning reads the encryption key from process.env.
   Object.assign(process.env, DB_ENV, {
     CERTOPS_SIGNING_ENCRYPTION_KEY: SIGNING_ENCRYPTION_KEY,
+    CERTOPS_REGISTRATION_ENCRYPTION_KEY: REGISTRATION_ENCRYPTION_KEY,
     CERTOPS_ENABLED: "true",
     SESSION_SECRET: process.env.SESSION_SECRET || "certops-agent-e2e",
   });

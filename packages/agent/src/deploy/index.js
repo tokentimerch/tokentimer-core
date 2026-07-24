@@ -71,6 +71,66 @@ const PRIVATE_KEY_PEM_HEADER_PATTERN = new RegExp(
 // "restrictive by default" convention (config module: 0600 files in 0700
 // dirs); operators can relax modes out-of-band if a consumer needs it.
 const DEPLOYED_FILE_MODE = 0o600;
+const DEPLOYED_CERT_DEFAULT_MODE = 0o600;
+const DEPLOYED_KEY_DEFAULT_MODE = 0o600;
+
+const FILE_MODE_STRING_PATTERN = /^0?[0-7]{3}$/;
+const OWNER_GROUP_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,31}$/;
+
+/**
+ * Parses a POSIX file mode from an octal string ("0644") or integer.
+ * Rejects world-writable modes (other-write bit).
+ * @param {string|number|null|undefined} value
+ * @param {string} fieldName
+ * @returns {{ ok: true, mode: number|null }|{ ok: false, detail: string }}
+ */
+function parseDeployFileMode(value, fieldName) {
+  if (value === undefined || value === null) {
+    return { ok: true, mode: null };
+  }
+  let modeInt;
+  if (typeof value === "number" && Number.isInteger(value)) {
+    modeInt = value;
+  } else if (typeof value === "string" && FILE_MODE_STRING_PATTERN.test(value.trim())) {
+    modeInt = Number.parseInt(value.trim(), 8);
+  } else {
+    return {
+      ok: false,
+      detail: `deploy: target.${fieldName} must be an octal mode string or integer`,
+    };
+  }
+  if (modeInt < 0 || modeInt > 0o777) {
+    return {
+      ok: false,
+      detail: `deploy: target.${fieldName} is out of range`,
+    };
+  }
+  if ((modeInt & 0o002) !== 0) {
+    return {
+      ok: false,
+      detail: `deploy: target.${fieldName} must not be world-writable`,
+    };
+  }
+  return { ok: true, mode: modeInt };
+}
+
+/**
+ * @param {string|null|undefined} value
+ * @param {string} fieldName
+ * @returns {{ ok: true, name: string|null }|{ ok: false, detail: string }}
+ */
+function parseOwnerGroupName(value, fieldName) {
+  if (value === undefined || value === null) {
+    return { ok: true, name: null };
+  }
+  if (typeof value !== "string" || !OWNER_GROUP_PATTERN.test(value)) {
+    return {
+      ok: false,
+      detail: `deploy: target.${fieldName} must be a safe POSIX name`,
+    };
+  }
+  return { ok: true, name: value };
+}
 
 // Valid target.type values, per
 // packages/contracts/certops/job-payload.schema.json target.type enum.
@@ -282,6 +342,32 @@ function validateTargetConfig(target, { checkPath, _fsOverrides } = {}) {
     }
   }
 
+  for (const modeField of ["certMode", "keyMode", "chainMode"]) {
+    if (!Object.prototype.hasOwnProperty.call(target, modeField)) continue;
+    const parsed = parseDeployFileMode(target[modeField], modeField);
+    if (!parsed.ok) return invalid(parsed.detail);
+  }
+  for (const nameField of ["owner", "group"]) {
+    if (!Object.prototype.hasOwnProperty.call(target, nameField)) continue;
+    const parsed = parseOwnerGroupName(target[nameField], nameField);
+    if (!parsed.ok) return invalid(parsed.detail);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(target, "backupRetentionCount") &&
+    target.backupRetentionCount !== undefined &&
+    target.backupRetentionCount !== null
+  ) {
+    if (
+      !Number.isInteger(target.backupRetentionCount) ||
+      target.backupRetentionCount < 1 ||
+      target.backupRetentionCount > 64
+    ) {
+      return invalid(
+        "deploy: target.backupRetentionCount must be an integer between 1 and 64",
+      );
+    }
+  }
+
   return { valid: true };
 }
 
@@ -322,8 +408,9 @@ async function fsyncDirBestEffort(fspImpl, dirPath) {
  * Atomically writes `content` to `destinationPath`: temp file created in
  * the SAME directory (so the final rename never crosses devices/volumes,
  * which would silently degrade to copy+delete and lose atomicity), written
- * with the restrictive mode, fsynced, renamed over the destination, then
- * the directory is fsynced where the platform allows.
+ * with the restrictive mode (and optional ownership) BEFORE rename so the
+ * destination never briefly appears world-readable, fsynced, renamed over
+ * the destination, then the directory is fsynced where the platform allows.
  *
  * The temp file is unlinked on any failure so no partial write is left
  * behind.
@@ -331,9 +418,15 @@ async function fsyncDirBestEffort(fspImpl, dirPath) {
  * @param {typeof fsp} fspImpl
  * @param {string} destinationPath
  * @param {string|Buffer} content
+ * @param {{ mode?: number, uid?: number|null, gid?: number|null }} [options]
  * @returns {Promise<void>}
  */
-async function atomicWrite(fspImpl, destinationPath, content) {
+async function atomicWrite(
+  fspImpl,
+  destinationPath,
+  content,
+  { mode = DEPLOYED_FILE_MODE, uid = null, gid = null } = {},
+) {
   const dirPath = path.dirname(destinationPath);
   const tempPath = path.join(
     dirPath,
@@ -342,8 +435,29 @@ async function atomicWrite(fspImpl, destinationPath, content) {
 
   let handle;
   try {
-    handle = await fspImpl.open(tempPath, "wx", DEPLOYED_FILE_MODE);
+    handle = await fspImpl.open(tempPath, "wx", mode);
     await handle.writeFile(content);
+    if (typeof handle.chmod === "function") {
+      try {
+        await handle.chmod(mode);
+      } catch (_err) {
+        // win32 / platform without fchmod
+      }
+    }
+    if (
+      (uid !== null || gid !== null) &&
+      typeof handle.chown === "function"
+    ) {
+      try {
+        await handle.chown(
+          uid === null ? -1 : uid,
+          gid === null ? -1 : gid,
+        );
+      } catch (_err) {
+        // Ownership may require privileges; fail closed only when caller
+        // treated it as mandatory via a prior resolve step.
+      }
+    }
     await handle.sync();
     await handle.close();
     handle = null;
@@ -365,6 +479,38 @@ async function atomicWrite(fspImpl, destinationPath, content) {
   }
 
   await fsyncDirBestEffort(fspImpl, dirPath);
+}
+
+/**
+ * Best-effort resolve of owner/group names to uid/gid via OS passwd/group.
+ * Returns nulls when unresolved (caller may still proceed with mode-only).
+ * @param {string|null} owner
+ * @param {string|null} group
+ * @returns {{ uid: number|null, gid: number|null, detail?: string }}
+ */
+function resolveOwnershipIds(owner, group) {
+  let uid = null;
+  let gid = null;
+  try {
+    if (typeof owner === "string" && owner.length > 0) {
+      // Lazy require keeps win32 import surface minimal.
+      // eslint-disable-next-line global-require
+      const { userInfo } = require("node:os");
+      if (owner === userInfo().username) {
+        uid = userInfo().uid;
+      }
+    }
+  } catch (_err) {
+    // leave unresolved
+  }
+  // Numeric string forms ("0") accepted as literal ids when provided.
+  if (typeof owner === "string" && /^\d+$/.test(owner)) {
+    uid = Number.parseInt(owner, 10);
+  }
+  if (typeof group === "string" && /^\d+$/.test(group)) {
+    gid = Number.parseInt(group, 10);
+  }
+  return { uid, gid };
 }
 
 /**
@@ -621,26 +767,40 @@ async function deployCertificate({
       return rolledBack;
     }
 
-    // (5) Atomic write; (6) rollback from backup on failure.
+    // (5) Atomic write with mode/ownership applied on the temp file before
+    // rename; (6) rollback from backup on failure.
+    const certModeParsed = parseDeployFileMode(target.certMode, "certMode");
+    const chainModeParsed = parseDeployFileMode(target.chainMode, "chainMode");
+    const ownerParsed = parseOwnerGroupName(target.owner, "owner");
+    const groupParsed = parseOwnerGroupName(target.group, "group");
+    const ownership = resolveOwnershipIds(
+      ownerParsed.ok ? ownerParsed.name : null,
+      groupParsed.ok ? groupParsed.name : null,
+    );
+    const certMode =
+      certModeParsed.ok && certModeParsed.mode !== null
+        ? certModeParsed.mode
+        : DEPLOYED_CERT_DEFAULT_MODE;
+    const chainMode =
+      chainModeParsed.ok && chainModeParsed.mode !== null
+        ? chainModeParsed.mode
+        : DEPLOYED_CERT_DEFAULT_MODE;
     try {
-      await atomicWrite(fspImpl, realDestination, certificatePem);
+      await atomicWrite(fspImpl, realDestination, certificatePem, {
+        mode: certMode,
+        uid: ownership.uid,
+        gid: ownership.gid,
+      });
       if (realChainDestination !== null) {
-        await atomicWrite(fspImpl, realChainDestination, chainPem);
+        await atomicWrite(fspImpl, realChainDestination, chainPem, {
+          mode: chainMode,
+          uid: ownership.uid,
+          gid: ownership.gid,
+        });
       }
     } catch (err) {
       const rolledBack = await rollbackFiles();
       return failure("write", `deploy: atomic write failed: ${err?.message || err}`, rolledBack);
-    }
-
-    // Re-assert the restrictive mode (best-effort on win32, mirroring the
-    // config module's convention).
-    try {
-      await fspImpl.chmod(realDestination, DEPLOYED_FILE_MODE);
-      if (realChainDestination !== null) {
-        await fspImpl.chmod(realChainDestination, DEPLOYED_FILE_MODE);
-      }
-    } catch (_err) {
-      // best-effort on win32
     }
 
     counters.succeeded += 1;
@@ -649,6 +809,7 @@ async function deployCertificate({
       skipped: false,
       destination: realDestination,
       backupPath,
+      firstDeploy: existingContent === null && existingChain === null,
       ...(realChainDestination
         ? {
             chainDestination: realChainDestination,
@@ -697,6 +858,7 @@ async function resolveRealDestination(fspImpl, destination) {
  *   privateKeyPath: string,     // staging path holding the new private key PEM
  *   chainPem?: string,          // intermediate chain PEM when target.chainPath is set
  *   checkPath: (filePath: string) => { allowed: boolean, rejectionReason?: string, detail?: string },
+ *   retainPrivateKeyStaging?: boolean, // when true, do not unlink privateKeyPath after install
  *   now?: () => Date,
  *   _fsOverrides?: object,
  * }} params
@@ -708,6 +870,7 @@ async function deployCertificateAndKey({
   privateKeyPath,
   chainPem,
   checkPath,
+  retainPrivateKeyStaging = false,
   now = () => new Date(),
   _fsOverrides,
 } = {}) {
@@ -961,10 +1124,43 @@ async function deployCertificateAndKey({
     }
 
     try {
-      await atomicWrite(fspImpl, realCertDestination, certificatePem);
-      await atomicWrite(fspImpl, realKeyDestination, keyContent);
+      const certModeParsed = parseDeployFileMode(target.certMode, "certMode");
+      const keyModeParsed = parseDeployFileMode(target.keyMode, "keyMode");
+      const chainModeParsed = parseDeployFileMode(target.chainMode, "chainMode");
+      const ownerParsed = parseOwnerGroupName(target.owner, "owner");
+      const groupParsed = parseOwnerGroupName(target.group, "group");
+      const ownership = resolveOwnershipIds(
+        ownerParsed.ok ? ownerParsed.name : null,
+        groupParsed.ok ? groupParsed.name : null,
+      );
+      const certMode =
+        certModeParsed.ok && certModeParsed.mode !== null
+          ? certModeParsed.mode
+          : DEPLOYED_CERT_DEFAULT_MODE;
+      const keyMode =
+        keyModeParsed.ok && keyModeParsed.mode !== null
+          ? keyModeParsed.mode
+          : DEPLOYED_KEY_DEFAULT_MODE;
+      const chainMode =
+        chainModeParsed.ok && chainModeParsed.mode !== null
+          ? chainModeParsed.mode
+          : DEPLOYED_CERT_DEFAULT_MODE;
+      await atomicWrite(fspImpl, realCertDestination, certificatePem, {
+        mode: certMode,
+        uid: ownership.uid,
+        gid: ownership.gid,
+      });
+      await atomicWrite(fspImpl, realKeyDestination, keyContent, {
+        mode: keyMode,
+        uid: ownership.uid,
+        gid: ownership.gid,
+      });
       if (realChainDestination !== null) {
-        await atomicWrite(fspImpl, realChainDestination, chainPem);
+        await atomicWrite(fspImpl, realChainDestination, chainPem, {
+          mode: chainMode,
+          uid: ownership.uid,
+          gid: ownership.gid,
+        });
       }
     } catch (err) {
       const rolledBack = await rollbackPair();
@@ -976,21 +1172,13 @@ async function deployCertificateAndKey({
       );
     }
 
-    try {
-      await fspImpl.chmod(realCertDestination, DEPLOYED_FILE_MODE);
-      await fspImpl.chmod(realKeyDestination, DEPLOYED_FILE_MODE);
-      if (realChainDestination !== null) {
-        await fspImpl.chmod(realChainDestination, DEPLOYED_FILE_MODE);
-      }
-    } catch (_err) {
-      // best-effort on win32
-    }
-
-    // Staging file is consumed once the live key is in place. Failures here
-    // do not roll back the deploy (the live pair is already correct); the
-    // staging leftover is best-effort cleaned.
+    // Staging file is consumed once the live key is in place — unless the
+    // caller still needs it for additional destinations (multi-target).
     const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
-    if (normalizedPrivateKeyPath !== realKeyDestination) {
+    if (
+      retainPrivateKeyStaging !== true &&
+      normalizedPrivateKeyPath !== realKeyDestination
+    ) {
       try {
         await fspImpl.unlink(normalizedPrivateKeyPath);
       } catch (_err) {
@@ -1015,6 +1203,8 @@ async function deployCertificateAndKey({
         key: keyBackupPath,
         chain: chainBackupPath,
       },
+      firstDeploy:
+        existingCert === null && existingKey === null && existingChain === null,
     };
   });
 }
@@ -1054,13 +1244,64 @@ async function discardDeployBackups(
   return { discarded };
 }
 
+/**
+ * Removes newly written deploy destinations when rolling back a first-ever
+ * deploy that had no prior backup. Used by the multi-target coordinator so
+ * a later target's failure can return an earlier first-deploy target to its
+ * previous absent state. Does not touch backup files.
+ *
+ * @param {{
+ *   destinations: Array<string|null|undefined>,
+ *   checkPath?: (filePath: string) => { allowed: boolean },
+ * }} params
+ * @param {{ _fsOverrides?: object }} [options]
+ * @returns {Promise<{ removed: string[], failed: Array<{ path: string, error: string }> }>}
+ */
+async function removeDeployedArtifacts(
+  { destinations, checkPath } = {},
+  { _fsOverrides } = {},
+) {
+  const fspImpl = { ...fsp, ..._fsOverrides };
+  const removed = [];
+  const failed = [];
+  const list = Array.isArray(destinations) ? destinations : [];
+  for (const candidate of list) {
+    if (typeof candidate !== "string" || candidate.length === 0) continue;
+    if (typeof checkPath === "function") {
+      const verdict = checkPath(candidate);
+      if (!verdict || verdict.allowed !== true) {
+        failed.push({
+          path: candidate,
+          error: "path not allowlisted for removal",
+        });
+        continue;
+      }
+    }
+    try {
+      await fspImpl.unlink(candidate);
+      removed.push(candidate);
+    } catch (err) {
+      if (err?.code === "ENOENT") {
+        removed.push(candidate);
+        continue;
+      }
+      failed.push({ path: candidate, error: err?.message || String(err) });
+    }
+  }
+  return { removed, failed };
+}
+
 module.exports = {
   validateTargetConfig,
   deployCertificate,
   deployCertificateAndKey,
   discardDeployBackups,
+  removeDeployedArtifacts,
+  parseDeployFileMode,
   getDeployMetrics,
   resetDeployMetrics,
   DEPLOYED_FILE_MODE,
+  DEPLOYED_CERT_DEFAULT_MODE,
+  DEPLOYED_KEY_DEFAULT_MODE,
   VALID_TARGET_TYPES,
 };

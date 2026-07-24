@@ -771,7 +771,13 @@ function initialLifecycleTimestamps(options, status) {
     (status === "running" ? now : null);
   const completedAt =
     options.completedAt ||
-    (["succeeded", "failed", "blocked", "dry_run_complete"].includes(status)
+    ([
+      "succeeded",
+      "failed",
+      "blocked",
+      "dry_run_complete",
+      "orphaned_unknown_effect",
+    ].includes(status)
       ? now
       : null);
   // The database column retains the American spelling for compatibility. The
@@ -1574,7 +1580,13 @@ async function updateCertificateJobStatus(options) {
                 ELSE started_at
               END,
               completed_at = CASE
-                WHEN $3 IN ('succeeded', 'failed', 'blocked', 'dry_run_complete')
+                WHEN $3 IN (
+                  'succeeded',
+                  'failed',
+                  'blocked',
+                  'dry_run_complete',
+                  'orphaned_unknown_effect'
+                )
                   THEN COALESCE(completed_at, NOW())
                 ELSE completed_at
               END,

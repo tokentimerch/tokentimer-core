@@ -1,0 +1,364 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/agent-protocol.schema.json",
+  "title": "CertOps Agent Protocol Message",
+  "description": "Agent/executor message envelope and per-messageType bodies (see ADR-0002/0003). The agent is outbound-only (it polls the control plane); the control plane never opens connections to agents. Messages MUST NOT carry private key material (enforced by apps/api/utils/secretMaterial.js at the ingest boundary). Bodies here are bootstrap-phase shapes for the packages/agent client stubs; server-side routes, Ed25519 signature verification, and replay-cache enforcement land with the control-plane agent backend and must stay in lockstep with this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocolVersion", "messageType", "agentId", "sentAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "protocolVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Agent protocol semver the agent speaks (version negotiation). The register message is the only messageType where agentId is a placeholder pending assignment."
+    },
+    "messageType": {
+      "type": "string",
+      "enum": ["register", "heartbeat", "claim", "result", "evidence"],
+      "description": "register/heartbeat/claim/result/evidence. See definitions.*Body below for the per-messageType payload."
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Stable agent identifier. For messageType=register this is a client-generated candidate id echoed back by the control plane; the control plane is the source of truth once registration succeeds."
+    },
+    "workspaceId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "sentAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "clockOffsetMs": {
+      "type": ["integer", "null"],
+      "description": "Agent-reported offset vs control-plane time, used for clock-drift detection. Present on heartbeat and result; optional elsewhere."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per-agent monotonically increasing message counter, enforced server-side when present (defense in depth on top of the single-use nonce replay ledger): the control plane rejects any message whose sequence does not exceed the last accepted one for this agent. The counter is not persisted across agent restarts; a successful register begins a new generation, so enforcement only rejects regressions within the current registered generation. Optional for backward compatibility with already-deployed agents that do not send it."
+    },
+    "body": {
+      "description": "Message-type-specific payload. Structurally validated against the matching *Body definition below via the if/then rules in `allOf`; each body definition is additionalProperties:false, so unconstrained extra fields are rejected per messageType.",
+      "type": ["object", "null"]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "messageType": { "const": "register" } } },
+      "then": { "properties": { "body": { "$ref": "#/definitions/registerBody" } } }
+    },
+    {
+      "if": { "properties": { "messageType": { "const": "heartbeat" } } },
+      "then": { "properties": { "body": { "$ref": "#/definitions/heartbeatBody" } } }
+    },
+    {
+      "if": { "properties": { "messageType": { "const": "claim" } } },
+      "then": { "properties": { "body": { "$ref": "#/definitions/claimBody" } } }
+    },
+    {
+      "if": { "properties": { "messageType": { "const": "result" } } },
+      "then": { "properties": { "body": { "$ref": "#/definitions/resultBody" } } }
+    },
+    {
+      "if": { "properties": { "messageType": { "const": "evidence" } } },
+      "then": { "properties": { "body": { "$ref": "#/definitions/evidenceBody" } } }
+    }
+  ],
+  "definitions": {
+    "publicMetadataEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^(?!.*(?:[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Ee][Nn][Cc][Rr][Yy][Pp][Tt][Ee][Dd][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][-_]?[Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll]|[Pp][Ff][Xx][-_]?[Bb][Ll][Oo][Bb]|[Jj][Kk][Ss][-_]?[Bb][Ll][Oo][Bb]|[Tt][Ll][Ss][-_]?[Kk][Ee][Yy]|[Cc][Aa][-_]?[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy]|[Kk][Ee][Yy][Ss][Tt][Oo][Rr][Ee][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_]?[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy][-_]?[Pp][Ee][Mm]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]))[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "value": {
+          "oneOf": [
+            { "type": "string", "maxLength": 512 },
+            { "type": "number" },
+            { "type": "integer" },
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "registerBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootstrapTokenId", "agentVersion"],
+      "description": "Agent identity lifecycle: POST /agents/register + single-use hashed bootstrap token. The raw bootstrap token travels as a bearer credential (outside this JSON body, per the machine-token pattern), never as a body field; bootstrapTokenId is an opaque non-secret reference used for correlation/audit only.",
+      "properties": {
+        "bootstrapTokenId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "agentVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "hostname": {
+          "type": ["string", "null"],
+          "maxLength": 255
+        },
+        "platform": {
+          "type": ["string", "null"],
+          "enum": ["linux", "darwin", "win32", null]
+        },
+        "nodeVersion": {
+          "type": ["string", "null"],
+          "maxLength": 32
+        },
+        "declaredTargetSelectors": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "Non-secret target scope declared at registration (defense in depth: server must not offer jobs outside this declared scope).",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "declaredCommandProfileNames": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "Names only of agent-local command profiles: argv itself never leaves the agent config file.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          }
+        },
+        "registrationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Client-generated registration idempotency key (H1). The agent persists this locally BEFORE the register request; a retry with the same registrationId after a crash must receive the same credential response rather than a hard rejection for a spent bootstrap token. See COORDINATION-H1.md."
+        },
+        "supportedDnsProviders": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Declared at registration so the control plane can route matching jobs."
+        }
+      }
+    },
+    "heartbeatBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agentVersion"],
+      "description": "Steady-state heartbeat: updates last_seen_at, carries version-negotiation and clock-drift-relevant fields. A retired agent's heartbeat returns 410 without updating last_seen_at; that behavior lives server-side and is out of scope for this body shape.",
+      "properties": {
+        "agentVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "ntpSynced": {
+          "type": ["boolean", "null"],
+          "description": "Optional local NTP sync status, used alongside clockOffsetMs for fleet clock-drift alerts."
+        },
+        "uptimeSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "pinnedSigningKeyId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Job-signing public key id currently pinned by the agent, so the control plane can detect agents still on a retiring key during rotation overlap."
+        },
+        "supportedDnsProviders": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Re-advertised on heartbeat so capability changes are picked up without re-registration."
+        }
+      }
+    },
+    "claimBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Job dispatch model: the agent polls a claim endpoint (FOR UPDATE SKIP LOCKED server-side); this body only expresses the agent's own poll preferences, never a specific job selection.",
+      "properties": {
+        "maxJobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 1,
+          "description": "Maximum number of jobs the agent is willing to claim in this poll."
+        },
+        "supportedActions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "enum": ["renew", "deploy", "reload", "revoke", "noop"]
+          },
+          "description": "Subset of job-payload.schema.json actions this agent build can execute; lets the claim query skip jobs the agent cannot run."
+        },
+        "supportedDnsProviders": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          },
+          "description": "DNS provider identifiers this agent can execute for DNS-01 jobs. Matched against certificate_jobs.required_dns_provider at claim time."
+        }
+      }
+    },
+    "resultBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "attemptId", "status"],
+      "description": "Job integrity and result reporting. Distinct from the external-executor events surface (executor-event.schema.json): this is the signed-job execution result path. attemptId is single-use per the server-side claim/lease model.",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["succeeded", "failed", "rejected", "blocked", "dry_run_complete", "orphaned_unknown_effect"]
+        },
+        "rejectionReason": {
+          "type": ["string", "null"],
+          "enum": [
+            "job_integrity_failed",
+            "job_replay_rejected",
+            "target_out_of_scope",
+            "command_not_allowlisted",
+            "path_not_allowlisted",
+            "ca_endpoint_not_allowlisted",
+            "dns_zone_not_allowlisted",
+            "dns_provider_not_allowlisted",
+            "key_export_requested",
+            "clock_drift_suspected",
+            null
+          ],
+          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule."
+        },
+        "keyRotated": {
+          "type": ["boolean", "null"],
+          "description": "Key rotation policy: whether this job generated a new key vs reused the existing one. Never accompanied by the key itself."
+        },
+        "errorMessage": {
+          "type": ["string", "null"],
+          "maxLength": 1024
+        },
+        "claimId": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Server-assigned claim id from the signed dispatch payload; a non-secret opaque reference the control plane uses to re-prove claim ownership at result ingestion (ADR-0003, 7.4). attemptId doubles as the claimId when omitted."
+        },
+        "nonce": {
+          "type": ["string", "null"],
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Single-use dispatch nonce from the signed job payload, consumed by the server-side replay ledger at result ingestion (ADR-0003, 7.4). Non-secret opaque reference."
+        }
+      }
+    },
+    "evidenceBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceItems"],
+      "description": "Agent-originated evidence, structurally aligned with evidence.schema.json's public fields but scoped to the message envelope's jobId/agentId rather than repeating them per item.",
+      "properties": {
+        "jobId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "evidenceItems": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["evidenceId", "eventType", "observedAt"],
+            "properties": {
+              "evidenceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_.:-]+$",
+                "description": "Client-generated idempotency key for this evidence item. Exact duplicate submissions are safely no-op'd by the control plane."
+              },
+              "eventType": {
+                "type": "string",
+                "enum": [
+                  "certificate.observed",
+                  "deployment.checked",
+                  "deployment.updated",
+                  "validation.passed",
+                  "validation.failed",
+                  "policy.checked"
+                ]
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "fingerprintSha256": {
+                "type": ["string", "null"],
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "summary": {
+                "type": ["string", "null"],
+                "maxLength": 1024
+              },
+              "metadata": {
+                "type": "array",
+                "maxItems": 32,
+                "items": { "$ref": "#/definitions/publicMetadataEntry" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

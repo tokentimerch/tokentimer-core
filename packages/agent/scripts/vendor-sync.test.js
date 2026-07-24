@@ -41,4 +41,27 @@ describe("vendor sync", () => {
     );
     assert.equal(stripVendoredAttribution(vendored), upstream);
   });
+
+  it("keeps agent-protocol.schema.json byte-identical to @tokentimer/contracts", () => {
+    const upstream = fs.readFileSync(
+      path.join(
+        repoRoot,
+        "packages",
+        "contracts",
+        "certops",
+        "agent-protocol.schema.json",
+      ),
+      "utf8",
+    );
+    const vendored = fs.readFileSync(
+      path.join(
+        packageRoot,
+        "vendor",
+        "contracts",
+        "agent-protocol.schema.json",
+      ),
+      "utf8",
+    );
+    assert.equal(vendored, upstream);
+  });
 });

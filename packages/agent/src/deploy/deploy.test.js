@@ -11,6 +11,8 @@ const {
   deployCertificate,
   deployCertificateAndKey,
   discardDeployBackups,
+  removeDeployedArtifacts,
+  parseDeployFileMode,
   getDeployMetrics,
   resetDeployMetrics,
 } = require("./index.js");
@@ -715,5 +717,69 @@ describe("deployCertificate chainPath", () => {
     assert.equal(result.rolledBack, true);
     assert.equal(fs.readFileSync(certPath, "utf8"), OTHER_CERT_PEM);
     assert.equal(fs.readFileSync(chainPath, "utf8"), INTERMEDIATE_PEM);
+  });
+});
+
+describe("deploy modes, ownership metadata, and first-deploy removal", () => {
+  it("rejects world-writable certMode", () => {
+    const parsed = parseDeployFileMode("0666", "certMode");
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.detail, /world-writable/);
+  });
+
+  it("rejects unsafe owner names", () => {
+    const dir = makeTempDir();
+    const result = validateTargetConfig(
+      makeTarget(dir, { owner: "root;rm -rf /" }),
+      { checkPath: makeCheckPath(dir) },
+    );
+    assert.equal(result.valid, false);
+    assert.match(result.detail, /owner/);
+  });
+
+  it("applies an explicit certMode on atomic write", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "mode.pem");
+    const result = await deployCertificate({
+      target: makeTarget(dir, { certPath, certMode: "0644" }),
+      certificatePem: CERT_PEM,
+      checkPath: makeCheckPath(dir),
+    });
+    assert.equal(result.deployed, true);
+    if (process.platform !== "win32") {
+      const mode = fs.statSync(certPath).mode & 0o777;
+      assert.equal(mode, 0o644);
+    }
+  });
+
+  it("removeDeployedArtifacts unlinks first-deploy destinations", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "new.pem");
+    const keyPath = path.join(dir, "new.key");
+    fs.writeFileSync(certPath, CERT_PEM, { mode: 0o600 });
+    fs.writeFileSync(keyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+    const removal = await removeDeployedArtifacts({
+      destinations: [certPath, keyPath],
+      checkPath: makeCheckPath(dir),
+    });
+    assert.deepEqual(removal.failed, []);
+    assert.equal(fs.existsSync(certPath), false);
+    assert.equal(fs.existsSync(keyPath), false);
+  });
+
+  it("never returns private key bytes from deployCertificateAndKey", async () => {
+    const dir = makeTempDir();
+    const certPath = path.join(dir, "pair.crt");
+    const keyPath = path.join(dir, "pair.key");
+    const staged = path.join(dir, "staged.key");
+    fs.writeFileSync(staged, MATCHING_KEY_PEM, { mode: 0o600 });
+    const result = await deployCertificateAndKey({
+      target: makeTarget(dir, { certPath, keyPath }),
+      certificatePem: CERT_PEM,
+      privateKeyPath: staged,
+      checkPath: makeCheckPath(dir),
+    });
+    assert.equal(result.deployed, true);
+    assert.doesNotMatch(JSON.stringify(result), /BEGIN [A-Z0-9 ]*PRIVATE KEY/);
   });
 });
