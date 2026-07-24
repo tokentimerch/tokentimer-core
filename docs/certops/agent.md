@@ -76,6 +76,19 @@ generated install command, run it on the target host, and watch the
 dashboard's agent fleet panel flip the agent to registered on first
 heartbeat.
 
+### Supported platform / tool version matrix
+
+This is the tested support matrix for this release. Versions outside this
+matrix may work but are not covered by CI or release sign-off.
+
+| Component | Supported range | Notes |
+|---|---|---|
+| Node.js | `>= 22.0.0, < 25.0.0` | Even-numbered Active LTS lines only (22, 24); odd/Current releases are not release-tested. |
+| Certbot | `2.x` (tested against the latest `2.x` release at release time) | `--manual` + `--csr` mode only; snap and pip installs both exercised in CI. |
+| acme.sh | Latest tagged release at release time (pinned commit recorded in CI config) | Uses the shipped `dns_certops` dnsapi hook; requires acme.sh's own `dnsapi` loading support (stable across acme.sh releases). |
+| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems are not supported by `install-agent.sh`. |
+| DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
+
 ### Config directory
 
 Resolution order (`resolveConfigDir`): explicit argument >
@@ -334,30 +347,44 @@ For `renew` (`executeRenewJob`):
    generated only when absent, or when `job.keyRotation` is truthy
    (forward-compatible field). `keyRotated` in the result reports whether a
    new key was generated. Supported algorithms: `ec-p256` (default),
-   `rsa-2048`, `rsa-3072`, `ed25519`. Keys are written 0600 in 0700 dirs and
+   `ec-p384`, `rsa-2048`, `rsa-3072`, `rsa-4096`, `ed25519`. When the job
+   carries `keyAlgorithm`/`keySize` from the renewal profile, those map onto
+   the matching algorithm id; unrecognized combinations fail the job.
+   Keys are written 0600 in 0700 dirs and
    the exported PEM buffer is zeroized after the write; no exported function
    ever returns private key material.
-2. **CSR** (`generateCsr`): PKCS#10, CN and single SAN from
-   `target.reference`, written to a job-scoped temp path
+2. **CSR** (`generateCsr`): PKCS#10. When `job.sans` (or nested
+   `renewalProfile.sanPolicy.sans`) is present, the full approved SAN list is
+   used for CSR altNames and ACME `-d` domains (CN prefers
+   `target.reference` when it is in that list). Otherwise CN and a single SAN
+   come from `target.reference`. The CSR is written to a job-scoped temp path
    `<keysDir>/<jobId>.csr.pem` (0600) and removed after the ACME step.
 3. **ACME** (`src/acme`): `job.commandRef` must resolve through
    `policyEngine.checkCommandRef` to an allowlisted `{ argv }` profile;
    `job.caEndpoint` is required and re-checked against the CA allowlist
-   inside the adapter as defense in depth. The adapter (`certbot` by
+   inside the adapter as defense in depth. Optional `preferredChain` and
+   External Account Binding (`eabRef` / `accountRef` resolved via local
+   `config.acmeAccounts` credentials files — never transmitted by the control
+   plane) are passed through when present. The adapter (`certbot` by
    default, or `acme.sh` when `job.acmeKind` says so) shells out via
    `child_process.execFile` without a shell, in CSR mode (`certbot certonly
    --csr` / `acme.sh --signcsr`), staging the certificate to
    `<keysDir>/<jobId>.cert.pem`. **Scope (current):** external command
    adapters only — there is no embedded ACME client, no step-ca
-   integration, no EAB/account lifecycle management, and no CA/profile
-   model beyond the allowlisted `caEndpoint` URL and the tool's own
-   on-host account state. DNS-01 is wired through the shipped
+   integration, and no CA/profile model beyond the allowlisted `caEndpoint`
+   URL, optional EAB refs, and the tool's own on-host account state. DNS-01 is wired through the shipped
    `certops-dns-hook` (certbot `--manual-auth-hook` /
    `--manual-cleanup-hook`, acme.sh `--dns` pointing at `dns_certops.sh`).
-   No private key and no DNS credentials ever appear in argv; credentials
+   No private key and no DNS/EAB credentials ever appear in argv; credentials
    stay in agent-local 0600 files referenced by path in `config.json`.
    Default exec timeout is 10 minutes.
-4. **Deploy** (`src/deploy`): atomic install to the resolved `certPath` with
+4. **Deploy** (`src/deploy`): atomic install to each resolved destination.
+   When `job.deploymentTargets` is a non-empty array, deploy/reload/verify
+   runs once per target (all-or-nothing: any target failure fails the job;
+   `orphaned_unknown_effect` wins if any target is orphaned). Otherwise a
+   single `certPath` / absolute `target.reference` is used. Optional
+   `chainPath` receives intermediate PEM blocks split from a fullchain-style
+   blob (leaf stays at `certPath`). Deploy includes
    target-config re-validation, realpath containment re-check via the policy
    `checkPath` callback, idempotent skip for byte-identical content,
    timestamped backup before overwrite, temp-file-plus-rename atomic write
@@ -428,10 +455,19 @@ hostname is never assumed to be the zone). Optional top-level
     "timeoutMs": 120000,
     "intervalMs": 2000,
     "resolvers": ["1.1.1.1", "8.8.8.8"],
-    "checkAuthoritative": true
+    "checkAuthoritative": true,
+    "verificationMode": "all",
+    "quorumCount": null
   }
 }
 ```
+
+`verificationMode` defaults to `all`, requiring every configured resolver
+(and the authoritative check, when enabled) to independently confirm the
+TXT record before the hook proceeds. Set it to `quorum` with a
+`quorumCount` (positive integer, required in quorum mode) to instead
+proceed once that many independent server checks confirm — useful when one
+of several public resolvers is flaky or slow to pick up the record.
 
 ```json
 {
@@ -456,7 +492,7 @@ group/other-readable files on POSIX), and never leave the host:
 | `azure-dns` | `tenantId`, `clientId`, `clientSecret`, `subscriptionId`, `resourceGroup` (client-credentials flow, DNS Zone Contributor role) |
 | `google-cloud-dns` | `client_email`, `private_key`, `project_id` (standard SA JSON fields); optional `managedZone` (else looked up by `dnsName`). The SA key is a DNS credential: it signs the OAuth JWT locally and never leaves the host |
 | `rfc2136` | `server`, `keyName`, `keySecretBase64`; optional `port` (default 53), `keyAlgorithm` (default `hmac-sha256`) |
-| `acme-dns` | `baseUrl`, `username`, `password`, `subdomain` (from `/register`). Cleanup is a documented no-op: acme-dns rotates its two TXT slots automatically |
+| `acme-dns` | `baseUrl`, `username`, `password`, `subdomain` (from `/register`). Cleanup is a documented no-op: acme-dns rotates its two TXT slots automatically. The provider declares `capabilities.cleanupVerifiable: false`, so the hook skips the generic wait-for-TXT-absence poll after cleanup and reports evidence `status: "cleanup_not_applicable"` instead of failing/timing out |
 | `ovhcloud` | `applicationKey`, `applicationSecret`, `consumerKey`; optional `endpoint` (default `https://eu.api.ovh.com/1.0`; other regions `https://ca.api.ovh.com/1.0`, `https://us.api.ovhcloud.com/1.0`). Requests are OVH-signed (`$1$` + SHA1) with the LOCAL unix time as `X-Ovh-Timestamp` (no `/auth/time` skew correction); a `POST /domain/zone/<zone>/refresh` follows every mutation so the change actually serves |
 | `hetzner` | `apiToken` — **Hetzner Console / Cloud project API token** (`Authorization: Bearer`), not a legacy DNS Console token. Optional `zoneId` (looked up by zone name when absent). Uses `https://api.hetzner.cloud/v1` rrset `add_records` / `remove_records` actions (value-specific; concurrent challenges do not clobber each other). Legacy `dns.hetzner.com` Auth-API-Token credentials are not supported |
 | `infomaniak` | `apiToken` (Bearer, "domain" scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
@@ -472,20 +508,35 @@ derives the TXT name `_acme-challenge.$CERTBOT_DOMAIN` and reads
 certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
   --manual-auth-hook    "/path/to/certops-dns-hook.js present" \
   --manual-cleanup-hook "/path/to/certops-dns-hook.js cleanup" \
-  --manual-public-ip-logging-ok
+  --config-dir <stateDir>/acme/certbot/config \
+  --work-dir   <stateDir>/acme/certbot/work \
+  --logs-dir   <stateDir>/acme/certbot/logs
 ```
 
-For acme.sh, point `--dns` at the shipped wrapper (absolute path) and set
-`CERTOPS_DNS_HOOK` to the Node hook path:
+For acme.sh, `--dns` takes the shipped dnsapi hook **name** (`dns_certops`),
+not an absolute path — acme.sh sources `dnsapi/dns_certops.sh` from its own
+config home and calls the `dns_certops_add` / `dns_certops_rm` shell
+functions it defines. The installer symlinks the shipped script into
+`<stateDir>/acme/acme.sh/dnsapi/dns_certops.sh`:
 
 ```
 CERTOPS_DNS_HOOK=/path/to/certops-dns-hook.js \
-  acme.sh --signcsr --csr <csr.pem> --dns /path/to/dns_certops.sh ...
+LE_CONFIG_HOME=<stateDir>/acme/acme.sh \
+  acme.sh --signcsr --csr <csr.pem> --dns dns_certops \
+  --home <stateDir>/acme/acme.sh --config-home <stateDir>/acme/acme.sh ...
 ```
 
-The wrapper exports `ACME_DOMAIN` / `ACME_TXT_VALUE` into `certops-dns-hook
-present|cleanup`. Credentials never appear on argv or in the ACME tool
-environment.
+`dns_certops.sh` strips one leading `_acme-challenge.` from the complete TXT
+name acme.sh calls it with and exports `ACME_DOMAIN` (base domain) /
+`ACME_TXT_VALUE` into `certops-dns-hook present|cleanup`, which prepends
+`_acme-challenge.` itself (same convention as certbot's `CERTBOT_DOMAIN`).
+Credentials never appear on argv or in the ACME tool environment. Both
+tools' working state (config/work/log dirs, or acme.sh's home) lives under
+the agent's own state directory so they stay writable under the hardened
+systemd unit's `ProtectSystem=strict`. See `COORDINATION-ACME-ADAPTER.md` at
+the repo root for the full typed adapter-options contract (`preferredChain`,
+`eabKid`/`eabHmacKey`); the adapter no longer accepts a generic `extraArgs`
+passthrough.
 
 Policy gate: the hook resolves the provider and zone for the domain, then
 requires BOTH `checkDnsProvider` and `checkDnsZone` to pass against the
@@ -543,11 +594,12 @@ Current behavior:
   is enabled; a payload without `signature`/`nonce`/`signingKeyId`/
   `issuedAt`/`expiresAt` fails signed-field validation. Signed dispatch is
   what the control plane's claim route produces.
-- No domains list in the schema: the CSR CN and the ACME `-d` domain come
-  from `job.target.reference`.
+- When `job.sans` is absent: the CSR CN and the ACME `-d` domain come
+  from `job.target.reference`. When present, the full SAN list is used.
 - `certPath` resolution: an explicit `job.certPath` wins; otherwise
   `target.reference` is used as the deploy destination when it is an
-  absolute path (POSIX or Windows form); neither present means the job fails
+  absolute path (POSIX or Windows form); `job.deploymentTargets` deploys to
+  every listed destination. Neither present means the job fails
   with a clear message.
 - `deploy` without `certificatePem` is `blocked`. The contract defines
   `certificatePem` as public leaf-plus-chain material attached by the
