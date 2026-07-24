@@ -2,12 +2,16 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   createAcmeAdapter,
   listSupportedAdapters,
   defaultDnsHookPath,
   defaultAcmeDnsApiPath,
+  resolveAcmeStatePaths,
+  ACME_SH_DNS_HOOK_NAME,
   SHELL_METACHARACTER_PATTERN,
   OUTPUT_EXCERPT_MAX_CHARS,
 } = require("./index.js");
@@ -15,9 +19,12 @@ const {
 const CA_ENDPOINT = "https://acme-v02.api.letsencrypt.org/directory";
 const CSR_PATH = "/etc/tokentimer-agent/csr/web-01.csr.pem";
 const OUT_CERT_PATH = "/etc/nginx/tls/web-01.crt.pem";
+const STATE_DIR = "/opt/tokentimer-agent/state";
 const DOMAINS = ["example.com", "www.example.com"];
 const DNS_HOOK_PATH = "/opt/tokentimer/bin/certops-dns-hook.js";
 const ACME_DNS_API_PATH = "/opt/tokentimer/bin/dns_certops.sh";
+
+const STATE_PATHS = resolveAcmeStatePaths(STATE_DIR);
 
 const allowAll = () => ({ allowed: true });
 
@@ -64,6 +71,7 @@ function baseRenewalInputs(overrides = {}) {
     domains: [...DOMAINS],
     csrPath: CSR_PATH,
     outCertPath: OUT_CERT_PATH,
+    stateDir: STATE_DIR,
     checkCaEndpoint: allowAll,
     ...overrides,
   };
@@ -151,7 +159,6 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
     `${DNS_HOOK_PATH} present`,
     "--manual-cleanup-hook",
     `${DNS_HOOK_PATH} cleanup`,
-    "--manual-public-ip-logging-ok",
     "--csr",
     CSR_PATH,
     "--server",
@@ -162,6 +169,12 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
     "www.example.com",
     "--cert-path",
     OUT_CERT_PATH,
+    "--config-dir",
+    STATE_PATHS.certbotConfigDir,
+    "--work-dir",
+    STATE_PATHS.certbotWorkDir,
+    "--logs-dir",
+    STATE_PATHS.certbotLogsDir,
   ]);
   assert.deepEqual(result.argvUsed, ["certbot", ...execStub.calls[0].args]);
   assert.equal(result.renewed, true);
@@ -169,12 +182,12 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
 });
 
-test("certbot adapter appends --dry-run when dryRun: true, before extraArgs", async () => {
+test("certbot adapter appends --dry-run when dryRun: true, after typed options", async () => {
   const execStub = makeExecStub();
   const adapter = certbotAdapter(execStub);
 
   const result = await adapter.runRenewal(
-    baseRenewalInputs({ dryRun: true, extraArgs: ["--preferred-chain", "ISRG Root X1"] }),
+    baseRenewalInputs({ dryRun: true, preferredChain: "ISRG Root X1" }),
   );
 
   assert.deepEqual(result.argvUsed, [
@@ -188,7 +201,6 @@ test("certbot adapter appends --dry-run when dryRun: true, before extraArgs", as
     `${DNS_HOOK_PATH} present`,
     "--manual-cleanup-hook",
     `${DNS_HOOK_PATH} cleanup`,
-    "--manual-public-ip-logging-ok",
     "--csr",
     CSR_PATH,
     "--server",
@@ -199,10 +211,38 @@ test("certbot adapter appends --dry-run when dryRun: true, before extraArgs", as
     "www.example.com",
     "--cert-path",
     OUT_CERT_PATH,
-    "--dry-run",
+    "--config-dir",
+    STATE_PATHS.certbotConfigDir,
+    "--work-dir",
+    STATE_PATHS.certbotWorkDir,
+    "--logs-dir",
+    STATE_PATHS.certbotLogsDir,
     "--preferred-chain",
     "ISRG Root X1",
+    "--dry-run",
   ]);
+});
+
+test("certbot adapter maps EAB typed options and redacts hmac in argvUsed", async () => {
+  const execStub = makeExecStub();
+  const adapter = certbotAdapter(execStub);
+
+  const result = await adapter.runRenewal(
+    baseRenewalInputs({
+      eabKid: "kid-abc",
+      eabHmacKey: "super-secret-hmac",
+    }),
+  );
+
+  const execArgs = execStub.calls[0].args;
+  const kidIdx = execArgs.indexOf("--eab-kid");
+  assert.ok(kidIdx >= 0);
+  assert.equal(execArgs[kidIdx + 1], "kid-abc");
+  assert.equal(execArgs[kidIdx + 2], "--eab-hmac-key");
+  assert.equal(execArgs[kidIdx + 3], "super-secret-hmac");
+
+  assert.equal(result.argvUsed.includes("super-secret-hmac"), false);
+  assert.equal(result.argvUsed[result.argvUsed.indexOf("--eab-hmac-key") + 1], "[redacted]");
 });
 
 // ---------------------------------------------------------------------------
@@ -218,6 +258,10 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(execStub.calls.length, 1);
   assert.equal(execStub.calls[0].file, "/root/.acme.sh/acme.sh");
   assert.deepEqual(execStub.calls[0].args, [
+    "--home",
+    STATE_PATHS.acmeShHome,
+    "--config-home",
+    STATE_PATHS.acmeShHome,
     "--signcsr",
     "--csr",
     CSR_PATH,
@@ -228,16 +272,18 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
     "-d",
     "www.example.com",
     "--dns",
-    ACME_DNS_API_PATH,
+    ACME_SH_DNS_HOOK_NAME,
     "--cert-file",
     OUT_CERT_PATH,
   ]);
+  assert.equal(ACME_SH_DNS_HOOK_NAME, "dns_certops");
   assert.deepEqual(result.argvUsed, [
     "/root/.acme.sh/acme.sh",
     ...execStub.calls[0].args,
   ]);
   assert.equal(result.renewed, true);
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
+  assert.equal(execStub.calls[0].options.env.LE_CONFIG_HOME, STATE_PATHS.acmeShHome);
 });
 
 test("acme.sh adapter appends --test when dryRun: true", async () => {
@@ -248,6 +294,10 @@ test("acme.sh adapter appends --test when dryRun: true", async () => {
 
   assert.deepEqual(result.argvUsed, [
     "/root/.acme.sh/acme.sh",
+    "--home",
+    STATE_PATHS.acmeShHome,
+    "--config-home",
+    STATE_PATHS.acmeShHome,
     "--signcsr",
     "--csr",
     CSR_PATH,
@@ -258,11 +308,32 @@ test("acme.sh adapter appends --test when dryRun: true", async () => {
     "-d",
     "www.example.com",
     "--dns",
-    ACME_DNS_API_PATH,
+    "dns_certops",
     "--cert-file",
     OUT_CERT_PATH,
     "--test",
   ]);
+});
+
+test("acme.sh adapter maps preferredChain and EAB typed options", async () => {
+  const execStub = makeExecStub();
+  const adapter = acmeShAdapter(execStub);
+
+  const result = await adapter.runRenewal(
+    baseRenewalInputs({
+      preferredChain: "ISRG Root X1",
+      eabKid: "kid-1",
+      eabHmacKey: "hmac-1",
+    }),
+  );
+
+  assert.ok(result.argvUsed.includes("--preferred-chain"));
+  assert.equal(
+    result.argvUsed[result.argvUsed.indexOf("--preferred-chain") + 1],
+    "ISRG Root X1",
+  );
+  assert.ok(result.argvUsed.includes("--eab-kid"));
+  assert.equal(result.argvUsed[result.argvUsed.indexOf("--eab-hmac-key") + 1], "[redacted]");
 });
 
 test("createAcmeAdapter defaults resolve shipped hook and dnsapi paths", () => {
@@ -316,20 +387,57 @@ test("runRenewal passes the job's caEndpoint to the checkCaEndpoint callback", a
 });
 
 // ---------------------------------------------------------------------------
-// programmer-error validation
+// programmer-error validation / typed options (no extraArgs)
 // ---------------------------------------------------------------------------
 
-test("runRenewal rejects on shell metacharacters in extraArgs, without exec", async () => {
+test("runRenewal rejects unknown option keys (no generic passthrough)", async () => {
   const execStub = makeExecStub();
   const adapter = certbotAdapter(execStub);
 
   await assert.rejects(
     adapter.runRenewal(
-      baseRenewalInputs({ extraArgs: ["--post-hook", "reload; rm -rf /"] }),
+      baseRenewalInputs({ extraArgs: ["--post-hook", "reload"] }),
     ),
-    /extraArgs\[1\] contains a disallowed shell metacharacter/,
+    /unknown option\(s\): extraArgs/,
   );
   assert.equal(execStub.calls.length, 0);
+});
+
+test("runRenewal rejects shell metacharacters in preferredChain, without exec", async () => {
+  const execStub = makeExecStub();
+  const adapter = certbotAdapter(execStub);
+
+  await assert.rejects(
+    adapter.runRenewal(
+      baseRenewalInputs({ preferredChain: "ISRG; rm -rf /" }),
+    ),
+    /preferredChain\[0\] contains a disallowed shell metacharacter/,
+  );
+  assert.equal(execStub.calls.length, 0);
+});
+
+test("runRenewal rejects EAB kid without hmac (and the reverse)", async () => {
+  const adapter = certbotAdapter(makeExecStub());
+  await assert.rejects(
+    adapter.runRenewal(baseRenewalInputs({ eabKid: "kid-only" })),
+    /eabKid and eabHmacKey must be provided together/,
+  );
+  await assert.rejects(
+    adapter.runRenewal(baseRenewalInputs({ eabHmacKey: "hmac-only" })),
+    /eabKid and eabHmacKey must be provided together/,
+  );
+});
+
+test("runRenewal rejects missing or relative stateDir", async () => {
+  const adapter = certbotAdapter(makeExecStub());
+  await assert.rejects(
+    adapter.runRenewal(baseRenewalInputs({ stateDir: undefined })),
+    /stateDir must be an absolute path/,
+  );
+  await assert.rejects(
+    adapter.runRenewal(baseRenewalInputs({ stateDir: "relative/state" })),
+    /stateDir must be an absolute path/,
+  );
 });
 
 test("runRenewal rejects on shell metacharacters in a domain", async () => {
@@ -371,9 +479,11 @@ test("runRenewal accepts Windows-style absolute paths", async () => {
     baseRenewalInputs({
       csrPath: "C:\\certops\\csr\\web-01.csr.pem",
       outCertPath: "C:\\certops\\tls\\web-01.crt.pem",
+      stateDir: "C:\\certops\\state",
     }),
   );
   assert.equal(result.renewed, true);
+  assert.ok(result.argvUsed.some((a) => a.includes("certbot") || a === "--config-dir"));
 });
 
 test("runRenewal rejects when checkCaEndpoint is missing", async () => {
@@ -484,6 +594,24 @@ test("PRIVATE KEY marker beyond the excerpt window still triggers redaction", as
 });
 
 // ---------------------------------------------------------------------------
+// dns_certops.sh contract (sourced functions, no exec, base-domain strip)
+// ---------------------------------------------------------------------------
+
+test("dns_certops.sh defines sourced add/rm functions without exec", () => {
+  const scriptPath = path.resolve(__dirname, "..", "..", "bin", "dns_certops.sh");
+  const source = fs.readFileSync(scriptPath, "utf8");
+  assert.match(source, /dns_certops_add\s*\(\)/);
+  assert.match(source, /dns_certops_rm\s*\(\)/);
+  assert.match(source, /_certops_base_domain/);
+  assert.match(source, /_acme-challenge\.\*/);
+  // Must not replace the shell process (acme.sh sources this file).
+  assert.equal(/\bexec\s+node\b/.test(source), false);
+  assert.match(source, /node "\$_hook" present/);
+  assert.match(source, /node "\$_hook" cleanup/);
+  assert.match(source, /return \$\?/);
+});
+
+// ---------------------------------------------------------------------------
 // misc invariants
 // ---------------------------------------------------------------------------
 
@@ -508,4 +636,13 @@ test("mutating the profile after adapter creation does not change exec argv", as
 
   assert.equal(result.argvUsed.includes("--sneaky-extra"), false);
   assert.equal(execStub.calls[0].file, "certbot");
+});
+
+test("resolveAcmeStatePaths nests certbot and acme.sh under stateDir/acme", () => {
+  const root = "/var/lib/tokentimer-agent";
+  const paths = resolveAcmeStatePaths(root);
+  assert.equal(paths.certbotConfigDir, path.join(root, "acme", "certbot", "config"));
+  assert.equal(paths.certbotWorkDir, path.join(root, "acme", "certbot", "work"));
+  assert.equal(paths.certbotLogsDir, path.join(root, "acme", "certbot", "logs"));
+  assert.equal(paths.acmeShHome, path.join(root, "acme", "acme.sh"));
 });
