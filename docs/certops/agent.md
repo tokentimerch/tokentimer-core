@@ -129,6 +129,7 @@ Top level:
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in section 5). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
+| `dnsPropagation` | object or null | defaults | Post-mutation DNS wait: `{ timeoutMs` (default 120000), `intervalMs` (default 2000), `resolvers` (optional recursive resolver IPs), `checkAuthoritative` (default true) `}`. Used by `certops-dns-hook` after present/cleanup. |
 
 `policy` block (deep validation in `src/policy/loadPolicyConfig`, fail-loud):
 
@@ -346,9 +347,16 @@ For `renew` (`executeRenewJob`):
    default, or `acme.sh` when `job.acmeKind` says so) shells out via
    `child_process.execFile` without a shell, in CSR mode (`certbot certonly
    --csr` / `acme.sh --signcsr`), staging the certificate to
-   `<keysDir>/<jobId>.cert.pem`. No private key and no DNS credentials ever
-   appear in argv; DNS credentials live in the ACME tool's own host-side
-   config files. Default exec timeout is 10 minutes.
+   `<keysDir>/<jobId>.cert.pem`. **Scope (current):** external command
+   adapters only — there is no embedded ACME client, no step-ca
+   integration, no EAB/account lifecycle management, and no CA/profile
+   model beyond the allowlisted `caEndpoint` URL and the tool's own
+   on-host account state. DNS-01 is wired through the shipped
+   `certops-dns-hook` (certbot `--manual-auth-hook` /
+   `--manual-cleanup-hook`, acme.sh `--dns` pointing at `dns_certops.sh`).
+   No private key and no DNS credentials ever appear in argv; credentials
+   stay in agent-local 0600 files referenced by path in `config.json`.
+   Default exec timeout is 10 minutes.
 4. **Deploy** (`src/deploy`): atomic install to the resolved `certPath` with
    target-config re-validation, realpath containment re-check via the policy
    `checkPath` callback, idempotent skip for byte-identical content,
@@ -385,24 +393,45 @@ effects; the keys/acme/deploy/reload/verify modules are never called.
 
 `src/dns` implements native TXT-record solvers so DNS-01 challenges no
 longer require the ACME tool's own DNS plugins. certbot/acme.sh still drive
-the ACME conversation; they call back into the agent through the
-`certops-dns-hook` executable (`packages/agent/bin/certops-dns-hook.js`).
-Zero npm dependencies: HTTP providers use global `fetch`, Route 53 SigV4,
-the GCP JWT, the OVH request signature, and the Exoscale EXO2-HMAC-SHA256
-signature are computed with `node:crypto`, and RFC 2136 speaks the DNS wire
-format over `node:net` with a TSIG HMAC (RFC 8945, `hmac-sha1/224/256/384/512`).
+the ACME conversation; the ACME adapter always wires them to the
+`certops-dns-hook` executable (`packages/agent/bin/certops-dns-hook.js`)
+and, for acme.sh, the shipped `dns_certops.sh` dnsapi wrapper. The hook
+resolves the managed zone (longest `zoneProviderMap` match, else DNS NS
+walk refined by the provider zone list when available), presents/cleans
+the TXT value under a cross-process file lock, then polls authoritative
+nameservers (and optional configured recursive resolvers) until the value
+is visible — or gone on cleanup — before returning success to the ACME
+tool. Zero npm dependencies: HTTP providers use global `fetch`, Route 53
+SigV4, the GCP JWT, the OVH request signature, and the Exoscale
+EXO2-HMAC-SHA256 signature are computed with `node:crypto`, and RFC 2136
+speaks the DNS wire format over `node:net` with a TSIG HMAC (RFC 8945,
+`hmac-sha1/224/256/384/512`).
 
 Wave-1 provider ids (exact-match against `policy.allowedDnsProviders`):
 `cloudflare`, `route53`, `azure-dns`, `google-cloud-dns`, `rfc2136`,
 `acme-dns`. Wave-2 provider ids: `ovhcloud`, `hetzner`, `infomaniak`,
-`exoscale`, `powerdns`.
+`exoscale`, `powerdns`. **Not supported yet:** DigitalOcean DNS (the
+`acme-dns` provider is the sixth wave-1 id; do not confuse the two).
 
 Config (`config.json`): each configured provider maps to an object holding
 the absolute path of its agent-local credentials file plus optional
 non-secret options; the reserved `zoneProviderMap` key routes zones to
 providers on multi-provider hosts (longest matching zone wins, dot-boundary
-rule; with a single provider and no map entry, that provider is the
-default).
+rule; with a single provider and no map entry, that provider is selected
+and the zone is discovered via DNS NS / provider zone list — the challenge
+hostname is never assumed to be the zone). Optional top-level
+`dnsPropagation` controls the post-present / post-cleanup wait:
+
+```json
+{
+  "dnsPropagation": {
+    "timeoutMs": 120000,
+    "intervalMs": 2000,
+    "resolvers": ["1.1.1.1", "8.8.8.8"],
+    "checkAuthoritative": true
+  }
+}
+```
 
 ```json
 {
@@ -429,24 +458,34 @@ group/other-readable files on POSIX), and never leave the host:
 | `rfc2136` | `server`, `keyName`, `keySecretBase64`; optional `port` (default 53), `keyAlgorithm` (default `hmac-sha256`) |
 | `acme-dns` | `baseUrl`, `username`, `password`, `subdomain` (from `/register`). Cleanup is a documented no-op: acme-dns rotates its two TXT slots automatically |
 | `ovhcloud` | `applicationKey`, `applicationSecret`, `consumerKey`; optional `endpoint` (default `https://eu.api.ovh.com/1.0`; other regions `https://ca.api.ovh.com/1.0`, `https://us.api.ovhcloud.com/1.0`). Requests are OVH-signed (`$1$` + SHA1) with the LOCAL unix time as `X-Ovh-Timestamp` (no `/auth/time` skew correction); a `POST /domain/zone/<zone>/refresh` follows every mutation so the change actually serves |
-| `hetzner` | `apiToken` (Auth-API-Token header, account-scoped); optional `zoneId` (looked up by zone name when absent). Cleanup of an already-absent record is idempotent success |
+| `hetzner` | `apiToken` — **Hetzner Console / Cloud project API token** (`Authorization: Bearer`), not a legacy DNS Console token. Optional `zoneId` (looked up by zone name when absent). Uses `https://api.hetzner.cloud/v1` rrset `add_records` / `remove_records` actions (value-specific; concurrent challenges do not clobber each other). Legacy `dns.hetzner.com` Auth-API-Token credentials are not supported |
 | `infomaniak` | `apiToken` (Bearer, "domain" scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
-| `exoscale` | `apiKey`, `apiSecret`; optional `apiEndpoint` (default `https://api-ch-gva-2.exoscale.com/v2`; DNS is global, any zone endpoint works). Requests are EXO2-HMAC-SHA256 signed. Mutations are async on Exoscale's side: the accepted operation response is treated as success without polling (the ACME tool's propagation wait covers the apply window) |
+| `exoscale` | `apiKey`, `apiSecret`; optional `apiEndpoint` (default `https://api-ch-gva-2.exoscale.com/v2`; DNS is global, any zone endpoint works). Requests are EXO2-HMAC-SHA256 signed. Mutations are async on Exoscale's side: the accepted operation response is treated as success; the hook's propagation wait covers the apply window |
 | `powerdns` | `apiUrl` (e.g. `http://127.0.0.1:8081`), `apiKey` (X-API-Key header); optional `serverId` (default `localhost`). Zone and record names carry a trailing dot and TXT content is double-quoted, per PowerDNS API rules. Present merges with existing TXT values at the name and `REPLACE`s the union (parallel challenges never clobber each other); cleanup `REPLACE`s the remainder or sends `changetype: DELETE` when none remain |
 
-Hook usage. certbot manual hooks (the hook derives the TXT name
-`_acme-challenge.$CERTBOT_DOMAIN` and reads `CERTBOT_DOMAIN` +
-`CERTBOT_VALIDATION` from the environment certbot sets):
+Hook usage. The ACME adapter builds these flags automatically; operators
+debugging by hand can use the same contract. certbot manual hooks (the hook
+derives the TXT name `_acme-challenge.$CERTBOT_DOMAIN` and reads
+`CERTBOT_DOMAIN` + `CERTBOT_VALIDATION` from the environment certbot sets):
 
 ```
 certbot certonly --csr <csr.pem> --preferred-challenges dns --manual \
-  --manual-auth-hook    "certops-dns-hook present" \
-  --manual-cleanup-hook "certops-dns-hook cleanup"
+  --manual-auth-hook    "/path/to/certops-dns-hook.js present" \
+  --manual-cleanup-hook "/path/to/certops-dns-hook.js cleanup" \
+  --manual-public-ip-logging-ok
 ```
 
-For acme.sh, export the fallback variables from a thin dnsapi wrapper and
-call the same binary: `ACME_DOMAIN=<domain> ACME_TXT_VALUE=<txt>
-certops-dns-hook present|cleanup`.
+For acme.sh, point `--dns` at the shipped wrapper (absolute path) and set
+`CERTOPS_DNS_HOOK` to the Node hook path:
+
+```
+CERTOPS_DNS_HOOK=/path/to/certops-dns-hook.js \
+  acme.sh --signcsr --csr <csr.pem> --dns /path/to/dns_certops.sh ...
+```
+
+The wrapper exports `ACME_DOMAIN` / `ACME_TXT_VALUE` into `certops-dns-hook
+present|cleanup`. Credentials never appear on argv or in the ACME tool
+environment.
 
 Policy gate: the hook resolves the provider and zone for the domain, then
 requires BOTH `checkDnsProvider` and `checkDnsZone` to pass against the

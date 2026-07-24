@@ -40,6 +40,17 @@
  *           acme-dns
  *   wave 2: ovhcloud, hetzner, infomaniak, exoscale, powerdns
  *
+ * Concurrent safety:
+ *   - In-process promise-chain mutex per provider:zone:recordName.
+ *   - Cross-process file lock (src/dns/lockfile.js) so separate
+ *     certops-dns-hook invocations serialize on the same record.
+ *   - Providers that support atomic append (Cloudflare POST, Hetzner
+ *     add_records, OVH POST, Exoscale POST, Infomaniak POST, RFC2136
+ *     UPDATE add) do; merge-then-REPLACE providers (Route53, Azure, GCP,
+ *     PowerDNS) rely on the file lock + value-specific cleanup.
+ *   - Conflict / precondition HTTP statuses (409, 412, 429) are retried
+ *     with backoff inside the locked section.
+ *
  * This module is self-contained within src/dns: it does not import policy,
  * config, or other sibling src/<name> modules. Wiring policy checks +
  * credential loading + this solver together is the hook's/dispatch
@@ -52,6 +63,7 @@ const {
   isRecordNameWithinZone,
   makeExcerptRedactor,
 } = require("./internal.js");
+const { withFileLock } = require("./lockfile.js");
 
 const cloudflare = require("./providers/cloudflare.js");
 const route53 = require("./providers/route53.js");
@@ -65,9 +77,14 @@ const infomaniak = require("./providers/infomaniak.js");
 const exoscale = require("./providers/exoscale.js");
 const powerdns = require("./providers/powerdns.js");
 
-/** Default per-request timeout. DNS APIs are fast; propagation waiting is
- * the ACME tool's job, not this module's. */
+/** Default per-request timeout. Propagation waiting lives in src/dns/propagate.js
+ * (invoked by the hook after present/cleanup), not here. */
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
+
+/** HTTP statuses that warrant a conflict/backoff retry under the record lock. */
+const CONFLICT_RETRY_STATUSES = new Set([409, 412, 429]);
+const CONFLICT_MAX_ATTEMPTS = 4;
+const CONFLICT_BASE_DELAY_MS = 100;
 
 /**
  * In-process serialization of present/cleanup operations per
@@ -76,11 +93,8 @@ const DEFAULT_TIMEOUT_MS = 30 * 1000;
  * interleave their read-modify-write sequences. Entries are deleted once
  * a chain settles and is still the tail.
  *
- * Cross-process serialization is deliberately OUT OF SCOPE: each hook
- * invocation is its own process, so no in-process lock can cover it. The
- * providers' read-modify-write merging (GET existing values, merge, write
- * back) is the primary protection against concurrent challenge writers;
- * this mutex only removes the avoidable in-process race window.
+ * Cross-process serialization uses withFileLock (see presentChallenge /
+ * cleanupChallenge below).
  */
 const recordOperationChains = new Map();
 
@@ -145,6 +159,14 @@ function listSupportedDnsProviders() {
 }
 
 /**
+ * @param {number} attempt 0-based
+ * @returns {number}
+ */
+function conflictBackoffMs(attempt) {
+  return CONFLICT_BASE_DELAY_MS * 2 ** attempt;
+}
+
+/**
  * Creates a DNS-01 solver bound to one provider and one credential set.
  *
  * Throws on programmer error / malformed credentials (fail loud at
@@ -164,10 +186,14 @@ function listSupportedDnsProviders() {
  *   (without the length prefix). Defaults to a node:net implementation.
  *   Tests inject this so they never open sockets.
  * @param {number} [options.timeoutMs] per-request timeout, default 30 s.
+ * @param {boolean} [options.useFileLock] cross-process lock (default true).
+ * @param {object} [options.fileLockOptions] forwarded to withFileLock.
+ * @param {(ms: number) => Promise<void>} [options.sleep] injectable sleep.
  * @returns {{
  *   provider: string,
  *   presentChallenge: (inputs: { zone: string, recordName: string, txtValue: string }) => Promise<object>,
  *   cleanupChallenge: (inputs: { zone: string, recordName: string, txtValue: string }) => Promise<object>,
+ *   listManagedZones: (() => Promise<string[]>)|null,
  * }}
  */
 function createDnsSolver({
@@ -176,6 +202,9 @@ function createDnsSolver({
   fetchImpl = globalThis.fetch,
   dnsUpdateImpl,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  useFileLock = true,
+  fileLockOptions,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   if (!isNonEmptyString(provider)) {
     throw new Error("dns: createDnsSolver requires a non-empty provider string");
@@ -222,6 +251,17 @@ function createDnsSolver({
     excerpt,
   });
 
+  const listManagedZones =
+    typeof providerModule.listManagedZones === "function"
+      ? () =>
+          providerModule.listManagedZones({
+            credentials: normalizedCredentials,
+            fetchImpl,
+            timeoutMs,
+            excerpt,
+          })
+      : null;
+
   /**
    * Programmer-error validation shared by present and cleanup. Throws.
    * @param {{ zone?: unknown, recordName?: unknown, txtValue?: unknown }} inputs
@@ -245,19 +285,59 @@ function createDnsSolver({
   }
 
   /**
-   * Runs one provider operation with the never-throw-on-operational-failure
-   * contract: anything the impl throws (network error, timeout abort,
-   * unexpected response shape) is mapped to { ok: false } with a redacted
-   * detail. Input validation throws BEFORE this wrapper engages.
+   * @param {"presentChallenge"|"cleanupChallenge"} operation
+   * @param {{ zone: string, recordName: string, txtValue: string }} inputs
+   */
+  async function runLocked(operation, inputs) {
+    // Validate before any lock so programmer errors still throw (tests and
+    // callers rely on that contract); operational failures stay ok:false.
+    validateChallengeInputs(inputs);
+
+    const key = recordLockKey(inputs);
+    const execute = () =>
+      withRecordLock(key, () => run(operation, inputs));
+
+    if (!useFileLock) {
+      return execute();
+    }
+
+    try {
+      return await withFileLock(key, execute, fileLockOptions);
+    } catch (err) {
+      return {
+        ok: false,
+        provider,
+        detail: excerpt(
+          `${operation} lock failed: ${err && err.message ? err.message : String(err)}`,
+        ),
+      };
+    }
+  }
+
+  /**
+   * Runs one provider operation with conflict retries and the
+   * never-throw-on-operational-failure contract. Input validation is done
+   * by runLocked before this is called.
    *
    * @param {"presentChallenge"|"cleanupChallenge"} operation
    * @param {{ zone: string, recordName: string, txtValue: string }} inputs
    */
   async function run(operation, inputs) {
-    validateChallengeInputs(inputs);
     try {
-      const result = await impl[operation](inputs);
-      return { provider, ...result };
+      let lastResult = null;
+      for (let attempt = 0; attempt < CONFLICT_MAX_ATTEMPTS; attempt += 1) {
+        const result = await impl[operation](inputs);
+        lastResult = { provider, ...result };
+        if (
+          lastResult.ok === true ||
+          !CONFLICT_RETRY_STATUSES.has(lastResult.statusCode) ||
+          attempt === CONFLICT_MAX_ATTEMPTS - 1
+        ) {
+          return lastResult;
+        }
+        await sleep(conflictBackoffMs(attempt));
+      }
+      return lastResult;
     } catch (err) {
       return {
         ok: false,
@@ -271,10 +351,9 @@ function createDnsSolver({
 
   return {
     provider,
-    presentChallenge: (inputs) =>
-      withRecordLock(recordLockKey(inputs), () => run("presentChallenge", inputs)),
-    cleanupChallenge: (inputs) =>
-      withRecordLock(recordLockKey(inputs), () => run("cleanupChallenge", inputs)),
+    presentChallenge: (inputs) => runLocked("presentChallenge", inputs),
+    cleanupChallenge: (inputs) => runLocked("cleanupChallenge", inputs),
+    listManagedZones,
   };
 
   /** @param {{ zone?: unknown, recordName?: unknown }} [inputs] */
@@ -290,4 +369,6 @@ module.exports = {
   createDnsSolver,
   DEFAULT_TIMEOUT_MS,
   OUTPUT_EXCERPT_MAX_CHARS,
+  CONFLICT_RETRY_STATUSES,
+  CONFLICT_MAX_ATTEMPTS,
 };

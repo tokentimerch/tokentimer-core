@@ -1,25 +1,30 @@
 "use strict";
 
 /**
- * Hetzner DNS DNS-01 provider.
+ * Hetzner DNS DNS-01 provider (Hetzner Console / Cloud API).
  *
- * Auth: Hetzner DNS API token sent as the Auth-API-Token header. Create
- * the token in the Hetzner DNS console; it is account-scoped (Hetzner DNS
- * has no per-zone tokens), so prefer a dedicated account for automation.
+ * ASSUMPTIONS (verify against live Hetzner docs before release):
+ *   - Base URL: https://api.hetzner.cloud/v1
+ *   - Auth: Authorization: Bearer <project API token> created in the
+ *     Hetzner Console (legacy dns.hetzner.com Auth-API-Token tokens do
+ *     NOT work against this API).
+ *   - Zones: GET /zones?name=<zone>
+ *   - Atomic TXT append: POST
+ *     /zones/{id_or_name}/rrsets/{rr_name}/TXT/actions/add_records
+ *     (auto-creates the RRSet when absent; appends otherwise).
+ *   - Value-specific remove: POST
+ *     /zones/{id_or_name}/rrsets/{rr_name}/TXT/actions/remove_records
+ *   - TXT record values are double-quoted in the API (e.g. "\"token\"").
+ *   - RRSet names are relative to the zone, lower case, no trailing dot;
+ *     apex uses "@".
  *
  * Credentials shape: { apiToken: string, zoneId?: string }
- *   - zoneId is optional; when absent the zone id is looked up by name via
- *     GET /zones?name=<zone> on every operation.
+ *   - zoneId is optional; when absent the zone id is looked up by name.
+ *   - apiToken must be a Hetzner Console / Cloud project token with DNS
+ *     read+write on the target project.
  *
- * API surface used (dns.hetzner.com/api/v1):
- *   GET    /zones?name=<zone>          zone id lookup
- *   POST   /records                    create TXT
- *   GET    /records?zone_id=<zoneId>   record lookup (cleanup)
- *   DELETE /records/<recordId>         delete TXT
- *
- * The record name sent to Hetzner is RELATIVE to the zone ("@" at the
- * apex). The record list endpoint has no name/type filter, so cleanup
- * lists the zone's records and matches type + name + value client-side.
+ * Legacy API (dns.hetzner.com/api/v1, Auth-API-Token) is intentionally
+ * NOT used: Hetzner is shutting it down after the Console migration.
  */
 
 const {
@@ -29,8 +34,14 @@ const {
 } = require("../internal.js");
 
 const PROVIDER_ID = "hetzner";
-const API_BASE_URL = "https://dns.hetzner.com/api/v1";
+/** Hetzner Cloud / Console DNS API (not the legacy dns.hetzner.com API). */
+const API_BASE_URL = "https://api.hetzner.cloud/v1";
 const TXT_TTL_SECONDS = 60;
+
+/** Quote a TXT RDATA value the way the Cloud DNS API expects. */
+function quoteTxtValue(txtValue) {
+  return `"${txtValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
 /**
  * @param {object} credentials
@@ -57,10 +68,42 @@ function collectSecretStrings(credentials) {
   return [credentials.apiToken];
 }
 
+/**
+ * Lists managed zone names for longest-suffix discovery.
+ * @param {object} options
+ * @returns {Promise<string[]>}
+ */
+async function listManagedZones({ credentials, fetchImpl, timeoutMs }) {
+  const response = await fetchWithTimeout(
+    fetchImpl,
+    `${API_BASE_URL}/zones`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${credentials.apiToken}`,
+      },
+    },
+    timeoutMs,
+  );
+  if (!response.ok) {
+    throw new Error(`hetzner list zones failed (HTTP ${response.status})`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(response.bodyText);
+  } catch {
+    throw new Error("hetzner list zones returned non-JSON");
+  }
+  const zones = parsed && Array.isArray(parsed.zones) ? parsed.zones : [];
+  return zones
+    .filter((zone) => zone && isNonEmptyString(zone.name))
+    .map((zone) => zone.name.replace(/\.$/, ""));
+}
+
 function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
   function authHeaders() {
     return {
-      "Auth-API-Token": credentials.apiToken,
+      Authorization: `Bearer ${credentials.apiToken}`,
       "Content-Type": "application/json",
     };
   }
@@ -80,6 +123,16 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     } catch {
       return null;
     }
+  }
+
+  function rrName(recordName, zone) {
+    return relativeRecordName(recordName, zone) || "@";
+  }
+
+  function rrsetActionUrl(zoneIdOrName, recordName, zone, action) {
+    const name = encodeURIComponent(rrName(recordName, zone));
+    const zoneKey = encodeURIComponent(zoneIdOrName);
+    return `${API_BASE_URL}/zones/${zoneKey}/rrsets/${name}/TXT/actions/${action}`;
   }
 
   /**
@@ -108,16 +161,18 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
       (candidate) =>
         candidate &&
         typeof candidate.name === "string" &&
-        candidate.name.toLowerCase() === zone.toLowerCase(),
+        candidate.name.toLowerCase().replace(/\.$/, "") === zone.toLowerCase(),
     );
-    if (!match || !isNonEmptyString(match.id)) {
+    if (!match || (!isNonEmptyString(match.id) && !isNonEmptyString(match.name))) {
       return {
         ok: false,
         statusCode: response.status,
         detail: excerpt(`hetzner zone lookup returned no zone named ${JSON.stringify(zone)}`),
       };
     }
-    return { ok: true, zoneId: match.id };
+    // Prefer numeric/string id when present; the API also accepts zone name
+    // as id_or_name on rrset paths.
+    return { ok: true, zoneId: isNonEmptyString(match.id) ? String(match.id) : match.name };
   }
 
   async function presentChallenge({ zone, recordName, txtValue }) {
@@ -126,24 +181,23 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
       return zoneResult;
     }
 
+    // add_records is append-safe: creates the RRSet when missing, otherwise
+    // appends distinct values (no read-modify-write clobber).
     const response = await fetchWithTimeout(
       fetchImpl,
-      `${API_BASE_URL}/records`,
+      rrsetActionUrl(zoneResult.zoneId, recordName, zone, "add_records"),
       {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
-          zone_id: zoneResult.zoneId,
-          type: "TXT",
-          name: relativeRecordName(recordName, zone) || "@",
-          value: txtValue,
           ttl: TXT_TTL_SECONDS,
+          records: [{ value: quoteTxtValue(txtValue) }],
         }),
       },
       timeoutMs,
     );
     if (!response.ok) {
-      return httpFailure("record create", response);
+      return httpFailure("record add_records", response);
     }
 
     return { ok: true };
@@ -155,46 +209,22 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
       return zoneResult;
     }
 
-    const listResponse = await fetchWithTimeout(
+    // remove_records deletes only the listed values — never the whole set.
+    const response = await fetchWithTimeout(
       fetchImpl,
-      `${API_BASE_URL}/records?zone_id=${encodeURIComponent(zoneResult.zoneId)}`,
-      { method: "GET", headers: authHeaders() },
+      rrsetActionUrl(zoneResult.zoneId, recordName, zone, "remove_records"),
+      {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          records: [{ value: quoteTxtValue(txtValue) }],
+        }),
+      },
       timeoutMs,
     );
-    if (!listResponse.ok) {
-      return httpFailure("record lookup", listResponse);
-    }
-
-    const relative = relativeRecordName(recordName, zone) || "@";
-    const parsed = parseJson(listResponse.bodyText);
-    const records = parsed && Array.isArray(parsed.records) ? parsed.records : [];
-    // Exact type + name + value match so cleanup never deletes an
-    // unrelated record that happens to share the name.
-    const matches = records.filter(
-      (record) =>
-        record &&
-        record.type === "TXT" &&
-        record.name === relative &&
-        record.value === txtValue &&
-        isNonEmptyString(record.id),
-    );
-    if (matches.length === 0) {
-      // Nothing to delete: cleanup is idempotent, an already-absent record
-      // is success, not failure.
-      return { ok: true };
-    }
-
-    for (const record of matches) {
-      const deleteResponse = await fetchWithTimeout(
-        fetchImpl,
-        `${API_BASE_URL}/records/${encodeURIComponent(record.id)}`,
-        { method: "DELETE", headers: authHeaders() },
-        timeoutMs,
-      );
-      // 404 means the record is already gone: idempotent success.
-      if (!deleteResponse.ok && deleteResponse.status !== 404) {
-        return httpFailure("record delete", deleteResponse);
-      }
+    // 404: RRSet or value already gone — idempotent success.
+    if (!response.ok && response.status !== 404) {
+      return httpFailure("record remove_records", response);
     }
 
     return { ok: true };
@@ -206,7 +236,9 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
 module.exports = {
   PROVIDER_ID,
   API_BASE_URL,
+  quoteTxtValue,
   validateCredentials,
   collectSecretStrings,
+  listManagedZones,
   createSolverImpl,
 };

@@ -31,9 +31,11 @@ never holds customer key material. See ADR-0003.
   plans, signs jobs, records evidence. Holds no private keys.
 - **Execution plane** - the TokenTimer **agent** (`packages/agent`) and the customer-side
   Kubernetes controller. The agent performs the key-bearing work locally:
-  keypair/CSR generation, ACME issuance (native HTTP-01/DNS-01 solvers plus
-  certbot/acme.sh exec adapters), atomic deploy/rollback, and service reload.
-  Its keys, DNS provider credentials, and ACME account keys never leave the
+  keypair/CSR generation, ACME issuance via external certbot/acme.sh command
+  adapters (no embedded ACME client; native DNS-01 TXT solvers are invoked
+  through `certops-dns-hook`), atomic deploy/rollback, and service reload.
+  Its keys, DNS provider credentials, and ACME account material (owned by
+  the external ACME tool on the host) never leave the
   agent host. The cert-manager controller never handles a key: it asks cert-manager to reconcile a
   `Certificate`, and cert-manager generates and retains the key in Kubernetes.
 

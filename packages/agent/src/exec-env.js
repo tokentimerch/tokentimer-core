@@ -18,6 +18,9 @@
  *   - LANG / LC_ALL / TZ: locale and time, keeps tool output/parsing stable.
  *   - TOKENTIMER_AGENT_CONFIG_DIR: the certops-dns-hook child that certbot
  *     spawns resolves the agent config dir from this.
+ *   - CERTOPS_DNS_HOOK: absolute path to certops-dns-hook.js (non-secret).
+ *     Set by the ACME adapter so the acme.sh dns_certops.sh wrapper can
+ *     locate the Node hook without putting credentials on argv/env.
  *
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN and every other TOKENTIMER_AGENT_* /
  * arbitrary variable are deliberately NOT forwarded.
@@ -37,6 +40,7 @@ const SUBPROCESS_ENV_ALLOWLIST = Object.freeze([
   "LC_ALL",
   "TZ",
   "TOKENTIMER_AGENT_CONFIG_DIR",
+  "CERTOPS_DNS_HOOK",
 ]);
 
 /**

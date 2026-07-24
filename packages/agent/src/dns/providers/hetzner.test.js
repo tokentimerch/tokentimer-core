@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { createDnsSolver } = require("../index.js");
-const { validateCredentials, API_BASE_URL } = require("./hetzner.js");
+const { validateCredentials, API_BASE_URL, quoteTxtValue } = require("./hetzner.js");
 
 const CHALLENGE = {
   zone: "example.com",
@@ -24,7 +24,12 @@ function makeFetchStub(respond) {
 }
 
 function solverWith(fetchImpl, credentials = { apiToken: "hetzner-token" }) {
-  return createDnsSolver({ provider: "hetzner", credentials, fetchImpl });
+  return createDnsSolver({
+    provider: "hetzner",
+    credentials,
+    fetchImpl,
+    useFileLock: false,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -40,12 +45,17 @@ test("hetzner: non-string zoneId throws at construction", () => {
   assert.throws(() => validateCredentials({ apiToken: "t", zoneId: 42 }), /zoneId/);
 });
 
+test("hetzner: quoteTxtValue double-quotes and escapes", () => {
+  assert.equal(quoteTxtValue("abc"), '"abc"');
+  assert.equal(quoteTxtValue('a"b'), '"a\\"b"');
+});
+
 // ---------------------------------------------------------------------------
-// present
+// present (Cloud API add_records)
 // ---------------------------------------------------------------------------
 
-test("hetzner: present with configured zoneId POSTs the TXT record directly", async () => {
-  const fetchStub = makeFetchStub(() => ({ status: 200, body: '{"record":{"id":"r1"}}' }));
+test("hetzner: present with configured zoneId POSTs add_records with Bearer auth", async () => {
+  const fetchStub = makeFetchStub(() => ({ status: 201, body: '{"action":{"id":1}}' }));
   const solver = solverWith(fetchStub, { apiToken: "hetzner-token", zoneId: "zone123" });
 
   const result = await solver.presentChallenge(CHALLENGE);
@@ -53,15 +63,15 @@ test("hetzner: present with configured zoneId POSTs the TXT record directly", as
   assert.equal(result.ok, true);
   assert.equal(fetchStub.calls.length, 1);
   const call = fetchStub.calls[0];
-  assert.equal(call.url, `${API_BASE_URL}/records`);
+  assert.equal(
+    call.url,
+    `${API_BASE_URL}/zones/zone123/rrsets/_acme-challenge/TXT/actions/add_records`,
+  );
   assert.equal(call.options.method, "POST");
-  assert.equal(call.options.headers["Auth-API-Token"], "hetzner-token");
+  assert.equal(call.options.headers.Authorization, "Bearer hetzner-token");
   assert.deepEqual(JSON.parse(call.options.body), {
-    zone_id: "zone123",
-    type: "TXT",
-    name: "_acme-challenge",
-    value: CHALLENGE.txtValue,
     ttl: 60,
+    records: [{ value: '"token-value"' }],
   });
 });
 
@@ -73,7 +83,7 @@ test("hetzner: present without zoneId looks the zone up by name first", async ()
         body: '{"zones":[{"id":"looked-up-zone","name":"example.com"}]}',
       };
     }
-    return { status: 200, body: '{"record":{"id":"r1"}}' };
+    return { status: 201, body: '{"action":{"id":1}}' };
   });
   const solver = solverWith(fetchStub);
 
@@ -82,10 +92,7 @@ test("hetzner: present without zoneId looks the zone up by name first", async ()
   assert.equal(result.ok, true);
   assert.equal(fetchStub.calls.length, 2);
   assert.equal(fetchStub.calls[0].url, `${API_BASE_URL}/zones?name=example.com`);
-  assert.equal(
-    JSON.parse(fetchStub.calls[1].options.body).zone_id,
-    "looked-up-zone",
-  );
+  assert.match(fetchStub.calls[1].url, /\/zones\/looked-up-zone\/rrsets\//);
 });
 
 test("hetzner: a zone lookup returning a non-matching zone maps to ok:false", async () => {
@@ -101,8 +108,8 @@ test("hetzner: a zone lookup returning a non-matching zone maps to ok:false", as
   assert.match(result.detail, /no zone named/);
 });
 
-test("hetzner: apex record name maps to @", async () => {
-  const fetchStub = makeFetchStub(() => ({ status: 200 }));
+test("hetzner: apex record name maps to @ in the rrset path", async () => {
+  const fetchStub = makeFetchStub(() => ({ status: 201 }));
   const solver = solverWith(fetchStub, { apiToken: "hetzner-token", zoneId: "zone123" });
 
   const result = await solver.presentChallenge({
@@ -112,10 +119,10 @@ test("hetzner: apex record name maps to @", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.equal(JSON.parse(fetchStub.calls[0].options.body).name, "@");
+  assert.match(fetchStub.calls[0].url, /\/rrsets\/%40\/TXT\/actions\/add_records$/);
 });
 
-test("hetzner: HTTP error on create maps to ok:false with statusCode", async () => {
+test("hetzner: HTTP error on add_records maps to ok:false with statusCode", async () => {
   const fetchStub = makeFetchStub(() => ({
     status: 422,
     body: '{"error":{"message":"invalid record"}}',
@@ -131,56 +138,32 @@ test("hetzner: HTTP error on create maps to ok:false with statusCode", async () 
 });
 
 // ---------------------------------------------------------------------------
-// cleanup
+// cleanup (Cloud API remove_records — value-specific)
 // ---------------------------------------------------------------------------
 
-test("hetzner: cleanup lists zone records and DELETEs the exact match only", async () => {
-  const fetchStub = makeFetchStub((url, options) => {
-    if (options.method === "GET") {
-      return {
-        status: 200,
-        body: JSON.stringify({
-          records: [
-            { id: "keep-1", type: "TXT", name: "_acme-challenge", value: "other-value" },
-            { id: "keep-2", type: "A", name: "_acme-challenge", value: "token-value" },
-            { id: "del-1", type: "TXT", name: "_acme-challenge", value: "token-value" },
-          ],
-        }),
-      };
-    }
-    return { status: 200, body: "{}" };
-  });
-  const solver = solverWith(fetchStub, { apiToken: "hetzner-token", zoneId: "zone123" });
-
-  const result = await solver.cleanupChallenge(CHALLENGE);
-
-  assert.equal(result.ok, true);
-  assert.equal(fetchStub.calls.length, 2);
-  assert.match(fetchStub.calls[0].url, /\/records\?zone_id=zone123$/);
-  assert.equal(fetchStub.calls[1].options.method, "DELETE");
-  assert.match(fetchStub.calls[1].url, /\/records\/del-1$/);
-});
-
-test("hetzner: cleanup of an already-absent record is idempotent success", async () => {
-  const fetchStub = makeFetchStub(() => ({ status: 200, body: '{"records":[]}' }));
+test("hetzner: cleanup POSTs remove_records for the exact quoted value only", async () => {
+  const fetchStub = makeFetchStub(() => ({ status: 201, body: '{"action":{"id":2}}' }));
   const solver = solverWith(fetchStub, { apiToken: "hetzner-token", zoneId: "zone123" });
 
   const result = await solver.cleanupChallenge(CHALLENGE);
 
   assert.equal(result.ok, true);
   assert.equal(fetchStub.calls.length, 1);
+  assert.equal(
+    fetchStub.calls[0].url,
+    `${API_BASE_URL}/zones/zone123/rrsets/_acme-challenge/TXT/actions/remove_records`,
+  );
+  assert.equal(fetchStub.calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(fetchStub.calls[0].options.body), {
+    records: [{ value: '"token-value"' }],
+  });
 });
 
-test("hetzner: a 404 on record delete is idempotent success", async () => {
-  const fetchStub = makeFetchStub((url, options) => {
-    if (options.method === "GET") {
-      return {
-        status: 200,
-        body: '{"records":[{"id":"gone","type":"TXT","name":"_acme-challenge","value":"token-value"}]}',
-      };
-    }
-    return { status: 404, body: '{"error":{"message":"record not found"}}' };
-  });
+test("hetzner: cleanup of an already-absent record (HTTP 404) is idempotent success", async () => {
+  const fetchStub = makeFetchStub(() => ({
+    status: 404,
+    body: '{"error":{"message":"rrset not found"}}',
+  }));
   const solver = solverWith(fetchStub, { apiToken: "hetzner-token", zoneId: "zone123" });
 
   const result = await solver.cleanupChallenge(CHALLENGE);
@@ -188,16 +171,8 @@ test("hetzner: a 404 on record delete is idempotent success", async () => {
   assert.equal(result.ok, true);
 });
 
-test("hetzner: failing DELETE maps to ok:false", async () => {
-  const fetchStub = makeFetchStub((url, options) => {
-    if (options.method === "GET") {
-      return {
-        status: 200,
-        body: '{"records":[{"id":"del-1","type":"TXT","name":"_acme-challenge","value":"token-value"}]}',
-      };
-    }
-    return { status: 500, body: "server error" };
-  });
+test("hetzner: failing remove_records maps to ok:false", async () => {
+  const fetchStub = makeFetchStub(() => ({ status: 500, body: "server error" }));
   const solver = solverWith(fetchStub, { apiToken: "hetzner-token", zoneId: "zone123" });
 
   const result = await solver.cleanupChallenge(CHALLENGE);
@@ -221,4 +196,8 @@ test("hetzner: error body echoing the apiToken is redacted wholesale", async () 
 
   assert.equal(result.ok, false);
   assert.equal(result.detail, "[redacted]");
+});
+
+test("hetzner: API_BASE_URL points at the Cloud Console API", () => {
+  assert.equal(API_BASE_URL, "https://api.hetzner.cloud/v1");
 });
