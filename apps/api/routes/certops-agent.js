@@ -41,6 +41,7 @@ const {
 const { CERTOPS_DISABLED } = require("../services/certops/settings");
 const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
   CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_JOB_NOT_FOUND,
   CERTOPS_AGENT_LEASE_INVALID,
@@ -197,6 +198,14 @@ function validateRegisterBody(envelope) {
     body.agentVersion.length > 32
   ) {
     throw messageError("agentVersion is invalid");
+  }
+  if (
+    typeof body.registrationId !== "string" ||
+    body.registrationId.length < 1 ||
+    body.registrationId.length > 128 ||
+    !AGENT_ID_PATTERN.test(body.registrationId)
+  ) {
+    throw messageError("registrationId is invalid");
   }
   optionalBoundedString(body.hostname, "hostname", 255);
   if (
@@ -499,6 +508,11 @@ function handleAgentRouteError(res, error) {
       return res.status(409).json({
         error: "An agent with this agentId already exists",
         code: CERTOPS_AGENT_REGISTRATION_CONFLICT,
+      });
+    case CERTOPS_AGENT_COMPATIBILITY_BLOCKED:
+      return res.status(409).json({
+        error: error.message || "Agent is blocked by CertOps compatibility policy",
+        code: CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
       });
     case CERTOPS_AGENT_RETIRED:
       return res.status(410).json(CERTOPS_AGENT_RETIRED_RESPONSE);

@@ -326,6 +326,14 @@ describe("CertOps agent bootstrap tokens", () => {
     assert.equal(used.valid, false);
     assert.equal(used.code, CERTOPS_AGENT_BOOTSTRAP_TOKEN_USED);
 
+    const usedAllowed = await validateBootstrapToken({
+      client,
+      rawToken: created.plaintextToken,
+      allowUsed: true,
+    });
+    assert.equal(usedAllowed.valid, true);
+    assert.equal(usedAllowed.bootstrapToken.status, "used");
+
     row.status = "revoked";
     const revoked = await validateBootstrapToken({
       client,

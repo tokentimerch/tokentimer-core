@@ -655,6 +655,25 @@ describe("CertOps inventory migration", () => {
     );
   });
 
+  it("defines the registration idempotency replay migration", () => {
+    const migration = migrations.find(
+      (entry) => entry.name === "certops_agent_registration_idempotency",
+    );
+    assert.ok(migration, "expected certops_agent_registration_idempotency migration");
+    assert.equal(migration.version, 29);
+    assert.match(
+      migration.sql,
+      /CREATE TABLE IF NOT EXISTS certops_agent_registration_replays/,
+    );
+    assert.match(
+      migration.sql,
+      /uq_certops_agent_registration_replays_token_registration/,
+    );
+    assert.match(migration.sql, /registration_id TEXT NOT NULL/);
+    assert.match(migration.sql, /credential TEXT NOT NULL/);
+    assert.match(migration.sql, /expires_at TIMESTAMPTZ NOT NULL/);
+  });
+
   it("keeps released migration 18 and the controller migration tail unique and ordered", () => {
     const expectedVersions = new Map([
       ["tokens_certops_api_token_link", 18],
@@ -668,6 +687,7 @@ describe("CertOps inventory migration", () => {
       ["certops_job_mode_and_dry_run_complete", 26],
       ["certops_dispatch_executor_lanes_and_routing", 27],
       ["certops_agent_inventory_evidence_integrity", 28],
+      ["certops_agent_registration_idempotency", 29],
     ]);
     for (const [name, version] of expectedVersions) {
       assert.equal(

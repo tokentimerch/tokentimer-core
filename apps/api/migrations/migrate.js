@@ -2090,6 +2090,52 @@ const migrations = [
         WHERE needs_operator_reconciliation = TRUE;
     `,
   },
+  {
+    version: 29,
+    name: "certops_agent_registration_idempotency",
+    sql: `
+      -- H1: durable registrationId → credential replay map so a crash after
+      -- bootstrap-token consumption can still recover the issued credential.
+      -- Retained for a short crash-retry window (default 7 days); expired rows
+      -- are ignored by lookup and may be deleted by ops cleanup.
+      CREATE TABLE IF NOT EXISTS certops_agent_registration_replays (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        bootstrap_token_id UUID NOT NULL
+          REFERENCES certops_agent_bootstrap_tokens(id) ON DELETE CASCADE,
+        registration_id TEXT NOT NULL
+          CHECK (registration_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        agent_id TEXT NOT NULL
+          CHECK (agent_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+        -- Plaintext credential retained ONLY for the idempotent replay window.
+        -- Agents receive it once at register; this column exists so a lost
+        -- response can be replayed. Rows expire via expires_at.
+        credential TEXT NOT NULL
+          CHECK (char_length(credential) BETWEEN 1 AND 256),
+        protocol_version TEXT NOT NULL
+          CHECK (protocol_version ~ '^[0-9]+\\.[0-9]+\\.[0-9]+$'),
+        signing_key_id TEXT NULL
+          CHECK (
+            signing_key_id IS NULL OR
+            signing_key_id ~ '^[A-Za-z0-9_.:-]{1,128}$'
+          ),
+        signing_public_key_pem TEXT NULL
+          CHECK (
+            signing_public_key_pem IS NULL OR
+            char_length(signing_public_key_pem) <= 8192
+          ),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        CONSTRAINT uq_certops_agent_registration_replays_token_registration
+          UNIQUE (bootstrap_token_id, registration_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_registration_replays_expires
+        ON certops_agent_registration_replays(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_certops_agent_registration_replays_workspace
+        ON certops_agent_registration_replays(workspace_id, created_at DESC);
+    `,
+  },
 ];
 
 async function runMigrations() {

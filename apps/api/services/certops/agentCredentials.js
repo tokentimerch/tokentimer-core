@@ -433,6 +433,15 @@ async function validateBootstrapToken(options) {
     return invalidBootstrapValidation();
   }
   if (row.status === "used") {
+    // Registration retries after a lost response must authenticate with the
+    // already-consumed bootstrap token so the control plane can replay the
+    // stored credential (H1). Callers pass allowUsed: true only on register.
+    if (options.allowUsed === true) {
+      return {
+        valid: true,
+        bootstrapToken: bootstrapTokenMetadataFromRow(row),
+      };
+    }
     return invalidBootstrapValidation(CERTOPS_AGENT_BOOTSTRAP_TOKEN_USED);
   }
   if (row.status === "revoked") {

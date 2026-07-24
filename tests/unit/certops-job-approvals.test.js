@@ -447,7 +447,13 @@ describe("agentDispatch.claimJobs approval-hash guard", () => {
   };
 
   function agentFixture() {
-    return { id: "agent-row-1", workspaceId: WORKSPACE_A, status: "active" };
+    return {
+      id: "agent-row-1",
+      workspaceId: WORKSPACE_A,
+      status: "active",
+      protocolVersion: "1.0.0",
+      agentVersion: "1.0.0",
+    };
   }
 
   function createMockPool(handler) {

@@ -57,9 +57,12 @@ function createAgentBootstrapTokenAuth(options = {}) {
 
     let validation;
     try {
+      // allowUsed: registration retries after token consumption must still
+      // authenticate so registerAgent can replay a stored registrationId map.
       validation = await validate({
         client: options.client,
         rawToken: bearer.rawToken,
+        allowUsed: true,
       });
     } catch (error) {
       return next(error);

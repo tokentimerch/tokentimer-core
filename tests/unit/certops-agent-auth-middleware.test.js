@@ -129,6 +129,7 @@ describe("CertOps agent bootstrap token auth middleware", () => {
     assert.equal(result.res.statusCode, null);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].rawToken, RAW_BOOTSTRAP_TOKEN);
+    assert.equal(calls[0].allowUsed, true);
     assert.equal(req.agentBootstrapToken.id, "boot-1");
     assert.equal(req.agentBootstrapToken.token_hash, undefined);
     // No consume call: validation is injectable and the middleware only

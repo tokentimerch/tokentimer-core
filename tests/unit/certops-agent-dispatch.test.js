@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
   CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_LEASE_INVALID,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
@@ -82,15 +83,68 @@ function registerEnvelope() {
   };
 }
 
-function registerBody() {
+function registerBody(overrides = {}) {
   return {
     bootstrapTokenId: "boot-1",
     agentVersion: "0.1.0",
+    registrationId: "550e8400-e29b-41d4-a716-446655440000",
     hostname: "edge-01",
     platform: "linux",
     nodeVersion: "22.1.0",
     declaredTargetSelectors: ["*.example.com"],
     declaredCommandProfileNames: ["nginx-reload"],
+    ...overrides,
+  };
+}
+
+function registrationQueryHandler({
+  tokenStatus = "active",
+  insertAgent = true,
+  replayRow = null,
+  agentRow = {
+    id: "agent-row-1",
+    agent_id: "agent-01",
+    protocol_version: "1.0.0",
+  },
+  onReplayInsert = null,
+} = {}) {
+  const replays = replayRow ? [replayRow] : [];
+  return (sql, params) => {
+    if (
+      sql.includes("FROM certops_agent_bootstrap_tokens") &&
+      sql.includes("FOR UPDATE")
+    ) {
+      return {
+        rows: [{ id: "boot-1", status: tokenStatus, workspace_id: WORKSPACE_A }],
+      };
+    }
+    if (sql.includes("FROM certops_agent_registration_replays")) {
+      const match = replays.find(
+        (row) =>
+          row.bootstrap_token_id === params[0] &&
+          row.registration_id === params[1],
+      );
+      return { rows: match ? [match] : [] };
+    }
+    if (sql.includes("INSERT INTO certops_agents")) {
+      if (!insertAgent) return { rows: [] };
+      return { rows: [agentRow] };
+    }
+    if (sql.includes("INSERT INTO certops_agent_registration_replays")) {
+      const row = {
+        bootstrap_token_id: params[1],
+        registration_id: params[2],
+        agent_id: params[3],
+        credential: params[4],
+        protocol_version: params[5],
+        signing_key_id: params[6],
+        signing_public_key_pem: params[7],
+      };
+      replays.push(row);
+      if (onReplayInsert) onReplayInsert(row, params);
+      return { rows: [row] };
+    }
+    throw new Error(`unexpected query: ${sql}`);
   };
 }
 
@@ -167,18 +221,15 @@ describe("agentDispatch.enforceAgentSequence", () => {
 });
 
 describe("agentDispatch.registerAgent", () => {
-  it("registers happy path: inserts row, consumes token, returns credential once", async () => {
-    const dbPool = createMockPool((sql) => {
-      if (sql.includes("INSERT INTO certops_agents")) {
-        return {
-          rows: [
-            { id: "agent-row-1", agent_id: "agent-01", protocol_version: "1.0.0" },
-          ],
-        };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
+  it("registers happy path: inserts row, consumes token, persists replay, returns credential once", async () => {
+    const persisted = [];
+    const dbPool = createMockPool(
+      registrationQueryHandler({
+        onReplayInsert: (row) => persisted.push(row),
+      }),
+    );
     const consumed = [];
+    const credential = `ttagent_0123456789abcdef_${"b".repeat(64)}`;
     const result = await registerAgent({
       dbPool,
       bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A },
@@ -192,7 +243,7 @@ describe("agentDispatch.registerAgent", () => {
         generateAgentCredential: () => ({
           credentialPrefix: "ttagent_0123456789abcdef",
           credentialHash: "hash",
-          plaintextCredential: `ttagent_0123456789abcdef_${"b".repeat(64)}`,
+          plaintextCredential: credential,
         }),
         consumeBootstrapToken: async (options) => {
           consumed.push(options);
@@ -204,26 +255,95 @@ describe("agentDispatch.registerAgent", () => {
     assert.equal(result.agentId, "agent-01");
     assert.equal(result.protocolVersion, "1.0.0");
     assert.equal(result.signingKeyId, "key-1");
-    assert.match(result.credential, /^ttagent_/);
+    assert.equal(result.credential, credential);
     assert.match(result.signingPublicKeyPem, /BEGIN PUBLIC KEY/);
     assert.equal(consumed.length, 1);
     assert.equal(consumed[0].tokenId, "boot-1");
     assert.equal(consumed[0].agentRowId, "agent-row-1");
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0].registration_id, registerBody().registrationId);
+    assert.equal(persisted[0].credential, credential);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
     assert.equal(dbPool.state.released, true);
   });
 
-  it("answers the consumed-race with the generic 401 code and rolls back", async () => {
-    const dbPool = createMockPool((sql) => {
-      if (sql.includes("INSERT INTO certops_agents")) {
-        return {
-          rows: [
-            { id: "agent-row-1", agent_id: "agent-01", protocol_version: "1.0.0" },
-          ],
-        };
-      }
-      throw new Error(`unexpected query: ${sql}`);
+  it("replays the same response for a retry with the same registrationId after the token is spent", async () => {
+    const credential = `ttagent_0123456789abcdef_${"c".repeat(64)}`;
+    const dbPool = createMockPool(
+      registrationQueryHandler({
+        tokenStatus: "used",
+        replayRow: {
+          bootstrap_token_id: "boot-1",
+          registration_id: "550e8400-e29b-41d4-a716-446655440000",
+          agent_id: "agent-01",
+          credential,
+          protocol_version: "1.0.0",
+          signing_key_id: "key-1",
+          signing_public_key_pem: "pem-1",
+        },
+      }),
+    );
+    let consumeCalls = 0;
+    const result = await registerAgent({
+      dbPool,
+      bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A, status: "used" },
+      envelope: registerEnvelope(),
+      body: registerBody(),
+      deps: {
+        ensureActiveSigningKey: async () => {
+          throw new Error("must not mint on replay");
+        },
+        generateAgentCredential: () => {
+          throw new Error("must not mint on replay");
+        },
+        consumeBootstrapToken: async () => {
+          consumeCalls += 1;
+          return null;
+        },
+      },
     });
+
+    assert.deepEqual(result, {
+      agentId: "agent-01",
+      credential,
+      protocolVersion: "1.0.0",
+      signingKeyId: "key-1",
+      signingPublicKeyPem: "pem-1",
+    });
+    assert.equal(consumeCalls, 0);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("hard-rejects a different registrationId against an already-spent token", async () => {
+    const dbPool = createMockPool(
+      registrationQueryHandler({ tokenStatus: "used" }),
+    );
+    await assert.rejects(
+      registerAgent({
+        dbPool,
+        bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A, status: "used" },
+        envelope: registerEnvelope(),
+        body: registerBody({ registrationId: "different-registration-id" }),
+        deps: {
+          ensureActiveSigningKey: async () => ({
+            signingKeyId: "key-1",
+            publicKeyPem: "pem",
+          }),
+          generateAgentCredential: () => ({
+            credentialPrefix: "ttagent_0123456789abcdef",
+            credentialHash: "hash",
+            plaintextCredential: "ttagent_x",
+          }),
+          consumeBootstrapToken: async () => null,
+        },
+      }),
+      (error) => error.code === CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
+    );
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  it("answers the consumed-race with the generic 401 code and rolls back", async () => {
+    const dbPool = createMockPool(registrationQueryHandler());
     await assert.rejects(
       registerAgent({
         dbPool,
@@ -252,18 +372,18 @@ describe("agentDispatch.registerAgent", () => {
 
   it("seeds last_sequence from the register envelope (new generation), 0 when absent", async () => {
     const insertParams = [];
-    const makePool = () =>
-      createMockPool((sql, params) => {
+    const makePool = () => {
+      const pool = createMockPool(registrationQueryHandler());
+      const original = pool.client.query.bind(pool.client);
+      pool.client.query = async (text, params) => {
+        const sql = typeof text === "string" ? text : text?.text || "";
         if (sql.includes("INSERT INTO certops_agents")) {
           insertParams.push(params);
-          return {
-            rows: [
-              { id: "agent-row-1", agent_id: "agent-01", protocol_version: "1.0.0" },
-            ],
-          };
         }
-        throw new Error(`unexpected query: ${sql}`);
-      });
+        return original(text, params);
+      };
+      return pool;
+    };
     const deps = {
       ensureActiveSigningKey: async () => ({ signingKeyId: "key-1", publicKeyPem: "pem" }),
       generateAgentCredential: () => ({
@@ -285,13 +405,103 @@ describe("agentDispatch.registerAgent", () => {
       dbPool: makePool(),
       bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A },
       envelope: registerEnvelope(),
-      body: registerBody(),
+      body: registerBody({ registrationId: "second-registration-id" }),
       deps,
     });
 
     // last_sequence is the 14th insert parameter.
     assert.equal(insertParams[0][13], 5);
     assert.equal(insertParams[1][13], 0);
+  });
+
+  it("resolves sequential duplicate registrationIds to a single agent credential", async () => {
+    const credential = `ttagent_0123456789abcdef_${"d".repeat(64)}`;
+    const sharedReplays = [];
+    let tokenStatus = "active";
+    let agentInserted = false;
+    const handler = (sql, params) => {
+      if (
+        sql.includes("FROM certops_agent_bootstrap_tokens") &&
+        sql.includes("FOR UPDATE")
+      ) {
+        return {
+          rows: [
+            { id: "boot-1", status: tokenStatus, workspace_id: WORKSPACE_A },
+          ],
+        };
+      }
+      if (sql.includes("FROM certops_agent_registration_replays")) {
+        const match = sharedReplays.find(
+          (row) =>
+            row.bootstrap_token_id === params[0] &&
+            row.registration_id === params[1],
+        );
+        return { rows: match ? [match] : [] };
+      }
+      if (sql.includes("INSERT INTO certops_agents")) {
+        if (agentInserted) return { rows: [] };
+        agentInserted = true;
+        return {
+          rows: [
+            {
+              id: "agent-row-1",
+              agent_id: "agent-01",
+              protocol_version: "1.0.0",
+            },
+          ],
+        };
+      }
+      if (sql.includes("INSERT INTO certops_agent_registration_replays")) {
+        const row = {
+          bootstrap_token_id: params[1],
+          registration_id: params[2],
+          agent_id: params[3],
+          credential: params[4],
+          protocol_version: params[5],
+          signing_key_id: params[6],
+          signing_public_key_pem: params[7],
+        };
+        sharedReplays.push(row);
+        tokenStatus = "used";
+        return { rows: [row] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    };
+
+    const deps = {
+      ensureActiveSigningKey: async () => ({
+        signingKeyId: "key-1",
+        publicKeyPem: "pem-1",
+      }),
+      generateAgentCredential: () => ({
+        credentialPrefix: "ttagent_0123456789abcdef",
+        credentialHash: "hash",
+        plaintextCredential: credential,
+      }),
+      consumeBootstrapToken: async () => {
+        tokenStatus = "used";
+        return { id: "boot-1" };
+      },
+    };
+
+    const first = await registerAgent({
+      dbPool: createMockPool(handler),
+      bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A },
+      envelope: registerEnvelope(),
+      body: registerBody(),
+      deps,
+    });
+    const second = await registerAgent({
+      dbPool: createMockPool(handler),
+      bootstrapToken: { id: "boot-1", workspaceId: WORKSPACE_A, status: "used" },
+      envelope: registerEnvelope(),
+      body: registerBody(),
+      deps,
+    });
+
+    assert.deepEqual(first, second);
+    assert.equal(sharedReplays.length, 1);
+    assert.equal(agentInserted, true);
   });
 });
 
@@ -810,6 +1020,114 @@ describe("agentDispatch.claimJobs", () => {
     });
     assert.deepEqual(result, { jobs: [] });
     assert.equal(blocked, true);
+  });
+
+  it("rejects claim when compatibilityState is blocked and does not assign jobs", async () => {
+    let claimed = false;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence") || sql.includes("SET last_sequence")) {
+        return { rows: [{ last_sequence: 0, id: "agent-row-1" }] };
+      }
+      if (sql.includes("SET status = 'claimed'")) {
+        claimed = true;
+        return { rows: [] };
+      }
+      throw new Error(`no job claim expected, got: ${sql}`);
+    });
+
+    await assert.rejects(
+      claimJobs({
+        dbPool,
+        agent: agentFixture({ protocolVersion: "0.0.1", agentVersion: "0.0.1" }),
+        body: { maxJobs: 1, supportedActions: ["renew"] },
+        env: {
+          CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+          CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.999.999",
+          CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
+          CERTOPS_AGENT_MAX_AGENT_VERSION: "99.999.999",
+        },
+        deps: CLAIM_DEPS_BASE,
+      }),
+      (error) =>
+        error.code === CERTOPS_AGENT_COMPATIBILITY_BLOCKED &&
+        /compatibility policy/i.test(error.message),
+    );
+    assert.equal(claimed, false);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  it("allows claim for outdated (not blocked) agents", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence") || sql.includes("SET last_sequence")) {
+        return { rows: [{ last_sequence: 0, id: "agent-row-1" }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture({ agentVersion: "0.1.0" }),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.999.999",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.1.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "0.5.0",
+      },
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("allows claim for compatible agents at the minimum protocol floor", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence") || sql.includes("SET last_sequence")) {
+        return { rows: [{ last_sequence: 0, id: "agent-row-1" }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture({ protocolVersion: "1.0.0", agentVersion: "0.10.0" }),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.999.999",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "99.999.999",
+      },
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 });
 

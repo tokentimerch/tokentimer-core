@@ -35,16 +35,23 @@ const {
   CERTOPS_RENEWAL_PROFILE_INVALID,
   buildRenewalJobPayload,
 } = require("./renewalProfile");
+const {
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+  DEFAULT_RENEWAL_PER_CA_CAP,
+  RENEWAL_PER_CA_CAP_ENV,
+  UNKNOWN_CA_BUCKET,
+  caCapKey,
+  normalizeCaBucket,
+  resolveRenewalPerCaCap,
+} = require("./renewalCapacity");
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
 const RENEWAL_THRESHOLD_ENV = "CERTOPS_RENEWAL_THRESHOLD_DAYS";
-const DEFAULT_RENEWAL_PER_CA_CAP = 5;
-const RENEWAL_PER_CA_CAP_ENV = "CERTOPS_RENEWAL_PER_CA_CAP";
 
 // Certificates without a resolvable caEndpoint share this bucket, so a flood
 // of endpoint-less renewals is still capped instead of being unbounded.
-const UNKNOWN_CA_BUCKET = "__unknown-ca__";
+// UNKNOWN_CA_BUCKET is imported from renewalCapacity (shared with jobs.js).
 
 // Advisory lock key for the sweep (single-flight across workers). Any
 // constant bigint works; this one is arbitrary but must stay stable.
@@ -70,20 +77,9 @@ function resolveRenewalThresholdDays(env = process.env) {
 
 /**
  * Max renewal jobs that may be in flight per CA endpoint at sweep time.
- * Same env pattern as resolveRenewalThresholdDays: blank/invalid values fall
- * back to the default.
+ * resolveRenewalPerCaCap / normalizeCaBucket / caCapKey live in
+ * renewalCapacity.js so createCertificateJob enforces the same rules.
  */
-function resolveRenewalPerCaCap(env = process.env) {
-  const raw = env[RENEWAL_PER_CA_CAP_ENV];
-  if (raw == null || String(raw).trim() === "") {
-    return DEFAULT_RENEWAL_PER_CA_CAP;
-  }
-  const parsed = Number.parseInt(String(raw).trim(), 10);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    return DEFAULT_RENEWAL_PER_CA_CAP;
-  }
-  return parsed;
-}
 
 /**
  * True when a metadata caEndpoint value would pass the execution-field
@@ -99,30 +95,6 @@ function isValidCaEndpointUrl(value) {
     return false;
   }
   return parsed.protocol === "https:" || parsed.protocol === "http:";
-}
-
-/**
- * Canonical form of a CA endpoint for cap bucketing, so the same CA never
- * lands in two buckets because of representation differences (case in the
- * scheme/host, default ports, trailing slashes, query/fragment noise).
- * Non-URL strings are lowercased+trimmed as-is; empty input maps to the
- * unknown-CA bucket. Used for BOTH sides of the cap comparison (due
- * certificates and in-flight job counts); the raw (un-normalized but valid)
- * URL is still what gets stamped on job payloads.
- */
-function normalizeCaBucket(value) {
-  if (typeof value !== "string") return UNKNOWN_CA_BUCKET;
-  const trimmed = value.trim();
-  if (trimmed === "" || trimmed === UNKNOWN_CA_BUCKET) return UNKNOWN_CA_BUCKET;
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch (_error) {
-    return trimmed.toLowerCase();
-  }
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  // URL already lowercases protocol/hostname and drops default ports.
-  return `${parsed.protocol}//${parsed.host}${pathname}`;
 }
 
 /**
@@ -160,15 +132,6 @@ function certificateCaEndpointRaw(certificate) {
     }
   }
   return null;
-}
-
-/**
- * Composite cap-accounting key: caps are per (workspace, CA), never global,
- * so one tenant's renewal backlog can never starve another tenant sharing
- * the same public CA.
- */
-function caCapKey(workspaceId, caBucket) {
-  return `${workspaceId}::${caBucket}`;
 }
 
 /**
@@ -320,6 +283,7 @@ async function createRenewalJobForCertificate({
         certificate.not_after,
       ),
       payload,
+      env,
       returnOutcome: true,
     });
 
@@ -452,6 +416,10 @@ async function runRenewalSchedulerSweep({
           error?.code === CERTOPS_DISABLED
         ) {
           summary.skippedPaused += 1;
+          continue;
+        }
+        if (error?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED) {
+          summary.skippedByCaCap += 1;
           continue;
         }
         if (

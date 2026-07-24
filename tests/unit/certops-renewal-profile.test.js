@@ -129,6 +129,11 @@ describe("certops renewal profile", () => {
     assert.equal(payload.dnsZone, "example.com");
     assert.equal(payload.certPath, "/etc/ssl/certs/app.pem");
     assert.equal(payload.keyRotation, true);
+    assert.equal(payload.keyAlgorithm, "rsa");
+    assert.equal(payload.keySize, 2048);
+    assert.deepEqual(payload.sans, ["app.example.com"]);
+    assert.ok(Array.isArray(payload.deploymentTargets));
+    assert.ok(payload.deploymentTargets.length >= 1);
     assert.ok(payload.renewalProfile);
   });
 

@@ -577,6 +577,7 @@ describe("Register handler", () => {
         body: envelope("register", {
           bootstrapTokenId: "boot-1",
           agentVersion: "0.1.0",
+          registrationId: "550e8400-e29b-41d4-a716-446655440000",
         }),
       },
       res,
@@ -608,6 +609,7 @@ describe("Register handler", () => {
         body: envelope("register", {
           bootstrapTokenId: "boot-1",
           agentVersion: "0.1.0",
+          registrationId: "550e8400-e29b-41d4-a716-446655440000",
         }),
       },
       res,

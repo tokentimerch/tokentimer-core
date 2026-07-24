@@ -452,6 +452,8 @@ function executionFieldsFromRenewalProfile(profile) {
     commandRef: profile.acme.commandRef,
     caEndpoint: profile.ca.endpoint,
     acmeKind: profile.acme.kind,
+    keyAlgorithm: profile.keyAlgorithm,
+    keySize: profile.keySize,
     keyRotation: profile.keyRotationPolicy.rotateOnRenew,
     dnsProvider: profile.dns.provider,
     dnsZone: profile.dns.zone,
@@ -460,6 +462,9 @@ function executionFieldsFromRenewalProfile(profile) {
       reference: profile.target.reference,
     },
     sans: [...profile.sanPolicy.sans],
+    // Full multi-target list for agent deploy; primary target fields below
+    // remain for single-destination backward compatibility.
+    deploymentTargets: profile.deploymentTargets.map((t) => ({ ...t })),
   };
   if (profile.target.certPath) {
     fields.certPath = profile.target.certPath;
@@ -477,6 +482,13 @@ function executionFieldsFromRenewalProfile(profile) {
   }
   if (profile.preferredChain) {
     fields.preferredChain = profile.preferredChain;
+  }
+  // Opaque agent-local refs only — never EAB HMAC material (D5 / ADR-0001).
+  if (profile.ca.accountRef) {
+    fields.accountRef = profile.ca.accountRef;
+  }
+  if (profile.ca.eabRef) {
+    fields.eabRef = profile.ca.eabRef;
   }
   return fields;
 }

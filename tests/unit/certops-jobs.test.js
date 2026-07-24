@@ -50,6 +50,34 @@ function createMemoryClient() {
     async query(sql, params = []) {
       const normalizedSql = sql.replace(/\s+/g, " ");
 
+      if (normalizedSql.includes("pg_advisory_xact_lock")) {
+        return { rows: [{ pg_advisory_xact_lock: "" }] };
+      }
+
+      if (
+        normalizedSql.includes("FROM certificate_jobs") &&
+        normalizedSql.includes("operation = 'renew'") &&
+        normalizedSql.includes("FOR UPDATE")
+      ) {
+        const terminal = new Set(params[1] || []);
+        return {
+          rows: jobs
+            .filter(
+              (row) =>
+                row.workspace_id === params[0] &&
+                row.operation === "renew" &&
+                !terminal.has(row.status),
+            )
+            .map((row) => ({
+              ca_endpoint:
+                typeof row.payload?.caEndpoint === "string" &&
+                row.payload.caEndpoint.trim() !== ""
+                  ? row.payload.caEndpoint.trim()
+                  : null,
+            })),
+        };
+      }
+
       if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
         const idempotencyKey = params[8];
         if (
@@ -1488,5 +1516,81 @@ describe("CertOps jobs service", () => {
         }),
       (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
     );
+  });
+
+  it("enforces per-CA renew capacity across sequential creators for the same CA", async () => {
+    const {
+      CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+    } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createMemoryClient();
+    const env = { CERTOPS_RENEWAL_PER_CA_CAP: "2" };
+    const caEndpoint = "https://acme.example.com/directory";
+
+    const first = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { certificateId: "cert-a", caEndpoint },
+      idempotencyKey: "manual-cert-a",
+      env,
+    });
+    const second = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { certificateId: "cert-b", caEndpoint },
+      idempotencyKey: "scheduler-cert-b",
+      env,
+    });
+    assert.ok(first.id);
+    assert.ok(second.id);
+    assert.notEqual(first.id, second.id);
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "api",
+          payload: { certificateId: "cert-c", caEndpoint },
+          idempotencyKey: "manual-cert-c",
+          env,
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+    );
+
+    // Idempotent replay of an existing job must still succeed at capacity.
+    const replay = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: { certificateId: "cert-a", caEndpoint },
+      idempotencyKey: "manual-cert-a",
+      env,
+      returnOutcome: true,
+    });
+    assert.equal(replay.created, false);
+    assert.equal(replay.job.id, first.id);
+
+    // A different CA bucket remains independently capped.
+    const otherCa = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      payload: {
+        certificateId: "cert-d",
+        caEndpoint: "https://other.example/directory",
+      },
+      idempotencyKey: "manual-cert-d",
+      env,
+    });
+    assert.ok(otherCa.id);
   });
 });

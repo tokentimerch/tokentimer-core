@@ -65,6 +65,7 @@ const {
   CERTOPS_JOB_OPERATION_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   findActiveJobForSubject,
   getCertificateJobById,
   listCertificateJobLog,
@@ -360,6 +361,13 @@ function handleCertOpsError(res, err) {
     });
   }
 
+  if (err?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED) {
+    return res.status(409).json({
+      error: err.message || "Per-CA renewal capacity exceeded",
+      code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+    });
+  }
+
   if (
     err?.code === CERTOPS_WORKSPACE_PAUSE_STATE_INVALID ||
     err?.code === CERTOPS_WORKSPACE_PAUSE_REASON_INVALID
@@ -505,8 +513,14 @@ const BULK_RENEW_ALLOWED_BODY_FIELDS = Object.freeze([
 const BULK_RENEW_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 function bulkRenewItemIdempotencyKey(idempotencyKey, certificateId) {
-  if (!idempotencyKey) return undefined;
-  return `bulk-renew:${idempotencyKey}:${certificateId}`;
+  // Non-dry-run bulk creates must always carry a stable per-certificate key
+  // so client retries cannot enqueue duplicate renew jobs. When the caller
+  // omits a request key, derive one from the certificate id alone (scoped
+  // by the workspace-scoped unique index on the jobs table's idempotency key).
+  if (idempotencyKey) {
+    return `bulk-renew:${idempotencyKey}:${certificateId}`;
+  }
+  return `bulk-renew:auto:${certificateId}`;
 }
 
 /**
@@ -2051,6 +2065,7 @@ module.exports = router;
 module.exports._test = {
   createManualCertificateJobHandler,
   bulkRenewCertificatesHandler,
+  bulkRenewItemIdempotencyKey,
   parseBulkRenewRequest,
   createControllerProvisionIntentHandler,
   requireCertOpsSessionUser,

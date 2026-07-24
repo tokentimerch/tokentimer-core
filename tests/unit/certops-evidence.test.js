@@ -146,6 +146,29 @@ function createMemoryClient() {
         return { rows };
       }
 
+      if (normalizedSql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
+
+      if (
+        normalizedSql.includes("FROM certificate_jobs") &&
+        normalizedSql.includes("operation = 'renew'") &&
+        normalizedSql.includes("FOR UPDATE")
+      ) {
+        const [workspaceId, terminalStatuses] = params;
+        const rows = jobs
+          .filter(
+            (row) =>
+              row.workspace_id === workspaceId &&
+              row.operation === "renew" &&
+              !(terminalStatuses || []).includes(row.status),
+          )
+          .map((row) => ({
+            ca_endpoint: row.payload && row.payload.caEndpoint,
+          }));
+        return { rows };
+      }
+
       throw new Error(`Unexpected query: ${normalizedSql}`);
     },
   };

@@ -46,12 +46,17 @@ const {
   assertNoPrivateKeyMaterial,
 } = require("../../utils/secretMaterial");
 const { logger } = require("../../utils/logger");
+const {
+  computeAgentCompatibility,
+} = require("./agentRegistry");
 
 // --- Frozen error codes ---
 const CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED =
   "CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED";
 const CERTOPS_AGENT_REGISTRATION_CONFLICT =
   "CERTOPS_AGENT_REGISTRATION_CONFLICT";
+const CERTOPS_AGENT_COMPATIBILITY_BLOCKED =
+  "CERTOPS_AGENT_COMPATIBILITY_BLOCKED";
 const CERTOPS_AGENT_RETIRED = "CERTOPS_AGENT_RETIRED";
 const CERTOPS_AGENT_MESSAGE_INVALID = "CERTOPS_AGENT_MESSAGE_INVALID";
 const CERTOPS_AGENT_JOB_NOT_FOUND = "CERTOPS_AGENT_JOB_NOT_FOUND";
@@ -65,6 +70,10 @@ const CERTOPS_AGENT_SEQUENCE_REGRESSION = "CERTOPS_AGENT_SEQUENCE_REGRESSION";
 const CERTOPS_AGENT_LEASE_INVALID = "CERTOPS_AGENT_LEASE_INVALID";
 const CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE =
   "CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE";
+
+// RegistrationId → credential replay window (H1). Long enough for crash
+// recovery; short enough that plaintext credentials are not retained forever.
+const REGISTRATION_REPLAY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   succeeded: "succeeded",
@@ -195,6 +204,33 @@ async function enforceAgentSequence({ client = pool, agentRowId, envelope }) {
  * Returns the exact shape the packages/agent register client parses:
  * { agentId, credential, protocolVersion, signingKeyId, signingPublicKeyPem }.
  */
+function registrationReplayResponse(row) {
+  return {
+    agentId: row.agent_id,
+    credential: row.credential,
+    protocolVersion: row.protocol_version,
+    signingKeyId: row.signing_key_id ?? null,
+    signingPublicKeyPem: row.signing_public_key_pem ?? null,
+  };
+}
+
+async function findRegistrationReplay(client, bootstrapTokenId, registrationId) {
+  const result = await client.query(
+    `SELECT agent_id,
+            credential,
+            protocol_version,
+            signing_key_id,
+            signing_public_key_pem
+       FROM certops_agent_registration_replays
+      WHERE bootstrap_token_id = $1
+        AND registration_id = $2
+        AND expires_at > NOW()
+      LIMIT 1`,
+    [bootstrapTokenId, registrationId],
+  );
+  return result.rows[0] || null;
+}
+
 async function registerAgent({
   dbPool = pool,
   bootstrapToken,
@@ -206,8 +242,43 @@ async function registerAgent({
   const ensureKey = deps.ensureActiveSigningKey || ensureActiveSigningKey;
   const generateCredential =
     deps.generateAgentCredential || generateAgentCredential;
+  const registrationId = body.registrationId;
 
   return await withTransaction(dbPool, async (client) => {
+    // Serialize concurrent registrations against the same bootstrap token so
+    // a lost-response retry and a first-time register cannot both mint.
+    const lockedToken = await client.query(
+      `SELECT id, status, workspace_id
+         FROM certops_agent_bootstrap_tokens
+        WHERE id = $1
+        FOR UPDATE`,
+      [bootstrapToken.id],
+    );
+    const tokenRow = lockedToken.rows[0];
+    if (!tokenRow) {
+      throw serviceError(
+        "Bootstrap token could not be consumed",
+        CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
+      );
+    }
+
+    const existingReplay = await findRegistrationReplay(
+      client,
+      bootstrapToken.id,
+      registrationId,
+    );
+    if (existingReplay) {
+      return registrationReplayResponse(existingReplay);
+    }
+
+    // Spent token + unknown registrationId remains a hard rejection (H1).
+    if (tokenRow.status === "used") {
+      throw serviceError(
+        "Bootstrap token could not be consumed",
+        CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
+      );
+    }
+
     // Signing key and credential are prepared before the insert so a
     // constraint failure cannot leave a half-registered agent.
     const signingKey = await ensureKey({ client });
@@ -274,22 +345,52 @@ async function registerAgent({
       agentRowId: row.id,
     });
     if (!consumed) {
-      // Lost the single-use race (or the token expired between auth and
+      // Lost the single-use race (or the token expired between lock and
       // consumption): the transaction rolls back and the route answers a
-      // generic 401.
+      // generic 401. Concurrent same-registrationId retries are handled
+      // above via the row lock + replay lookup.
       throw serviceError(
         "Bootstrap token could not be consumed",
         CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
       );
     }
 
-    return {
+    const response = {
       agentId: row.agent_id,
       credential: credential.plaintextCredential,
       protocolVersion: row.protocol_version,
       signingKeyId: signingKey?.signingKeyId ?? null,
       signingPublicKeyPem: signingKey?.publicKeyPem ?? null,
     };
+
+    await client.query(
+      `INSERT INTO certops_agent_registration_replays (
+         workspace_id,
+         bootstrap_token_id,
+         registration_id,
+         agent_id,
+         credential,
+         protocol_version,
+         signing_key_id,
+         signing_public_key_pem,
+         expires_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + make_interval(secs => $9))
+       ON CONFLICT (bootstrap_token_id, registration_id) DO NOTHING`,
+      [
+        bootstrapToken.workspaceId,
+        bootstrapToken.id,
+        registrationId,
+        response.agentId,
+        response.credential,
+        response.protocolVersion,
+        response.signingKeyId,
+        response.signingPublicKeyPem,
+        Math.floor(REGISTRATION_REPLAY_TTL_MS / 1000),
+      ],
+    );
+
+    return response;
   });
 }
 
@@ -542,6 +643,20 @@ async function claimJobs({
     // the transaction, so a claim that later fails rolls the counter back
     // with everything else.
     await enforceSequence({ client, agentRowId: agent.id, envelope });
+
+    // H8 hard floor: blocked agents must not claim or execute jobs.
+    // "outdated" remains advisory and does not reject claims.
+    const compatibility = (deps.computeAgentCompatibility ||
+      computeAgentCompatibility)(agent, env);
+    if (compatibility.compatibilityState === "blocked") {
+      const cfg = compatibility.compatibilityConfig || {};
+      throw serviceError(
+        "Agent is blocked by CertOps compatibility policy " +
+          `(protocol ${cfg.minProtocolVersion || "?"}–${cfg.maxProtocolVersion || "?"}, ` +
+          `agent ${cfg.minAgentVersion || "?"}–${cfg.maxAgentVersion || "?"})`,
+        CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
+      );
+    }
 
     // Throws CERTOPS_WORKSPACE_PAUSED / CERTOPS_DISABLED; the route maps
     // these to 409 / 404 and no job is claimed.
@@ -1150,6 +1265,7 @@ async function assertEvidenceClaimOwnership({
 
 module.exports = {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_COMPATIBILITY_BLOCKED,
   CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
   CERTOPS_AGENT_JOB_NOT_FOUND,
   CERTOPS_AGENT_LEASE_INVALID,
@@ -1171,10 +1287,13 @@ module.exports = {
   renewJobLease,
   resolveDeployPublicCertificate,
   _test: {
+    REGISTRATION_REPLAY_TTL_MS,
     RESULT_STATUS_TO_JOB_STATUS,
     dateToIso,
     envelopeSequence,
+    findRegistrationReplay,
     normalizeStringList,
+    registrationReplayResponse,
     safeParseJson,
     serviceError,
     withTransaction,

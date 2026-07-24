@@ -13,6 +13,10 @@ const {
   CERTOPS_RENEWAL_PROFILE_INVALID,
   validateRenewalProfile,
 } = require("./renewalProfile");
+const {
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
+  assertRenewalPerCaCapacityAvailable,
+} = require("./renewalCapacity");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -1161,6 +1165,53 @@ async function createCertificateJob(options) {
     cancelledAt: dateToIso(explicitLifecycleTimestamps.cancelledAt),
   });
 
+  // Idempotent replays must not be rejected by the per-CA cap: a retry of an
+  // already-created renew job is not a new capacity reservation.
+  if (idempotencyKey) {
+    const existingBeforeInsert = await getJobByIdempotencyKey(
+      db,
+      workspaceId,
+      idempotencyKey,
+    );
+    if (existingBeforeInsert) {
+      const isMatchingReplay = existingBeforeInsert.creationRequestHash
+        ? existingBeforeInsert.creationRequestHash === creationRequestHash
+        : legacyJobCreationIdentity(existingBeforeInsert) ===
+          legacyJobCreationIdentity({
+            operation,
+            source,
+            mode,
+            requestedByUserId,
+            requestedByApiTokenId,
+            subjectType,
+            subjectId,
+            payload,
+          });
+      if (isMatchingReplay) {
+        return options.returnOutcome === true
+          ? { job: existingBeforeInsert, created: false }
+          : existingBeforeInsert;
+      }
+      throw serviceError(
+        "Idempotency key was already used with a different CertOps job request",
+        CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+      );
+    }
+  }
+
+  // Authoritative per-(workspace, CA) renew capacity. Scheduler pre-filters
+  // are best-effort; bulk/manual paths share this transactional gate.
+  if (operation === "renew") {
+    await assertRenewalPerCaCapacityAvailable({
+      client: db,
+      workspaceId,
+      payload,
+      terminalStatuses: [...TERMINAL_JOB_STATUSES],
+      env: options.env || process.env,
+      perCaCap: options.perCaCap,
+    });
+  }
+
   try {
     const result = await db.query(
       `INSERT INTO certificate_jobs (
@@ -1654,6 +1705,7 @@ module.exports = {
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   CERTOPS_JOB_MODE_INVALID,
   CERTOPS_JOB_MODE_TERMINAL_INVALID,
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
   DEFAULT_JOB_MODE,

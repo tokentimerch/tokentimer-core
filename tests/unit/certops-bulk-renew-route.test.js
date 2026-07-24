@@ -102,7 +102,52 @@ describe("CertOps bulk-renew route", () => {
       assert.strictEqual(call.requiresApproval, false);
       assert.strictEqual(call.requestedByUserId, 42);
       assert.strictEqual(call.actorUserId, 42);
+      assert.strictEqual(
+        call.idempotencyKey,
+        `bulk-renew:auto:${uuid(index + 1)}`,
+      );
     }
+  });
+
+  it("derives a stable auto idempotency key when the caller omits one", async () => {
+    const { bulkRenewItemIdempotencyKey } = certOpsRouter._test;
+    assert.strictEqual(
+      bulkRenewItemIdempotencyKey(undefined, uuid(1)),
+      `bulk-renew:auto:${uuid(1)}`,
+    );
+    assert.strictEqual(
+      bulkRenewItemIdempotencyKey("client-key", uuid(1)),
+      `bulk-renew:client-key:${uuid(1)}`,
+    );
+
+    const creatorCalls = [];
+    const handler = bulkRenewCertificatesHandler({
+      certificateLoader: async () => ({ id: "found" }),
+      manualJobCreator: async (options) => {
+        creatorCalls.push(options);
+        return {
+          job: { id: `job-${creatorCalls.length}` },
+          created: creatorCalls.length === 1,
+        };
+      },
+    });
+
+    const first = responseRecorder();
+    await handler(makeRequest({ certificateIds: [uuid(9)] }), first);
+    const second = responseRecorder();
+    await handler(makeRequest({ certificateIds: [uuid(9)] }), second);
+
+    assert.strictEqual(first.statusCode, 200);
+    assert.strictEqual(second.statusCode, 200);
+    assert.strictEqual(creatorCalls.length, 2);
+    assert.strictEqual(
+      creatorCalls[0].idempotencyKey,
+      creatorCalls[1].idempotencyKey,
+    );
+    assert.strictEqual(
+      creatorCalls[0].idempotencyKey,
+      `bulk-renew:auto:${uuid(9)}`,
+    );
   });
 
   it("reports a mixed envelope where item failures never abort the batch", async () => {
