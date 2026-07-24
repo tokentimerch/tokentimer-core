@@ -587,6 +587,29 @@ Common terminal states and what to look for:
 - **Heartbeat stops and the process exits with a "retired" log line**: the
   control plane returned HTTP 410; this is a clean, intentional shutdown.
 
+### Fleet compatibility and clock drift (control plane)
+
+The control plane computes per-agent compatibility on register/heartbeat and
+surfaces it on fleet status APIs (`compatibilityState`, `clockDriftState`,
+`clockDriftMs`):
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `compatibilityState` | `compatible` / `outdated` / `blocked` | Protocol and agent version vs env-configured min/max |
+| `clockDriftState` | `ok` / `warn` / `alert` / `null` | Absolute drift vs warn/alert thresholds |
+| `clockDriftMs` | number or `null` | Absolute clock offset in milliseconds |
+
+Env knobs (API process):
+
+- `CERTOPS_AGENT_MIN_PROTOCOL_VERSION` / `CERTOPS_AGENT_MAX_PROTOCOL_VERSION`
+- `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION`
+- `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS`
+
+`blocked` agents are outside the supported protocol/agent version window.
+`outdated` means below the preferred minimum but still accepted. Full alert
+delivery wiring for `clockDriftState: alert` is a follow-up; the fleet API
+flag is the operator-visible signal today.
+
 ### Forced agent retirement and in-flight work
 
 When an operator force-retires an agent (`POST .../agents/:id/retire` with
