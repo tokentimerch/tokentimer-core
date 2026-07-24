@@ -424,6 +424,53 @@ async function completeSigningKeyRotation(options = {}) {
   };
 }
 
+/**
+ * Read-only rotation state for operators: which key is active, which is
+ * retiring, and how much of the active fleet has acknowledged the active key.
+ * Never requires the env encryption key and never returns private material,
+ * so it is safe to call before deciding to start or complete a rotation.
+ */
+async function getSigningKeyRotationStatus(options = {}) {
+  const db = options.client || pool;
+  const active = await selectActiveKeyRow(db);
+  const retiring = await selectRetiringKeyRow(db);
+
+  let activeAgents = 0;
+  let ackCount = 0;
+  if (active) {
+    const fleet = await db.query(
+      `SELECT COUNT(*)::int AS active_agents
+         FROM certops_agents
+        WHERE status = 'active'`,
+    );
+    const acks = await db.query(
+      `SELECT COUNT(DISTINCT agent_id)::int AS ack_count
+         FROM certops_signing_key_acks
+        WHERE signing_key_id = $1`,
+      [active.signing_key_id],
+    );
+    activeAgents = Number(fleet.rows[0]?.active_agents || 0);
+    ackCount = Number(acks.rows[0]?.ack_count || 0);
+  }
+
+  return {
+    active: publicInfoFromRow(active),
+    retiring: retiring
+      ? {
+          signingKeyId: retiring.signing_key_id,
+          status: retiring.status,
+          rotationStartedAt: retiring.rotation_started_at || null,
+        }
+      : null,
+    rotationInProgress: Boolean(retiring),
+    activeAgents,
+    ackCount,
+    // Mirrors the completeSigningKeyRotation gate so a caller can tell
+    // whether completing now would need --force.
+    fullyAcked: activeAgents === 0 || ackCount >= activeAgents,
+  };
+}
+
 // --- Dispatch signing ---
 
 function generateNonce() {
@@ -665,6 +712,7 @@ module.exports = {
   ensureActiveSigningKey,
   getActiveSigningKeyPublicInfo,
   getSigningKeyRotationNotice,
+  getSigningKeyRotationStatus,
   signJobForDispatch,
   consumeNonce,
   extendJobNonceExpiry,

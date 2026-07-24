@@ -179,6 +179,9 @@ jobs:
       - name: Validate CertOps zero-custody keygen ban
         run: pnpm run check:certops-keygen-ban
 
+      - name: Validate CertOps DNS provider catalogue
+        run: pnpm run check:certops-dns-providers
+
       - name: Run contract tests
         env:
           CONTRACT_API_REQUIRED: "0"
@@ -274,7 +277,6 @@ jobs:
           if-no-files-found: ignore
 
   build_and_test:
-    if: github.event_name != 'pull_request'
     name: Build and Integration Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -397,7 +399,6 @@ jobs:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest
     needs: [dependency_audit, frontend_quality, worker_quality, controller_quality, backend_quality, build_and_test, helm_chart]
-    if: github.event_name != 'pull_request'
     timeout-minutes: 20
     permissions:
       security-events: write
