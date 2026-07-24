@@ -175,6 +175,11 @@
       "pattern": "^-----BEGIN CERTIFICATE-----",
       "description": "Public leaf (optionally followed by chain) certificate PEM for deploy jobs. Attached by the control plane at signed dispatch time, never persisted in the stored job payload. Must never contain private key material; both sides content-scan and reject."
     },
+    "certificatePemSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 (hex) of the UTF-8 certificatePem bytes. Bound into the signed dispatch payload so the agent can verify integrity of the attached public certificate before deploying it."
+    },
     "dnsZone": {
       "type": "string",
       "minLength": 1,

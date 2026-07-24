@@ -51,7 +51,7 @@ function createMemoryClient() {
       const normalizedSql = sql.replace(/\s+/g, " ");
 
       if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
-        const idempotencyKey = params[6];
+        const idempotencyKey = params[7];
         if (
           idempotencyKey &&
           jobs.some(
@@ -73,22 +73,27 @@ function createMemoryClient() {
           operation: params[1],
           status: params[2],
           source: params[3],
-          requested_by_user_id: params[4],
-          requested_by_api_token_id: params[5],
+          executor_kind: params[4],
+          requested_by_user_id: params[5],
+          requested_by_api_token_id: params[6],
           idempotency_key: idempotencyKey,
-          subject_type: params[7],
-          subject_id: params[8],
-          payload: json(params[9]),
-          result_metadata: json(params[10]),
-          error_code: params[11],
-          error_message: params[12],
+          subject_type: params[8],
+          subject_id: params[9],
+          payload: json(params[10]),
+          result_metadata: json(params[11]),
+          error_code: params[12],
+          error_message: params[13],
+          assigned_agent_id: params[14],
+          required_target_selector: params[15],
+          required_dns_provider: params[16],
+          required_command_profile: params[17],
           created_at: createdAt,
           updated_at: createdAt,
-          queued_at: params[13],
-          started_at: params[14],
-          completed_at: params[15],
-          canceled_at: params[16],
-          creation_request_hash: params[17],
+          queued_at: params[18],
+          started_at: params[19],
+          completed_at: params[20],
+          canceled_at: params[21],
+          creation_request_hash: params[22],
         };
         jobs.push(row);
         return { rows: [row] };

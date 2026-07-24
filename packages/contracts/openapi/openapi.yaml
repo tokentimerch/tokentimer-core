@@ -5047,6 +5047,96 @@ paths:
           description: Security audit sink unavailable while rejecting private material
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certops/agent/jobs/{jobId}/lease:
+    post:
+      tags: [CertOps Agent]
+      summary: Renew a claimed job lease
+      operationId: renewCertOpsAgentJobLease
+      description: >-
+        Re-proves claim ownership (authenticated agent + claimId), transitions
+        claimed→running on first renew, extends lease_expires_at, stamps
+        lease_renewed_at, and extends the still-open dispatch nonce so late
+        results remain reportable through the reaper hard-grace window. The
+        agent must call this before each external side effect (ACME/DNS/deploy/
+        reload). See COORDINATION-B6.md. Not an agent-protocol envelope
+        messageType: lean JSON body with claimId and optional sequence.
+      security:
+        - agentCredentialAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_.:-]+$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsAgentLeaseRequest"
+      responses:
+        "200":
+          description: Lease renewed; job is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsAgentLeaseResponse"
+        "400":
+          description: Lease body invalid or job not in a renewable state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: claimId is invalid
+                code: CERTOPS_AGENT_MESSAGE_INVALID
+        "401":
+          description: Per-agent credential missing, unknown, or revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent authentication required
+                code: CERTOPS_AGENT_UNAUTHORIZED
+        "404":
+          description: Job not found, or CertOps is disabled deployment-wide
+        "409":
+          description: Claim ownership mismatch or sequence regression
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Lease renew does not match the current claim for this job
+                code: CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH
+        "410":
+          description: Agent is retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps agent is retired
+                code: CERTOPS_AGENT_RETIRED
+        "422":
+          description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted on CertOps agent routes
+                code: PRIVATE_KEY_MATERIAL_REJECTED
+        "429":
+          description: CertOps machine-token rate limit exceeded
+        "503":
+          description: Security audit sink unavailable while rejecting private material
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/certops/agent/jobs/results:
     post:
       tags: [CertOps Agent]
@@ -7477,6 +7567,49 @@ components:
               signature:
                 type: string
                 description: Base64 Ed25519 signature over the canonical job payload (excluding this field).
+    CertOpsAgentLeaseRequest:
+      type: object
+      additionalProperties: false
+      required: [claimId]
+      description: Lean lease-renew body (not an agent-protocol envelope). See COORDINATION-B6.md.
+      properties:
+        claimId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_.:-]+$'
+          description: Claim id from the signed dispatch payload.
+        sequence:
+          type: integer
+          minimum: 1
+          description: Optional per-agent monotonic sequence (same semantics as heartbeat/claim/result).
+    CertOpsAgentLeaseResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, jobId, status, claimId, leaseExpiresAt]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [running]
+        claimId:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        leaseRenewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        nonceExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Extended dispatch-nonce expiry after this renew (B7).
     CertOpsAgentResultRequest:
       allOf:
         - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"

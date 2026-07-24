@@ -6,6 +6,8 @@ const path = require("node:path");
 
 const {
   CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+  CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE,
+  CERTOPS_AGENT_LEASE_INVALID,
   CERTOPS_AGENT_REGISTRATION_UNAUTHORIZED,
   CERTOPS_AGENT_RESULT_NONCE_REJECTED,
   CERTOPS_AGENT_SEQUENCE_REGRESSION,
@@ -14,6 +16,7 @@ const {
   ingestResult,
   recordHeartbeat,
   registerAgent,
+  renewJobLease,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
 );
@@ -387,10 +390,23 @@ describe("agentDispatch.claimJobs", () => {
         assert.match(sql, /status <> 'retired'/);
         return { rows: [] };
       }
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: ["*.example.com"],
+              declared_command_profile_names: ["nginx-reload"],
+              supported_dns_providers: ["route53"],
+            },
+          ],
+        };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         assert.equal(params[0], WORKSPACE_A);
         assert.deepEqual(params[1], ["renew"]);
-        assert.equal(params[2], 2);
+        assert.equal(params[2], "agent-row-1");
+        assert.match(sql, /executor_kind = 'agent'/);
+        assert.equal(params[6], 2);
         return {
           rows: [
             {
@@ -400,6 +416,7 @@ describe("agentDispatch.claimJobs", () => {
               subject_type: "certificate",
               subject_id: "cert-1",
               payload: { domain: "example.com" },
+              executor_kind: "agent",
             },
           ],
         };
@@ -468,9 +485,20 @@ describe("agentDispatch.claimJobs", () => {
       if (sql.includes("SET last_seen_at = NOW()")) {
         return { rows: [] };
       }
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         return {
-          rows: [{ id: 1, operation: "renew", payload: {} }],
+          rows: [{ id: 1, operation: "renew", payload: {}, executor_kind: "agent" }],
         };
       }
       if (sql.includes("SET status = 'claimed'")) {
@@ -588,6 +616,17 @@ describe("agentDispatch.claimJobs", () => {
       if (sql.includes("SET last_seen_at = NOW()")) {
         return { rows: [] };
       }
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
       if (sql.includes("FOR UPDATE SKIP LOCKED")) {
         return { rows: [] };
       }
@@ -604,6 +643,278 @@ describe("agentDispatch.claimJobs", () => {
     assert.deepEqual(result, { jobs: [] });
     assert.deepEqual(casParams, ["agent-row-1", 9]);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("excludes controller-lane jobs from agent claims (B2)", async () => {
+    let claimSql = null;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        claimSql = sql;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["deploy"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.match(claimSql, /executor_kind = 'agent'/);
+  });
+
+  it("attaches public certificate PEM and hash for deploy jobs (B15)", async () => {
+    const pem =
+      "-----BEGIN CERTIFICATE-----\nMIIBdeploy\n-----END CERTIFICATE-----\n";
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        return {
+          rows: [
+            {
+              id: "job-deploy-1",
+              operation: "deploy",
+              subject_type: "managed_certificate",
+              subject_id: "mc-1",
+              payload: { certPath: "/etc/ssl/cert.pem" },
+              executor_kind: "agent",
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM managed_certificates")) {
+        return {
+          rows: [
+            {
+              certificate_pem: pem,
+              fingerprint_sha256: "a".repeat(64),
+            },
+          ],
+        };
+      }
+      if (sql.includes("SET status = 'claimed'")) {
+        return {
+          rows: [
+            {
+              id: "job-deploy-1",
+              claim_id: "claim-d1",
+              lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
+              attempt_count: 1,
+              operation: "deploy",
+              subject_type: "managed_certificate",
+              subject_id: "mc-1",
+              payload: { certPath: "/etc/ssl/cert.pem" },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["deploy"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.equal(result.jobs.length, 1);
+    assert.equal(result.jobs[0].certificatePem, pem.trim());
+    assert.equal(typeof result.jobs[0].certificatePemSha256, "string");
+    assert.equal(result.jobs[0].certificatePemSha256.length, 64);
+    assert.equal(result.jobs[0].target.fingerprintSha256, "a".repeat(64));
+  });
+
+  it("blocks deploy jobs when public certificate inventory is missing (B15)", async () => {
+    let blocked = false;
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        return {
+          rows: [
+            {
+              id: "job-deploy-2",
+              operation: "deploy",
+              subject_type: "managed_certificate",
+              subject_id: "mc-missing",
+              payload: {},
+              executor_kind: "agent",
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM managed_certificates")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SET status = 'blocked'")) {
+        blocked = true;
+        assert.equal(sql.includes("error_code"), true);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["deploy"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+    assert.deepEqual(result, { jobs: [] });
+    assert.equal(blocked, true);
+  });
+});
+
+describe("agentDispatch.renewJobLease", () => {
+  it("transitions claimed→running, extends lease, and extends the nonce (B6/B7)", async () => {
+    let extendedNonce = null;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SELECT id, status, claimed_by_agent_id")) {
+        return {
+          rows: [
+            {
+              id: "job-1",
+              status: "claimed",
+              claimed_by_agent_id: "agent-row-1",
+              claim_id: "claim-1",
+              lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
+            },
+          ],
+        };
+      }
+      if (sql.includes("SET status = 'running'")) {
+        assert.equal(params[1], 900);
+        return {
+          rows: [
+            {
+              id: "job-1",
+              status: "running",
+              claim_id: "claim-1",
+              lease_expires_at: new Date("2026-07-22T10:30:00.000Z"),
+              lease_renewed_at: new Date("2026-07-22T10:15:00.000Z"),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await renewJobLease({
+      dbPool,
+      agent: agentFixture(),
+      jobId: "job-1",
+      claimId: "claim-1",
+      envelope: {},
+      env: {},
+      deps: {
+        extendJobNonceExpiry: async (opts) => {
+          extendedNonce = opts;
+          return {
+            extended: true,
+            expiresAt: "2026-07-22T11:35:00.000Z",
+          };
+        },
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "running");
+    assert.equal(result.claimId, "claim-1");
+    assert.equal(result.nonceExpiresAt, "2026-07-22T11:35:00.000Z");
+    assert.equal(extendedNonce.jobId, "job-1");
+    assert.equal(extendedNonce.nonceTtlSeconds, 4800);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("rejects lease renew with ownership mismatch", async () => {
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SELECT id, status, claimed_by_agent_id")) {
+        return {
+          rows: [
+            {
+              id: "job-1",
+              status: "claimed",
+              claimed_by_agent_id: "other-agent",
+              claim_id: "claim-1",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(
+      renewJobLease({
+        dbPool,
+        agent: agentFixture(),
+        jobId: "job-1",
+        claimId: "claim-1",
+        deps: { extendJobNonceExpiry: async () => ({ extended: false }) },
+      }),
+      (error) => error.code === CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+    );
+  });
+
+  it("rejects lease renew without claimId", async () => {
+    await assert.rejects(
+      renewJobLease({
+        dbPool: createMockPool(() => ({ rows: [] })),
+        agent: agentFixture(),
+        jobId: "job-1",
+        claimId: "",
+      }),
+      (error) => error.code === CERTOPS_AGENT_LEASE_INVALID,
+    );
   });
 });
 

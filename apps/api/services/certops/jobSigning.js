@@ -46,7 +46,8 @@ const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const NONCE_RANDOM_BYTES = 24;
 const DEFAULT_NONCE_TTL_SECONDS = 300;
 // Expired nonces stay queryable for one extra hour so late result ingestion
-// can still distinguish "replayed" from "never issued".
+// can still distinguish "replayed" from "never issued". Kept aligned with
+// the lease hard-grace window (leaseTiming.DEFAULT_LEASE_HARD_GRACE_SECONDS).
 const SWEEP_GRACE_SECONDS = 3600;
 
 function serviceError(message, code) {
@@ -375,6 +376,51 @@ async function consumeNonce(options = {}) {
 }
 
 /**
+ * Extends the still-open dispatch nonce for a job so it stays consumable
+ * for as long as the renewable lease is alive (B6/B7). Only rows that are
+ * unconsumed and currently bound to the claiming agent are touched.
+ *
+ * @returns {Promise<{ extended: boolean, expiresAt: string|null }>}
+ */
+async function extendJobNonceExpiry(options = {}) {
+  const db = options.client || pool;
+  const {
+    jobId,
+    workspaceId,
+    agentRowId = null,
+    nonceTtlSeconds = DEFAULT_NONCE_TTL_SECONDS,
+  } = options;
+
+  if (typeof jobId !== "string" || jobId.length === 0) {
+    return { extended: false, expiresAt: null };
+  }
+  if (!Number.isFinite(nonceTtlSeconds) || nonceTtlSeconds <= 0) {
+    return { extended: false, expiresAt: null };
+  }
+
+  const result = await db.query(
+    `UPDATE certops_consumed_nonces
+        SET expires_at = NOW() + make_interval(secs => $4)
+      WHERE job_id = $1
+        AND workspace_id = $2
+        AND consumed_at IS NULL
+        AND ($3::uuid IS NULL OR issued_to_agent_id IS NULL
+             OR issued_to_agent_id = $3::uuid)
+      RETURNING expires_at`,
+    [jobId, workspaceId, agentRowId, nonceTtlSeconds],
+  );
+  const row = result.rows[0];
+  if (!row) return { extended: false, expiresAt: null };
+  const expiresAt =
+    row.expires_at instanceof Date
+      ? row.expires_at.toISOString()
+      : row.expires_at
+        ? new Date(row.expires_at).toISOString()
+        : null;
+  return { extended: true, expiresAt };
+}
+
+/**
  * Deletes nonce rows whose expires_at is more than the grace window in the
  * past (consumed or not), bounded per call. Returns the deleted count.
  * Called by the worker sweep loop (separate task).
@@ -409,6 +455,7 @@ module.exports = {
   getActiveSigningKeyPublicInfo,
   signJobForDispatch,
   consumeNonce,
+  extendJobNonceExpiry,
   sweepExpiredNonces,
   _test: {
     ENV_KEY_NAME,

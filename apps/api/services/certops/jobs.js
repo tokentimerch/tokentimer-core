@@ -115,6 +115,12 @@ const JOB_SOURCES = Object.freeze([
 ]);
 const JOB_SOURCE_SET = new Set(JOB_SOURCES);
 
+// Immutable at insert: agent claim path only sees 'agent'; controller
+// provisioning delivery only sees 'controller' (B2).
+const JOB_EXECUTOR_KINDS = Object.freeze(["agent", "controller"]);
+const JOB_EXECUTOR_KIND_SET = new Set(JOB_EXECUTOR_KINDS);
+const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
+
 const SUBJECT_TYPES = Object.freeze([
   "managed_certificate",
   "certificate_instance",
@@ -151,6 +157,7 @@ const SAFE_JOB_SELECT_FIELDS = `
   operation,
   status,
   source,
+  executor_kind,
   requested_by_user_id,
   requested_by_api_token_id,
   idempotency_key,
@@ -162,12 +169,18 @@ const SAFE_JOB_SELECT_FIELDS = `
   error_code,
   error_message,
   claimed_by_agent_id,
+  claimed_by_controller_cluster_id,
   claim_id,
   lease_expires_at,
+  lease_renewed_at,
   attempt_count,
   max_attempts,
   next_attempt_at,
   scheduled_for,
+  assigned_agent_id,
+  required_target_selector,
+  required_dns_provider,
+  required_command_profile,
   approved_by_user_id,
   approved_at,
   approved_payload_hash,
@@ -681,6 +694,90 @@ function normalizeSubject(options) {
   return { subjectType, subjectId };
 }
 
+/**
+ * Resolve the immutable executor lane and the optional B5 routing selectors
+ * for a new job. Controller provisioning source always forces the controller
+ * lane; any other source defaults to agent unless the caller overrides.
+ */
+function resolveExecutorKindAndRouting(options, source, payload) {
+  const inferredKind =
+    source === CONTROLLER_PROVISIONING_JOB_SOURCE ? "controller" : "agent";
+  const executorKind = normalizeEnum(
+    options.executorKind,
+    JOB_EXECUTOR_KIND_SET,
+    CERTOPS_JOB_INVALID,
+    "executorKind",
+    inferredKind,
+  );
+  if (
+    source === CONTROLLER_PROVISIONING_JOB_SOURCE &&
+    executorKind !== "controller"
+  ) {
+    throw serviceError(
+      "controller_provisioning jobs must use executor_kind=controller",
+      CERTOPS_JOB_INVALID,
+    );
+  }
+  if (
+    source !== CONTROLLER_PROVISIONING_JOB_SOURCE &&
+    executorKind === "controller"
+  ) {
+    throw serviceError(
+      "executor_kind=controller is reserved for controller_provisioning jobs",
+      CERTOPS_JOB_INVALID,
+    );
+  }
+
+  const assignedAgentId =
+    normalizeOptionalShortText(
+      options.assignedAgentId ?? payload.assignedAgentId,
+      "assignedAgentId",
+    ) || null;
+
+  const requiredTargetSelector =
+    normalizeOptionalPublicText(
+      options.requiredTargetSelector ??
+        payload.targetSelector ??
+        (payload.target && typeof payload.target === "object"
+          ? payload.target.reference
+          : null),
+      "requiredTargetSelector",
+      512,
+    ) || null;
+
+  const requiredDnsProvider =
+    normalizeOptionalShortText(
+      options.requiredDnsProvider ?? payload.dnsProvider,
+      "requiredDnsProvider",
+    ) || null;
+  if (
+    requiredDnsProvider &&
+    !DNS_PROVIDER_PATTERN.test(requiredDnsProvider)
+  ) {
+    throw executionFieldError("dnsProvider");
+  }
+
+  const requiredCommandProfile =
+    normalizeOptionalShortText(
+      options.requiredCommandProfile ?? payload.commandRef,
+      "requiredCommandProfile",
+    ) || null;
+  if (
+    requiredCommandProfile &&
+    !COMMAND_REF_PATTERN.test(requiredCommandProfile)
+  ) {
+    throw executionFieldError("commandRef");
+  }
+
+  return {
+    executorKind,
+    assignedAgentId,
+    requiredTargetSelector,
+    requiredDnsProvider,
+    requiredCommandProfile,
+  };
+}
+
 function jobFromRow(row) {
   if (!row) return null;
   return {
@@ -689,6 +786,7 @@ function jobFromRow(row) {
     operation: row.operation,
     status: row.status,
     source: row.source,
+    executorKind: row.executor_kind ?? "agent",
     requestedByUserId: row.requested_by_user_id,
     requestedByApiTokenId: row.requested_by_api_token_id,
     idempotencyKey: row.idempotency_key,
@@ -700,12 +798,19 @@ function jobFromRow(row) {
     errorCode: row.error_code,
     errorMessage: row.error_message,
     claimedByAgentId: row.claimed_by_agent_id ?? null,
+    claimedByControllerClusterId:
+      row.claimed_by_controller_cluster_id ?? null,
     claimId: row.claim_id ?? null,
     leaseExpiresAt: dateToIso(row.lease_expires_at),
+    leaseRenewedAt: dateToIso(row.lease_renewed_at),
     attemptCount: row.attempt_count ?? 0,
     maxAttempts: row.max_attempts ?? 3,
     nextAttemptAt: dateToIso(row.next_attempt_at),
     scheduledFor: dateToIso(row.scheduled_for),
+    assignedAgentId: row.assigned_agent_id ?? null,
+    requiredTargetSelector: row.required_target_selector ?? null,
+    requiredDnsProvider: row.required_dns_provider ?? null,
+    requiredCommandProfile: row.required_command_profile ?? null,
     approvedByUserId: row.approved_by_user_id ?? null,
     approvedAt: dateToIso(row.approved_at),
     approvedPayloadHash: row.approved_payload_hash ?? null,
@@ -884,6 +989,13 @@ async function createCertificateJob(options) {
   );
   const payload = normalizePublicObject(options.payload, "payload");
   validateExecutionFields(payload, operation);
+  const {
+    executorKind,
+    assignedAgentId,
+    requiredTargetSelector,
+    requiredDnsProvider,
+    requiredCommandProfile,
+  } = resolveExecutorKindAndRouting(options, source, payload);
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -900,6 +1012,7 @@ async function createCertificateJob(options) {
     operation,
     status,
     source,
+    executorKind,
     requestedByUserId,
     requestedByApiTokenId,
     subjectType,
@@ -908,6 +1021,10 @@ async function createCertificateJob(options) {
     resultMetadata,
     errorCode,
     errorMessage,
+    assignedAgentId,
+    requiredTargetSelector,
+    requiredDnsProvider,
+    requiredCommandProfile,
     queuedAt: dateToIso(explicitLifecycleTimestamps.queuedAt),
     startedAt: dateToIso(explicitLifecycleTimestamps.startedAt),
     completedAt: dateToIso(explicitLifecycleTimestamps.completedAt),
@@ -921,6 +1038,7 @@ async function createCertificateJob(options) {
          operation,
          status,
          source,
+         executor_kind,
          requested_by_user_id,
          requested_by_api_token_id,
          idempotency_key,
@@ -930,6 +1048,10 @@ async function createCertificateJob(options) {
          result_metadata,
          error_code,
          error_message,
+         assigned_agent_id,
+         required_target_selector,
+         required_dns_provider,
+         required_command_profile,
          queued_at,
          started_at,
          completed_at,
@@ -937,8 +1059,9 @@ async function createCertificateJob(options) {
         creation_request_hash
        )
        VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+         $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18,
+         $19, $20, $21, $22, $23
        )
        ON CONFLICT (workspace_id, idempotency_key)
          WHERE idempotency_key IS NOT NULL
@@ -949,6 +1072,7 @@ async function createCertificateJob(options) {
         operation,
         status,
         source,
+        executorKind,
         requestedByUserId,
         requestedByApiTokenId,
         idempotencyKey,
@@ -958,6 +1082,10 @@ async function createCertificateJob(options) {
         JSON.stringify(resultMetadata),
         errorCode,
         errorMessage,
+        assignedAgentId,
+        requiredTargetSelector,
+        requiredDnsProvider,
+        requiredCommandProfile,
         queuedAt,
         startedAt,
         completedAt,
@@ -1385,6 +1513,7 @@ module.exports = {
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   JOB_LOG_EVENT_TYPES,
   JOB_OPERATIONS,
+  JOB_EXECUTOR_KINDS,
   JOB_SOURCES,
   JOB_STATUSES,
   JOB_STATUS_TRANSITIONS,
