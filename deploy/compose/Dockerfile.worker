@@ -34,7 +34,7 @@ COPY apps/api/db/database.js ./apps/api/db/database.js
 
 # Install production dependencies for the worker and its workspace deps
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/worker... \
-    && rm -rf /usr/local/lib/node_modules/npm
+    && rm -rf /usr/local/lib/node_modules/npm /root/.cache/node/corepack
 
 # Node resolves require("pg")/("winston")/("prom-client") by walking up from
 # the requiring file. pnpm's non-hoisted install only symlinks those into
