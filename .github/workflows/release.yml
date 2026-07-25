@@ -62,6 +62,100 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'alpha') || contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'rc') }}
 
+  # Notify Discord once the release exists. Runs in parallel with the docker/helm
+  # publish jobs since the notification doesn't depend on them. Re-running this
+  # workflow for the same tag re-posts the notification (same idempotency
+  # trade-off as the release_lookup skip-create path above).
+  notify-discord:
+    runs-on: ubuntu-latest
+    needs: create-release
+    permissions:
+      contents: read
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Post release to Discord
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DISCORD_WEBHOOK_URL:-}" ]]; then
+            echo "DISCORD_WEBHOOK_URL secret not set; skipping Discord notification."
+            exit 0
+          fi
+
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          RELEASE_JSON="$(gh api \
+            --header "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/releases/tags/${TAG_NAME}")"
+
+          PAYLOAD="$(
+            jq -n \
+              --arg repo "${{ github.repository }}" \
+              --argjson release "$RELEASE_JSON" \
+              '
+              def value_or($fallback):
+                if . == null or . == "" then $fallback else . end;
+
+              {
+                username: "GitHub Releases",
+                allowed_mentions: {
+                  parse: []
+                },
+                embeds: [
+                  {
+                    title: (
+                      ($release.name | value_or($release.tag_name))[0:256]
+                    ),
+                    url: $release.html_url,
+                    description: (
+                      ($release.body | value_or("No release notes provided."))
+                      | if length > 3900
+                        then .[0:3897] + "..."
+                        else .
+                        end
+                    ),
+                    fields: [
+                      {
+                        name: "Repository",
+                        value: $repo,
+                        inline: true
+                      },
+                      {
+                        name: "Version",
+                        value: $release.tag_name,
+                        inline: true
+                      },
+                      {
+                        name: "Type",
+                        value: (
+                          if $release.prerelease
+                          then "Pre-release"
+                          else "Release"
+                          end
+                        ),
+                        inline: true
+                      }
+                    ],
+                    timestamp: (
+                      $release.published_at // $release.created_at
+                    )
+                  }
+                ]
+              }
+              '
+          )"
+
+          curl \
+            --fail-with-body \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 2 \
+            --header "Content-Type: application/json" \
+            --data "$PAYLOAD" \
+            "$DISCORD_WEBHOOK_URL"
+
   build-and-push-docker:
     runs-on: ubuntu-latest
     needs: create-release
