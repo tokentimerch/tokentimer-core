@@ -464,6 +464,12 @@ services:
       ENABLE_METRICS: ${ENABLE_METRICS:-false}
       PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
       ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      # Without this, isCertOpsEnabled() falls through to the DB setting and
+      # then to a hard "false" default, which makes lockWorkspaceForCertOps-
+      # SideEffect() reject every renewal-scheduler attempt as CERTOPS_DISABLED
+      # (silently counted as skippedPaused, no error log) even though the API
+      # and every other worker correctly see CertOps as enabled.
+      CERTOPS_ENABLED: ${CERTOPS_ENABLED:-true}
       # How long an active agent may go without a heartbeat before this
       # sweep marks it offline (ms). Keep in sync with the fleet panel's
       # expectations; default is 10 minutes when unset.

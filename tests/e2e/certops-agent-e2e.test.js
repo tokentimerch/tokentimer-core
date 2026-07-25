@@ -308,6 +308,7 @@ async function registerAgent(agentId) {
       agentVersion: "1.0.0",
       hostname: "e2e-host",
       platform: "linux",
+      registrationId: crypto.randomUUID(),
     }),
   );
   assert.equal(response.status, 201, JSON.stringify(response.body));
@@ -523,7 +524,6 @@ describe("CertOps agent surface E2E", () => {
       envelope("result", agentId, {
         ...resultBody,
         status: "failed",
-        errorCode: "deploy_failed",
         errorMessage: "conflicting replay",
       }),
     );
@@ -555,6 +555,10 @@ describe("CertOps agent surface E2E", () => {
       envelope("register", `e2e-agent-${RUN_ID}-reuse`, {
         bootstrapTokenId: String(state.agent.bootstrapToken.id),
         agentVersion: "1.0.0",
+        // Deliberately a fresh id (not the one used for the original
+        // registration) so this exercises the H1 "spent token + unknown
+        // registrationId is a hard rejection" path, not a safe replay.
+        registrationId: crypto.randomUUID(),
       }),
     );
     assert.equal(reuse.status, 401, JSON.stringify(reuse.body));
@@ -641,6 +645,7 @@ describe("CertOps agent surface E2E", () => {
         jobId,
         evidenceItems: [
           {
+            evidenceId: crypto.randomUUID(),
             eventType: "validation.passed",
             observedAt: new Date().toISOString(),
             fingerprintSha256: crypto.randomBytes(32).toString("hex"),
@@ -827,7 +832,11 @@ describe("CertOps agent surface E2E", () => {
       envelope(
         "register",
         agentId,
-        { bootstrapTokenId: String(boot1.token.id), agentVersion: "1.0.0" },
+        {
+          bootstrapTokenId: String(boot1.token.id),
+          agentVersion: "1.0.0",
+          registrationId: crypto.randomUUID(),
+        },
         { sequence: 3 },
       ),
     );
@@ -874,10 +883,17 @@ describe("CertOps agent surface E2E", () => {
     assert.equal(claim.status, 200, JSON.stringify(claim.body));
     assert.equal(await lastSequenceOf(), 5);
 
-    // Backward compatibility: an envelope without a sequence is processed
-    // as today and leaves last_sequence untouched.
+    // No-bypass rule (hardening pass): once an agent has sent ANY sequenced
+    // message, further envelopes without a sequence are rejected outright,
+    // not silently accepted - otherwise a captured/replayed message could
+    // defeat the whole regression check just by omitting the field. This
+    // agent already sent sequence 3/4/5 above, so it is well past the
+    // last_sequence=0 bootstrap window where sequence-less traffic is
+    // tolerated (that case is covered separately below for a *fresh*
+    // agent that has never sent a sequence at all).
     const legacy = await heartbeatWith(undefined);
-    assert.equal(legacy.status, 200, JSON.stringify(legacy.body));
+    assert.equal(legacy.status, 409, JSON.stringify(legacy.body));
+    assert.equal(legacy.body.code, "CERTOPS_AGENT_SEQUENCE_REGRESSION");
     assert.equal(await lastSequenceOf(), 5);
 
     // Re-register (decommission + fresh install with the same agentId):
@@ -893,7 +909,11 @@ describe("CertOps agent surface E2E", () => {
       envelope(
         "register",
         agentId,
-        { bootstrapTokenId: String(boot2.token.id), agentVersion: "1.0.0" },
+        {
+          bootstrapTokenId: String(boot2.token.id),
+          agentVersion: "1.0.0",
+          registrationId: crypto.randomUUID(),
+        },
         { sequence: 1 },
       ),
     );
@@ -912,5 +932,33 @@ describe("CertOps agent surface E2E", () => {
     );
     assert.equal(restarted.status, 200, JSON.stringify(restarted.body));
     assert.equal(await lastSequenceOf(), 2);
+
+    // True backward-compatibility case (distinct from the no-bypass check
+    // above): a brand-new agent that has NEVER sent a sequence at all
+    // (last_sequence stays 0 through register) is still accepted
+    // sequence-less indefinitely, since it never opted into the counter.
+    const freshAgentId = `e2e-agent-${RUN_ID}-nosequence`;
+    const bootFresh = await createBootstrap();
+    const regFresh = await postAgent(
+      "register",
+      bootFresh.plaintextToken,
+      envelope("register", freshAgentId, {
+        bootstrapTokenId: String(bootFresh.token.id),
+        agentVersion: "1.0.0",
+        registrationId: crypto.randomUUID(),
+      }),
+    );
+    assert.equal(regFresh.status, 201, JSON.stringify(regFresh.body));
+    const freshHeartbeat = await postAgent(
+      "heartbeat",
+      regFresh.body.credential,
+      envelope("heartbeat", freshAgentId, { agentVersion: "1.0.0" }),
+    );
+    assert.equal(freshHeartbeat.status, 200, JSON.stringify(freshHeartbeat.body));
+    const freshLastSequence = await pool.query(
+      `SELECT last_sequence FROM certops_agents WHERE agent_id = $1`,
+      [freshAgentId],
+    );
+    assert.equal(Number(freshLastSequence.rows[0].last_sequence), 0);
   });
 });

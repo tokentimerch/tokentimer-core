@@ -61,6 +61,7 @@ const {
   retireAgent,
 } = require("../services/certops/agentRegistry");
 const {
+  CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_INVALID,
@@ -372,6 +373,13 @@ function handleCertOpsError(res, err) {
     return res.status(400).json({
       error: "Certificate renewal profile is missing or invalid",
       code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
     });
   }
 

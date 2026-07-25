@@ -1015,7 +1015,8 @@ async function reportJobRejection({
   log,
   outboxDir,
 }) {
-  log(
+  emitLog(
+    log,
     `tokentimer-agent: job ${jobId} rejected: ${verdict.rejectionReason}`,
   );
   const evidenceBody = buildPolicyRejectionEvidence({
@@ -1407,7 +1408,7 @@ async function handleSignedJob({
       outcome = heartbeatAbort;
     }
   } catch (err) {
-    log(`tokentimer-agent: job ${jobId} execution error: ${err.message}`);
+    emitLog(log, `tokentimer-agent: job ${jobId} execution error: ${err.message}`);
     outcome = {
       status: "failed",
       errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
@@ -3154,7 +3155,7 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log, leaseO
     },
   });
   if (outcome.reloaded !== true) {
-    log(`tokentimer-agent: reload step failed for job ${jobId}`);
+    emitLog(log, `tokentimer-agent: reload step failed for job ${jobId}`);
     await reportStepEvidence(client, jobId, [
       buildEvidenceItem({
         eventType: "validation.failed",
@@ -3766,6 +3767,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
               policyEngine,
               client,
               executionContext,
+              log: (msg) => defaultAgentLogger.error(msg),
             });
             if (outcome && outcome.retired === true) {
               process.exitCode = AGENT_RETIRED_EXIT_CODE;

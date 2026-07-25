@@ -36,6 +36,8 @@ const CERTOPS_JOB_EXECUTION_FIELD_INVALID =
 const CERTOPS_JOB_MODE_INVALID = "CERTOPS_JOB_MODE_INVALID";
 const CERTOPS_JOB_MODE_TERMINAL_INVALID =
   "CERTOPS_JOB_MODE_TERMINAL_INVALID";
+const CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE =
+  "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 // Job execution mode. Persisted on certificate_jobs.mode and included in the
@@ -820,7 +822,7 @@ function normalizeSubject(options) {
  * for a new job. Controller provisioning source always forces the controller
  * lane; any other source defaults to agent unless the caller overrides.
  */
-function resolveExecutorKindAndRouting(options, source, payload) {
+function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId = null) {
   const inferredKind =
     source === CONTROLLER_PROVISIONING_JOB_SOURCE ? "controller" : "agent";
   const executorKind = normalizeEnum(
@@ -849,9 +851,13 @@ function resolveExecutorKindAndRouting(options, source, payload) {
     );
   }
 
+  // Explicit caller/payload assignment always wins; only fall back to the
+  // certificate's stored discovery agent (agent_filesystem source) when
+  // neither was supplied, so a caller can still override for a legitimate
+  // hand-off (e.g. re-homing a certificate to a replacement agent).
   const assignedAgentId =
     normalizeOptionalShortText(
-      options.assignedAgentId ?? payload.assignedAgentId,
+      options.assignedAgentId ?? payload.assignedAgentId ?? autoAssignedAgentId,
       "assignedAgentId",
     ) || null;
 
@@ -897,6 +903,91 @@ function resolveExecutorKindAndRouting(options, source, payload) {
     requiredDnsProvider,
     requiredCommandProfile,
   };
+}
+
+const AGENT_MUTATING_OPERATIONS = new Set(["renew", "deploy", "reload", "revoke"]);
+const AGENT_DEPLOYABLE_KEY_MODES = new Set(["agent-local", "proxy-agent-local"]);
+const SUBJECT_ID_UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * Resolve certificate-ownership defaults for renew/deploy/reload/revoke jobs
+ * against a managed_certificate subject, and reject the ones that have no
+ * agent-manageable key custody at all. Two related problems this closes:
+ *
+ * 1. Without the key_mode check, a renew job could be created for a
+ *    certificate that was only ever observed (e.g. via an endpoint/domain
+ *    monitor: key_mode NULL, no agent target). Nothing can ever deploy to
+ *    it, so whichever agent later claims it fails immediately, surfacing as
+ *    a false cert_renewal_failed alert instead of a clear creation-time
+ *    error.
+ * 2. Without the auto-assign, a job with no requiredTargetSelector/
+ *    assignedAgentId is claimable by *any* online agent that declares
+ *    support for the operation (see agentDispatch.js claimJobs'
+ *    "assigned_agent_id IS NULL OR ..." matcher) -- including one with zero
+ *    relationship to the certificate. For a certificate discovered by a
+ *    specific agent (source = agent_filesystem), that agent's id is already
+ *    stored in public_metadata.controllerObservation.agentId; defaulting
+ *    assignedAgentId from it pins the job to that exact agent instead of
+ *    relying on every fleet agent's self-declared target-selector policy to
+ *    avoid overlap (which does not scale safely to hundreds of agents).
+ *
+ * Skipped entirely for subject ids that are not a real managed_certificates
+ * UUID: free-text subjects and most job-lifecycle test fixtures are not
+ * DB-backed rows here, so there is nothing to look up.
+ */
+async function resolveManagedCertificateJobDefaults({
+  db,
+  workspaceId,
+  source,
+  operation,
+  subjectType,
+  subjectId,
+}) {
+  if (source === CONTROLLER_PROVISIONING_JOB_SOURCE) {
+    return { autoAssignedAgentId: null };
+  }
+  if (!AGENT_MUTATING_OPERATIONS.has(operation)) {
+    return { autoAssignedAgentId: null };
+  }
+  if (subjectType !== "managed_certificate" || !subjectId) {
+    return { autoAssignedAgentId: null };
+  }
+  if (!SUBJECT_ID_UUID_PATTERN.test(subjectId)) {
+    return { autoAssignedAgentId: null };
+  }
+
+  const result = await db.query(
+    `SELECT key_mode,
+            source,
+            public_metadata->'controllerObservation'->>'agentId'
+              AS discovery_agent_id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+      LIMIT 1`,
+    [workspaceId, subjectId],
+  );
+  const row = result.rows[0];
+  if (!row) return { autoAssignedAgentId: null };
+
+  if (!AGENT_DEPLOYABLE_KEY_MODES.has(row.key_mode)) {
+    throw serviceError(
+      "This certificate has no agent-manageable key custody (it was only " +
+        "observed, e.g. via an endpoint or domain monitor) and cannot be " +
+        `assigned an agent-executed ${operation} job`,
+      CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    );
+  }
+
+  if (row.source !== "agent_filesystem" || !row.discovery_agent_id) {
+    return { autoAssignedAgentId: null };
+  }
+  const agentResult = await db.query(
+    `SELECT id FROM certops_agents WHERE workspace_id = $1 AND agent_id = $2 LIMIT 1`,
+    [workspaceId, row.discovery_agent_id],
+  );
+  return { autoAssignedAgentId: agentResult.rows[0]?.id || null };
 }
 
 function jobFromRow(row) {
@@ -1128,13 +1219,21 @@ async function createCertificateJob(options) {
       source === "automation" || options.requireRenewalProfile === true,
   });
   assertModeAllowsTerminalStatus(mode, status);
+  const { autoAssignedAgentId } = await resolveManagedCertificateJobDefaults({
+    db,
+    workspaceId,
+    source,
+    operation,
+    subjectType,
+    subjectId,
+  });
   const {
     executorKind,
     assignedAgentId,
     requiredTargetSelector,
     requiredDnsProvider,
     requiredCommandProfile,
-  } = resolveExecutorKindAndRouting(options, source, payload);
+  } = resolveExecutorKindAndRouting(options, source, payload, autoAssignedAgentId);
   const resultMetadata = normalizePublicObject(
     options.resultMetadata,
     "resultMetadata",
@@ -1705,6 +1804,7 @@ async function listCertificateJobLog(options) {
 
 module.exports = {
   CERTOPS_JOB_INVALID,
+  CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_METADATA_INVALID,

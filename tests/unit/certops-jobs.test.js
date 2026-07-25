@@ -1626,3 +1626,223 @@ describe("CertOps jobs service", () => {
     assert.ok(otherCa.id);
   });
 });
+
+describe("CertOps jobs service - managed certificate ownership guard", () => {
+  const OBSERVED_CERT_ID = "a1111111-1111-4111-8111-111111111111";
+  const AGENT_LOCAL_CERT_ID = "a2222222-2222-4222-8222-222222222222";
+  const DISCOVERED_CERT_ID = "a3333333-3333-4333-8333-333333333333";
+  const OWNING_AGENT_DB_ID = "b1111111-1111-4111-8111-111111111111";
+
+  function createOwnershipMemoryClient({ certificates = [], agents = [] } = {}) {
+    const jobs = [];
+    let nextJob = 1;
+
+    return {
+      jobs,
+      async query(sql, params = []) {
+        const normalizedSql = sql.replace(/\s+/g, " ");
+
+        if (normalizedSql.includes("pg_advisory_xact_lock")) {
+          return { rows: [{ pg_advisory_xact_lock: "" }] };
+        }
+
+        if (normalizedSql.includes("FROM managed_certificates")) {
+          const [workspaceId, id] = params;
+          const row = certificates.find(
+            (cert) => cert.workspace_id === workspaceId && cert.id === id,
+          );
+          return { rows: row ? [row] : [] };
+        }
+
+        if (normalizedSql.includes("FROM certops_agents")) {
+          const [workspaceId, agentId] = params;
+          const row = agents.find(
+            (agent) =>
+              agent.workspace_id === workspaceId && agent.agent_id === agentId,
+          );
+          return { rows: row ? [{ id: row.id }] : [] };
+        }
+
+        if (
+          normalizedSql.includes("FROM certificate_jobs") &&
+          normalizedSql.includes("operation = 'renew'") &&
+          normalizedSql.includes("FOR UPDATE")
+        ) {
+          return { rows: [] };
+        }
+
+        if (normalizedSql.includes("idempotency_key = $2")) {
+          return { rows: [] };
+        }
+
+        if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
+          const createdAt = new Date(Date.UTC(2026, 5, 30, 0, 0, 0));
+          const row = {
+            id: `job-${nextJob++}`,
+            workspace_id: params[0],
+            operation: params[1],
+            status: params[2],
+            mode: params[3],
+            source: params[4],
+            executor_kind: params[5],
+            requested_by_user_id: params[6],
+            requested_by_api_token_id: params[7],
+            idempotency_key: params[8],
+            subject_type: params[9],
+            subject_id: params[10],
+            payload: json(params[11]),
+            result_metadata: json(params[12]),
+            error_code: params[13],
+            error_message: params[14],
+            assigned_agent_id: params[15],
+            required_target_selector: params[16],
+            required_dns_provider: params[17],
+            required_command_profile: params[18],
+            created_at: createdAt,
+            updated_at: createdAt,
+            queued_at: params[19],
+            started_at: params[20],
+            completed_at: params[21],
+            canceled_at: params[22],
+            creation_request_hash: params[23],
+          };
+          jobs.push(row);
+          return { rows: [row] };
+        }
+
+        throw new Error(`Unhandled query in ownership test client: ${normalizedSql}`);
+      },
+    };
+  }
+
+  it("rejects a renew job for a managed_certificate with no agent-manageable key custody", async () => {
+    const { CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: OBSERVED_CERT_ID,
+          key_mode: null,
+          source: "endpoint_monitor",
+          discovery_agent_id: null,
+        },
+      ],
+    });
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: OBSERVED_CERT_ID,
+          payload: {},
+        }),
+      (error) => error?.code === CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    );
+  });
+
+  it("allows a renew job for a managed_certificate with agent-local key custody and no discovery agent", async () => {
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          source: "api",
+          discovery_agent_id: null,
+        },
+      ],
+    });
+
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: AGENT_LOCAL_CERT_ID,
+      payload: {},
+    });
+    assert.equal(job.assignedAgentId, null);
+  });
+
+  it("auto-assigns the certificate's discovering agent for an agent_filesystem certificate", async () => {
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: DISCOVERED_CERT_ID,
+          key_mode: "agent-local",
+          source: "agent_filesystem",
+          discovery_agent_id: "candidate-edge-01-9001",
+        },
+      ],
+      agents: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: OWNING_AGENT_DB_ID,
+          agent_id: "candidate-edge-01-9001",
+        },
+      ],
+    });
+
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: DISCOVERED_CERT_ID,
+      payload: {},
+    });
+    assert.equal(job.assignedAgentId, OWNING_AGENT_DB_ID);
+  });
+
+  it("does not override an explicit assignedAgentId with the auto-derived discovery agent", async () => {
+    const explicitAgentId = "c4444444-4444-4444-8444-444444444444";
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: DISCOVERED_CERT_ID,
+          key_mode: "agent-local",
+          source: "agent_filesystem",
+          discovery_agent_id: "candidate-edge-01-9001",
+        },
+      ],
+      agents: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: OWNING_AGENT_DB_ID,
+          agent_id: "candidate-edge-01-9001",
+        },
+      ],
+    });
+
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: DISCOVERED_CERT_ID,
+      assignedAgentId: explicitAgentId,
+      payload: {},
+    });
+    assert.equal(job.assignedAgentId, explicitAgentId);
+  });
+
+  it("skips the ownership lookup entirely for non-UUID subject ids (free-text/test fixtures)", async () => {
+    const client = createOwnershipMemoryClient({});
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "not-a-uuid",
+      payload: {},
+    });
+    assert.equal(job.assignedAgentId, null);
+  });
+});
