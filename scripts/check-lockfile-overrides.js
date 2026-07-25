@@ -18,8 +18,8 @@ const pkgPath = path.join(repoRoot, "package.json");
 const REQUIRED_PINS = {
   tar: { "*": "7.5.7" },
   "fast-xml-parser": { "*": "5.7.3" },
-  minimatch: { "*": "9.0.9" },
-  "brace-expansion": { "*": "2.1.2" },
+  minimatch: { "*": "10.2.5" },
+  "brace-expansion": { "*": "5.0.8" },
   "path-to-regexp": { "*": "8.4.0" },
   yaml: { "*": "1.10.3" },
   "js-yaml": { "*": "4.3.0" },
