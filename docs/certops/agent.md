@@ -260,8 +260,15 @@ Flow:
   `ntpSynced`, `uptimeSeconds`, `pinnedSigningKeyId`, and (on the envelope)
   `clockOffsetMs`. With execution enabled, `clockOffsetMs` is the clock
   estimator's current median and `pinnedSigningKeyId` is the pinned key id;
-  in observe-only mode both stay null. An HTTP 410 response means the control plane
-  retired this agent: it exits cleanly, no respawn loop.
+  in observe-only mode both stay null. `ntpSynced` is independent of
+  execution mode: it comes from `src/ntp` running
+  `timedatectl show -p NTPSynchronized --value` (systemd, matching the
+  agent's only supported install target) fresh on every heartbeat tick, and
+  is `true`/`false` when timedatectl gives a definite answer, or `null`
+  when it cannot (missing binary, non-systemd host, timeout, nonzero exit,
+  or unparseable output), never a guessed default. An HTTP 410 response
+  means the control plane retired this agent: it exits cleanly, no
+  respawn loop.
 - **claim**: every `pollIntervalMs`, requests up to `maxJobs` (the main loop
   uses 1) and processes each returned job.
 - **result/evidence**: terminal job outcome (`succeeded`, `failed`,

@@ -284,11 +284,16 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
  * drift, NTP sync state, pinned job-signing key, last heartbeat, and a
  * manager-only Retire action. Empty state points to the Deploy an agent
  * panel on the same page.
+ *
+ * @param {number} [refreshSignal] - Optional value from DeployAgentPanel;
+ *   changing it (e.g. right after a new agent registers) triggers an
+ *   immediate refetch instead of waiting on this panel's own poll.
  */
-export default function AgentFleetPanel() {
+export default function AgentFleetPanel({ refreshSignal } = {}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
-  const { enabled, agents, loading, error, refresh } = useCertOpsAgents();
+  const { enabled, agents, loading, error, refresh } =
+    useCertOpsAgents(refreshSignal);
 
   const [retireTarget, setRetireTarget] = useState(null);
 

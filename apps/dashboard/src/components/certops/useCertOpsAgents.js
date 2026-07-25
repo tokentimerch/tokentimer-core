@@ -11,9 +11,12 @@ import { useCertOpsCanManage, useCertOpsEnabled } from './useCertOps.js';
  * manager-only server-side, so viewers get an empty state instead of a 403
  * banner). Retire is called imperatively via certopsAgentsApi from the panel.
  *
+ * @param {number} [externalRefreshSignal] - Optional value from a sibling
+ *   panel (e.g. DeployAgentPanel's onAgentRegistered callback); changing it
+ *   triggers an immediate refetch, without waiting for the internal poll.
  * @returns {{ enabled: boolean|null, agents: object[], loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsAgents() {
+export function useCertOpsAgents(externalRefreshSignal) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
@@ -62,7 +65,13 @@ export function useCertOpsAgents() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, canManage, reloadTick]);
+  }, [
+    workspaceId,
+    enabled,
+    canManage,
+    reloadTick,
+    externalRefreshSignal,
+  ]);
 
   return { enabled, agents, loading, error, refresh };
 }

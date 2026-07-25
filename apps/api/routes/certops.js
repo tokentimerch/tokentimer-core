@@ -27,7 +27,9 @@ const {
   getManagedCertificate,
   importPublicCertificates,
   listCertificateInstances,
+  listCertificateTargets,
   listManagedCertificates,
+  listWorkspaceCertificateInstances,
   retireManagedCertificate,
 } = require("../services/certops/inventory");
 const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
@@ -2034,6 +2036,60 @@ router.post(
   requireCertOpsEnabled,
   requireCertOpsWriteRole,
   retireCertificateHandler,
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/instances",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listWorkspaceCertificateInstances({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(result);
+    } catch (err) {
+      logger.error("CertOps certificate instances list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate instances",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/targets",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listCertificateTargets({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(result);
+    } catch (err) {
+      logger.error("CertOps certificate targets list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list certificate targets",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
 );
 
 router.get(

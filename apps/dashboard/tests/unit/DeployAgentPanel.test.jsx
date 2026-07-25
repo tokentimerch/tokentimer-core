@@ -241,6 +241,40 @@ describe('DeployAgentPanel', () => {
     expect(screen.getByText(/dc1-edge/)).toBeInTheDocument();
   });
 
+  it('calls onAgentRegistered once the fresh agent is detected, so the fleet panel can refetch immediately', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
+    useCertOpsAgentsMock.mockReturnValue(agentsState());
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+    listAgentsMock.mockResolvedValue({
+      items: [
+        {
+          id: 'row-1',
+          agentId: 'agent-1',
+          name: 'dc1-edge',
+          status: 'active',
+          createdAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      ],
+    });
+    const onAgentRegistered = vi.fn();
+
+    renderWithProviders(
+      <DeployAgentPanel onAgentRegistered={onAgentRegistered} />
+    );
+
+    await createTokenAndCloseModal();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'I pasted the token, start watching' })
+    );
+
+    await screen.findByText(/is now connected/);
+    expect(onAgentRegistered).toHaveBeenCalledTimes(1);
+  });
+
   it('detects a new agent by registration timestamp even when its id is in a stale baseline', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -40,6 +40,11 @@ import {
   createJob,
 } from '../../components/certops/certopsJobsApi.js';
 import {
+  listCertificates,
+  listCertificateTargets,
+  listWorkspaceCertificateInstances,
+} from '../../components/certops/certopsApi.js';
+import {
   formatDateTime,
   formatRelativeDateTime,
   jobOperationLabel,
@@ -64,6 +69,73 @@ import { showError, showSuccess } from '../../utils/toast.js';
 
 const JOB_LIST_LIMIT = 20;
 const SUBJECT_ID_MAX_LENGTH = 128;
+const MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID =
+  'certops-manual-job-subject-suggestions';
+
+// Manual jobs are an exception path for driving certificate operations
+// (renew/deploy/reload/revoke); "token" is declared in the shared
+// CERTOPS_SUBJECT_TYPES enum for future use but nothing in the job/executor
+// pipeline acts on it today (see apps/api/services/certops/jobs.js), so it's
+// hidden here to avoid implying it triggers real automation. The remaining
+// non-certificate types (domain, endpoint, external) stay available for
+// manual audit trail jobs even though they're free text.
+const MANUAL_JOB_SUBJECT_TYPES = CERTOPS_SUBJECT_TYPES.filter(
+  type => type !== 'token'
+);
+
+// Per-subject-type hint for the free-text Subject ID input; shown for every
+// subject type, whether or not a live suggestion list is available below.
+const SUBJECT_ID_PLACEHOLDERS = {
+  managed_certificate: 'e.g. a managed certificate ID',
+  certificate_instance: 'e.g. a certificate instance ID',
+  certificate_target: 'e.g. a certificate target ID',
+  domain: 'e.g. example.com',
+  endpoint: 'e.g. https://example.com or host:port',
+  external: 'e.g. a reference from an external system',
+};
+const DEFAULT_SUBJECT_ID_PLACEHOLDER = 'e.g. a managed certificate ID';
+
+// Only subject types backed by an existing, workspace-scoped list endpoint
+// get live suggestions; the rest (domain, endpoint, external) stay a plain
+// text input by design, since they're free-form references.
+const SUBJECT_ID_SUGGESTION_LOADERS = {
+  managed_certificate: async (workspaceId, { signal } = {}) => {
+    const data = await listCertificates(workspaceId, { limit: 100, signal });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    return items.map(cert => ({
+      id: cert.id,
+      label: cert.commonName
+        ? `${cert.commonName} (${truncateId(cert.id)})`
+        : cert.id,
+    }));
+  },
+  certificate_target: async (workspaceId, { signal } = {}) => {
+    const data = await listCertificateTargets(workspaceId, {
+      limit: 100,
+      signal,
+    });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    return items.map(target => ({
+      id: target.id,
+      label: target.name
+        ? `${target.name} (${truncateId(target.id)})`
+        : target.id,
+    }));
+  },
+  certificate_instance: async (workspaceId, { signal } = {}) => {
+    const data = await listWorkspaceCertificateInstances(workspaceId, {
+      limit: 100,
+      signal,
+    });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    return items.map(instance => ({
+      id: instance.id,
+      label: instance.observedSubject
+        ? `${instance.observedSubject} (${truncateId(instance.id)})`
+        : instance.id,
+    }));
+  },
+};
 
 function createJobErrorMessage(err) {
   const code = err?.response?.data?.code;
@@ -91,11 +163,13 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [subjectSuggestions, setSubjectSuggestions] = useState([]);
 
   const resetForm = () => {
     setOperation('');
     setSubjectType('');
     setSubjectId('');
+    setSubjectSuggestions([]);
   };
 
   const handleClose = () => {
@@ -104,12 +178,41 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     onClose();
   };
 
+  // Suggestions adapt to the selected subject type: each type with an
+  // existing workspace-scoped list endpoint gets its own loader (see
+  // SUBJECT_ID_SUGGESTION_LOADERS above); types without one (domain,
+  // endpoint, external, certificate_instance, certificate_target) stay a
+  // plain, unassisted text input. Loaded lazily, once per subject-type
+  // change, native datalist, same pattern as the workspace-contacts
+  // suggestions in TokenDetailModal.jsx.
+  useEffect(() => {
+    setSubjectSuggestions([]);
+    const loadSuggestions = SUBJECT_ID_SUGGESTION_LOADERS[subjectType];
+    if (!isOpen || !loadSuggestions || !workspaceId) return undefined;
+    let cancelled = false;
+    const controller = new AbortController();
+    loadSuggestions(workspaceId, { signal: controller.signal })
+      .then(items => {
+        if (!cancelled) setSubjectSuggestions(items);
+      })
+      .catch(() => {
+        // Suggestions are a convenience, not a requirement: a failed fetch
+        // just leaves the field as a plain, unassisted text input.
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [isOpen, subjectType, workspaceId]);
+
+  const subjectPairComplete =
+    (!subjectType || Boolean(subjectId.trim())) &&
+    (!subjectId.trim() || Boolean(subjectType));
   const canSubmit =
     Boolean(operation) &&
     Boolean(workspaceId) &&
     !submitting &&
-    (!subjectType || Boolean(subjectId.trim())) &&
-    (!subjectId.trim() || Boolean(subjectType));
+    subjectPairComplete;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -165,15 +268,18 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                 ))}
               </Select>
             </FormControl>
-            <FormControl>
-              <FormLabel fontSize='sm'>Subject type (optional)</FormLabel>
+            <FormControl isRequired={Boolean(subjectId.trim())}>
+              <FormLabel fontSize='sm'>Subject type</FormLabel>
               <Select
                 size='sm'
                 placeholder='No subject'
                 value={subjectType}
-                onChange={event => setSubjectType(event.target.value)}
+                onChange={event => {
+                  setSubjectType(event.target.value);
+                  setSubjectId('');
+                }}
               >
-                {CERTOPS_SUBJECT_TYPES.map(type => (
+                {MANUAL_JOB_SUBJECT_TYPES.map(type => (
                   <option key={type} value={type}>
                     {subjectTypeLabel(type)}
                   </option>
@@ -183,15 +289,34 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                 Required together with subject ID, or leave both empty.
               </FormHelperText>
             </FormControl>
-            <FormControl>
-              <FormLabel fontSize='sm'>Subject ID (optional)</FormLabel>
+            <FormControl isRequired={Boolean(subjectType)}>
+              <FormLabel fontSize='sm'>Subject ID</FormLabel>
               <Input
                 size='sm'
                 value={subjectId}
                 onChange={event => setSubjectId(event.target.value)}
                 maxLength={SUBJECT_ID_MAX_LENGTH}
-                placeholder='e.g. a managed certificate ID'
+                placeholder={
+                  SUBJECT_ID_PLACEHOLDERS[subjectType] ||
+                  DEFAULT_SUBJECT_ID_PLACEHOLDER
+                }
+                list={
+                  subjectSuggestions.length
+                    ? MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID
+                    : undefined
+                }
+                autoComplete='off'
               />
+              <FormHelperText>
+                Required together with subject type, or leave both empty.
+              </FormHelperText>
+              {subjectSuggestions.length ? (
+                <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
+                  {subjectSuggestions.map(item => (
+                    <option key={item.id} value={item.id} label={item.label} />
+                  ))}
+                </datalist>
+              ) : null}
             </FormControl>
           </VStack>
         </ModalBody>
@@ -386,6 +511,9 @@ export default function CertOpsOperations({
     error: availabilityError,
     retry: retryAvailability,
   } = useCertOpsAvailability();
+  // Bumped when DeployAgentPanel detects a freshly registered agent, so the
+  // fleet panel refetches immediately instead of waiting on its own poll.
+  const [fleetRefreshSignal, setFleetRefreshSignal] = useState(0);
 
   const shellProps = useDashboardShellProps({
     session,
@@ -435,10 +563,14 @@ export default function CertOpsOperations({
                   <ApiTokenPanel />
                 </DashboardPanel>
                 <DashboardPanel>
-                  <DeployAgentPanel />
+                  <DeployAgentPanel
+                    onAgentRegistered={() =>
+                      setFleetRefreshSignal(tick => tick + 1)
+                    }
+                  />
                 </DashboardPanel>
                 <DashboardPanel>
-                  <AgentFleetPanel />
+                  <AgentFleetPanel refreshSignal={fleetRefreshSignal} />
                 </DashboardPanel>
               </SimpleGrid>
             ) : (

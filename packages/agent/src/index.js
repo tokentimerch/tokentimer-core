@@ -108,6 +108,7 @@ const { defaultAgentLogger } = require("./logging");
 const { verifyJobSignature, checkJobTimeWindow } = require("./signing");
 const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
+const { checkNtpSynced } = require("./ntp");
 const { generateKeyPairToFile, discardStagedKey, generateCsr } = require("./keys");
 const { createAcmeAdapter } = require("./acme");
 const {
@@ -3686,8 +3687,15 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     signal: controller.signal,
     startImmediately: true,
     onTick: async () => {
+      // Independent of execution mode: this reports host-level NTP sync
+      // health (observe-only agents benefit from the drift signal just as
+      // much as execution-enabled ones). checkNtpSynced never throws; a
+      // missing timedatectl or non-systemd host resolves to null ("unknown")
+      // rather than stalling or failing the heartbeat.
+      const ntpSynced = await checkNtpSynced();
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
+        ntpSynced,
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
         supportedDnsProviders,
         // With execution enabled, report the measured clock offset and the

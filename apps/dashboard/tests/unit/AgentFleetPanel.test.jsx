@@ -300,4 +300,23 @@ describe('AgentFleetPanel', () => {
       });
     });
   });
+
+  it('forwards refreshSignal to useCertOpsAgents so a freshly registered agent refetches immediately', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(agentsState());
+
+    const { rerender } = renderWithProviders(
+      <AgentFleetPanel refreshSignal={0} />
+    );
+    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(0);
+
+    rerender(
+      <ChakraProvider>
+        <MemoryRouter>
+          <AgentFleetPanel refreshSignal={1} />
+        </MemoryRouter>
+      </ChakraProvider>
+    );
+    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(1);
+  });
 });

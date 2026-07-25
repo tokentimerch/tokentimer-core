@@ -12,12 +12,18 @@ const {
   useCertOpsCanManageMock,
   useCertOpsApiTokensMock,
   createJobMock,
+  listCertificatesMock,
+  listCertificateTargetsMock,
+  listWorkspaceCertificateInstancesMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
   useCertOpsJobsMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
   useCertOpsApiTokensMock: vi.fn(),
   createJobMock: vi.fn(),
+  listCertificatesMock: vi.fn(),
+  listCertificateTargetsMock: vi.fn(),
+  listWorkspaceCertificateInstancesMock: vi.fn(),
 }));
 
 vi.mock('../../src/hooks/useDashboardShellProps.js', () => ({
@@ -73,6 +79,18 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
   return {
     ...actual,
     createJob: createJobMock,
+  };
+});
+
+vi.mock('../../src/components/certops/certopsApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsApi.js'
+  );
+  return {
+    ...actual,
+    listCertificates: listCertificatesMock,
+    listCertificateTargets: listCertificateTargetsMock,
+    listWorkspaceCertificateInstances: listWorkspaceCertificateInstancesMock,
   };
 });
 
@@ -139,6 +157,12 @@ describe('CertOpsOperations', () => {
     useCertOpsCanManageMock.mockReset();
     useCertOpsApiTokensMock.mockReset();
     createJobMock.mockReset();
+    listCertificatesMock.mockReset();
+    listCertificatesMock.mockResolvedValue({ items: [] });
+    listCertificateTargetsMock.mockReset();
+    listCertificateTargetsMock.mockResolvedValue({ items: [] });
+    listWorkspaceCertificateInstancesMock.mockReset();
+    listWorkspaceCertificateInstancesMock.mockResolvedValue({ items: [] });
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsApiTokensMock.mockReturnValue({
       enabled: true,
@@ -446,6 +470,197 @@ describe('CertOpsOperations', () => {
       target: { value: 'cert-1' },
     });
     expect(createButton).not.toBeDisabled();
+  });
+
+  it('offers managed-certificate suggestions as a datalist once that subject type is chosen', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+    listCertificatesMock.mockResolvedValue({
+      items: [
+        { id: 'cert-uuid-1', commonName: 'example.com' },
+        { id: 'cert-uuid-2', commonName: null },
+      ],
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    // No fetch, and no datalist wiring, before a subject type is picked.
+    expect(listCertificatesMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+
+    await waitFor(() =>
+      expect(listCertificatesMock).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({ limit: 100 })
+      )
+    );
+
+    const subjectIdInput = await screen.findByLabelText(/^Subject ID/);
+    await waitFor(() => expect(subjectIdInput).toHaveAttribute('list'));
+    const listId = subjectIdInput.getAttribute('list');
+    const datalist = document.getElementById(listId);
+    expect(datalist).toBeTruthy();
+    expect(datalist.querySelectorAll('option')).toHaveLength(2);
+  });
+
+  it('offers certificate target suggestions once subject type is switched to certificate target', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+    listCertificatesMock.mockResolvedValue({
+      items: [{ id: 'cert-uuid-1', commonName: 'example.com' }],
+    });
+    listCertificateTargetsMock.mockResolvedValue({
+      items: [
+        { id: 'target-uuid-1', name: 'prod-lb-01' },
+        { id: 'target-uuid-2', name: null },
+      ],
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+
+    // Start on managed_certificate so a cert suggestion list is loaded...
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    await waitFor(() => expect(listCertificatesMock).toHaveBeenCalledTimes(1));
+
+    // ...then switch to certificate target: suggestions should now come
+    // from the targets list endpoint instead, not the certificate one.
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'certificate_target' },
+    });
+
+    await waitFor(() =>
+      expect(listCertificateTargetsMock).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({ limit: 100 })
+      )
+    );
+
+    const subjectIdInput = await screen.findByLabelText(/^Subject ID/);
+    await waitFor(() => expect(subjectIdInput).toHaveAttribute('list'));
+    const listId = subjectIdInput.getAttribute('list');
+    const datalist = document.getElementById(listId);
+    expect(datalist).toBeTruthy();
+    expect(datalist.querySelectorAll('option')).toHaveLength(2);
+    // listCertificates should not be called again just for switching types.
+    expect(listCertificatesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers certificate instance suggestions once subject type is switched to certificate instance', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+    listWorkspaceCertificateInstancesMock.mockResolvedValue({
+      items: [
+        { id: 'instance-uuid-1', observedSubject: 'example.com' },
+        { id: 'instance-uuid-2', observedSubject: null },
+      ],
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'certificate_instance' },
+    });
+
+    await waitFor(() =>
+      expect(listWorkspaceCertificateInstancesMock).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({ limit: 100 })
+      )
+    );
+
+    const subjectIdInput = await screen.findByLabelText(/^Subject ID/);
+    await waitFor(() => expect(subjectIdInput).toHaveAttribute('list'));
+    const listId = subjectIdInput.getAttribute('list');
+    const datalist = document.getElementById(listId);
+    expect(datalist).toBeTruthy();
+    expect(datalist.querySelectorAll('option')).toHaveLength(2);
+  });
+
+  it('does not offer "token" as a subject type, since no job/executor logic acts on it', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+
+    const subjectTypeSelect = screen.getByLabelText(/^Subject type/);
+    const optionValues = Array.from(subjectTypeSelect.options).map(
+      option => option.value
+    );
+    expect(optionValues).not.toContain('token');
+    expect(optionValues).toEqual(
+      expect.arrayContaining([
+        'managed_certificate',
+        'certificate_instance',
+        'certificate_target',
+        'domain',
+        'endpoint',
+        'external',
+      ])
+    );
+  });
+
+  it('falls back to a plain text input with no datalist for subject types without a suggestion source', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'domain' },
+    });
+
+    const subjectIdInput = await screen.findByLabelText(/^Subject ID/);
+    expect(subjectIdInput).not.toHaveAttribute('list');
+    expect(listCertificatesMock).not.toHaveBeenCalled();
+    expect(listCertificateTargetsMock).not.toHaveBeenCalled();
+    expect(listWorkspaceCertificateInstancesMock).not.toHaveBeenCalled();
   });
 
   it('shows an inline error and keeps the modal open when creation fails', async () => {

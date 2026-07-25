@@ -3,7 +3,7 @@
 /**
  * Unicode / homograph-safe certificate identity validation for CN and DNS SANs.
  *
- * Modelled on certctl ValidateUnicodeSafe: reject rather than normalize, so an
+ * ValidateUnicodeSafe: reject rather than normalize, so an
  * imported or displayed certificate identity cannot carry a spoofed name.
  *
  * Threats covered:

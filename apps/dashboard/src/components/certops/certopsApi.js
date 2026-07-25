@@ -33,6 +33,39 @@ export async function listCertificates(
 }
 
 /**
+ * List certificate targets for a workspace (deployment/observation
+ * locations: hosts, endpoints, load balancers, k8s secrets, etc.).
+ * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
+ */
+export async function listCertificateTargets(
+  workspaceId,
+  { limit = 50, offset = 0, signal } = {}
+) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/targets`, {
+    params: { limit, offset },
+    signal,
+  });
+  return res.data;
+}
+
+/**
+ * List certificate instances across the whole workspace (flat browse, not
+ * scoped to one managed certificate). Distinct from getCertificateInstances,
+ * which is nested under a single certificate id.
+ * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
+ */
+export async function listWorkspaceCertificateInstances(
+  workspaceId,
+  { limit = 50, offset = 0, signal } = {}
+) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/instances`, {
+    params: { limit, offset },
+    signal,
+  });
+  return res.data;
+}
+
+/**
  * Fetch a single managed certificate by id.
  * @returns {Promise<{ certificate: object }>}
  */

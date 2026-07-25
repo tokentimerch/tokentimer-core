@@ -3401,6 +3401,216 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/instances:
+    get:
+      tags: [CertOps]
+      summary: List workspace certificate instances
+      operationId: listCertOpsInstances
+      description: Returns public, workspace-scoped certificate instance history across all managed certificates (a flat inventory browse, unlike the per-certificate instances route). Private key material, evidence, raw output, and secret fields are never returned.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Workspace certificate instance inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - workspaceId
+                        - managedCertificateId
+                        - targetId
+                        - status
+                        - source
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        workspaceId:
+                          type: string
+                          format: uuid
+                        managedCertificateId:
+                          type: string
+                          format: uuid
+                        targetId:
+                          type: string
+                          format: uuid
+                        domainMonitorId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        tokenId:
+                          type: integer
+                          nullable: true
+                        status:
+                          type: string
+                        source:
+                          type: string
+                        sourceRef:
+                          type: string
+                          nullable: true
+                        observedFingerprintSha256:
+                          type: string
+                          pattern: "^[a-f0-9]{64}$"
+                          nullable: true
+                        observedSerialNumber:
+                          type: string
+                          nullable: true
+                        observedSubject:
+                          type: string
+                          nullable: true
+                        observedIssuer:
+                          type: string
+                          nullable: true
+                        observedNotBefore:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        observedNotAfter:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        deploymentReference:
+                          type: string
+                          nullable: true
+                        observedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/targets:
+    get:
+      tags: [CertOps]
+      summary: List certificate targets
+      operationId: listCertOpsTargets
+      description: Returns the workspace's certificate targets (deployment/observation locations such as hosts, endpoints, load balancers, or Kubernetes secrets). Targets never hold key material.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Certificate target inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - workspaceId
+                        - name
+                        - targetType
+                        - status
+                        - source
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        workspaceId:
+                          type: string
+                          format: uuid
+                        profileId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        domainMonitorId:
+                          type: string
+                          format: uuid
+                          nullable: true
+                        tokenId:
+                          type: integer
+                          nullable: true
+                        name:
+                          type: string
+                        targetType:
+                          type: string
+                        status:
+                          type: string
+                        source:
+                          type: string
+                        sourceRef:
+                          type: string
+                          nullable: true
+                        hostname:
+                          type: string
+                          nullable: true
+                        url:
+                          type: string
+                          nullable: true
+                        deploymentReference:
+                          type: string
+                          nullable: true
+                        environment:
+                          type: string
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        updatedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/imports:
     post:
       tags: [CertOps]

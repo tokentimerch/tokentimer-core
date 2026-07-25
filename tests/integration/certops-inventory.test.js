@@ -716,6 +716,133 @@ describe("CertOps inventory routes", function () {
     expect(JSON.stringify(response.body)).to.not.include("evidence");
   });
 
+  it("allows viewers to list workspace certificate instances without a certId (flat inventory browse)", async () => {
+    const sourceRef = `certops-flat-instances-route-${Date.now()}`;
+    const target = await TestUtils.execQuery(
+      `INSERT INTO certificate_targets (
+         workspace_id,
+         name,
+         target_type,
+         status,
+         source,
+         source_ref,
+         hostname,
+         url,
+         deployment_reference
+       )
+       VALUES ($1, $2, 'endpoint', 'active', 'endpoint_monitor', $3, $4, $5, $5)
+       RETURNING id`,
+      [
+        workspaceId,
+        `flat-instances-target-${Date.now()}`,
+        sourceRef,
+        "flat.certops.example",
+        "https://flat.certops.example",
+      ],
+    );
+    const targetId = target.rows[0].id;
+
+    const instance = await TestUtils.execQuery(
+      `INSERT INTO certificate_instances (
+         workspace_id,
+         managed_certificate_id,
+         target_id,
+         status,
+         source,
+         source_ref,
+         observed_fingerprint_sha256,
+         observed_at
+       )
+       VALUES ($1, $2, $3, 'active', 'endpoint_monitor', $4, $5, $6)
+       RETURNING id`,
+      [
+        workspaceId,
+        leafCertificate.id,
+        targetId,
+        sourceRef,
+        leafCertificate.fingerprintSha256,
+        "2026-06-27T12:00:00.000Z",
+      ],
+    );
+
+    const response = await request(BASE)
+      .get(`/api/v1/workspaces/${workspaceId}/certops/instances?limit=50&offset=0`)
+      .set("Cookie", viewerSession.cookie)
+      .expect(200);
+
+    const item = response.body.items.find(
+      (entry) => entry.id === instance.rows[0].id,
+    );
+    expect(item).to.exist;
+    expect(item.managedCertificateId).to.equal(leafCertificate.id);
+    expect(item.targetId).to.equal(targetId);
+    expect(response.body.pagination).to.deep.equal({ limit: 50, offset: 0 });
+    expectNoPrivateKeyFields(response.body);
+
+    const outsiderResponse = await request(BASE)
+      .get(
+        `/api/v1/workspaces/${outsiderWorkspaceId}/certops/instances`,
+      )
+      .set("Cookie", outsiderSession.cookie)
+      .expect(200);
+    expect(
+      outsiderResponse.body.items.some(
+        (entry) => entry.id === instance.rows[0].id,
+      ),
+    ).to.equal(false);
+  });
+
+  it("allows viewers to list certificate targets (deployment/observation locations)", async () => {
+    const sourceRef = `certops-targets-route-${Date.now()}`;
+    const target = await TestUtils.execQuery(
+      `INSERT INTO certificate_targets (
+         workspace_id,
+         name,
+         target_type,
+         status,
+         source,
+         source_ref,
+         hostname,
+         url,
+         deployment_reference
+       )
+       VALUES ($1, $2, 'endpoint', 'active', 'endpoint_monitor', $3, $4, $5, $5)
+       RETURNING id`,
+      [
+        workspaceId,
+        `targets-route-${Date.now()}`,
+        sourceRef,
+        "targets.certops.example",
+        "https://targets.certops.example",
+      ],
+    );
+    const targetId = target.rows[0].id;
+
+    const response = await request(BASE)
+      .get(`/api/v1/workspaces/${workspaceId}/certops/targets?limit=50&offset=0`)
+      .set("Cookie", viewerSession.cookie)
+      .expect(200);
+
+    const item = response.body.items.find((entry) => entry.id === targetId);
+    expect(item).to.exist;
+    expect(item.workspaceId).to.equal(workspaceId);
+    expect(item.targetType).to.equal("endpoint");
+    expect(item.status).to.equal("active");
+    expect(item.source).to.equal("endpoint_monitor");
+    expect(item.sourceRef).to.equal(sourceRef);
+    expect(item.hostname).to.equal("targets.certops.example");
+    expect(response.body.pagination).to.deep.equal({ limit: 50, offset: 0 });
+    expectNoPrivateKeyFields(response.body);
+
+    const outsiderResponse = await request(BASE)
+      .get(`/api/v1/workspaces/${outsiderWorkspaceId}/certops/targets`)
+      .set("Cookie", outsiderSession.cookie)
+      .expect(200);
+    expect(
+      outsiderResponse.body.items.some((entry) => entry.id === targetId),
+    ).to.equal(false);
+  });
+
   it("retires a managed certificate as decommissioned without deleting rows", async () => {
     const instanceCountBefore = await certificateInstanceCount(
       workspaceId,

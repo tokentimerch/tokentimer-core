@@ -930,6 +930,87 @@ async function listCertificateInstances({ workspaceId, certId, limit, offset }) 
   };
 }
 
+/**
+ * Flat, workspace-wide certificate_instances listing (no certId filter).
+ * Distinct from listCertificateInstances, which is scoped to one certificate
+ * and 404s when that certificate doesn't exist; this one is a plain
+ * inventory browse, used by UI surfaces (e.g. the manual job Subject ID
+ * suggestions) that need "any instance in this workspace" rather than
+ * "instances of this one certificate".
+ */
+async function listWorkspaceCertificateInstances({ workspaceId, limit, offset }) {
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const result = await pool.query(
+    `SELECT *
+       FROM certificate_instances
+      WHERE workspace_id = $1
+      ORDER BY observed_at DESC NULLS LAST,
+               updated_at DESC,
+               created_at DESC,
+               id ASC
+      LIMIT $2 OFFSET $3`,
+    [workspaceId, normalizedLimit, normalizedOffset],
+  );
+
+  return {
+    items: result.rows.map(toInstanceRecord),
+    pagination: {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+  };
+}
+
+function toTargetRecord(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    profileId: row.profile_id,
+    domainMonitorId: row.domain_monitor_id,
+    tokenId: row.token_id,
+    name: row.name,
+    targetType: row.target_type,
+    status: row.status,
+    source: row.source,
+    sourceRef: row.source_ref,
+    hostname: row.hostname,
+    url: row.url,
+    deploymentReference: row.deployment_reference,
+    environment: row.environment,
+    createdAt: dateToIso(row.created_at),
+    updatedAt: dateToIso(row.updated_at),
+  };
+}
+
+/**
+ * Workspace-wide certificate_targets listing (deployment/observation
+ * locations: hosts, endpoints, load balancers, etc.). No nesting under a
+ * certificate, since a target can outlive or precede any given cert.
+ */
+async function listCertificateTargets({ workspaceId, limit, offset }) {
+  const normalizedLimit = normalizeLimit(limit);
+  const normalizedOffset = normalizeOffset(offset);
+  const result = await pool.query(
+    `SELECT *
+       FROM certificate_targets
+      WHERE workspace_id = $1
+      ORDER BY updated_at DESC, created_at DESC, id ASC
+      LIMIT $2 OFFSET $3`,
+    [workspaceId, normalizedLimit, normalizedOffset],
+  );
+
+  return {
+    items: result.rows.map(toTargetRecord),
+    pagination: {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
+    },
+  };
+}
+
 function resolveRetireArgs(clientOrPool, options) {
   if (options === undefined) {
     return { db: pool, options: clientOrPool || {} };
@@ -1088,7 +1169,9 @@ module.exports = {
   importPublicCertificates,
   isRetiredCertificateStatus,
   listCertificateInstances,
+  listCertificateTargets,
   listManagedCertificates,
+  listWorkspaceCertificateInstances,
   normalizeKeyMode,
   normalizeKeyReference,
   normalizeLimit,
@@ -1096,6 +1179,7 @@ module.exports = {
   retireManagedCertificate,
   toInstanceRecord,
   toInventoryRecord,
+  toTargetRecord,
   upsertAgentFilesystemInstance,
   upsertAgentFilesystemTarget,
   upsertManagedCertificate,
