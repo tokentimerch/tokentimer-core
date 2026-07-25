@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -12,6 +12,8 @@ const {
   useCertOpsCanManageMock,
   useCertOpsApiTokensMock,
   createJobMock,
+  approveJobMock,
+  rejectJobMock,
   listCertificatesMock,
   listCertificateTargetsMock,
   listWorkspaceCertificateInstancesMock,
@@ -21,6 +23,8 @@ const {
   useCertOpsCanManageMock: vi.fn(),
   useCertOpsApiTokensMock: vi.fn(),
   createJobMock: vi.fn(),
+  approveJobMock: vi.fn(),
+  rejectJobMock: vi.fn(),
   listCertificatesMock: vi.fn(),
   listCertificateTargetsMock: vi.fn(),
   listWorkspaceCertificateInstancesMock: vi.fn(),
@@ -70,6 +74,16 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
   useCertOpsCanManage: useCertOpsCanManageMock,
+  useCertOpsIsWorkspaceAdmin: () => false,
+  useCertOpsWorkspaceKillSwitch: () => ({
+    certOpsPaused: false,
+    certOpsEnabled: true,
+    certOpsActive: true,
+    loading: false,
+    error: '',
+    saving: false,
+    setPaused: vi.fn(),
+  }),
 }));
 
 vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
@@ -79,6 +93,8 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
   return {
     ...actual,
     createJob: createJobMock,
+    approveJob: approveJobMock,
+    rejectJob: rejectJobMock,
   };
 });
 
@@ -157,6 +173,8 @@ describe('CertOpsOperations', () => {
     useCertOpsCanManageMock.mockReset();
     useCertOpsApiTokensMock.mockReset();
     createJobMock.mockReset();
+    approveJobMock.mockReset();
+    rejectJobMock.mockReset();
     listCertificatesMock.mockReset();
     listCertificatesMock.mockResolvedValue({ items: [] });
     listCertificateTargetsMock.mockReset();
@@ -689,6 +707,240 @@ describe('CertOpsOperations', () => {
     await waitFor(() => expect(createJobMock).toHaveBeenCalledTimes(1));
     // The modal stays open on failure so the manager can retry.
     expect(screen.getByRole('dialog', { name: 'Create manual job' })).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('sends requiresApproval when the checkbox is checked', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsJobsMock.mockReturnValue(jobsState());
+    createJobMock.mockResolvedValue({
+      job: { id: 'job-new', operation: 'renew', status: 'pending_approval' },
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create manual job' })
+    );
+    fireEvent.change(screen.getByLabelText(/^Operation/), {
+      target: { value: 'renew' },
+    });
+    fireEvent.click(
+      screen.getByText('Require approval before this job can run')
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Create job' }));
+
+    await waitFor(() =>
+      expect(createJobMock).toHaveBeenCalledWith('ws-1', {
+        operation: 'renew',
+        requiresApproval: true,
+      })
+    );
+  });
+
+  it('shows Approve/Reject actions only for a manager on a job pending approval', () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    const pendingJob = {
+      id: 'job-1',
+      operation: 'renew',
+      status: 'pending_approval',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [pendingJob] }));
+    const { rerender } = renderWithProviders(
+      <CertOpsOperations session={{ isAdmin: true }} />
+    );
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+
+    useCertOpsCanManageMock.mockReturnValue(false);
+    rerender(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <CertOpsOperations session={{ isAdmin: true }} />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Approve' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not show Approve/Reject on a job not pending approval', () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            id: 'job-1',
+            operation: 'renew',
+            status: 'pending',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    expect(
+      screen.queryByRole('button', { name: 'Approve' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('approves a job through the confirm modal with an optional reason', async () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const refresh = vi.fn();
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            id: 'job-1',
+            operation: 'renew',
+            status: 'pending_approval',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        refresh,
+      })
+    );
+    approveJobMock.mockResolvedValue({
+      job: { id: 'job-1', status: 'pending' },
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(
+      await screen.findByText('Approve job')
+    ).toBeInTheDocument();
+    const approveDialog = screen.getByRole('dialog');
+
+    fireEvent.change(
+      screen.getByPlaceholderText('e.g. confirmed with the domain owner'),
+      { target: { value: 'confirmed with the owner' } }
+    );
+    fireEvent.click(
+      within(approveDialog).getByRole('button', { name: 'Approve' })
+    );
+
+    await waitFor(() => {
+      expect(approveJobMock).toHaveBeenCalledWith('ws-1', 'job-1', {
+        reason: 'confirmed with the owner',
+      });
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('rejects a job through the confirm modal', async () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const refresh = vi.fn();
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            id: 'job-1',
+            operation: 'renew',
+            status: 'pending_approval',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        refresh,
+      })
+    );
+    rejectJobMock.mockResolvedValue({
+      job: { id: 'job-1', status: 'rejected' },
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(
+      await screen.findByText('Reject job')
+    ).toBeInTheDocument();
+    const rejectDialog = screen.getByRole('dialog');
+    fireEvent.click(
+      within(rejectDialog).getByRole('button', { name: 'Reject' })
+    );
+
+    await waitFor(() => {
+      expect(rejectJobMock).toHaveBeenCalledWith('ws-1', 'job-1', {
+        reason: undefined,
+      });
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('surfaces the non-requester error and keeps the job in the list on a failed approval', async () => {
+    useCertOpsAvailabilityMock.mockReturnValue({
+      ready: true,
+      enabled: true,
+      error: null,
+    });
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const refresh = vi.fn();
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [
+          {
+            id: 'job-1',
+            operation: 'renew',
+            status: 'pending_approval',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        refresh,
+      })
+    );
+    approveJobMock.mockRejectedValue({
+      response: {
+        status: 403,
+        data: { code: 'CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN' },
+      },
+    });
+
+    renderWithProviders(<CertOpsOperations session={{ isAdmin: true }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(approveJobMock).toHaveBeenCalledTimes(1));
+    // The modal stays open (not auto-dismissed) so the manager sees the toast
+    // and can hand off to another approver; the job list is not refetched
+    // since nothing actually changed server-side.
+    expect(screen.getByText('Approve job')).toBeInTheDocument();
     expect(refresh).not.toHaveBeenCalled();
   });
 });

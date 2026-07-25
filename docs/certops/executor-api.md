@@ -312,6 +312,11 @@ Reported events and evidence show up under `/certops/operations` (Executor
 jobs panel + evidence timeline) for workspace managers/admins, with status
 badges, redaction markers, and audit links where available. See
 `apps/dashboard/src/components/certops/{JobStatusBadge,EvidenceTimeline,CertificateTimeline}.jsx`.
+A job sitting at `pending_approval` shows inline **Approve**/**Reject**
+buttons on its row (manager/admin only, via the confirm modal in
+`apps/dashboard/src/pages/certops/CertOpsOperations.jsx`); see the
+"Approval gates" runbook in `tokentimer-cloud`'s docs for the non-requester
+rule and what each decision does.
 
 ## 9. Kubernetes controller routes
 

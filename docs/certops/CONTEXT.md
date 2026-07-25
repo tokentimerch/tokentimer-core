@@ -113,10 +113,13 @@ rather than adding a parallel inventory page. See ADR-0006.
 - **Token detail** - CertOps panel for managed fields and deployment history.
 - **Import tokens** - public PEM import card when `certops.enabled` is on.
 - **CertOps section** - orchestration only (agents, jobs, evidence,
-  approvals), not a second certificate list. It ships
-  `/certops/operations` (executor jobs, evidence timelines, machine API
-  tokens, the Deploy-an-agent panel with the show-once bootstrap token and
-  install command, and the Agent fleet panel with status/heartbeat/retire)
+  approvals, kill switch), not a second certificate list. It ships
+  `/certops/operations` (the workspace kill switch toggle at the top; the
+  executor jobs panel with a manager-only "Create manual job" dialog,
+  including a "require approval" checkbox, and inline Approve/Reject
+  actions on jobs sitting at `pending_approval`; evidence timelines; machine
+  API tokens; the Deploy-an-agent panel with the show-once bootstrap token
+  and install command; and the Agent fleet panel with status/heartbeat/retire)
   mounted via the `/certops/*` splat route. No nav entry: it is
   reached from the Control Center certificate-operations panel footer link
   and from a Workspace Preferences entry (last section, shown only when

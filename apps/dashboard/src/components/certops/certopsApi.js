@@ -166,6 +166,43 @@ export async function retireCertificate(
 }
 
 /**
+ * Fetch the workspace CertOps kill-switch state.
+ *
+ * Maps to GET /certops/settings, which stays available even while the
+ * deployment-wide certops.enabled rollout flag is off, so incident controls
+ * can be inspected and staged ahead of a rollout. Any human session member
+ * can read it; only workspace admins can change it (see
+ * updateWorkspaceCertOpsPauseState).
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean }>}
+ */
+export async function getWorkspaceCertOpsPauseState(workspaceId, { signal } = {}) {
+  const res = await apiClient.get(`${workspaceBase(workspaceId)}/settings`, {
+    signal,
+  });
+  return res.data;
+}
+
+/**
+ * Pause or resume CertOps for a workspace (the local kill switch).
+ *
+ * Maps to PUT /certops/settings. Requires the workspace admin role
+ * server-side (certops.kill_switch.manage); a 403 surfaces for
+ * managers/viewers. `reason` is optional free text recorded on the
+ * pause/resume audit event, not persisted as ongoing state.
+ * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean, changed: boolean }>}
+ */
+export async function updateWorkspaceCertOpsPauseState(
+  workspaceId,
+  { certOpsPaused, reason } = {}
+) {
+  const res = await apiClient.put(`${workspaceBase(workspaceId)}/settings`, {
+    certOpsPaused,
+    reason,
+  });
+  return res.data;
+}
+
+/**
  * Lightweight availability probe used to gate CertOps UI behind the
  * `certops.enabled` rollout flag. The backend hides the routes with a 404 when
  * the flag is off, so a successful list call means CertOps is available to this
