@@ -2182,6 +2182,31 @@ const migrations = [
         ON certops_agents(workspace_id, agent_id);
     `,
   },
+  {
+    version: 32,
+    name: "certificate_targets_target_type_agent_host",
+    sql: `
+      -- Migration 28 (B17) taught certificate_targets/_instances/managed_
+      -- certificates about the 'agent_filesystem' source, but never widened
+      -- certificate_targets_target_type_check: upsertAgentFilesystemTarget
+      -- (services/certops/inventory.js) always inserts target_type =
+      -- 'agent-host', which the check constraint rejected outright. Every
+      -- agent filesystem-discovery evidence report has been failing with an
+      -- HTTP 500 (23514 check-constraint violation) since #91/#92 shipped.
+      -- Found manually re-running the real agent against a live backend
+      -- (certops-m4-m5-manual-review-and-test-plan-dev-b.md Part 2 section
+      -- 7's "real Core backend rehearsal" item).
+      ALTER TABLE certificate_targets
+        DROP CONSTRAINT IF EXISTS certificate_targets_target_type_check;
+      ALTER TABLE certificate_targets
+        ADD CONSTRAINT certificate_targets_target_type_check CHECK (
+          target_type IN (
+            'endpoint', 'domain', 'host', 'kubernetes-secret', 'load-balancer',
+            'cdn', 'appliance', 'hsm', 'vault', 'other', 'agent-host'
+          )
+        );
+    `,
+  },
 ];
 
 async function runMigrations() {
