@@ -81,7 +81,6 @@ import {
   useDashboardModalProps,
 } from '../components/DashboardModalFrame.jsx';
 import SEO from '../components/SEO.jsx';
-import CertOpsPreferencesEntry from '../components/certops/CertOpsPreferencesEntry.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { trackEvent } from '../utils/analytics.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
@@ -3443,8 +3442,6 @@ export default function AlertPreferences({
               </VStack>
             </DashboardPanel>
           </SettingsSection>
-
-          <CertOpsPreferencesEntry />
         </SettingsPageShell>
       </DashboardPageLayout>
 
