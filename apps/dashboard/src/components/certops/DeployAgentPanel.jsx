@@ -32,6 +32,7 @@ import {
 } from '@chakra-ui/react';
 import CopyableCodeBlock from '../CopyableCodeBlock.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 import {
@@ -141,9 +142,11 @@ function revokeErrorMessage(err) {
 
 /**
  * Guided "Deploy an agent" flow:
- *  1. create a bootstrap token (show-once secret, ApiTokenPanel pattern),
- *  2. copy a pre-filled install command (CopyableCodeBlock); the installer
- *     prompts for the token, which is never embedded in the command,
+ *  1. copy a pre-filled install command (CopyableCodeBlock) and run it on the
+ *     target host; the installer pauses at a hidden prompt asking for a
+ *     bootstrap token, which is never embedded in the command,
+ *  2. create a bootstrap token (show-once secret, ApiTokenPanel pattern) and
+ *     paste it at that prompt,
  *  3. wait for the agent to register (polls GET /certops/agents and reports
  *     an agent whose id was not known when the token was created, or whose
  *     registration timestamp is at or after token creation).
@@ -271,7 +274,7 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
 
   const apiUrl =
     typeof window !== 'undefined' && window.location
-      ? window.location.origin
+      ? resolveApiBaseUrl() || window.location.origin
       : '';
   const installCommand = buildTokenlessInstallCommand({
     apiUrl,
@@ -376,9 +379,10 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
           <AlertIcon boxSize={4} />
           <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
             Agents run on your infrastructure and connect outbound-only. Keys
-            never leave the agent host. Deploying takes three steps: create a
-            single-use bootstrap token, run the install command on the target
-            host, then wait for the agent to register.
+            never leave the agent host. Deploying takes three steps: run the
+            install command on the target host, create a single-use bootstrap
+            token to paste at its prompt, then wait for the agent to
+            register.
           </AlertDescription>
         </Alert>
       </Box>
@@ -399,7 +403,38 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
             p={{ base: 3.5, md: 4 }}
           >
             <Text fontSize='sm' fontWeight='semibold' color={titleColor} mb={3}>
-              Step 1: Create a bootstrap token
+              Step 1: Run the installer on the target host
+            </Text>
+            <VStack align='stretch' spacing={3}>
+              <Text fontSize='sm' color={muted}>
+                From the unpacked agent package directory (
+                <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
+                host with Node 22+:
+              </Text>
+              <CopyableCodeBlock
+                code={installCommand}
+                label='Install command'
+                copyable
+                monospace
+              />
+              <Text fontSize='xs' color={muted}>
+                The command does not include a token. The installer will
+                pause with a hidden prompt asking for one; create a bootstrap
+                token in step 2 below and paste it there, or set the
+                TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
+                running.
+              </Text>
+            </VStack>
+          </Box>
+
+          <Box
+            border='1px solid'
+            borderColor={border}
+            borderRadius='12px'
+            p={{ base: 3.5, md: 4 }}
+          >
+            <Text fontSize='sm' fontWeight='semibold' color={titleColor} mb={3}>
+              Step 2: Create a bootstrap token
             </Text>
             <VStack align='stretch' spacing={4}>
               <FormControl isRequired>
@@ -445,43 +480,11 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
               >
                 Create bootstrap token
               </Button>
-            </VStack>
-          </Box>
 
-          <Box
-            border='1px solid'
-            borderColor={border}
-            borderRadius='12px'
-            p={{ base: 3.5, md: 4 }}
-          >
-            <Text fontSize='sm' fontWeight='semibold' color={titleColor} mb={3}>
-              Step 2: Run the installer on the target host
-            </Text>
-            <VStack align='stretch' spacing={3}>
-              <Text fontSize='sm' color={muted}>
-                From the unpacked agent package directory (
-                <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
-                host with Node 22+:
+              <Text fontSize='xs' color={muted}>
+                Once you have pasted the token at the installer's prompt in
+                step 1 and it is proceeding, watch for the agent to register:
               </Text>
-              <CopyableCodeBlock
-                code={installCommand}
-                label='Install command'
-                copyable
-                monospace
-              />
-              {!plaintextToken ? (
-                <Text fontSize='xs' color={muted}>
-                  Create a bootstrap token in step 1 first. The command never
-                  contains the token; the installer asks for it separately.
-                </Text>
-              ) : (
-                <Text fontSize='xs' color={muted}>
-                  The command does not include the token. The installer will
-                  prompt for it (hidden input); paste the token from step 1 at
-                  the prompt, or set the TOKENTIMER_AGENT_BOOTSTRAP_TOKEN
-                  environment variable before running.
-                </Text>
-              )}
               <Button
                 size='sm'
                 alignSelf='flex-start'
@@ -490,7 +493,7 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
                 onClick={beginWaiting}
                 isDisabled={waitState === 'waiting'}
               >
-                I ran the installer
+                I pasted the token, start watching
               </Button>
             </VStack>
           </Box>
@@ -680,14 +683,14 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
                 monospace
               />
               <Text fontSize='xs' color={muted}>
-                The install command in step 2 does not contain the token. Paste
-                the token at the installer prompt when asked.
+                The install command in step 1 does not contain the token.
+                Paste it at the installer's hidden prompt now.
               </Text>
             </VStack>
           </ModalBody>
           <ModalFooter>
             <Button colorScheme='blue' onClick={handleShowOnceClose}>
-              Continue to install
+              Continue
             </Button>
           </ModalFooter>
         </ModalContent>

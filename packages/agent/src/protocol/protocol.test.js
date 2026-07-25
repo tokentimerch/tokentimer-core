@@ -92,6 +92,36 @@ test("register: validates and returns the full response before persistence", asy
   assert.equal(calls[0].parsedBody.schemaVersion, 1);
 });
 
+test("register: accepts a credential whose embedded id differs from agentId (server mints it independently)", async () => {
+  // Mirrors the real API: apps/api/services/certops/agentCredentials.js mints
+  // the credential's id segment as an unrelated random secret, never derived
+  // from (and never expected to equal) the agent-declared agentId.
+  const unrelatedCredential = "ttagent_00112233445566ff_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const calls = stubFetch([
+    {
+      status: 201,
+      json: { agentId: "agent-1", credential: unrelatedCredential, protocolVersion: "1.0.0" },
+    },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => null,
+  });
+
+  const result = await client.register({
+    bootstrapToken: "raw-bootstrap-token",
+    bootstrapTokenId: "bst_abc123",
+    agentVersion: "0.1.0",
+  });
+
+  assert.equal(result.agentId, "agent-1");
+  assert.equal(result.credential, unrelatedCredential);
+  assert.equal(calls.length, 1);
+});
+
 test("register: rejects malformed or unexpected response fields", async () => {
   stubFetch([
     {

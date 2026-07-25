@@ -426,8 +426,12 @@ function validateRegistrationResponse(json, expectedProtocolVersion) {
   if (typeof json.agentId !== "string" || !AGENT_ID_PATTERN.test(json.agentId)) {
     throw new AgentProtocolError("registration response contains an invalid agentId", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
   }
+  // The credential's embedded id is an independent, server-minted secret
+  // identifier (see apps/api/services/certops/agentCredentials.js); it is
+  // never expected to equal the agent-declared agentId, so only the shape
+  // (ttagent_<id>_<secret>) is validated here.
   const credentialMatch = typeof json.credential === "string" ? CREDENTIAL_PATTERN.exec(json.credential) : null;
-  if (!credentialMatch || credentialMatch[1] !== json.agentId) {
+  if (!credentialMatch) {
     throw new AgentProtocolError("registration response contains an invalid credential", AGENT_PROTOCOL_ERROR_CODES.INVALID_RESPONSE);
   }
   if (typeof json.protocolVersion !== "string" || !PROTOCOL_VERSION_PATTERN.test(json.protocolVersion) || json.protocolVersion !== expectedProtocolVersion) {

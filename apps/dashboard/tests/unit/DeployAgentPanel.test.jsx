@@ -78,7 +78,7 @@ function agentsState(overrides = {}) {
   };
 }
 
-/** Runs the step-1 flow: fill the name, create the token, close the modal. */
+/** Runs the step-2 flow: fill the name, create the token, close the modal. */
 async function createTokenAndCloseModal() {
   fireEvent.change(screen.getByLabelText(/^Name/), {
     target: { value: 'dc1-edge' },
@@ -87,7 +87,7 @@ async function createTokenAndCloseModal() {
     screen.getByRole('button', { name: 'Create bootstrap token' })
   );
   await screen.findByText(/shown only once and registers exactly one agent/);
-  fireEvent.click(screen.getByRole('button', { name: 'Continue to install' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 }
 
 describe('DeployAgentPanel', () => {
@@ -128,7 +128,7 @@ describe('DeployAgentPanel', () => {
       screen.queryByRole('button', { name: 'Create bootstrap token' })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText('Step 2: Run the installer on the target host')
+      screen.queryByText('Step 1: Run the installer on the target host')
     ).not.toBeInTheDocument();
   });
 
@@ -139,14 +139,14 @@ describe('DeployAgentPanel', () => {
     renderWithProviders(<DeployAgentPanel />);
 
     expect(
-      screen.getByText('Step 1: Create a bootstrap token')
+      screen.getByText('Step 1: Run the installer on the target host')
+    ).toBeInTheDocument();
+    expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Step 2: Create a bootstrap token')
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/^Name/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Expires/)).toBeInTheDocument();
-    expect(
-      screen.getByText('Step 2: Run the installer on the target host')
-    ).toBeInTheDocument();
-    expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
   });
 
   it('creates a token, shows the one-time secret, and keeps it out of the install command', async () => {
@@ -191,7 +191,7 @@ describe('DeployAgentPanel', () => {
 
     // Helper text explains the installer's hidden token prompt.
     expect(
-      screen.getByText(/installer will prompt for it \(hidden input\)/)
+      screen.getByText(/installer will pause with a hidden prompt/)
     ).toBeInTheDocument();
   });
 
@@ -232,7 +232,9 @@ describe('DeployAgentPanel', () => {
     renderWithProviders(<DeployAgentPanel />);
 
     await createTokenAndCloseModal();
-    fireEvent.click(screen.getByRole('button', { name: 'I ran the installer' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'I pasted the token, start watching' })
+    );
 
     expect(await screen.findByText(/is now connected/)).toBeInTheDocument();
     expect(listAgentsMock).toHaveBeenCalledTimes(1);
@@ -267,7 +269,9 @@ describe('DeployAgentPanel', () => {
     renderWithProviders(<DeployAgentPanel />);
 
     await createTokenAndCloseModal();
-    fireEvent.click(screen.getByRole('button', { name: 'I ran the installer' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'I pasted the token, start watching' })
+    );
 
     expect(await screen.findByText(/is now connected/)).toBeInTheDocument();
     expect(screen.getByText(/dc1-edge/)).toBeInTheDocument();
@@ -293,7 +297,7 @@ describe('DeployAgentPanel', () => {
       renderWithProviders(<DeployAgentPanel />);
 
       fireEvent.click(
-        screen.getByRole('button', { name: 'I ran the installer' })
+        screen.getByRole('button', { name: 'I pasted the token, start watching' })
       );
 
       expect(
