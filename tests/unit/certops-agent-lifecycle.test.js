@@ -441,6 +441,7 @@ describe("CertOps agents list route", () => {
       compatibilityState: "outdated",
       clockDriftState: "ok",
       clockDriftMs: 25,
+      livenessState: "stale",
     });
   });
 

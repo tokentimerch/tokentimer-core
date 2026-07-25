@@ -44,15 +44,32 @@ import { useCertOpsAgents } from './useCertOpsAgents.js';
 
 const AGENT_STATUS_SCHEME = {
   active: 'green',
+  stale: 'orange',
   offline: 'orange',
   retired: 'gray',
 };
 
 const AGENT_STATUS_LABEL = {
   active: 'Active',
+  stale: 'Stale',
   offline: 'Offline',
   retired: 'Retired',
 };
+
+// The persisted `status` column only moves toward 'active' on the agent's
+// own register/heartbeat/claim calls; it is only ever demoted to 'offline'
+// by the periodic stale-agent sweep (apps/worker/src/certops-worker.js).
+// Between sweeps (or if the sweep isn't running), an agent that crashed or
+// stopped heartbeating would otherwise still show a green "Active" badge.
+// livenessState is computed live on every list/read call
+// (agentRegistry.js#computeAgentCompatibility) from the same threshold the
+// sweep uses, so prefer it here to catch that gap.
+function displayAgentStatus(agent) {
+  if (agent?.livenessState === 'stale' && agent?.status === 'active') {
+    return 'stale';
+  }
+  return agent?.status;
+}
 
 /** Subtle status chip for an agent, JobStatusBadge conventions. */
 function AgentStatusBadge({ status, fontSize = 'xs' }) {
@@ -64,6 +81,11 @@ function AgentStatusBadge({ status, fontSize = 'xs' }) {
       textTransform='none'
       fontWeight='medium'
       fontSize={fontSize}
+      title={
+        key === 'stale'
+          ? 'No heartbeat received within the offline threshold; the agent is likely down and awaiting the next fleet sweep.'
+          : undefined
+      }
     >
       {AGENT_STATUS_LABEL[key] || (status ? String(status) : 'Unknown')}
     </Badge>
@@ -366,7 +388,7 @@ export default function AgentFleetPanel() {
                       </Box>
                     </Td>
                     <Td>
-                      <AgentStatusBadge status={agent.status} />
+                      <AgentStatusBadge status={displayAgentStatus(agent)} />
                     </Td>
                     <Td>
                       <Text fontSize='sm' fontFamily='mono'>

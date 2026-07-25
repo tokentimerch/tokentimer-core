@@ -18,6 +18,13 @@ const DEFAULT_MIN_AGENT_VERSION = "0.1.0";
 const DEFAULT_MAX_AGENT_VERSION = "99.999.999";
 const DEFAULT_CLOCK_DRIFT_WARN_MS = 5_000;
 const DEFAULT_CLOCK_DRIFT_ALERT_MS = 30_000;
+// Kept in sync with apps/worker/src/certops-worker.js's
+// DEFAULT_AGENT_OFFLINE_AFTER_MS / CERTOPS_AGENT_OFFLINE_AFTER_MS: the
+// stale-agent sweep is the eventual source of truth for the persisted
+// `status` column, but it only runs periodically, so this read path
+// independently derives a `livenessState` from the same threshold to avoid
+// showing a crashed/unresponsive agent as "active" between sweeps.
+const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
 
 // The workspace admin surface must never see credential_prefix or
 // credential_hash; only these columns leave the service layer.
@@ -132,6 +139,11 @@ function readCompatibilityConfig(env = process.env) {
         String(DEFAULT_CLOCK_DRIFT_ALERT_MS),
       10,
     ),
+    agentOfflineAfterMs: Number.parseInt(
+      env.CERTOPS_AGENT_OFFLINE_AFTER_MS ||
+        String(DEFAULT_AGENT_OFFLINE_AFTER_MS),
+      10,
+    ),
   };
 }
 
@@ -190,10 +202,30 @@ function computeAgentCompatibility(agent, env = process.env) {
     else clockDriftState = "ok";
   }
 
+  // Mirrors sweepStaleAgents' own COALESCE(last_seen_at, created_at) check
+  // (apps/worker/src/certops-worker.js) so an agent that registered but
+  // never heartbeated, or stopped heartbeating, is flagged 'stale' here in
+  // real time rather than waiting for the next periodic sweep to persist
+  // status='offline'. Retired agents are never stale; they are terminal.
+  let livenessState = null;
+  if (agent.status === "retired") {
+    livenessState = "retired";
+  } else {
+    const referenceAt = agent.lastSeenAt || agent.createdAt;
+    const referenceMs = referenceAt ? new Date(referenceAt).getTime() : NaN;
+    if (Number.isFinite(referenceMs)) {
+      livenessState =
+        Date.now() - referenceMs >= config.agentOfflineAfterMs
+          ? "stale"
+          : "live";
+    }
+  }
+
   return {
     compatibilityState,
     clockDriftState,
     clockDriftMs,
+    livenessState,
     compatibilityConfig: {
       minProtocolVersion: config.minProtocolVersion,
       maxProtocolVersion: config.maxProtocolVersion,
@@ -201,6 +233,7 @@ function computeAgentCompatibility(agent, env = process.env) {
       maxAgentVersion: config.maxAgentVersion,
       clockDriftWarnMs: config.clockDriftWarnMs,
       clockDriftAlertMs: config.clockDriftAlertMs,
+      agentOfflineAfterMs: config.agentOfflineAfterMs,
     },
   };
 }
@@ -230,6 +263,7 @@ function agentMetadataFromRow(row, env = process.env) {
     compatibilityState: compatibility.compatibilityState,
     clockDriftState: compatibility.clockDriftState,
     clockDriftMs: compatibility.clockDriftMs,
+    livenessState: compatibility.livenessState,
   };
 }
 

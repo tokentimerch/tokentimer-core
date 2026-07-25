@@ -58,6 +58,87 @@ describe("agent compatibility (H8)", () => {
     assert.equal(result.clockDriftState, "alert");
     assert.equal(result.clockDriftMs, 60_000);
   });
+
+  it("marks an agent live within the offline threshold", () => {
+    const result = computeAgentCompatibility(
+      {
+        protocolVersion: "1.0.0",
+        agentVersion: "0.11.0",
+        clockOffsetMs: 0,
+        status: "active",
+        lastSeenAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+      {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "0.12.0",
+        CERTOPS_AGENT_OFFLINE_AFTER_MS: "600000",
+      },
+    );
+    assert.equal(result.livenessState, "live");
+  });
+
+  it("marks an agent stale once last_seen_at exceeds the offline threshold, even if status is still 'active' (sweep has not yet run)", () => {
+    const result = computeAgentCompatibility(
+      {
+        protocolVersion: "1.0.0",
+        agentVersion: "0.11.0",
+        clockOffsetMs: 0,
+        status: "active",
+        lastSeenAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+      },
+      {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "0.12.0",
+        CERTOPS_AGENT_OFFLINE_AFTER_MS: "600000",
+      },
+    );
+    assert.equal(result.livenessState, "stale");
+  });
+
+  it("judges a never-heartbeated agent on created_at, so registration alone cannot look permanently live", () => {
+    const result = computeAgentCompatibility(
+      {
+        protocolVersion: "1.0.0",
+        agentVersion: "0.11.0",
+        clockOffsetMs: 0,
+        status: "active",
+        lastSeenAt: null,
+        createdAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+      },
+      {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "0.12.0",
+        CERTOPS_AGENT_OFFLINE_AFTER_MS: "600000",
+      },
+    );
+    assert.equal(result.livenessState, "stale");
+  });
+
+  it("always reports retired agents as 'retired', never 'stale'", () => {
+    const result = computeAgentCompatibility(
+      {
+        protocolVersion: "1.0.0",
+        agentVersion: "0.11.0",
+        clockOffsetMs: 0,
+        status: "retired",
+        lastSeenAt: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      {
+        CERTOPS_AGENT_MIN_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MAX_PROTOCOL_VERSION: "1.0.0",
+        CERTOPS_AGENT_MIN_AGENT_VERSION: "0.10.0",
+        CERTOPS_AGENT_MAX_AGENT_VERSION: "0.12.0",
+        CERTOPS_AGENT_OFFLINE_AFTER_MS: "600000",
+      },
+    );
+    assert.equal(result.livenessState, "retired");
+  });
 });
 
 describe("fenceAgentInFlightWork (H12)", () => {

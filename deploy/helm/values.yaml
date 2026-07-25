@@ -263,6 +263,26 @@ worker:
         limits:
           memory: 512Mi
 
+    # CertOps maintenance -- lease reaper, stale-agent sweep, nonce and
+    # registration-replay sweeps, renewal scheduler. Without this cronjob,
+    # certops_agents.status is never demoted off 'active' when an agent
+    # stops heartbeating.
+    certops:
+      enabled: true
+      schedule: "*/1 * * * *"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
 # -- CertOps Kubernetes controller -------------------------------------------
 # The controller is independently opt-in. Observe is the default; provision
 # adds only cert-manager Certificate create/patch rights.

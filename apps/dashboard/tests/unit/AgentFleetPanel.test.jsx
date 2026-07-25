@@ -150,6 +150,23 @@ describe('AgentFleetPanel', () => {
     expect(screen.getAllByRole('button', { name: 'Retire' })).toHaveLength(2);
   });
 
+  it('shows a Stale badge instead of Active when livenessState says the heartbeat is overdue (sweep has not yet caught up)', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    const agents = sampleAgents();
+    // Row 1 is status='active' in the raw column, but the server-computed
+    // livenessState flags it stale because last_seen_at is past the
+    // offline threshold and the periodic sweep has not yet demoted it.
+    agents[0].livenessState = 'stale';
+    useCertOpsAgentsMock.mockReturnValue(agentsState({ agents }));
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    // The raw offline row is unaffected and still reads "Offline".
+    expect(screen.getByText('Offline')).toBeInTheDocument();
+  });
+
   it('renders protocol version and clock drift columns, flagging large offsets', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(

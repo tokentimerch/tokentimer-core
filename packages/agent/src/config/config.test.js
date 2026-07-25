@@ -881,6 +881,24 @@ describe("registration persistence", () => {
     assert.equal(fs.existsSync(path.join(dir, "registration.pending.json")), false);
   });
 
+  it("accepts a credential whose embedded id differs from agentId (server mints it independently)", () => {
+    // Mirrors the real API: apps/api/services/certops/agentCredentials.js
+    // mints the credential's id segment as an unrelated random secret, never
+    // derived from (and never expected to equal) the assigned agentId.
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ serverUrl: "https://cp.example.test" }));
+    const unrelatedRegistration = {
+      agentId: "agent-registration-1",
+      credential: "ttagent_00112233445566ff_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    };
+
+    persistRegistration(dir, unrelatedRegistration);
+
+    assert.equal(loadAgentConfig({ configDir: dir }).agentId, unrelatedRegistration.agentId);
+    assert.equal(readCredential(dir), unrelatedRegistration.credential);
+  });
+
   it("fails closed on a malformed pending-registration record", () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);

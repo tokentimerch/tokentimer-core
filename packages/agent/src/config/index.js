@@ -1281,10 +1281,10 @@ function validateRegistrationRecord(record) {
   }
   validateAgentId(record.agentId);
   assertValidCredentialShape(record.credential);
-  const credentialAgentId = CREDENTIAL_SHAPE_PATTERN.exec(record.credential)?.[1];
-  if (credentialAgentId !== record.agentId) {
-    throw new Error("tokentimer-agent: registration credential does not match assigned agentId");
-  }
+  // The credential's embedded id is an independent, server-minted secret
+  // identifier (see apps/api/services/certops/agentCredentials.js on the
+  // control plane); it is never expected to equal the assigned agentId, so
+  // only the shape (ttagent_<id>_<secret>) is validated above.
   return { agentId: record.agentId, credential: record.credential };
 }
 

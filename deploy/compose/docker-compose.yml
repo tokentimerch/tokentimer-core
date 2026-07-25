@@ -436,6 +436,43 @@ services:
       WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
       WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
 
+  # Worker Service - CertOps maintenance (lease reaper, stale-agent sweep,
+  # nonce/registration-replay sweeps, renewal scheduler). Without this
+  # service certops_agents.status is never demoted off 'active' when an
+  # agent stops heartbeating: the fleet panel then shows a crashed/offline
+  # agent as active indefinitely.
+  worker-certops:
+    build:
+      context: ../../
+      dockerfile: deploy/compose/Dockerfile.worker
+    container_name: tokentimer-worker-certops
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["node", "/app/apps/worker/src/runner.js", "certops"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      TZ: ${TZ:-UTC}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-tokentimer}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-tokentimer}
+      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      PUSHGATEWAY_URL: ${PUSHGATEWAY_URL:-}
+      ENVIRONMENT_SUFFIX: ${ENVIRONMENT_SUFFIX:-}
+      # How long an active agent may go without a heartbeat before this
+      # sweep marks it offline (ms). Keep in sync with the fleet panel's
+      # expectations; default is 10 minutes when unset.
+      CERTOPS_AGENT_OFFLINE_AFTER_MS: ${CERTOPS_AGENT_OFFLINE_AFTER_MS:-}
+      WORKER_CERTOPS_CRON: "${WORKER_CERTOPS_CRON:-*/1 * * * *}"
+      WORKER_CERTOPS_INTERVAL_MS: ${WORKER_CERTOPS_INTERVAL_MS:-}
+      WORKER_RUN_ON_START: ${WORKER_RUN_ON_START:-false}
+      WORKER_EXIT_ON_ERROR: ${WORKER_EXIT_ON_ERROR:-false}
+
   # Dashboard (Frontend)
   dashboard:
     build:
