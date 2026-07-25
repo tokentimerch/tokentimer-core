@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Link as RouterLink, useLocation } from 'react-router-dom';
+import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Alert,
   AlertDescription,

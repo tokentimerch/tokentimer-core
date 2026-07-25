@@ -314,6 +314,9 @@ jobs:
   # tags or digests from release-manifest.json (attached to the GitHub Release and
   # uploaded as a workflow artifact). Helm chart defaults pin appVersion tags (not
   # :latest); see deploy/helm/values.yaml image.digest notes.
+  #
+  # Note: main added a notify-discord job here (#97); release/0.11.0 reverted that
+  # feature (see the "Revert" commit), so it is intentionally not carried forward.
   promote-latest:
     runs-on: ubuntu-latest
     needs: create-release

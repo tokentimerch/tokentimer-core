@@ -8,7 +8,7 @@ import React from 'react';
 import './styles/brand.css';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter } from 'react-router';
 
 const RootTree = (
   <BrowserRouter>

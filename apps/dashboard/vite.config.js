@@ -26,7 +26,7 @@ export default defineConfig({
         // Enable code splitting for lazy-loaded pages
         manualChunks: {
           // Core vendor libs that rarely change (good cache hits)
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-react': ['react', 'react-dom', 'react-router'],
           'vendor-chakra': [
             '@chakra-ui/react',
             '@emotion/react',

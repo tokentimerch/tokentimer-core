@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import SEO from '../components/SEO.jsx';
 import { getLogoPath } from '../utils/logoUtils.js';
 import { logger } from '../utils/logger.js';

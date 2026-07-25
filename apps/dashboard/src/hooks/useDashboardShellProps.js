@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { useDashboardTheme } from './useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
