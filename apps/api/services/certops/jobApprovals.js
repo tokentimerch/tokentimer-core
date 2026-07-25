@@ -448,6 +448,7 @@ async function approveJob(options) {
       status: row.status,
       payloadHash: row.approved_payload_hash,
       canonicalIntentHash: row.approved_canonical_intent_hash,
+      ...(reason ? { reason } : {}),
     },
   });
 
@@ -537,6 +538,7 @@ async function rejectJob(options) {
     metadata: {
       jobId,
       status: row.status,
+      ...(reason ? { reason } : {}),
     },
   });
 

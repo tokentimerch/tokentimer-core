@@ -125,6 +125,7 @@ describe("jobApprovals.approveJob", () => {
     const logCalls = [];
     let updateParams = null;
     let ledgerParams = null;
+    let auditParams = null;
 
     const db = createMockDb((sql, params) => {
       if (sql.includes("FROM certificate_jobs")) {
@@ -166,6 +167,7 @@ describe("jobApprovals.approveJob", () => {
         };
       }
       if (sql.includes("INSERT INTO audit_events")) {
+        auditParams = params;
         return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -192,6 +194,8 @@ describe("jobApprovals.approveJob", () => {
     assert.equal(logCalls[0].eventType, "approval.granted");
     assert.equal(logCalls[0].status, "pending");
     assert.equal(logCalls[0].metadata.payloadHash, expectedHash);
+    assert.equal(auditParams[2], "CERTOPS_JOB_APPROVAL_GRANTED");
+    assert.equal(auditParams[6].reason, "Looks safe");
   });
 
   it("answers double-approve (job already pending) with the 409-shaped conflict code", async () => {
@@ -320,9 +324,10 @@ describe("jobApprovals.approveJob", () => {
 });
 
 describe("jobApprovals.rejectJob", () => {
-  it("rejects: terminal status, ledger row, approval.rejected log event", async () => {
+  it("rejects: terminal status, ledger row, approval.rejected log event, audited reason", async () => {
     const logCalls = [];
     let updateParams = null;
+    let auditParams = null;
 
     const db = createMockDb((sql, params) => {
       if (sql.includes("FROM certificate_jobs")) {
@@ -355,6 +360,7 @@ describe("jobApprovals.rejectJob", () => {
         };
       }
       if (sql.includes("INSERT INTO audit_events")) {
+        auditParams = params;
         return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -375,6 +381,54 @@ describe("jobApprovals.rejectJob", () => {
     assert.equal(logCalls.length, 1);
     assert.equal(logCalls[0].eventType, "approval.rejected");
     assert.equal(logCalls[0].status, "rejected");
+    // writeAudit(actorUserId, subjectUserId, action, targetType, targetId, channel, metadata, workspaceId)
+    assert.equal(auditParams[2], "CERTOPS_JOB_APPROVAL_REJECTED");
+    assert.equal(auditParams[6].reason, "Not during the freeze window");
+  });
+
+  it("omits reason from the audit metadata when no reason was given", async () => {
+    let auditParams = null;
+
+    const db = createMockDb((sql, params) => {
+      if (sql.includes("FROM certificate_jobs")) {
+        return { rows: [jobRow()] };
+      }
+      if (sql.includes("UPDATE certificate_jobs")) {
+        return { rows: [{ id: JOB_ID, status: "rejected" }] };
+      }
+      if (sql.includes("INSERT INTO certops_job_approvals")) {
+        return {
+          rows: [
+            {
+              id: "approval-1",
+              workspace_id: params[0],
+              job_id: params[1],
+              decision: params[2],
+              approved_by_user_id: params[3],
+              payload_hash: params[4],
+              canonical_intent_hash: params[5],
+              reason: params[6],
+              created_at: new Date(),
+            },
+          ],
+        };
+      }
+      if (sql.includes("INSERT INTO audit_events")) {
+        auditParams = params;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    await rejectJob({
+      client: db,
+      workspaceId: WORKSPACE_A,
+      jobId: JOB_ID,
+      approverUserId: 9,
+      logAppender: noopLogAppender(),
+    });
+
+    assert.equal("reason" in auditParams[6], false);
   });
 
   it("answers reject on a non-pending_approval job with the conflict code", async () => {

@@ -805,6 +805,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         parts.push(`Intent hash: ${md.canonicalIntentHash}`);
       if (md.rejectedByUserId)
         parts.push(`Rejected by: ${md.rejectedByUserId}`);
+      if (md.reason) parts.push(`Reason: ${md.reason}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';
