@@ -19,6 +19,8 @@ const {
   upsertManagedCertificateByMonitorSource,
   upsertAgentFilesystemTarget,
   upsertAgentFilesystemInstance,
+  ensureManagedCertificateToken,
+  findManagedCertificateBySourceRef,
 } = require("./inventory");
 const { createControllerObservationEvidence, createCertificateEvidence } = require("./evidence");
 const {
@@ -238,12 +240,29 @@ function targetSourceRefFor(observation) {
   return `${observation.agentId}/${observation.targetHost}`;
 }
 
+/**
+ * Extracts the CN attribute from a raw X.509 subject string (e.g.
+ * "CN=example.com, O=Example Inc"). Mirrors monitorBridge.js's
+ * commonNameFromSubject so a discovered certificate's display name reflects
+ * its own subject rather than the discovering host.
+ */
+function commonNameFromSubject(subject) {
+  const text = typeof subject === "string" ? subject.trim() : "";
+  if (!text) return null;
+  const match = text.match(/(?:^|\n|,\s*)CN\s*=\s*([^,\n]+)/i);
+  return match?.[1]?.trim() || null;
+}
+
 function certificateFor(observation) {
   const publicCertificate = observation.publicCertificate || {};
   return {
     certificatePem: publicCertificate.certificatePem || null,
+    // SAN first (X.509 convention), then the certificate's own subject CN;
+    // the discovery host/file path are last-resort fallbacks only for a
+    // certificate that reports neither, not the certificate's identity.
     commonName:
       publicCertificate.subjectAltNames?.[0] ||
+      commonNameFromSubject(publicCertificate.subject) ||
       observation.targetHost ||
       observation.filePath,
     fingerprintSha256: observation.fingerprintSha256,
@@ -278,6 +297,36 @@ async function upsertInventoryForObservation(client, observation) {
   const certSourceRef = certSourceRefFor(observation);
   const targetSourceRef = targetSourceRefFor(observation);
 
+  // Filesystem-discovered certificates have no pre-existing "linked token"
+  // the way endpoint/domain monitors do (monitorBridge.js's "Token first"
+  // rule: it skips the write entirely when no token is already linked).
+  // There is no equivalent setup step for an agent host, so this instead
+  // mirrors the manual PEM-import path (importPublicCertificates) and
+  // auto-creates/reuses an ssl_cert token, keeping the CONTEXT.md invariant
+  // that a managed_certificate row is never left without a linked token
+  // (otherwise it is invisible in the token-centric dashboard views).
+  // Looked up by the stable (source, source_ref) identity first, not
+  // fingerprint, since a rotation at the same file path keeps the same
+  // source_ref but changes the fingerprint.
+  const existingManagedCertificate = await findManagedCertificateBySourceRef(
+    client,
+    {
+      workspaceId: observation.workspaceId,
+      source: "agent_filesystem",
+      sourceRef: certSourceRef,
+    },
+  );
+  const tokenId = await ensureManagedCertificateToken(
+    client,
+    certificate,
+    {
+      workspaceId: observation.workspaceId,
+      name: certificate.commonName || observation.filePath,
+      tokenNotesSourceLabel: "agent filesystem discovery",
+    },
+    existingManagedCertificate,
+  );
+
   const managedCertificate = await upsertManagedCertificateByMonitorSource(
     client,
     certificate,
@@ -289,6 +338,7 @@ async function upsertInventoryForObservation(client, observation) {
       name: certificate.commonName || observation.filePath,
       keyMode: "agent-local",
       keyReference: `file://${observation.filePath}`,
+      tokenId,
       controllerObservationMetadata: {
         agentId: observation.agentId,
         filePath: observation.filePath,

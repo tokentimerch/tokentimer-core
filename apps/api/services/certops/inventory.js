@@ -160,10 +160,10 @@ async function countQuotaConsumingNewFingerprints(client, workspaceId, fingerpri
   return consuming;
 }
 
-function certOpsTokenNotes(certificate, domains) {
+function certOpsTokenNotes(certificate, domains, sourceLabel = "public PEM import") {
   const fingerprint = fingerprintSha256For(certificate) || "unknown";
   const domainText = domains.length ? ` Domains: ${domains.join(", ")}.` : "";
-  return `Imported by CertOps public PEM import. Fingerprint: ${fingerprint}.${domainText}`;
+  return `Imported by CertOps ${sourceLabel}. Fingerprint: ${fingerprint}.${domainText}`;
 }
 
 function keyReferenceError() {
@@ -366,6 +366,27 @@ async function existingManagedCertificateForToken(client, certificate, options) 
   return result.rows[0] || null;
 }
 
+/**
+ * Look up an existing managed_certificate row by its stable (source,
+ * source_ref) identity rather than fingerprint. Used by discovery sources
+ * (e.g. agent filesystem) whose source_ref is stable across a certificate
+ * rotation at the same location, so a rotated fingerprint still resolves to
+ * the same already-linked token instead of minting a new one each time.
+ */
+async function findManagedCertificateBySourceRef(client, { workspaceId, source, sourceRef }) {
+  if (!sourceRef) return null;
+  const result = await client.query(
+    `SELECT id, token_id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND source = $2
+        AND source_ref = $3
+      LIMIT 1`,
+    [workspaceId, source, sourceRef],
+  );
+  return result.rows[0] || null;
+}
+
 async function existingCertOpsToken(client, certificate, options, domains) {
   const fingerprintSha256 = fingerprintSha256For(certificate);
   if (fingerprintSha256) {
@@ -450,7 +471,7 @@ async function ensureManagedCertificateToken(
       certificate.subject || null,
       domains,
       domains[0] || null,
-      certOpsTokenNotes(certificate, domains),
+      certOpsTokenNotes(certificate, domains, options.tokenNotesSourceLabel),
     ],
   );
   return token.rows[0].id;
@@ -1164,6 +1185,8 @@ module.exports = {
   countActiveManagedCertificates,
   countActiveManagedCertificatesWithClient,
   countQuotaConsumingNewFingerprints,
+  ensureManagedCertificateToken,
+  findManagedCertificateBySourceRef,
   fingerprintsFromCertificates,
   getManagedCertificate,
   importPublicCertificates,

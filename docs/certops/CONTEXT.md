@@ -206,6 +206,15 @@ Bridge rules (worker rechecks and admin create paths share `monitorBridge.js`):
   history under the one managed certificate.
 - **PEM import** remains the path for certificates without an endpoint monitor
   (no URL to observe).
+- **Agent filesystem discovery is the one bridge-adjacent exception to
+  "Token first"**: an agent host has no pre-existing monitor/token setup step
+  the way an endpoint/domain monitor does, so `agentObservations.js` mints or
+  reuses an `ssl_cert` token the same way manual PEM import does (by
+  fingerprint, then by certificate shape) instead of skipping the write when
+  unlinked. Identity still keys by the stable `(source, source_ref)` pair
+  (`agentId/targetHost/filePath`), not fingerprint, so a rotation at the same
+  file path reuses the same `managed_certificate` row and its already-linked
+  token instead of minting a new token per rotation.
 
 Recurring endpoint SSL checks call the bridge after updating the linked token.
 The bridge does not add a historical backfill job or admin UI; existing monitor recheck
