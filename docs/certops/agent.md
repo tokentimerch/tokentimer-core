@@ -911,28 +911,45 @@ Common terminal states and what to look for:
 - **Heartbeat stops and the process exits with a "retired" log line**: the
   control plane returned HTTP 410; this is a clean, intentional shutdown.
 
-### Fleet compatibility and clock drift (control plane)
+### Fleet compatibility, clock drift, and liveness (control plane)
 
 The control plane computes per-agent compatibility on register/heartbeat and
 surfaces it on fleet status APIs (`compatibilityState`, `clockDriftState`,
-`clockDriftMs`):
+`clockDriftMs`, `livenessState`):
 
 | Field | Values | Meaning |
 | --- | --- | --- |
 | `compatibilityState` | `compatible` / `outdated` / `blocked` | Protocol and agent version vs env-configured min/max |
 | `clockDriftState` | `ok` / `warn` / `alert` / `null` | Absolute drift vs warn/alert thresholds |
 | `clockDriftMs` | number or `null` | Absolute clock offset in milliseconds |
+| `livenessState` | `live` / `stale` / `retired` / `null` | Computed in real time from `lastSeenAt` (or `createdAt` if never heartbeated) vs `CERTOPS_AGENT_OFFLINE_AFTER_MS` |
 
 Env knobs (API process):
 
 - `CERTOPS_AGENT_MIN_PROTOCOL_VERSION` / `CERTOPS_AGENT_MAX_PROTOCOL_VERSION`
 - `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION`
 - `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS`
+- `CERTOPS_AGENT_OFFLINE_AFTER_MS` (default `600000`, 10 minutes; also read by
+  the worker sweep below, so keep both in sync if overridden)
 
 `blocked` agents are outside the supported protocol/agent version window.
 `outdated` means below the preferred minimum but still accepted. Full alert
 delivery wiring for `clockDriftState: alert` is a follow-up; the fleet API
 flag is the operator-visible signal today.
+
+The persisted `certops_agents.status` column (`active` / `offline` /
+`retired`) only ever moves *toward* `active` on the agent's own
+register/heartbeat/claim calls; it is demoted to `offline` exclusively by the
+periodic stale-agent sweep (`sweepStaleAgents` in
+`apps/worker/src/certops-worker.js`, the `certops` worker/CronJob target,
+`WORKER_CERTOPS_CRON` default `*/1 * * * *`). `livenessState` is derived from
+the same `CERTOPS_AGENT_OFFLINE_AFTER_MS` threshold on every list/read call,
+so the fleet panel shows `stale` immediately even in the window between
+sweeps, or if the `certops` worker/CronJob is not deployed at all. The
+`certops` worker target must be running (Compose: `worker-certops` service;
+Kubernetes: `cronjob-certops`, `worker.cronjobs.certops.enabled`) for
+`status` itself to ever converge to `offline`; without it, `status` stays
+`active` forever regardless of `livenessState`.
 
 ### Forced agent retirement and in-flight work
 

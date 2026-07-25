@@ -13,6 +13,7 @@ Token, certificate, and secret expiration management for teams.
 | Weekly Digest | CronJob | Sends weekly token-expiry summaries |
 | Endpoint Check | CronJob | SSL certificate and health monitoring |
 | Auto Sync | CronJob | Scheduled integration scans |
+| CertOps Maintenance | CronJob | Lease reaper, stale-agent sweep, nonce/registration-replay sweeps, renewal scheduler |
 | PostgreSQL | CloudNativePG Cluster | Database (optional, can use external) |
 | CertOps Controller | Deployment | Optional cert-manager observation and safe `Certificate` provisioning |
 

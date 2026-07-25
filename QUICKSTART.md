@@ -157,6 +157,7 @@ Default worker runner schedules:
 | Auto Sync | `0 * * * *` | No |
 | Endpoint Check | `*/1 * * * *` | No |
 | Weekly Digest | `0 9 * * 1` | No |
+| CertOps Maintenance | `*/1 * * * *` | No |
 
 Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes.
 
@@ -308,7 +309,7 @@ docker compose logs api
 **Check worker logs:**
 
 ```bash
-docker compose logs worker-discovery worker-delivery worker-weekly-digest worker-auto-sync worker-endpoint-check
+docker compose logs worker-discovery worker-delivery worker-weekly-digest worker-auto-sync worker-endpoint-check worker-certops
 ```
 
 **Verify SMTP configuration:**
