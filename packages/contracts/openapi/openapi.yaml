@@ -977,7 +977,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Managed-backed certificate token must be retired before reclassification
+          description: Managed-backed certificate token must be retired before reclassification (CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED)
           content:
             application/json:
               schema:
@@ -1006,7 +1006,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Managed-backed certificate token must be retired before removal
+          description: Managed-backed certificate token must be retired before removal (CERTOPS_MANAGED_CERTIFICATE_RETIRE_REQUIRED)
           content:
             application/json:
               schema:
@@ -3671,7 +3671,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: idempotencyKey conflict or workspace CertOps is paused
+          description: idempotencyKey conflict, workspace CertOps is paused, or per-CA renewal capacity exceeded
           content:
             application/json:
               schema:
@@ -3685,6 +3685,10 @@ paths:
                   value:
                     error: CertOps is paused for this workspace
                     code: CERTOPS_WORKSPACE_PAUSED
+                perCaCapExceeded:
+                  value:
+                    error: Per-CA renewal capacity exceeded
+                    code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED
         "422":
           description: The request contained private-key or forbidden secret material
           content:
@@ -3807,12 +3811,21 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CertOpsProvisionIntentResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
           description: Idempotency conflict, terminal identity, or paused workspace
         "422":
           description: Request rejected because it contained private key material
+        "500":
+          description: >-
+            Provisioning intent could not be created after validation
+            (CERTOPS_CONTROLLER_PROVISIONING_CREATE_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/workspaces/{id}/certops/jobs/{jobId}:
     get:
       tags: [CertOps]
@@ -3887,12 +3900,16 @@ paths:
       responses:
         "200":
           description: Job approved; status moves to approved and the payload hash is recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobApprovalDecisionResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Caller lacks the manager role, is the job requester, or uses non-session credentials
+          description: Caller lacks the manager role, is the job requester, or uses non-session credentials (CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN)
           content:
             application/json:
               schema:
@@ -3904,7 +3921,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Job is not awaiting approval
+          description: Job is not awaiting approval (CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL)
           content:
             application/json:
               schema:
@@ -3945,6 +3962,10 @@ paths:
       responses:
         "200":
           description: Job rejected; status moves to rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobApprovalDecisionResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3962,7 +3983,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Job is not awaiting approval
+          description: Job is not awaiting approval (CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL)
           content:
             application/json:
               schema:
@@ -4443,11 +4464,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Event body failed schema/idempotency validation
+            (CERTOPS_EXECUTOR_EVENT_INVALID, CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
+            CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH, or CERTOPS_JOB_STATUS_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Caller lacks the required events-write scope
+            (CERTOPS_API_TOKEN_SCOPE_DENIED), or the token's workspace does
+            not match the job's workspace (CERTOPS_EXECUTOR_WORKSPACE_MISMATCH)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: CertOps is disabled or the certificate job was not found in the authenticated workspace
           content:
@@ -4530,11 +4565,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Evidence body failed schema validation
+            (CERTOPS_EXECUTOR_EVENT_INVALID or CERTOPS_EVIDENCE_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: Caller lacks the required evidence-write scope (CERTOPS_API_TOKEN_SCOPE_DENIED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: CertOps is disabled or the certificate job was not found in the authenticated workspace
           content:
@@ -4638,11 +4683,21 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Idempotency key conflicts with a different semantic observation
+          description: >-
+            Idempotency key conflicts with a different semantic observation
+            (CERTOPS_CONTROLLER_OBSERVATION_CONFLICT)
         "422":
           description: Request rejected because it contained private key material
         "429":
           description: CertOps machine-token rate limit exceeded
+        "500":
+          description: >-
+            Observation could not be persisted after acceptance
+            (CERTOPS_CONTROLLER_OBSERVATION_PERSIST_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: Security audit sink unavailable while rejecting private material
   /api/v1/certops/executor/provisioning-commands/next:
@@ -4671,6 +4726,14 @@ paths:
         "409": { description: Workspace CertOps is paused }
         "422": { description: Request rejected because it contained private key material }
         "429": { description: CertOps machine-token rate limit exceeded }
+        "500":
+          description: >-
+            Command dispatch failed after selection
+            (CERTOPS_CONTROLLER_PROVISIONING_COMMAND_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/certops/executor/provisioning-commands/{jobId}/authorize-mutation:
     post:
       tags: [CertOps Controller]
@@ -4700,6 +4763,14 @@ paths:
         "409": { description: Workspace paused or command no longer mutation-authorized }
         "422": { description: Request rejected because it contained private key material }
         "429": { description: CertOps machine-token rate limit exceeded }
+        "500":
+          description: >-
+            Reauthorization check failed
+            (CERTOPS_CONTROLLER_PROVISIONING_AUTHORIZATION_FAILED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/certops/executor/events:
     post:
       tags: [CertOps Agent]
@@ -4734,11 +4805,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsExecutorEventAcceptedResponse"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: >-
+            Executor event body failed schema/idempotency validation
+            (CERTOPS_EXECUTOR_EVENT_INVALID, CERTOPS_EXECUTOR_EVENT_TYPE_INVALID,
+            CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH, CERTOPS_JOB_STATUS_INVALID,
+            or CERTOPS_EVIDENCE_INVALID for evidence-bearing events)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Caller lacks the required scope for this event type
+            (CERTOPS_API_TOKEN_SCOPE_DENIED), or the token's workspace does not
+            match the event's workspaceId (CERTOPS_EXECUTOR_WORKSPACE_MISMATCH)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -4760,7 +4846,13 @@ paths:
                 error: CertOps security audit is temporarily unavailable
                 code: CERTOPS_SECURITY_AUDIT_UNAVAILABLE
         "409":
-          description: Executor event idempotency key conflicts with a different sanitized payload
+          description: >-
+            Executor event idempotency key conflicts with a different
+            sanitized payload (CERTOPS_EXECUTOR_EVENT_CONFLICT); the event
+            conflicts with the job's current status
+            (CERTOPS_JOB_STATUS_TRANSITION_INVALID); or a terminal status
+            does not match the job's mode, e.g. a dry_run job completing as
+            succeeded instead of dry_run_complete (CERTOPS_JOB_MODE_TERMINAL_INVALID)
           content:
             application/json:
               schema:
@@ -4936,6 +5028,15 @@ paths:
                 code: CERTOPS_AGENT_UNAUTHORIZED
         "404":
           description: CertOps is disabled deployment-wide (route is hidden)
+        "409":
+          description: Message sequence is not greater than the last accepted sequence for this agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Message sequence is not greater than the last accepted sequence for this agent
+                code: CERTOPS_AGENT_SEQUENCE_REGRESSION
         "410":
           description: Agent is retired; last_seen_at is not updated
           content:
@@ -5015,7 +5116,12 @@ paths:
         "404":
           description: CertOps is disabled deployment-wide (route is hidden)
         "409":
-          description: Workspace CertOps is paused; no job is claimed
+          description: >-
+            Workspace CertOps is paused (CERTOPS_WORKSPACE_PAUSED); message
+            sequence regression (CERTOPS_AGENT_SEQUENCE_REGRESSION); agent
+            blocked by compatibility policy (CERTOPS_AGENT_COMPATIBILITY_BLOCKED);
+            or the deploy public certificate is unavailable
+            (CERTOPS_AGENT_DEPLOY_CERT_UNAVAILABLE)
           content:
             application/json:
               schema:
@@ -5085,7 +5191,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/CertOpsAgentLeaseResponse"
         "400":
-          description: Lease body invalid or job not in a renewable state
+          description: Lease body invalid or job not in a renewable state (CERTOPS_AGENT_MESSAGE_INVALID or CERTOPS_AGENT_LEASE_INVALID)
           content:
             application/json:
               schema:
@@ -5105,7 +5211,9 @@ paths:
         "404":
           description: Job not found, or CertOps is disabled deployment-wide
         "409":
-          description: Claim ownership mismatch or sequence regression
+          description: >-
+            Claim ownership mismatch (CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH)
+            or sequence regression (CERTOPS_AGENT_SEQUENCE_REGRESSION)
           content:
             application/json:
               schema:
@@ -5771,6 +5879,13 @@ components:
         idempotencyKey:
           type: string
           maxLength: 128
+        requiresApproval:
+          type: boolean
+          default: false
+          description: >-
+            True creates the job at pending_approval instead of pending, so
+            it must be approved by a different user before it becomes
+            claimable (see the approval gate on POST .../{jobId}/approve).
     CertOpsBulkRenewRequest:
       type: object
       additionalProperties: false
@@ -5800,6 +5915,17 @@ components:
           description: >-
             True makes every created job start at pending_approval, matching
             the per-job approval gate of single manual job creation.
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9._-]{1,64}$'
+          description: >-
+            Optional request-level idempotency key. Combined with each
+            certificateId to derive a per-item key
+            (bulk-renew:<idempotencyKey>:<certificateId>), so retrying the
+            same bulk request is safe. When omitted, the server derives
+            bulk-renew:auto:<certificateId> instead.
         payload:
           allOf:
             - $ref: "#/components/schemas/CertOpsPublicObject"
@@ -5807,6 +5933,71 @@ components:
             Optional shared public payload merged into every created renew
             job, accepting the same optional execution fields as a single
             renew job. The server sets certificateId per item.
+    CertOpsJobApprovalDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [jobId, status]
+      description: >-
+        Result of an approve/reject decision. approvedByUserId/payloadHash/
+        canonicalIntentHash are null on reject (no hash is bound to a
+        rejection); approval mirrors the ledger row the server just wrote.
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [approved, rejected]
+        approvedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        payloadHash:
+          type: string
+          nullable: true
+          description: SHA256 hex of the canonical job payload bound by this decision. Null on reject.
+        canonicalIntentHash:
+          type: string
+          nullable: true
+          description: SHA256 hex of the canonical job intent bound by this decision. Null on reject.
+        approval:
+          type: object
+          additionalProperties: false
+          required: [id, workspaceId, jobId, decision, createdAt]
+          description: The approval-ledger row just written for this decision.
+          properties:
+            id:
+              type: string
+              format: uuid
+            workspaceId:
+              type: string
+              format: uuid
+            jobId:
+              type: string
+              format: uuid
+            decision:
+              type: string
+              enum: [approved, rejected]
+            approvedByUserId:
+              type: string
+              format: uuid
+              nullable: true
+            payloadHash:
+              type: string
+              nullable: true
+            canonicalIntentHash:
+              type: string
+              nullable: true
+            reason:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
     CertOpsBulkRenewResultItem:
       type: object
       additionalProperties: false

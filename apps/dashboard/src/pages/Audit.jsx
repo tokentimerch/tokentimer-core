@@ -121,6 +121,17 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_EVIDENCE_ACCEPTED',
   'CERTOPS_EXECUTOR_EVENT_ACCEPTED',
   'CERTOPS_GENERIC_SECRET_REDACTION_APPLIED',
+  'CERTOPS_JOB_APPROVAL_GRANTED',
+  'CERTOPS_JOB_APPROVAL_REJECTED',
+  'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED',
+  'CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED',
+  'CERTOPS_AGENT_RETIRED',
+  'CERTOPS_WORKSPACE_PAUSED',
+  'CERTOPS_WORKSPACE_RESUMED',
+  'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED',
+  'CERTOPS_CONTROLLER_OBSERVATION_ACCEPTED',
+  'CERTOPS_SIGNING_KEY_ROTATION_STARTED',
+  'CERTOPS_SIGNING_KEY_ROTATION_COMPLETED',
   // Alert operations
   'ALERT_QUEUED',
   'ALERT_SENT',
@@ -783,6 +794,126 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
+  function formatCertOpsApprovalMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.payloadHash) parts.push(`Payload hash: ${md.payloadHash}`);
+      if (md.canonicalIntentHash)
+        parts.push(`Intent hash: ${md.canonicalIntentHash}`);
+      if (md.rejectedByUserId)
+        parts.push(`Rejected by: ${md.rejectedByUserId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsBootstrapTokenMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.bootstrap_token_id)
+        parts.push(`Token: ${md.bootstrap_token_id}`);
+      if (md.name) parts.push(`Name: ${md.name}`);
+      if (md.token_prefix) parts.push(`Prefix: ${md.token_prefix}`);
+      if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.expires_at) parts.push(`Expiry: ${formatDateTime(md.expires_at)}`);
+      if (md.revoked_at)
+        parts.push(`Revoked: ${formatDateTime(md.revoked_at)}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsAgentRetiredMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.force != null) parts.push(`Forced: ${md.force ? 'yes' : 'no'}`);
+      if (md.reason) parts.push(`Reason: ${md.reason}`);
+      if (md.leasedJobs != null) parts.push(`Leased jobs: ${md.leasedJobs}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsWorkspacePauseMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.certOpsPaused != null)
+        parts.push(`Paused: ${md.certOpsPaused ? 'yes' : 'no'}`);
+      if (md.previousCertOpsPaused != null)
+        parts.push(`Previously: ${md.previousCertOpsPaused ? 'paused' : 'active'}`);
+      if (md.certOpsActive != null)
+        parts.push(`Active: ${md.certOpsActive ? 'yes' : 'no'}`);
+      if (md.reason) parts.push(`Reason: ${md.reason}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsProvisionIntentMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.clusterId) parts.push(`Cluster: ${md.clusterId}`);
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.managedCertificateId)
+        parts.push(`Certificate: ${md.managedCertificateId}`);
+      if (md.targetId) parts.push(`Target: ${md.targetId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsObservationAcceptedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.clusterId) parts.push(`Cluster: ${md.clusterId}`);
+      if (md.managedCertificateId)
+        parts.push(`Certificate: ${md.managedCertificateId}`);
+      if (md.observationId) parts.push(`Observation: ${md.observationId}`);
+      if (md.resourceRecreated != null)
+        parts.push(`Recreated: ${md.resourceRecreated ? 'yes' : 'no'}`);
+      if (md.apiTokenId) parts.push(`Machine token: ${md.apiTokenId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsSigningKeyRotationMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.signing_key_id) parts.push(`New key: ${md.signing_key_id}`);
+      if (md.supersedes_signing_key_id)
+        parts.push(`Supersedes: ${md.supersedes_signing_key_id}`);
+      if (md.retired_signing_key_id)
+        parts.push(`Retired: ${md.retired_signing_key_id}`);
+      if (md.active_signing_key_id)
+        parts.push(`Active: ${md.active_signing_key_id}`);
+      if (md.forced != null) parts.push(`Forced: ${md.forced ? 'yes' : 'no'}`);
+      if (md.force_reason) parts.push(`Force reason: ${md.force_reason}`);
+      if (md.active_agents != null)
+        parts.push(`Active agents: ${md.active_agents}`);
+      if (md.ack_count != null) parts.push(`Acknowledged: ${md.ack_count}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   function formatAuthMetadata(ev) {
     try {
       const md = ev?.metadata || {};
@@ -1186,6 +1317,53 @@ export default function Audit({ session, onLogout, onAccountClick }) {
 
     if (action === 'CERTOPS_GENERIC_SECRET_REDACTION_APPLIED') {
       const formatted = formatCertOpsRedactionMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_JOB_APPROVAL_GRANTED' ||
+      action === 'CERTOPS_JOB_APPROVAL_REJECTED'
+    ) {
+      const formatted = formatCertOpsApprovalMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED' ||
+      action === 'CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED'
+    ) {
+      const formatted = formatCertOpsBootstrapTokenMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_AGENT_RETIRED') {
+      const formatted = formatCertOpsAgentRetiredMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_WORKSPACE_PAUSED' ||
+      action === 'CERTOPS_WORKSPACE_RESUMED'
+    ) {
+      const formatted = formatCertOpsWorkspacePauseMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED') {
+      const formatted = formatCertOpsProvisionIntentMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_CONTROLLER_OBSERVATION_ACCEPTED') {
+      const formatted = formatCertOpsObservationAcceptedMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_SIGNING_KEY_ROTATION_STARTED' ||
+      action === 'CERTOPS_SIGNING_KEY_ROTATION_COMPLETED'
+    ) {
+      const formatted = formatCertOpsSigningKeyRotationMetadata(ev);
       if (formatted) return formatted;
     }
 

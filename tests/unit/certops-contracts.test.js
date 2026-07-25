@@ -671,6 +671,10 @@ describe("CertOps contract skeletons", () => {
       "nonce",
       "signingKeyId",
       "signature",
+      "claimId",
+      "attemptId",
+      "leaseExpiresAt",
+      "attemptCount",
     ]) {
       assert.equal(
         jobPayloadSchema.required.includes(agentOnlyField),
@@ -692,6 +696,21 @@ describe("CertOps contract skeletons", () => {
     assert.match(jobPayloadSchema.description, /signed dispatch/i);
     assert.equal(validate(validJobPayload()), true);
     assert.equal(validate({ ...validJobPayload(), privateKey: "nope" }), false);
+
+    // agentDispatch.js stamps these 4 fields onto every dispatched job
+    // (apps/api/services/certops/agentDispatch.js basePayload); the schema
+    // must accept them so real dispatch payloads validate against the
+    // published contract, not just the unsigned skeleton.
+    assert.equal(
+      validate({
+        ...validJobPayload(),
+        claimId: "claim-123",
+        attemptId: "claim-123",
+        leaseExpiresAt: "2030-01-01T00:00:00Z",
+        attemptCount: 1,
+      }),
+      true,
+    );
   });
 
   it("keeps the execution fields optional, bounded, and custody-safe", () => {

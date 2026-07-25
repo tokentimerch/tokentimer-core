@@ -377,6 +377,30 @@
       "minLength": 64,
       "maxLength": 1024,
       "description": "Reserved for signed agent dispatch: signature over the canonical job payload. Optional and not required for validation today."
+    },
+    "claimId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Reserved for signed agent dispatch: claim identifier the agent must echo back with the result (ownership re-proof). Optional and not required for validation today."
+    },
+    "attemptId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Reserved for signed agent dispatch: server-assigned attempt id mirroring claimId, so a schema-minimal result report (attemptId only) still re-proves claim ownership. Optional and not required for validation today."
+    },
+    "leaseExpiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Reserved for signed agent dispatch: current claim lease expiry, echoed on dispatch so the agent can plan lease renewal. Optional and not required for validation today."
+    },
+    "attemptCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Reserved for signed agent dispatch: number of claim attempts made for this job so far. Optional and not required for validation today."
     }
   },
   "definitions": {

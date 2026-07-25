@@ -2980,6 +2980,56 @@ describe("CertOps executor event ingestion", function () {
     }
   });
 
+  it("returns a safe 409 (not a 500) when a job.completed event targets a dry_run job", async () => {
+    const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
+      "certops-executor-events-mode-terminal",
+    );
+
+    try {
+      const token = await createScopedToken({
+        workspaceId: workspaceA,
+        ownerId,
+        scopes: ["certops:events:write"],
+      });
+      const job = await createCertificateJob({
+        workspaceId: workspaceA,
+        operation: "deploy",
+        source: "api",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${crypto.randomUUID()}`,
+        payload: {
+          deploymentTarget: "kubernetes/default/web-cert",
+          fingerprintSha256:
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        },
+        status: "running",
+        mode: "dry_run",
+        requestedByUserId: ownerId,
+      });
+      const app = buildExecutorApp();
+      const route = "/api/v1/certops/executor/events";
+      const auth = `Bearer ${token.plaintextToken}`;
+
+      const res = await supertest(app)
+        .post(route)
+        .set("Authorization", auth)
+        .send(
+          eventPayload({
+            workspaceId: workspaceA,
+            jobId: job.id,
+            eventType: "job.completed",
+            status: "succeeded",
+          }),
+        );
+
+      expect(res.status).to.equal(409);
+      expect(res.body.code).to.equal("CERTOPS_JOB_MODE_TERMINAL_INVALID");
+      expectNoSensitiveValues(res.body, token.plaintextToken);
+    } finally {
+      await cleanupWorkspacePair(ownerId, [workspaceA, workspaceB]);
+    }
+  });
+
   it("rejects malformed IDs and metadata at the route boundary", async () => {
     const { ownerId, workspaceA, workspaceB } = await createWorkspacePair(
       "certops-executor-events-boundary",

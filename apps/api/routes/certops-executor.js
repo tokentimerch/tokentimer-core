@@ -50,6 +50,7 @@ const {
 const {
   CERTOPS_JOB_INVALID,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
+  CERTOPS_JOB_MODE_TERMINAL_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_JOB_STATUS_TRANSITION_INVALID,
@@ -1494,13 +1495,16 @@ function handleExecutorEventError(res, error) {
 
   if (
     error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID ||
-    error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT
+    error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT ||
+    error?.code === CERTOPS_JOB_MODE_TERMINAL_INVALID
   ) {
     return res.status(409).json({
       error:
         error.code === CERTOPS_EXECUTOR_EVENT_CONFLICT
           ? "Executor event conflicts with a previously accepted event"
-          : "Executor event conflicts with the current certificate job status",
+          : error.code === CERTOPS_JOB_MODE_TERMINAL_INVALID
+            ? "Executor event's terminal status is invalid for this job's mode"
+            : "Executor event conflicts with the current certificate job status",
       code: error.code,
     });
   }
