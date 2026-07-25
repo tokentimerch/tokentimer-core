@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 import { workspaceAPI } from '../utils/apiClient';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 

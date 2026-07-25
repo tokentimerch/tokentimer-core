@@ -22,7 +22,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
 import {

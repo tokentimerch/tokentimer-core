@@ -1,4 +1,4 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { HStack, Icon, Text } from '@chakra-ui/react';
 import { ArrowRight, ShieldCheck } from 'lucide-react';
 import {

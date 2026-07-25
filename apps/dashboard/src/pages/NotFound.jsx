@@ -1,5 +1,5 @@
 import { Box, Heading, Text, Button, VStack } from '@chakra-ui/react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import SEO from '../components/SEO.jsx';
 
 export default function NotFound() {

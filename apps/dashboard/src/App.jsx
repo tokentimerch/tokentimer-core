@@ -55,7 +55,7 @@ import {
   useSearchParams,
   useNavigate,
   useLocation,
-} from 'react-router-dom';
+} from 'react-router';
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';

@@ -9,7 +9,7 @@ import {
   useColorModeValue,
   Icon,
 } from '@chakra-ui/react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { FiFileText, FiBookOpen } from 'react-icons/fi';
 import {
   useBrandColors,
