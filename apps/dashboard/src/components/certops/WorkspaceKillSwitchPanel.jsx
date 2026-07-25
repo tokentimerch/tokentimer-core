@@ -145,25 +145,21 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
 /**
  * Workspace-local CertOps kill switch (incident control).
  *
- * Backed by GET/PUT /api/v1/workspaces/:id/certops/settings, which stay
- * reachable even while the deployment-wide certops.enabled rollout flag is
- * off (see docs/certops/CONTEXT.md), so this panel is mounted unconditionally
- * on the CertOps page rather than gated behind useCertOpsAvailability.
- * Pausing blocks new provisioning intent and command delivery only; it does
- * not stop already-leased jobs or passive observation/evidence reporting.
- * Only workspace admins can change it (certops.kill_switch.manage); other
- * roles see the current state read-only.
+ * Backed by GET/PUT /api/v1/workspaces/:id/certops/settings. The underlying
+ * routes stay reachable even while the deployment-wide certops.enabled
+ * rollout flag is off, but the CertOps page only mounts this panel once
+ * useCertOpsAvailability resolves `enabled: true`: pausing/resuming a
+ * feature that is not rolled out for the deployment at all is not a
+ * meaningful control to surface to workspace admins. Pausing blocks new
+ * provisioning intent and command delivery only; it does not stop
+ * already-leased jobs or passive observation/evidence reporting. Only
+ * workspace admins can change it (certops.kill_switch.manage); other roles
+ * see the current state read-only.
  */
 export default function WorkspaceKillSwitchPanel() {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
-  const {
-    certOpsPaused,
-    certOpsEnabled,
-    loading,
-    error,
-    saving,
-    setPaused,
-  } = useCertOpsWorkspaceKillSwitch();
+  const { certOpsPaused, loading, error, saving, setPaused } =
+    useCertOpsWorkspaceKillSwitch();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
@@ -204,9 +200,6 @@ export default function WorkspaceKillSwitchPanel() {
         Pausing stops new provisioning intent and command delivery to agents
         for this workspace only. Already-leased jobs keep running, and agents
         can still report observations and evidence while paused.
-        {certOpsEnabled === false
-          ? ' Certificate operations is also off deployment-wide right now, so this control only stages the workspace state ahead of rollout.'
-          : ''}
       </Text>
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}

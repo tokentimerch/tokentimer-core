@@ -140,16 +140,4 @@ describe('WorkspaceKillSwitchPanel', () => {
     expect(screen.getByText('Internal error')).toBeInTheDocument();
   });
 
-  it('notes when the deployment-wide rollout flag is also off', () => {
-    useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
-    useCertOpsWorkspaceKillSwitchMock.mockReturnValue(
-      killSwitchState({ certOpsEnabled: false, certOpsActive: false })
-    );
-
-    renderWithProviders(<WorkspaceKillSwitchPanel />);
-
-    expect(
-      screen.getByText(/also off deployment-wide right now/)
-    ).toBeInTheDocument();
-  });
 });

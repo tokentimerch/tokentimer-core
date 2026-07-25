@@ -746,9 +746,6 @@ export default function CertOpsOperations({
             minW={0}
             maxW='100%'
           >
-            <DashboardPanel mb={3}>
-              <WorkspaceKillSwitchPanel />
-            </DashboardPanel>
             {!ready ? (
               <DashboardState
                 type='loading'
@@ -769,6 +766,9 @@ export default function CertOpsOperations({
               />
             ) : enabled ? (
               <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={3}>
+                <DashboardPanel gridColumn={{ xl: '1 / -1' }}>
+                  <WorkspaceKillSwitchPanel />
+                </DashboardPanel>
                 <ExecutorJobsPanel />
                 <DashboardPanel>
                   <ApiTokenPanel />

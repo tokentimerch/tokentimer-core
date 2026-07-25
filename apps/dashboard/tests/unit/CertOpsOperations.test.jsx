@@ -222,6 +222,9 @@ describe('CertOpsOperations', () => {
     expect(
       screen.queryByText('Machine executor jobs')
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Certificate operations kill switch')
+    ).not.toBeInTheDocument();
   });
 
   it('shows an availability error distinct from the disabled empty state', () => {
@@ -275,6 +278,9 @@ describe('CertOpsOperations', () => {
 
     expect(screen.getByText('Machine executor jobs')).toBeInTheDocument();
     expect(screen.getByText('Machine API tokens')).toBeInTheDocument();
+    expect(
+      screen.getByText('Certificate operations kill switch')
+    ).toBeInTheDocument();
   });
 
   it('shows a loading state for the jobs panel distinct from the empty state', () => {
