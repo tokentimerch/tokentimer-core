@@ -1,7 +1,7 @@
 // Legacy Usage page stub. App.jsx redirects /usage to /control-center; this file
 // is not imported as a route element.
 
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 export default function Usage() {
   return <Navigate to='/control-center' replace />;

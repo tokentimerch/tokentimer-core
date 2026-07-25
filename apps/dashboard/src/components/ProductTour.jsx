@@ -8,7 +8,7 @@ import {
   HStack,
   Box,
 } from '@chakra-ui/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { trackEvent } from '../utils/analytics';
 import { logger } from '../utils/logger';
 
