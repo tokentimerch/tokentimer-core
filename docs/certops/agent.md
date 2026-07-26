@@ -71,6 +71,31 @@ that the dashboard's Deploy-an-agent panel generates a command for. It:
 
 `--dry-run` prints every action without touching the system.
 
+#### Installer flags
+
+Run `install-agent.sh --help` for the authoritative list; the table below is
+the same surface with the operator-relevant caveats.
+
+| Flag | Required | Notes |
+|------|----------|-------|
+| `--api-url URL` | yes (install) | Control plane base URL, written to `config.json` `serverUrl`. Must be `https://` unless `--allow-insecure-local-http` is set **and** the host is loopback. |
+| `--workspace-id ID` | yes (install) | Recorded in `config.json`. The bootstrap token is already workspace-scoped server-side. |
+| bootstrap token | yes (install) | Preferably **not** a flag. With neither `TOKENTIMER_AGENT_BOOTSTRAP_TOKEN` nor `--bootstrap-token` set, the installer reads it from a hidden prompt, so nothing lands in shell history or process listings. |
+| `--bootstrap-token TOKEN` | no | Works, but discouraged: argv is visible in process listings while the installer runs. Prefer the prompt or the env var. |
+| `--ca-bundle PATH` | no | PEM CA bundle for a private-CA control plane; copied into the state dir and referenced as `caBundlePath`. Note it *replaces* the default trust store for control-plane requests rather than extending it. |
+| `--write-path PATH` | no | Absolute directory the agent may write certificates into. Repeatable. Installed into a systemd drop-in `ReadWritePaths` list. Never grants all of `/etc`. |
+| `--write-paths-file F` | no | One absolute path per line (`#` comments and blank lines allowed), merged with `--write-path`. |
+| `--reload-service NAME` | no | Allows `systemctl reload NAME` through a generated polkit rule. Repeatable. Allowlist: `nginx`, `apache`/`apache2`, `httpd`, `haproxy`. Polkit rather than sudoers because the unit keeps `NoNewPrivileges=true`, under which sudo cannot escalate at all. |
+| `--allow-insecure-local-http` | no | Development only. Permits plain `http://` for loopback hosts only, and writes `allowInsecureLocalHttp=true` into `config.json`. |
+| `--dry-run` | no | Print every action, execute nothing. Also valid with `--uninstall`. |
+| `--uninstall` | no | See below. |
+
+`--write-path` is a sandbox grant, not a filesystem permission. It only lets
+the systemd sandbox *reach* the directory; the `tokentimer-agent` user must
+still be able to write there, for example
+`setfacl -m u:tokentimer-agent:rwx /etc/nginx/certs`. Without that, deploy
+jobs fail with a permission error even though the path is allowlisted.
+
 `--uninstall` stops and disables the service, then removes the app directory,
 the unit file, the drop-in override, and the polkit rule. It deliberately
 **preserves the state directory and the system user**, because the state dir
@@ -122,6 +147,11 @@ inside it:
 | `signing-key-pin.json` | Pinned control-plane job-signing public key (`signingKeyId`, `publicKeyPem`) | 0600 |
 | `replay-store.json` | Consumed-nonce replay cache (default location) | 0600 |
 | `keys/` | Agent-generated private keys, `<certificateId>.key.pem` (default location) | dir 0700, keys 0600 |
+| `outbox/` | Durable queue of terminal results/evidence awaiting control-plane acknowledgement (default location); drained on restart before new claims | dir 0700, files 0600 |
+| `job-journal/` | Side-effect journal, `<jobId>-<attemptId>.json`, written before the first external mutation; an unresolved entry blocks automatic re-execution (see section 5) | dir 0700, files 0600 |
+| `registration-id.json` | Client-generated `registrationId` for encrypted registration recovery; cleared once the credential is durably stored | 0600 |
+| `bootstrap.env` | Bootstrap token, written by the installer and **deleted by the agent** after its first successful registration (best-effort; delete it yourself if it survives) | 0600 |
+| `acme/` | certbot (`config`/`work`/`logs`) and acme.sh (`home`/`config-home`, incl. the `dnsapi/dns_certops.sh` symlink) working state, kept here so both stay writable under `ProtectSystem=strict` | dir 0700 |
 
 ### First-run registration
 
@@ -183,7 +213,10 @@ Top level:
 | `execution` | object or null | null | Null is treated as `{ enabled: false }` (observe-only mode). |
 | `caBundlePath` | string or null | null | Path to a PEM CA bundle trusted for the agent-to-control-plane HTTPS channel (private-CA control planes). Env override: `TOKENTIMER_AGENT_CA_BUNDLE`. Fail-loud at startup: a missing/unreadable file, a file without a `BEGIN CERTIFICATE` block, or a file containing private key material aborts before any network call. When set, the bundle replaces the default trust store for control-plane requests (it does not extend it); plain `http` URLs are unaffected. When unset, the OS trust store applies (`NODE_EXTRA_CA_CERTS` remains a coarser process-wide alternative). |
 | `dnsProviders` | object or null | null | Native DNS-01 solver configuration (see "DNS-01 providers" in section 5). Maps provider id to `{ credentialsFile: <absolute path>, ...non-secret options }`, plus a reserved `zoneProviderMap` key (zone to provider id). Credentials never live in `config.json`, only the path to a 0600 credentials file does. Fail-loud validation: unknown provider ids, relative paths, and `zoneProviderMap` entries naming unconfigured providers abort startup. |
-| `dnsPropagation` | object or null | defaults | Post-mutation DNS wait: `{ timeoutMs` (default 120000), `intervalMs` (default 2000), `resolvers` (optional recursive resolver IPs), `checkAuthoritative` (default true) `}`. Used by `certops-dns-hook` after present/cleanup. |
+| `dnsPropagation` | object or null | defaults | Post-mutation DNS wait: `{ timeoutMs` (default 120000), `intervalMs` (default 2000), `resolvers` (optional recursive resolver IPs), `checkAuthoritative` (default true), `verificationMode` (`all` default, or `quorum`), `quorumCount` (required positive integer in quorum mode, else null) `}`. Used by `certops-dns-hook` after present/cleanup. See "DNS-01 providers" in section 5 for the verification-mode semantics. |
+| `allowInsecureLocalHttp` | boolean | false | Permits a plain `http://` `serverUrl`, and only for loopback hosts (`localhost` / `127/8` / `::1` / `*.localhost`). Development only; the installer's `--allow-insecure-local-http` writes it. |
+| `acmeAccounts` | object or null | null | Maps an opaque account/EAB reference to `{ credentialsFile: <absolute path> }` for ACME External Account Binding. Like `dnsProviders`, only the path lives in config; the credentials stay in an agent-local 0600 file and are never transmitted by the control plane. |
+| `pinnedSigningKey` | object or null | null | **Derived, not hand-written.** Read back from `signing-key-pin.json` (`{ signingKeyId, publicKeyPem }`) and surfaced on the loaded config. Set by trust-on-first-use at registration and by rotation adoption; editing it by hand is not a supported way to change the trusted key. |
 
 `policy` block (deep validation in `src/policy/loadPolicyConfig`, fail-loud):
 
@@ -210,6 +243,7 @@ Top level:
 | `dryRun` | boolean | true | Plan-only execution with zero side effects (see section 5). |
 | `keysDir` | string | `<configDir>/keys` | Private keys, 0600 in 0700 dir. |
 | `replayStorePath` | string | `<configDir>/replay-store.json` | Persisted replay cache. |
+| `outboxDir` | string | `<configDir>/outbox` | Durable queue for terminal results/evidence that could not be delivered yet, so an outage does not lose a completed job's outcome. |
 | `clockDriftToleranceMs` | positive int | 30000 | Slack applied to the signed-job validity window. |
 
 ## 3. Protocol
