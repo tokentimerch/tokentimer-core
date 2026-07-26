@@ -204,46 +204,67 @@ async function createCertificateIssuanceJob(options = {}) {
   const { idempotencyKey, commonName, sans, certPath } =
     normalizeIssuanceRequest(options);
 
-  // Replay check before inserting the certificate: createCertificateJob would
-  // return the original job for a repeated key, but only after this function
-  // had already created a second orphan provisioning row.
-  const replay = await client.query(
-    `SELECT id FROM certificate_jobs
-      WHERE workspace_id = $1 AND idempotency_key = $2
+  // Resolve the identity before touching certificate_jobs. A retried POST must
+  // reuse the certificate its first attempt created; inserting unconditionally
+  // would either collide on the source_ref unique index or, worse, leave an
+  // orphan provisioning row behind when createCertificateJob then replayed the
+  // original job.
+  const existing = await client.query(
+    `SELECT id FROM managed_certificates
+      WHERE workspace_id = $1 AND source = $2 AND source_ref = $3
       LIMIT 1`,
-    [workspaceId, idempotencyKey],
+    [workspaceId, ISSUANCE_SOURCE, idempotencyKey],
   );
-  if (replay.rows[0]) {
-    return await createJob({
-      ...jobOptions,
-      client,
-      operation: "issue",
+
+  let certificateId = existing.rows[0]?.id || null;
+  if (!certificateId) {
+    // The key may still be taken by a non-issuance job (an operator reusing a
+    // key across operations). Do not create an identity in that case: hand the
+    // bare request to createCertificateJob so it raises its own idempotency
+    // conflict, which is the honest answer.
+    const conflicting = await client.query(
+      `SELECT 1 FROM certificate_jobs
+        WHERE workspace_id = $1 AND idempotency_key = $2
+        LIMIT 1`,
+      [workspaceId, idempotencyKey],
+    );
+    if (conflicting.rows[0]) {
+      return await createJob({
+        ...jobOptions,
+        client,
+        operation: "issue",
+        idempotencyKey,
+        returnOutcome: true,
+      });
+    }
+    const certificate = await insertProvisioningCertificate(client, {
+      workspaceId,
       idempotencyKey,
-      returnOutcome: true,
+      commonName,
+      sans,
+      certPath,
     });
+    certificateId = certificate.id;
   }
 
-  const certificate = await insertProvisioningCertificate(client, {
-    workspaceId,
-    idempotencyKey,
-    commonName,
-    sans,
-    certPath,
-  });
-
+  // One call site, on both the first attempt and the replay, so the derived
+  // options are byte-identical. createCertificateJob hashes the creation
+  // request to decide replay-vs-conflict, so a replay that reconstructed the
+  // payload differently would be reported as a conflicting reuse of the key
+  // instead of returning the original job.
   return await createJob({
     ...jobOptions,
     client,
     operation: "issue",
     idempotencyKey,
     subjectType: "managed_certificate",
-    subjectId: certificate.id,
+    subjectId: certificateId,
     payload: {
       ...options.payload,
       // Server-assigned: the agent uses certificateId as the job's identity
       // for its own state and logging, and it must match the row this job
       // reconciles.
-      certificateId: certificate.id,
+      certificateId,
       sans,
       certPath,
     },

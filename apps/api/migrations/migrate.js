@@ -2276,6 +2276,31 @@ const migrations = [
           );
     `,
   },
+  {
+    version: 34,
+    name: "certificate_jobs_issue_operation",
+    sql: `
+      -- Companion to migration 33. Migration 33 taught managed_certificates
+      -- about the "issue" operation's row (status 'provisioning', source
+      -- 'agent_issuance') but left the certificate_jobs vocabulary alone, so
+      -- the job that creates that row could never be inserted: every issue
+      -- request failed at COMMIT with
+      -- "violates check constraint certificate_jobs_operation_check", surfacing
+      -- as an opaque HTTP 500. Found by live end-to-end testing against a
+      -- running stack, which is exactly the class of gap the service-layer unit
+      -- tests cannot see because they stub the database.
+      --
+      -- "issue" is control-plane vocabulary only: signed dispatch translates it
+      -- to the wire action "renew", so no agent needs to know about it and this
+      -- constraint is the only schema change it requires.
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_operation_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_operation_check CHECK (
+          operation IN ('issue', 'renew', 'deploy', 'reload', 'revoke', 'noop')
+        );
+    `,
+  },
 ];
 
 async function runMigrations() {

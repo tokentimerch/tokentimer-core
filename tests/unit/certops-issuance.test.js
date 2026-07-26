@@ -68,12 +68,18 @@ function validRequest({ payload, ...overrides } = {}) {
  * Records every write so a test can assert not just the outcome but that no
  * certificate row was created on a rejected or replayed request.
  */
-function createIssuanceClient({ existingJobId = null } = {}) {
+function createIssuanceClient({
+  existingJobId = null,
+  existingCertificateId = null,
+} = {}) {
   const state = { inserts: [], queries: [] };
   const client = {
     query: async (text, params) => {
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ sql, params });
+      if (sql.includes("FROM managed_certificates") && sql.includes("source_ref")) {
+        return { rows: existingCertificateId ? [{ id: existingCertificateId }] : [] };
+      }
       if (sql.includes("FROM certificate_jobs") && sql.includes("idempotency_key")) {
         return { rows: existingJobId ? [{ id: existingJobId }] : [] };
       }
@@ -218,7 +224,10 @@ describe("certops issuance job creation", () => {
   });
 
   it("creates no second certificate when the idempotency key replays", async () => {
-    const { state, client } = createIssuanceClient({ existingJobId: "job-1" });
+    const { state, client } = createIssuanceClient({
+      existingJobId: "job-1",
+      existingCertificateId: NEW_CERT_ID,
+    });
     await createCertificateIssuanceJob({
       ...validRequest(),
       client,
@@ -229,6 +238,62 @@ describe("certops issuance job creation", () => {
       0,
       "a replay must not create an orphan provisioning row",
     );
+  });
+
+  it("derives identical job options on the replay, so it replays instead of conflicting", async () => {
+    // Regression: the replay path used to hand createCertificateJob the bare
+    // request (no subjectId, no server-assigned certificateId), so its
+    // creation-request hash differed from the original and a byte-identical
+    // retry was reported as an idempotency conflict (HTTP 409) instead of
+    // returning the original job. Found by live end-to-end testing.
+    const captured = [];
+    const jobCreatorOverride = async (options) => {
+      captured.push(options);
+      return { job: { id: "job-1" }, created: captured.length === 1 };
+    };
+
+    const first = createIssuanceClient();
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      client: first.client,
+      jobCreatorOverride,
+    });
+
+    const replay = createIssuanceClient({
+      existingJobId: "job-1",
+      existingCertificateId: NEW_CERT_ID,
+    });
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      client: replay.client,
+      jobCreatorOverride,
+    });
+
+    assert.equal(captured.length, 2);
+    const strip = ({ client, jobCreatorOverride: _ignored, ...rest }) => rest;
+    assert.deepEqual(
+      strip(captured[1]),
+      strip(captured[0]),
+      "replayed job options must be identical to the original",
+    );
+  });
+
+  it("does not create an identity when the key belongs to a non-issuance job", async () => {
+    // Key reused across operations: there is no issuance certificate to reuse,
+    // and inventing one would leave an orphan row behind the conflict that
+    // createCertificateJob is about to raise.
+    const { state, client } = createIssuanceClient({ existingJobId: "job-renew" });
+    let jobOptions = null;
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      client,
+      jobCreatorOverride: async (options) => {
+        jobOptions = options;
+        return { job: { id: "job-renew" }, created: false };
+      },
+    });
+    assert.equal(state.inserts.length, 0);
+    assert.equal(jobOptions.subjectId, undefined);
   });
 
   it("refuses to run without the kill-switch-locked client", async () => {
@@ -421,5 +486,34 @@ describe("migration 33 issuance vocabulary", () => {
       migration.sql,
       /uq_managed_certificates_workspace_fingerprint_import[\s\S]*agent_issuance/,
     );
+  });
+});
+
+describe("migration 34 issue job operation", () => {
+  const migration = migrations.find((entry) => entry.version === 34);
+
+  it("widens certificate_jobs.operation to accept issue", () => {
+    // Regression: migration 33 taught managed_certificates about issuance but
+    // left this constraint alone, so every issue request failed at COMMIT with
+    // an opaque HTTP 500. The unit tests could not see it because they stub the
+    // database; only live testing against a real stack caught it.
+    assert.ok(migration, "migration 34 expected");
+    assert.match(migration.sql, /certificate_jobs_operation_check/);
+    assert.match(migration.sql, /'issue'/);
+  });
+
+  it("keeps every previously accepted operation", () => {
+    for (const value of ["renew", "deploy", "reload", "revoke", "noop"]) {
+      assert.match(migration.sql, new RegExp(`'${value}'`));
+    }
+  });
+
+  it("accepts exactly the operations the service layer declares", () => {
+    const declared = migration.sql.match(/operation IN \(([^)]+)\)/);
+    assert.ok(declared, "operation IN (...) list expected");
+    const values = declared[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual([...values].sort(), [...JOB_OPERATIONS].sort());
   });
 });
