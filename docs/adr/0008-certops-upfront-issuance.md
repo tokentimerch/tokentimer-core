@@ -53,6 +53,17 @@ where an operator most needs to see what happened.
    operator double-click). An idempotent replay returns the existing job and
    creates zero additional `managed_certificates` rows. Without the key, retries
    would silently multiply provisioning rows for one certificate.
+
+   This puts a real constraint on the implementation, learned the hard way:
+   the replay must resolve the *same* identity the first attempt assigned and
+   present the job layer with the *same* derived request. The job layer decides
+   replay-versus-conflict by hashing the creation request, so a replay path that
+   reconstructs the request differently (omitting the server-assigned
+   `subjectId` and `certificateId`, for example) hashes differently and gets
+   reported as a conflicting reuse of the key, which is precisely the failure
+   the mandatory key exists to prevent. Identity resolution therefore happens
+   before the job table is touched, and both first attempt and replay go through
+   one call site.
 4. **Execution fields match `renew`.** Allowed: `commandRef`, `caEndpoint`,
    `acmeKind`, `keyRotation`, `certPath`, `reloadService`, `verifyHost`,
    `verifyPort`, `dnsZone`, `dnsProvider`. A `renewalProfile` snapshot is **not**
@@ -95,13 +106,30 @@ where an operator most needs to see what happened.
 
 ### Schema implication
 
-Migration v33 is additive:
+Two migrations, both additive, and the vocabulary lives in **two different
+tables**. Migration v33 covers the certificate row:
 
 - `'provisioning'` is added to the `managed_certificates` status CHECK
   constraint.
 - `'agent_issuance'` is added to the source CHECK constraint.
 - The partial unique indexes that enumerate sources are widened to include
   `agent_issuance`.
+
+Migration v34 covers the job that references it:
+
+- `'issue'` is added to the `certificate_jobs.operation` CHECK constraint.
+
+v34 was missed on first implementation, and the consequence is worth recording
+because it is not obvious: with only v33 applied, the certificate row inserts
+fine and then the job insert fails, so the whole transaction aborts and *every*
+`issue` request returns an opaque HTTP 500 with the real cause visible only in
+the API log. Nothing partial is written, so it is safe, but it is
+undiagnosable from the response alone. Unit tests could not see it because they
+stub the database; it was found by live testing against a running stack. The
+regression test therefore asserts the v34 constraint's value list equals the
+service layer's `JOB_OPERATIONS` **exactly**, rather than merely containing
+`'issue'`, so any future operation added to one side and not the other fails
+the suite instead of production.
 
 ### Lifecycle implication
 
@@ -153,11 +181,14 @@ inventory field.
 
 ## Consequences
 
-- Migration v33 must be applied before the `issue` route is enabled; the CHECK
-  constraints reject `provisioning` and `agent_issuance` until then.
-- Cloud and Enterprise must adopt the same migration and the same job-service
+- Migrations v33 **and** v34 must both be applied before the `issue` route is
+  enabled. v33's constraints reject `provisioning` and `agent_issuance`; v34's
+  rejects the `issue` job itself. Either one missing means every request fails,
+  and because the failure is a constraint violation at COMMIT it surfaces as an
+  opaque HTTP 500 rather than a useful error.
+- Cloud and Enterprise must adopt both migrations and the same job-service
   change when they re-pin core. The reconciliation branch lives in the shared
-  job status transition path, so overlays inherit it, but the migration is not
+  job status transition path, so overlays inherit it, but the migrations are not
   optional for them.
 - Agents require no change and no redeploy. Field fleets accept `issue` jobs
   immediately because they only ever see `action: "renew"`.
