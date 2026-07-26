@@ -55,6 +55,9 @@ const {
   linkReconciledCertificateToken,
 } = require("./inventory");
 const {
+  ensureDerivedRenewalProfile,
+} = require("./renewalProfileDerivation");
+const {
   dispatchNonceTtlSeconds,
   jobLeaseSeconds,
 } = require("./leaseTiming");
@@ -1200,14 +1203,20 @@ async function renewJobLease({
  * When any of those fails the row stays 'provisioning' with a recorded
  * reconciliation_reason, which is a state an operator can see and act on.
  *
+ * On a successful promotion this also derives the certificate's renewal profile
+ * from the payload that just succeeded, because without one the renewal
+ * scheduler will never pick the certificate up and it would silently expire.
+ *
  * Runs inside the result-ingestion transaction. Returns
- * { certificateId, promoted, reason } or null when there was nothing to do.
+ * { certificateId, promoted, reason, profileId } or null when there was nothing
+ * to do.
  */
 async function reconcileProvisionedCertificate({
   client,
   workspaceId,
   job,
   linkToken = linkReconciledCertificateToken,
+  ensureRenewalProfile = ensureDerivedRenewalProfile,
 }) {
   if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
 
@@ -1325,7 +1334,32 @@ async function reconcileProvisionedCertificate({
     existingTokenId: certificate.token_id || null,
   });
 
-  return { certificateId: String(job.subject_id), promoted: true, reason: null };
+  // A certificate with no renewal profile is never picked up by the renewal
+  // scheduler: it refuses to dispatch a renewal it cannot fully specify. Since
+  // nothing else in the product writes certificate_profiles, an issued
+  // certificate would sit at 'active' with a real expiry and silently never
+  // renew. Derive the profile here, where the payload that just succeeded is
+  // known to work, rather than asking the operator to retype it and risk
+  // disagreeing with what actually ran.
+  const derivation = await ensureRenewalProfile({
+    client,
+    workspaceId,
+    certificateId: String(job.subject_id),
+    payload: job.payload || {},
+    certificate: {
+      commonName: text(metadata.commonName),
+      subjectAltNames: sans
+        ? sans.split(",").map((name) => name.trim()).filter(Boolean)
+        : [],
+    },
+  });
+
+  return {
+    certificateId: String(job.subject_id),
+    promoted: true,
+    reason: null,
+    profileId: derivation?.profileId || null,
+  };
 }
 
 /**
@@ -1371,7 +1405,8 @@ async function ingestResult({
 
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
-              subject_type, subject_id, error_code, completed_at, mode
+              subject_type, subject_id, error_code, completed_at, mode,
+              payload
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2

@@ -24,7 +24,11 @@
  */
 
 const { pool } = require("../../db/database");
-const { createCertificateJob, isTerminalJobStatus } = require("./jobs");
+const {
+  CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+  createCertificateJob,
+  isTerminalJobStatus,
+} = require("./jobs");
 const {
   CERTOPS_WORKSPACE_PAUSED,
   lockWorkspaceForCertOpsSideEffect,
@@ -356,6 +360,7 @@ async function runRenewalSchedulerSweep({
     skippedPaused: 0,
     skippedByCaCap: 0,
     skippedIncompleteProfile: 0,
+    skippedNotAgentDeployable: 0,
     errors: [],
   };
 
@@ -439,6 +444,14 @@ async function runRenewalSchedulerSweep({
               code: error?.code,
             });
           }
+          continue;
+        }
+        // An observed-only certificate (endpoint or domain monitor, no agent
+        // custody of the key) can never be renewed by an agent. That is an
+        // expected steady state, not a failure, so counting it as an error would
+        // make every sweep look broken and bury real failures.
+        if (error?.code === CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE) {
+          summary.skippedNotAgentDeployable += 1;
           continue;
         }
         summary.errors.push({

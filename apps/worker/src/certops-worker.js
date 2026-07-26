@@ -37,6 +37,7 @@ import {
   gCertopsNoncesSwept,
   gCertopsRegistrationReplaysSwept,
   gCertopsRenewalJobsCreated,
+  gCertopsRenewalScheduler,
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
 import { createRequire } from "module";
@@ -777,10 +778,24 @@ export async function runCertOpsMaintenance({
     },
   );
   if (results.renewalScheduler.status === "success") {
-    safeGaugeSet(
-      gCertopsRenewalJobsCreated,
-      results.renewalScheduler.result.created,
-    );
+    const summary = results.renewalScheduler.result;
+    safeGaugeSet(gCertopsRenewalJobsCreated, summary.created);
+    // Export the skip reasons too, not just the successes. Without these a
+    // fleet whose certificates all lack a renewal profile looks identical to an
+    // idle one, which is exactly the failure mode that lets certificates expire
+    // unnoticed.
+    for (const [outcome, value] of [
+      ["scanned", summary.scanned],
+      ["created", summary.created],
+      ["replayed", summary.replayed],
+      ["skipped_paused", summary.skippedPaused],
+      ["skipped_ca_cap", summary.skippedByCaCap],
+      ["skipped_incomplete_profile", summary.skippedIncompleteProfile],
+      ["skipped_not_agent_deployable", summary.skippedNotAgentDeployable],
+      ["errors", summary.errors?.length ?? 0],
+    ]) {
+      safeGaugeSet(gCertopsRenewalScheduler, { outcome }, value ?? 0);
+    }
   }
 
   results.outboxDrain = await runIsolated(

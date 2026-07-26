@@ -41,3 +41,14 @@ export const gCertopsRenewalJobsCreated = new client.Gauge({
   help: "Renew jobs created by the last renewal-scheduler run",
   registers: [metricsRegister],
 });
+
+// A fleet where every certificate is skipped for a missing renewal profile
+// reports certops_renewal_jobs_created = 0, which is indistinguishable from
+// "nothing was due". These make the difference observable: a non-zero skip
+// series with a zero created series means certificates are expiring unrenewed.
+export const gCertopsRenewalScheduler = new client.Gauge({
+  name: "certops_renewal_scheduler_certificates",
+  help: "Certificates handled by the last renewal-scheduler run, by outcome",
+  labelNames: ["outcome"],
+  registers: [metricsRegister],
+});
