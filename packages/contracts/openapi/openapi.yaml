@@ -3513,6 +3513,242 @@ paths:
                 code: NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/profiles:
+    get:
+      tags: [CertOps]
+      summary: List renewal profiles
+      operationId: listCertOpsRenewalProfiles
+      description: |
+        Returns the workspace's renewal profiles. A profile carries the execution
+        contract the renewal scheduler uses for a certificate: SAN policy, key
+        parameters, CA endpoint, ACME command reference, DNS provider and zone,
+        and deployment paths. Profiles never hold key material.
+
+        Profiles are normally derived automatically from the issuance that
+        created a certificate, so `derived` is true for most rows and
+        `editableFields` lists the subset a caller may change.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Renewal profile inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfileList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/renewals/upcoming:
+    get:
+      tags: [CertOps]
+      summary: List upcoming automatic renewals
+      operationId: listCertOpsUpcomingRenewals
+      description: |
+        Returns active certificates that have a renewal profile, ordered by
+        expiry, with the date the renewal scheduler starts attempting each one
+        (`renewsFrom`, computed as notAfter minus the effective lead time) and
+        whether automatic renewal is switched on.
+
+        Certificates with `autoRenewEnabled` false are still listed: an operator
+        needs to see that a certificate is expiring AND that renewal was
+        deliberately switched off, which is otherwise indistinguishable from
+        nothing being due.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Upcoming renewal schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsUpcomingRenewalList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: CertOps is disabled for this deployment or workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Endpoint not found
+                code: NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/profiles/{profileId}:
+    get:
+      tags: [CertOps]
+      summary: Get a renewal profile
+      operationId: getCertOpsRenewalProfile
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Renewal profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Renewal profile not found, or CertOps is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [CertOps]
+      summary: Update a renewal profile
+      operationId: updateCertOpsRenewalProfile
+      description: |
+        Changes renewal configuration for a profile. Requires the workspace
+        admin role (`certops.renewal_profile.manage`) because the stored profile
+        determines what a host-privileged agent executes at the next renewal.
+
+        Only the fields listed in the profile's `editableFields` may be changed.
+        The fields that decide WHERE a certificate is written and WHAT command
+        writes it (`target`, `deploymentTargets`, `acme`, `ca`, `dns`) are
+        immutable after issuance and are rejected with
+        `CERTOPS_PROFILE_FIELD_IMMUTABLE`; repointing a deployment is a new
+        issuance, not an edit.
+
+        Set `autoRenewEnabled` to false to stop automatic renewal for every
+        certificate linked to this profile. The certificate then expires unless
+        it is renewed manually. Every accepted change writes an audit event in
+        the same transaction as the update.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                autoRenewEnabled:
+                  type: boolean
+                  description: False switches automatic renewal off for certificates using this profile.
+                renewBeforeDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  nullable: true
+                  description: Lead time before expiry. Null falls back to the deployment-wide threshold.
+                description:
+                  type: string
+                  nullable: true
+                  maxLength: 1024
+                renewalProfile:
+                  type: object
+                  additionalProperties: false
+                  description: Partial patch limited to the editable fields.
+                  properties:
+                    sanPolicy:
+                      type: object
+                    keyAlgorithm:
+                      type: string
+                      enum: [rsa, ecdsa]
+                    keySize:
+                      type: integer
+                    keyRotationPolicy:
+                      type: object
+                    verification:
+                      type: object
+                    preferredChain:
+                      type: string
+                      nullable: true
+            examples:
+              switchOffAutomaticRenewal:
+                summary: Stop renewing certificates on this profile
+                value:
+                  autoRenewEnabled: false
+              changeLeadTime:
+                summary: Renew 45 days before expiry
+                value:
+                  renewBeforeDays: 45
+      responses:
+        "200":
+          description: Updated renewal profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfile"
+        "400":
+          description: No supported changes were requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: No supported changes were requested
+                code: CERTOPS_PROFILE_NO_CHANGES
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Renewal profile not found, or CertOps is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The requested change is not permitted or fails the profile contract
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - type: object
+                    properties:
+                      fields:
+                        type: array
+                        items:
+                          type: string
+              example:
+                error: "These renewal-profile fields cannot be changed after issuance: target."
+                code: CERTOPS_PROFILE_FIELD_IMMUTABLE
+                fields: [target]
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/targets:
     get:
       tags: [CertOps]
@@ -5699,6 +5935,134 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    CertOpsRenewalProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, autoRenewEnabled, editableFields]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          description: Lifecycle status. 'disabled' and 'archived' both stop automatic renewal.
+          enum: [active, disabled, archived]
+        source:
+          type: string
+          nullable: true
+        autoRenewEnabled:
+          type: boolean
+          description: Convenience view of status. False means the scheduler will not renew certificates on this profile.
+        renewBeforeDays:
+          type: integer
+          nullable: true
+          description: Lead time before expiry. Null means the deployment-wide threshold applies.
+        keyMode:
+          type: string
+          nullable: true
+        renewalProfile:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            The stored execution contract. Exposed in full because an operator
+            needs to see where a renewal deploys in order to trust it; every
+            field is non-secret by the zero-custody rule (no key material, and
+            CA/EAB references are opaque identifiers).
+        derived:
+          type: boolean
+          description: True when the profile was generated automatically from a successful issuance rather than authored by hand.
+        derivedFrom:
+          type: object
+          nullable: true
+          additionalProperties: true
+        certificateCount:
+          type: integer
+          description: Number of managed certificates currently linked to this profile.
+        editableFields:
+          type: array
+          description: |
+            The renewalProfile fields this API permits changing. Travels with the
+            record so a client renders the same boundary the server enforces.
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsRenewalProfileList:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertOpsRenewalProfile"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    CertOpsUpcomingRenewalList:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [certificateId, commonName, autoRenewEnabled]
+            properties:
+              certificateId:
+                type: string
+                format: uuid
+              commonName:
+                type: string
+                nullable: true
+              notAfter:
+                type: string
+                format: date-time
+                nullable: true
+              renewsFrom:
+                type: string
+                format: date-time
+                nullable: true
+                description: When the scheduler starts attempting this renewal (notAfter minus the effective lead time).
+              profileId:
+                type: string
+                format: uuid
+                nullable: true
+              profileName:
+                type: string
+                nullable: true
+              autoRenewEnabled:
+                type: boolean
+              renewBeforeDays:
+                type: integer
+                description: Effective lead time, falling back to the deployment threshold when the profile does not set one.
+              lastRenewJobStatus:
+                type: string
+                nullable: true
+                description: Status of the most recent renewal job for this certificate, if any.
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
     Pagination:
       type: object
       properties:

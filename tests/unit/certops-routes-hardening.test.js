@@ -107,8 +107,11 @@ describe("CertOps route hardening", () => {
   });
 
   it("implements only the frozen workspace, executor, and controller routes", () => {
+    // patch/delete are matched too: the point of this guard is that no new
+    // workspace CertOps route appears without being reviewed here, and a
+    // method-limited regex would let a mutating PATCH land unnoticed.
     const routeMatches = Array.from(
-      routesSource.matchAll(/router\.(get|post|put)\(\n\s+"([^"]+)"/g),
+      routesSource.matchAll(/router\.(get|post|put|patch|delete)\(\n\s+"([^"]+)"/g),
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
 
     assert.deepEqual(routeMatches.sort(), [
@@ -122,9 +125,13 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
       "GET /api/v1/workspaces/:id/certops/jobs/:jobId/log",
+      "GET /api/v1/workspaces/:id/certops/profiles",
+      "GET /api/v1/workspaces/:id/certops/profiles/:profileId",
+      "GET /api/v1/workspaces/:id/certops/renewals/upcoming",
       "GET /api/v1/workspaces/:id/certops/tokens",
       "GET /api/v1/workspaces/:id/certops/settings",
       "GET /api/v1/workspaces/:id/certops/targets",
+      "PATCH /api/v1/workspaces/:id/certops/profiles/:profileId",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
       "POST /api/v1/workspaces/:id/certops/agents/:agentId/retire",
@@ -143,6 +150,64 @@ describe("CertOps route hardening", () => {
 
     assert.equal(routesSource.includes("/api/v1/certops/executor"), false);
     assert.equal(routesSource.includes("/api/v1/certops/agent"), false);
+  });
+
+  it("gates renewal-profile editing on admin role and a human session", () => {
+    // A profile edit changes what a host-privileged agent executes at the next
+    // renewal, so it needs a strictly stronger gate than ordinary CertOps job
+    // creation (workspace_manager) and must never be reachable by an internal
+    // worker credential.
+    const block = routeBlock(
+      "patch",
+      "/api/v1/workspaces/:id/certops/profiles/:profileId",
+    );
+    assert.match(block, /authorize\("certops\.renewal_profile\.manage"\)/);
+    assert.match(block, /requireCertOpsSessionUser/);
+    assert.ok(
+      block.indexOf("rejectKeyMaterial") <
+        block.indexOf("requireCertOpsSessionUser"),
+      "profile PATCH must reject key material before session-user denial",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsSessionUser") <
+        block.indexOf('authorize("certops.renewal_profile.manage")'),
+      "profile PATCH must require a human session before role authorization",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsEnabled") <
+        block.indexOf('authorize("certops.renewal_profile.manage")'),
+      "profile PATCH must check the rollout gate before authorization",
+    );
+  });
+
+  it("maps the renewal-profile permission to admin in shared RBAC", () => {
+    const rbacSource = fs.readFileSync(
+      path.resolve(__dirname, "../../apps/api/services/rbac.js"),
+      "utf8",
+    );
+    assert.match(
+      rbacSource,
+      /"certops\.renewal_profile\.manage":\s*"admin"/,
+      "renewal-profile editing must be admin-gated; can() denies unknown actions, so a missing entry would 403 instead of silently allowing, but an accidental downgrade to workspace_manager would not",
+    );
+  });
+
+  it("declares the upcoming-renewals route before the generic profile detail route", () => {
+    // /profiles/:profileId would otherwise swallow nothing here, but
+    // /renewals/upcoming shares no prefix with it; the ordering that matters is
+    // profiles list before profiles detail, asserted via index comparison.
+    const listIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/profiles"',
+    );
+    const detailIndex = routesSource.indexOf(
+      '"/api/v1/workspaces/:id/certops/profiles/:profileId"',
+    );
+    assert.notEqual(listIndex, -1);
+    assert.notEqual(detailIndex, -1);
+    assert.ok(
+      listIndex < detailIndex,
+      "profiles list route must be declared before generic profile detail",
+    );
   });
 
   it("gates operational workspace CertOps routes with certops.enabled", () => {

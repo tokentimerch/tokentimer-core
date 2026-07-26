@@ -89,6 +89,16 @@ const {
   resolveRenewalProfileSnapshot,
 } = require("../services/certops/renewalProfile");
 const {
+  CERTOPS_PROFILE_FIELD_IMMUTABLE,
+  CERTOPS_PROFILE_INVALID,
+  CERTOPS_PROFILE_NOT_FOUND,
+  CERTOPS_PROFILE_NO_CHANGES,
+  getRenewalProfile,
+  listRenewalProfiles,
+  listUpcomingRenewals,
+  updateRenewalProfile,
+} = require("../services/certops/renewalProfileAdmin");
+const {
   CERTOPS_EVIDENCE_INVALID,
   CERTOPS_EVIDENCE_TYPE_INVALID,
   listCertificateEvidence,
@@ -218,6 +228,39 @@ function writeOptionsFromRequest(req, source) {
 function handleCertOpsError(res, err) {
   if (err?.code === CERTOPS_DISABLED) {
     return res.status(404).json(NOT_FOUND_RESPONSE);
+  }
+
+  if (err?.code === CERTOPS_PROFILE_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Renewal profile not found",
+      code: CERTOPS_PROFILE_NOT_FOUND,
+    });
+  }
+
+  // 422 rather than 400: the request is well-formed, it asks for a change the
+  // profile contract does not permit. The offending field names are returned so
+  // the caller is never left guessing which one was refused.
+  if (err?.code === CERTOPS_PROFILE_FIELD_IMMUTABLE) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_PROFILE_FIELD_IMMUTABLE,
+      fields: err.details?.fields || [],
+    });
+  }
+
+  if (err?.code === CERTOPS_PROFILE_INVALID) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_PROFILE_INVALID,
+      fields: err.details?.fields || [],
+    });
+  }
+
+  if (err?.code === CERTOPS_PROFILE_NO_CHANGES) {
+    return res.status(400).json({
+      error: err.message,
+      code: CERTOPS_PROFILE_NO_CHANGES,
+    });
   }
 
   if (err?.code === PRIVATE_KEY_MATERIAL_REJECTED) {
@@ -2262,6 +2305,168 @@ router.post(
   requireCertOpsEnabled,
   requireCertOpsWriteRole,
   (req, res) => importCertificatesHandler(req, res, "api", 201),
+);
+
+// Renewal-profile administration (W8). Reads use the same posture as the
+// certificates inventory. The single mutating route is admin-gated via
+// authorize("certops.renewal_profile.manage") because a profile edit changes
+// what a host-privileged agent executes at the next renewal; see
+// services/certops/renewalProfileAdmin.js for the editable-field boundary.
+router.get(
+  "/api/v1/workspaces/:id/certops/profiles",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listRenewalProfiles({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list renewal profiles",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/renewals/upcoming",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    try {
+      const result = await listUpcomingRenewals({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+        thresholdDays: resolveRenewalThresholdDays(process.env),
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps upcoming renewals list failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to list upcoming renewals",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/profiles/:profileId",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.profileId || ""))) {
+      return res.status(404).json({
+        error: "Renewal profile not found",
+        code: CERTOPS_PROFILE_NOT_FOUND,
+      });
+    }
+    try {
+      const profile = await getRenewalProfile({
+        workspaceId: req.workspace.id,
+        profileId: req.params.profileId,
+      });
+      return res.json(profile);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile fetch failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to fetch renewal profile",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.patch(
+  "/api/v1/workspaces/:id/certops/profiles/:profileId",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // A session user specifically: a profile edit is an attributable human
+  // decision, so internal worker credentials must not reach it.
+  requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"),
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.profileId || ""))) {
+      return res.status(404).json({
+        error: "Renewal profile not found",
+        code: CERTOPS_PROFILE_NOT_FOUND,
+      });
+    }
+    try {
+      const profile = await updateRenewalProfile({
+        workspaceId: req.workspace.id,
+        profileId: req.params.profileId,
+        autoRenewEnabled: req.body?.autoRenewEnabled,
+        renewBeforeDays: req.body?.renewBeforeDays,
+        renewalProfile: req.body?.renewalProfile,
+        description: req.body?.description,
+        actorUserId: req.user?.id || null,
+      });
+      return res.json(profile);
+    } catch (err) {
+      // Mapped here rather than in handleCertOpsError: these two codes already
+      // have an established 400 meaning on the job-creation routes ("this
+      // certificate's stored profile is unusable"), and on this route they mean
+      // something different ("the patch you sent would produce an unusable
+      // profile"). Keeping the mapping local avoids changing the existing
+      // contract for every other caller.
+      if (
+        err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
+        err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+      ) {
+        return res.status(422).json({
+          error: err.message,
+          code: err.code,
+        });
+      }
+
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile update failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to update renewal profile",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
 );
 
 router.get(

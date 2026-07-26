@@ -42,6 +42,10 @@ const actionPolicy = {
   "auto_sync.manage": "workspace_manager",
   "domain.manage": "workspace_manager",
   "certops.kill_switch.manage": "admin",
+  // Editing a renewal profile changes what a privileged agent executes on a
+  // host at the next renewal, so it sits above ordinary CertOps job creation
+  // (workspace_manager) and alongside the kill switch.
+  "certops.renewal_profile.manage": "admin",
 };
 
 /**
