@@ -110,7 +110,10 @@ const { createReplayCache } = require("./replay");
 const { createClockOffsetEstimator } = require("./clock");
 const { checkNtpSynced } = require("./ntp");
 const { generateKeyPairToFile, discardStagedKey, generateCsr } = require("./keys");
-const { createAcmeAdapter } = require("./acme");
+const {
+  createAcmeAdapter,
+  resolveCertificateOutputPaths,
+} = require("./acme");
 const {
   deployCertificate,
   deployCertificateAndKey,
@@ -831,6 +834,33 @@ function splitLeafAndChainPem(pem) {
     leafPem: blocks[0],
     chainPem: `${blocks.slice(1).join("\n")}\n`,
   };
+}
+
+/**
+ * Reads the certificate material an ACME run staged, preferring the
+ * fullchain artifact: nearly every server expects leaf plus intermediates at
+ * its certificate path, and a leaf-only deployment is what makes clients
+ * report an incomplete chain. The leaf-only file stays a fallback for tools
+ * (or CAs) that produced no chain artifact at all.
+ *
+ * @param {{ leafPath: string, fullchainPath: string }} paths
+ * @returns {{ pem: string }|{ error: string }}
+ */
+function readStagedCertificateChain(paths) {
+  const candidates = [paths.fullchainPath, paths.leafPath];
+  const errors = [];
+  for (const candidate of candidates) {
+    try {
+      const pem = fs.readFileSync(candidate, "utf8");
+      if (pem.trim().length > 0) {
+        return { pem };
+      }
+      errors.push(`${candidate} is empty`);
+    } catch (err) {
+      errors.push(err.message);
+    }
+  }
+  return { error: errors.join("; ") };
 }
 
 /**
@@ -1968,10 +1998,14 @@ async function executeRenewJob({
   const csrPath = path.join(execution.keysDir, `${jobId}.csr.pem`);
   fs.writeFileSync(csrPath, csrPem, { mode: 0o600 });
 
-  // The ACME client writes to a job-scoped staging path; the deploy module
-  // then owns the atomic install (with backup/rollback) to certPath.
+  // The ACME client writes to job-scoped staging paths; the deploy module
+  // then owns the atomic install (with backup/rollback) to certPath. The
+  // chain and fullchain artifacts are siblings of the leaf, named by the
+  // same helper the adapter uses to build its argv.
   const stagedCertPath = path.join(execution.keysDir, `${jobId}.cert.pem`);
+  const stagedCertPaths = resolveCertificateOutputPaths(stagedCertPath);
 
+  let certificatePem;
   try {
     // Step 3: ACME renewal via the policy-resolved command profile.
     {
@@ -2045,27 +2079,30 @@ async function executeRenewJob({
         metadata: [{ name: "step", value: "acme" }, { name: "exitCode", value: renewal.exitCode }],
       }),
     ]);
+
+    // Steps 4-6 are shared with the deploy action (possibly multi-target).
+    const staged = readStagedCertificateChain(stagedCertPaths);
+    if (staged.error) {
+      discardStagedKey({ keyPath, stagedKeyPath });
+      return {
+        status: "failed",
+        keyRotated,
+        errorMessage: boundErrorMessage(
+          `acme step reported success but produced no certificate file: ${staged.error}`,
+        ),
+      };
+    }
+    certificatePem = staged.pem;
   } finally {
     // The CSR is public material, but it is job-scoped scratch: remove it.
     fs.rmSync(csrPath, { force: true });
+    // Every route out of the block above, success or failure, lands here, so
+    // a partially written chain never survives a failed renewal.
+    for (const stagedArtifact of Object.values(stagedCertPaths)) {
+      fs.rmSync(stagedArtifact, { force: true });
+    }
   }
 
-  // Steps 4-6 are shared with the deploy action (possibly multi-target).
-  let certificatePem;
-  try {
-    certificatePem = fs.readFileSync(stagedCertPath, "utf8");
-  } catch (err) {
-    discardStagedKey({ keyPath, stagedKeyPath });
-    return {
-      status: "failed",
-      keyRotated,
-      errorMessage: boundErrorMessage(
-        `acme step reported success but produced no certificate file: ${err.message}`,
-      ),
-    };
-  } finally {
-    fs.rmSync(stagedCertPath, { force: true });
-  }
   const tail = await runDeployReloadVerifyForTargets({
     job,
     jobId,

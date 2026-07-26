@@ -79,6 +79,8 @@
  *                "-d", domain      (repeated per domain, in input order),
  *                "--dns", "dns_certops",  // hook NAME (dnsapi/dns_certops.sh)
  *                "--cert-file", outCertPath,
+ *                "--ca-file", "<outCertPath sibling>.chain.pem",
+ *                "--fullchain-file", "<outCertPath sibling>.fullchain.pem",
  *                "--preferred-chain", preferredChain   (optional),
  *                "--eab-kid", eabKid                   (optional, with hmac),
  *                "--eab-hmac-key", eabHmacKey           (optional, with kid),
@@ -199,6 +201,33 @@ function resolveAcmeStatePaths(stateDir) {
  */
 function listSupportedAdapters() {
   return [...SUPPORTED_ADAPTER_KINDS];
+}
+
+/**
+ * Derives the three certificate artifact paths an ACME run produces from the
+ * caller's `outCertPath`.
+ *
+ * Both tools default their chain/fullchain destinations relative to their own
+ * cwd, not to the leaf destination: certbot's `--csr` mode writes
+ * ./chain.pem / ./fullchain.pem, which resolves against wherever the agent
+ * process happens to run (e.g. a systemd-sandboxed read-only "/") and aborts
+ * after the ACME order already succeeded. Pinning all three next to
+ * `outCertPath` keeps every artifact inside the job-scoped directory the
+ * caller controls, and lets the dispatch layer clean up staging without
+ * re-deriving names.
+ *
+ * @param {string} outCertPath absolute path the leaf certificate is written to
+ * @returns {{ leafPath: string, chainPath: string, fullchainPath: string }}
+ *   frozen so a caller cannot repoint one artifact after the fact
+ */
+function resolveCertificateOutputPaths(outCertPath) {
+  const outCertDir = path.dirname(outCertPath);
+  const outCertBase = path.basename(outCertPath, ".pem");
+  return Object.freeze({
+    leafPath: outCertPath,
+    chainPath: path.join(outCertDir, `${outCertBase}.chain.pem`),
+    fullchainPath: path.join(outCertDir, `${outCertBase}.fullchain.pem`),
+  });
 }
 
 function isNonEmptyString(value) {
@@ -344,6 +373,7 @@ function buildAdapterArgs(kind, {
     eabHmacKey,
   });
   const paths = resolveAcmeStatePaths(stateDir);
+  const outputPaths = resolveCertificateOutputPaths(outCertPath);
 
   if (kind === "certbot") {
     // certbot runs the hook string via a shell-like invocation; keep the
@@ -352,17 +382,6 @@ function buildAdapterArgs(kind, {
     // part of this string — only the hook binary path + mode.
     const authHook = `${dnsHookPath} present`;
     const cleanupHook = `${dnsHookPath} cleanup`;
-    // certbot's --csr mode defaults --chain-path/--fullchain-path to
-    // ./chain.pem / ./fullchain.pem (relative to its cwd), NOT next to
-    // --cert-path. Left unset, that resolves against wherever the agent
-    // process happens to be running (e.g. a systemd-sandboxed "/", which
-    // is read-only) and certbot aborts after the ACME order already
-    // succeeded. Pin both explicitly next to outCertPath so save always
-    // lands in the job-scoped keysDir this adapter actually controls.
-    const outCertDir = path.dirname(outCertPath);
-    const outCertBase = path.basename(outCertPath, ".pem");
-    const chainPath = path.join(outCertDir, `${outCertBase}.chain.pem`);
-    const fullchainPath = path.join(outCertDir, `${outCertBase}.fullchain.pem`);
     // No --dry-run here: certbot rejects --dry-run combined with --csr, and
     // this adapter always issues via --csr. runRenewal rejects dryRun:true
     // for kind === "certbot" before this function is ever called.
@@ -382,11 +401,11 @@ function buildAdapterArgs(kind, {
       caEndpoint,
       ...domainFlags,
       "--cert-path",
-      outCertPath,
+      outputPaths.leafPath,
       "--chain-path",
-      chainPath,
+      outputPaths.chainPath,
       "--fullchain-path",
-      fullchainPath,
+      outputPaths.fullchainPath,
       "--config-dir",
       paths.certbotConfigDir,
       "--work-dir",
@@ -416,7 +435,11 @@ function buildAdapterArgs(kind, {
     "--dns",
     ACME_SH_DNS_HOOK_NAME,
     "--cert-file",
-    outCertPath,
+    outputPaths.leafPath,
+    "--ca-file",
+    outputPaths.chainPath,
+    "--fullchain-file",
+    outputPaths.fullchainPath,
     ...typedArgs,
     ...(dryRun ? ["--test"] : []),
   ];
@@ -482,7 +505,7 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env) {
  * @param {string} [options.dnsHookPath] absolute path to certops-dns-hook.js.
  * @param {string} [options.acmeDnsApiPath] absolute path to the shipped
  *   dns_certops.sh source (installer symlink target; not passed as --dns).
- * @returns {{ kind: string, runRenewal: Function, dnsHookPath: string, acmeDnsApiPath: string }}
+ * @returns {{ kind: string, runRenewal: Function, resolveCertificateOutputPaths: Function, dnsHookPath: string, acmeDnsApiPath: string }}
  */
 function createAcmeAdapter({
   kind,
@@ -565,7 +588,8 @@ function createAcmeAdapter({
    * @param {string} options.csrPath absolute path to the CSR file (produced
    *   by the keys module; the private key never passes through here).
    * @param {string} options.outCertPath absolute path where the tool writes
-   *   the issued certificate.
+   *   the issued leaf certificate. The chain and fullchain artifacts are
+   *   written as siblings and reported back in `certificatePaths`.
    * @param {string} options.stateDir absolute agent state/config directory
    *   (`resolveConfigDir()` / `TOKENTIMER_AGENT_CONFIG_DIR`). ACME tool
    *   writable paths are derived under `<stateDir>/acme/...`.
@@ -580,7 +604,8 @@ function createAcmeAdapter({
    * @param {boolean} [options.dryRun] map to --dry-run (certbot) / --test
    *   (acme.sh) so no real certificate is issued.
    * @returns {Promise<
-   *   { renewed: boolean, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string, argvUsed: string[] }
+   *   { renewed: boolean, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string, argvUsed: string[],
+   *     certificatePaths: { leafPath: string, chainPath: string, fullchainPath: string } }
    *   | { allowed: false, rejectionReason: string, detail: string }
    * >}
    */
@@ -739,18 +764,22 @@ function createAcmeAdapter({
 
     // (5) Result. argvUsed is included for evidence: DNS credentials never
     // appear; EAB hmac is redacted. Account keys live under stateDir only.
+    // certificatePaths is reported on failures too so the caller can clean
+    // up whatever partial artifacts the tool already wrote.
     return {
       renewed: exitCode === 0,
       exitCode,
       stdoutExcerpt: boundAndRedactExcerpt(stdout),
       stderrExcerpt: boundAndRedactExcerpt(stderr),
       argvUsed: redactSensitiveArgv(argvUsed),
+      certificatePaths: resolveCertificateOutputPaths(outCertPath),
     };
   }
 
   return {
     kind,
     runRenewal,
+    resolveCertificateOutputPaths,
     dnsHookPath: resolvedDnsHookPath,
     acmeDnsApiPath: resolvedAcmeDnsApiPath,
   };
@@ -762,6 +791,7 @@ module.exports = {
   defaultDnsHookPath,
   defaultAcmeDnsApiPath,
   resolveAcmeStatePaths,
+  resolveCertificateOutputPaths,
   ACME_SH_DNS_HOOK_NAME,
   RUN_RENEWAL_ALLOWED_KEYS,
   SHELL_METACHARACTER_PATTERN,

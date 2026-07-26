@@ -2532,3 +2532,226 @@ describe("lease fail-closed + side-effect journal + multi-target transaction", (
     assert.match(outcome.errorMessage || "", /keyPath|policy|allowlist/i);
   });
 });
+
+describe("renew chain deployment (W5)", () => {
+  const CERTIFICATE_ID = "certificate-chain";
+  const RENEW_JOB_ID = "job-chain";
+  const CA_ENDPOINT = "https://acme.example/dir";
+
+  let workDir;
+  let signingKey;
+
+  beforeEach(() => {
+    workDir = makeTempConfigDir();
+    signingKey = generateSigningKeyPair();
+    fs.mkdirSync(path.join(workDir, "deployed"), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  });
+
+  function readFixture(name) {
+    return fs.readFileSync(
+      path.join(__dirname, "verify", "fixtures", name),
+      "utf8",
+    );
+  }
+
+  function keysDir() {
+    return path.join(workDir, "keys");
+  }
+
+  function makeExecutionContext(acmeExecFileImpl) {
+    return buildExecutionContext({
+      config: {
+        execution: {
+          enabled: true,
+          dryRun: false,
+          keysDir: keysDir(),
+          replayStorePath: path.join(workDir, "replay.json"),
+          outboxDir: path.join(workDir, "outbox"),
+          clockDriftToleranceMs: 300000,
+        },
+        pinnedSigningKey: null,
+        acmeAccounts: null,
+      },
+      acmeExecFileImpl,
+    });
+  }
+
+  /**
+   * Seeds the live key so the renewal reuses it instead of rotating: the
+   * fixture chain is issued for this exact key, so pre-deploy key matching
+   * passes without having to mint a real certificate in the test.
+   */
+  function seedLiveKey() {
+    fs.mkdirSync(keysDir(), { recursive: true });
+    fs.writeFileSync(
+      path.join(keysDir(), `${CERTIFICATE_ID}.key.pem`),
+      readFixture("chain-leaf.key.pem"),
+      { mode: 0o600 },
+    );
+  }
+
+  function argvValue(args, flag) {
+    const at = args.indexOf(flag);
+    assert.notEqual(at, -1, `adapter argv is missing ${flag}`);
+    return args[at + 1];
+  }
+
+  /**
+   * Stands in for certbot: writes the leaf, chain and fullchain artifacts to
+   * the paths the adapter asked for, so the staging layout under test is the
+   * one the real tool would produce.
+   */
+  function makeCertbotStub({ exitCode = 0 } = {}) {
+    const calls = [];
+    function execFileStub(file, args, options, callback) {
+      calls.push({ file, args, options });
+      fs.writeFileSync(
+        argvValue(args, "--cert-path"),
+        readFixture("chain-leaf.crt.pem"),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        argvValue(args, "--chain-path"),
+        readFixture("intermediate.crt.pem"),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        argvValue(args, "--fullchain-path"),
+        readFixture("chain-leaf-fullchain.crt.pem"),
+        { mode: 0o600 },
+      );
+      const error =
+        exitCode === 0
+          ? null
+          : Object.assign(new Error("Command failed"), { code: exitCode });
+      process.nextTick(() => callback(error, "", exitCode === 0 ? "" : "order failed"));
+    }
+    execFileStub.calls = calls;
+    return execFileStub;
+  }
+
+  function makeJob(overrides = {}) {
+    const nowMs = Date.now();
+    const job = {
+      schemaVersion: 1,
+      jobId: RENEW_JOB_ID,
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      certificateId: CERTIFICATE_ID,
+      action: "renew",
+      target: { type: "domain", reference: "chain.example.com" },
+      requestedAt: new Date(nowMs).toISOString(),
+      issuedAt: new Date(nowMs).toISOString(),
+      expiresAt: new Date(nowMs + 5 * 60 * 1000).toISOString(),
+      nonce: `nonce-${Math.random().toString(16).slice(2)}-0123456789abcdef`,
+      claimId: "claim-chain",
+      mode: "real",
+      commandRef: "certbot-renew",
+      caEndpoint: CA_ENDPOINT,
+      certPath: path.join(workDir, "deployed", "chain.crt.pem"),
+      signingKeyId: signingKey.signingKeyId,
+      ...overrides,
+    };
+    job.signature = signJobPayload({
+      job,
+      privateKeyPem: signingKey.privateKeyPem,
+    });
+    return job;
+  }
+
+  function permissiveEngine() {
+    return engineWith(
+      {
+        allowedPaths: [workDir],
+        allowedCommands: { "certbot-renew": { argv: ["certbot"] } },
+        allowedCaEndpoints: [CA_ENDPOINT],
+      },
+      { declaredTargetSelectors: ["chain.example.com"] },
+    );
+  }
+
+  async function runRenew({ job, acmeExecFileImpl }) {
+    const client = createRecordingClient();
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine: permissiveEngine(),
+      client,
+      executionContext: makeExecutionContext(acmeExecFileImpl),
+      log: silentLog,
+    });
+    return { outcome, client };
+  }
+
+  function stagingLeftovers() {
+    return fs
+      .readdirSync(keysDir())
+      .filter((entry) => entry !== `${CERTIFICATE_ID}.key.pem`);
+  }
+
+  it("deploys the fullchain to certPath by default, intermediate included", async () => {
+    seedLiveKey();
+    const job = makeJob();
+    const { outcome } = await runRenew({
+      job,
+      acmeExecFileImpl: makeCertbotStub(),
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const deployed = fs.readFileSync(job.certPath, "utf8");
+    assert.equal(deployed, readFixture("chain-leaf-fullchain.crt.pem"));
+    assert.ok(deployed.includes(readFixture("chain-leaf.crt.pem").trim()));
+    assert.ok(deployed.includes(readFixture("intermediate.crt.pem").trim()));
+  });
+
+  it("splits leaf and intermediates when the target configures a chainPath", async () => {
+    seedLiveKey();
+    const chainPath = path.join(workDir, "deployed", "chain.ca.pem");
+    const job = makeJob({ chainPath });
+    const { outcome } = await runRenew({
+      job,
+      acmeExecFileImpl: makeCertbotStub(),
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    const deployedCert = fs.readFileSync(job.certPath, "utf8");
+    const deployedChain = fs.readFileSync(chainPath, "utf8");
+    const leaf = readFixture("chain-leaf.crt.pem").trim();
+    const intermediate = readFixture("intermediate.crt.pem").trim();
+
+    assert.ok(deployedCert.includes(leaf));
+    assert.equal(deployedCert.includes(intermediate), false);
+    assert.ok(deployedChain.includes(intermediate));
+    assert.equal(deployedChain.includes(leaf), false);
+  });
+
+  it("leaves no staging artifact behind after a successful renewal", async () => {
+    seedLiveKey();
+    const job = makeJob();
+    const { outcome } = await runRenew({
+      job,
+      acmeExecFileImpl: makeCertbotStub(),
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.deepEqual(stagingLeftovers(), []);
+  });
+
+  it("leaves no staging artifact behind after a failed renewal", async () => {
+    seedLiveKey();
+    const job = makeJob();
+    const { outcome } = await runRenew({
+      job,
+      acmeExecFileImpl: makeCertbotStub({ exitCode: 1 }),
+    });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /acme step failed/);
+    assert.deepEqual(stagingLeftovers(), []);
+    assert.equal(fs.existsSync(job.certPath), false);
+  });
+});

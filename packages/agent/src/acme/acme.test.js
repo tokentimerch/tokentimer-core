@@ -11,6 +11,7 @@ const {
   defaultDnsHookPath,
   defaultAcmeDnsApiPath,
   resolveAcmeStatePaths,
+  resolveCertificateOutputPaths,
   ACME_SH_DNS_HOOK_NAME,
   SHELL_METACHARACTER_PATTERN,
   OUTPUT_EXCERPT_MAX_CHARS,
@@ -19,6 +20,16 @@ const {
 const CA_ENDPOINT = "https://acme-v02.api.letsencrypt.org/directory";
 const CSR_PATH = "/etc/tokentimer-agent/csr/web-01.csr.pem";
 const OUT_CERT_PATH = "/etc/nginx/tls/web-01.crt.pem";
+// The adapter derives these with path.join, so the expectations must too:
+// hard-coded POSIX separators break when the suite runs on Windows.
+const OUT_CHAIN_PATH = path.join(
+  path.dirname(OUT_CERT_PATH),
+  "web-01.crt.chain.pem",
+);
+const OUT_FULLCHAIN_PATH = path.join(
+  path.dirname(OUT_CERT_PATH),
+  "web-01.crt.fullchain.pem",
+);
 const STATE_DIR = "/opt/tokentimer-agent/state";
 const DOMAINS = ["example.com", "www.example.com"];
 const DNS_HOOK_PATH = "/opt/tokentimer/bin/certops-dns-hook.js";
@@ -170,12 +181,9 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
     "--cert-path",
     OUT_CERT_PATH,
     "--chain-path",
-    // Derived with path.join, so the separator is platform-dependent. The
-    // agent only ever runs on POSIX hosts; this keeps the test green when it
-    // is developed on Windows.
-    path.join(path.dirname(OUT_CERT_PATH), "web-01.crt.chain.pem"),
+    OUT_CHAIN_PATH,
     "--fullchain-path",
-    path.join(path.dirname(OUT_CERT_PATH), "web-01.crt.fullchain.pem"),
+    OUT_FULLCHAIN_PATH,
     "--config-dir",
     STATE_PATHS.certbotConfigDir,
     "--work-dir",
@@ -187,6 +195,48 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(result.renewed, true);
   assert.equal(result.exitCode, 0);
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
+});
+
+test("certbot adapter reports the leaf, chain and fullchain paths it wrote", async () => {
+  const execStub = makeExecStub();
+  const adapter = certbotAdapter(execStub);
+
+  const result = await adapter.runRenewal(baseRenewalInputs());
+
+  assert.deepEqual(result.certificatePaths, {
+    leafPath: OUT_CERT_PATH,
+    chainPath: OUT_CHAIN_PATH,
+    fullchainPath: OUT_FULLCHAIN_PATH,
+  });
+  // Every reported path is also an argv path certbot was actually told to
+  // write, so a caller cleaning up staging cannot miss an artifact.
+  const execArgs = execStub.calls[0].args;
+  for (const reported of Object.values(result.certificatePaths)) {
+    assert.ok(execArgs.includes(reported), reported);
+  }
+});
+
+test("certificate output paths are reported on a failed run so staging can be cleaned", async () => {
+  const error = Object.assign(new Error("Command failed"), { code: 1 });
+  const execStub = makeExecStub({ error, stderr: "order failed" });
+  const adapter = certbotAdapter(execStub);
+
+  const result = await adapter.runRenewal(baseRenewalInputs());
+
+  assert.equal(result.renewed, false);
+  assert.deepEqual(result.certificatePaths, {
+    leafPath: OUT_CERT_PATH,
+    chainPath: OUT_CHAIN_PATH,
+    fullchainPath: OUT_FULLCHAIN_PATH,
+  });
+});
+
+test("resolveCertificateOutputPaths derives siblings of the leaf and is frozen", () => {
+  const paths = resolveCertificateOutputPaths(OUT_CERT_PATH);
+  assert.equal(paths.leafPath, OUT_CERT_PATH);
+  assert.equal(paths.chainPath, OUT_CHAIN_PATH);
+  assert.equal(paths.fullchainPath, OUT_FULLCHAIN_PATH);
+  assert.equal(Object.isFrozen(paths), true);
 });
 
 test("certbot adapter rejects dryRun: true (certbot forbids --dry-run with --csr, which this adapter always uses)", async () => {
@@ -252,6 +302,10 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
     ACME_SH_DNS_HOOK_NAME,
     "--cert-file",
     OUT_CERT_PATH,
+    "--ca-file",
+    OUT_CHAIN_PATH,
+    "--fullchain-file",
+    OUT_FULLCHAIN_PATH,
   ]);
   assert.equal(ACME_SH_DNS_HOOK_NAME, "dns_certops");
   assert.deepEqual(result.argvUsed, [
@@ -261,6 +315,25 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
   assert.equal(result.renewed, true);
   assert.equal(execStub.calls[0].options.env.CERTOPS_DNS_HOOK, DNS_HOOK_PATH);
   assert.equal(execStub.calls[0].options.env.LE_CONFIG_HOME, STATE_PATHS.acmeShHome);
+});
+
+test("acme.sh adapter produces the same three artifacts as certbot", async () => {
+  const execStub = makeExecStub();
+  const adapter = acmeShAdapter(execStub);
+
+  const result = await adapter.runRenewal(baseRenewalInputs());
+
+  assert.deepEqual(result.certificatePaths, {
+    leafPath: OUT_CERT_PATH,
+    chainPath: OUT_CHAIN_PATH,
+    fullchainPath: OUT_FULLCHAIN_PATH,
+  });
+  const execArgs = execStub.calls[0].args;
+  assert.equal(execArgs[execArgs.indexOf("--ca-file") + 1], OUT_CHAIN_PATH);
+  assert.equal(
+    execArgs[execArgs.indexOf("--fullchain-file") + 1],
+    OUT_FULLCHAIN_PATH,
+  );
 });
 
 test("acme.sh adapter appends --test when dryRun: true", async () => {
@@ -288,6 +361,10 @@ test("acme.sh adapter appends --test when dryRun: true", async () => {
     "dns_certops",
     "--cert-file",
     OUT_CERT_PATH,
+    "--ca-file",
+    OUT_CHAIN_PATH,
+    "--fullchain-file",
+    OUT_FULLCHAIN_PATH,
     "--test",
   ]);
 });
