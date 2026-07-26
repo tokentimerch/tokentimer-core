@@ -3881,7 +3881,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: idempotencyKey conflict, workspace CertOps is paused, or per-CA renewal capacity exceeded
+          description: >-
+            idempotencyKey conflict, workspace CertOps is paused, per-CA renewal
+            capacity exceeded, or the subject certificate has no agent-manageable
+            key custody.
           content:
             application/json:
               schema:
@@ -3899,6 +3902,13 @@ paths:
                   value:
                     error: Per-CA renewal capacity exceeded
                     code: CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED
+                certificateNotAgentDeployable:
+                  value:
+                    error: >-
+                      This certificate has no agent-manageable key custody (it
+                      was only observed, e.g. via an endpoint or domain monitor)
+                      and cannot be assigned an agent-executed renew job
+                    code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
         "422":
           description: The request contained private-key or forbidden secret material
           content:
@@ -4566,7 +4576,18 @@ paths:
       tags: [CertOps]
       summary: Retire a CertOps agent
       operationId: retireCertOpsAgent
-      description: Retires an agent so its credential stops authenticating (agent protocol routes return 410). Retiring an already-retired agent is idempotent. If the agent holds actively leased jobs the request is blocked with 409 unless force is true, in which case an attributable reason is required; leased jobs are left to the lease reaper.
+      description: >-
+        Retires an agent so its credential stops authenticating (agent protocol
+        routes return 410). Retiring an already-retired agent is idempotent. If
+        the agent holds actively leased jobs the request is blocked with 409
+        unless force is true, in which case an attributable reason is required.
+        A forced retire fences the agent's in-flight work immediately rather
+        than leaving it to the lease reaper: jobs still at "claimed" are
+        cancelled with error_code CERTOPS_AGENT_FORCE_RETIRED, while jobs that
+        had reached "running" become orphaned_unknown_effect and are flagged
+        needs_operator_reconciliation, because their real-world effect is
+        unknown. Both id lists are returned in the response and recorded on the
+        CERTOPS_AGENT_RETIRED audit event.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
