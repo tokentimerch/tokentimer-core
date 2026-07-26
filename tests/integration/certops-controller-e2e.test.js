@@ -499,6 +499,27 @@ describe("CertOps controller end-to-end composition", function () {
         const counts = await inventoryCounts(fixture.workspaceId, "status-only");
         expect(counts).to.include({ managed: 1, instances: 0 });
       });
+      const statusList = await fetchJson(
+        `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/certificates`,
+      );
+      expect(statusList.status).to.equal(200);
+      const statusCertificate = statusList.body.items.find(
+        (item) => item.sourceRef === "cluster-a/certops/status-only",
+      );
+      expect(statusCertificate).to.include({
+        fingerprintSha256: null,
+        source: "cert_manager",
+      });
+      const statusDetail = await fetchJson(
+        `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/certificates/${statusCertificate.id}`,
+      );
+      expect(statusDetail.status).to.equal(200);
+      expect(statusDetail.body.certificate.fingerprintSha256).to.equal(null);
+      const statusInstances = await fetchJson(
+        `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/certificates/${statusCertificate.id}/instances`,
+      );
+      expect(statusInstances.status).to.equal(200);
+      expect(statusInstances.body.items).to.deep.equal([]);
       expect(statusRuntime.isReady()).to.equal(true);
       expect(statusBoundary.calls.readSecret).to.deep.equal([]);
       expect(statusBoundary.calls.list.map((call) => call.plural).sort()).to.deep.equal([
@@ -558,6 +579,22 @@ describe("CertOps controller end-to-end composition", function () {
         const counts = await inventoryCounts(fixture.workspaceId, "fallback-cert");
         expect(counts.instances).to.equal(1);
       });
+      const fallbackList = await fetchJson(
+        `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/certificates`,
+      );
+      expect(fallbackList.status).to.equal(200);
+      const fallbackCertificate = fallbackList.body.items.find(
+        (item) => item.sourceRef === "cluster-a/certops/fallback-cert",
+      );
+      expect(fallbackCertificate.fingerprintSha256).to.match(/^[a-f0-9]{64}$/);
+      const fallbackInstances = await fetchJson(
+        `${server.apiUrl}/api/v1/workspaces/${fixture.workspaceId}/certops/certificates/${fallbackCertificate.id}/instances`,
+      );
+      expect(fallbackInstances.status).to.equal(200);
+      expect(fallbackInstances.body.items).to.have.length(1);
+      expect(fallbackInstances.body.items[0].observedFingerprintSha256).to.equal(
+        fallbackCertificate.fingerprintSha256,
+      );
       expect(fallbackRuntime.isReady()).to.equal(true);
       expect(fallbackBoundary.calls.readSecret).to.deep.equal([
         { namespace: "certops", secretName: "fallback-cert-tls" },

@@ -342,6 +342,16 @@ replay returns `200` with `duplicate: true`; first delivery returns `201`. The
 bounded response contains only `managedCertificateId`, `targetId`, nullable
 `certificateInstanceId`, and `duplicate`. No fake job is created.
 
+The public SHA-256 fingerprint is optional for this controller route. Complete
+cert-manager lifecycle status (Ready condition, issuer, revision, validity, and
+CertificateRequest identity) is a valid status-only observation: it creates or
+updates the managed certificate and target, leaves the fingerprint null, and
+does not create fingerprint-keyed instance history. Enabling the explicitly
+permissioned `tls.crt` fallback can add a real public fingerprint later. The
+dashboard labels the former state as status-only; it never substitutes a fake
+fingerprint. This does not relax the separate agent deployment verifier, which
+still requires and compares the expected public fingerprint.
+
 Observation remains accepted while the workspace is paused. Private material
 is rejected and audited before scope, workspace, and downstream commercial
 gates. Generic secret text is redacted only in the approved free-text fields;

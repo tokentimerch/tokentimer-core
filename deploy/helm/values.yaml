@@ -577,9 +577,12 @@ networkPolicy:
     controllerApiCidrs: []
     controllerApiPort: 443
     # Required when both networkPolicy and certops.controller are enabled.
-    # Kubernetes NetworkPolicy cannot safely express a kube-apiserver hostname.
+    # Kubernetes NetworkPolicy cannot safely express a kube-apiserver hostname,
+    # and some datapaths enforce this rule after Service DNAT. Discover the
+    # effective EndpointSlice/control-plane destinations for this cluster;
+    # never copy a Kind or another cluster's address as a universal value.
     kubeApiServerCidrs: []
-    # Match the destination port exposed by the cluster's Kubernetes API.
+    # Match the effective destination port, which may differ from Service 443.
     kubeApiServerPort: 443
 
 # -- Pod Security (shared defaults) --------------------------------------------

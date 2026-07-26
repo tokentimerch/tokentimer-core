@@ -416,13 +416,13 @@ describe("CertOps cert-manager status observer", () => {
     assert.equal(client.startCalls, 1);
     assert.deepEqual(
       client.listCalls.map((call) => [call.resource, call.namespace]),
-      [["Certificate", undefined], ["CertificateRequest", undefined]],
+      [["CertificateRequest", undefined], ["Certificate", undefined]],
     );
     assert.deepEqual(
       client.watchCalls.map((call) => [call.resource, call.namespace, call.resourceVersion]),
       [
-        ["Certificate", undefined, "certificate-list-rv"],
         ["CertificateRequest", undefined, "request-list-rv"],
+        ["Certificate", undefined, "certificate-list-rv"],
       ],
     );
     assert.equal(observer.isReady(), true);

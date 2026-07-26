@@ -234,6 +234,7 @@ fi
 
 controller_deployment="$(component_blocks "${controller_default}" Deployment)"
 controller_service_accounts="$(component_blocks "${controller_default}" ServiceAccount)"
+controller_default_network_policy="$(component_blocks "${controller_default}" NetworkPolicy)"
 shared_service_account="$(awk -v RS='---' '
   index($0, "kind: ServiceAccount\n") &&
   !index($0, "app.kubernetes.io/component: certops-controller") { print "---" $0 }
@@ -248,6 +249,7 @@ assert_contains "${controller_deployment}" 'value: "certops-system"' "controller
 assert_contains "${controller_deployment}" 'secretName: "controller-api-token"' "controller existing token secret"
 assert_contains "${controller_service_accounts}" 'automountServiceAccountToken: true' "controller service account token mount"
 assert_contains "${shared_service_account}" 'automountServiceAccountToken: false' "shared service account token mount"
+[[ -z "${controller_default_network_policy}" ]] || fail "controller NetworkPolicy rendered while chart policy is disabled"
 
 controller_internal_api="$(render_controller internal-api-url --set-string certops.controller.api.url=http://tokentimer-api:4000)"
 controller_internal_deployment="$(component_blocks "${controller_internal_api}" Deployment)"
@@ -350,11 +352,13 @@ fi
 
 controller_network_policy="$(render_controller network-policy \
   --set networkPolicy.enabled=true \
-  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32)"
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=192.0.2.10/32 \
+  --set networkPolicy.egress.kubeApiServerCidrs[1]=192.0.2.11/32)"
 controller_policy="$(component_blocks "${controller_network_policy}" NetworkPolicy)"
 assert_contains "${controller_policy}" 'k8s-app: kube-dns' "controller DNS egress"
 assert_contains "${controller_policy}" 'app.kubernetes.io/component: api' "controller in-chart API egress"
-assert_contains "${controller_policy}" 'cidr: "10.96.0.1/32"' "controller Kubernetes API egress"
+assert_contains "${controller_policy}" 'cidr: "192.0.2.10/32"' "controller first Kubernetes API egress"
+assert_contains "${controller_policy}" 'cidr: "192.0.2.11/32"' "controller HA Kubernetes API egress"
 assert_contains "${controller_policy}" 'port: 443' "controller Kubernetes API port"
 assert_not_contains "${controller_policy}" 'ingress:' "controller NetworkPolicy ingress"
 assert_not_contains "${controller_policy}" '0.0.0.0/0' "controller NetworkPolicy broad egress"
@@ -366,7 +370,7 @@ assert_not_contains "${controller_policy}" 'port: 9091' "controller NetworkPolic
 
 controller_network_custom_kube_port="$(render_controller network-policy-custom-kube-port \
   --set networkPolicy.enabled=true \
-  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32 \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=192.0.2.10/32 \
   --set networkPolicy.egress.kubeApiServerPort=6443)"
 controller_custom_kube_policy="$(component_blocks "${controller_network_custom_kube_port}" NetworkPolicy)"
 assert_contains "${controller_custom_kube_policy}" 'port: 6443' "custom Kubernetes API port"
@@ -374,12 +378,12 @@ assert_contains "${controller_custom_kube_policy}" 'port: 6443' "custom Kubernet
 expect_controller_failure network-policy-disabled-api 'controllerApiCidrs' \
   --set api.enabled=false \
   --set networkPolicy.enabled=true \
-  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=192.0.2.10/32
 
 controller_network_cidrs="$(render_controller network-policy-cidrs \
   --set api.enabled=false \
   --set networkPolicy.enabled=true \
-  --set networkPolicy.egress.kubeApiServerCidrs[0]=10.96.0.1/32 \
+  --set networkPolicy.egress.kubeApiServerCidrs[0]=192.0.2.10/32 \
   --set networkPolicy.egress.controllerApiCidrs[0]=198.51.100.0/24)"
 controller_cidr_policy="$(component_blocks "${controller_network_cidrs}" NetworkPolicy)"
 assert_contains "${controller_cidr_policy}" 'cidr: "198.51.100.0/24"' "controller explicit API CIDR egress"

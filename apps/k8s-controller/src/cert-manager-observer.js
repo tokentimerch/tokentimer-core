@@ -702,7 +702,14 @@ function createCertManagerObserver({
     acceptingWork = true;
     if (typeof suppliedTrackWork === "function") trackWork = suppliedTrackWork;
     if (typeof client.start === "function") await client.start();
-    await Promise.all(states.map((state) => synchronizeAndWatch(state)));
+    // Populate CertificateRequest enrichment before any Certificate list can
+    // emit an observation. Running both initial lists concurrently can expose
+    // a transient request-less payload whose Certificate resourceVersion is
+    // otherwise unchanged, which is especially visible after a restart.
+    const requestStates = states.filter((state) => state.resource === "CertificateRequest");
+    const certificateStates = states.filter((state) => state.resource === "Certificate");
+    await Promise.all(requestStates.map((state) => synchronizeAndWatch(state)));
+    await Promise.all(certificateStates.map((state) => synchronizeAndWatch(state)));
   }
 
   async function stopAcceptingWork() {

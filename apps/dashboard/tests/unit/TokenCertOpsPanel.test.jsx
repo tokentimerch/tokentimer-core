@@ -63,7 +63,7 @@ function hookState(overrides = {}) {
   };
 }
 
-describe('TokenCertOpsPanel multi-cert notice', () => {
+describe('TokenCertOpsPanel', () => {
   beforeEach(() => {
     useCertOpsForTokenMock.mockReset();
   });
@@ -94,5 +94,37 @@ describe('TokenCertOpsPanel multi-cert notice', () => {
     expect(
       screen.getByText(/2 certificates reference this token/)
     ).toBeInTheDocument();
+  });
+
+  it('labels a missing cert-manager fingerprint as a valid status-only observation', () => {
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({
+        certificates: [
+          cert({ source: 'cert_manager', fingerprintSha256: null }),
+        ],
+      })
+    );
+
+    renderPanel(certToken);
+
+    expect(
+      screen.getByText('Not reported (status-only observation)')
+    ).toBeInTheDocument();
+  });
+
+  it('shows a public fingerprint when Secret fallback supplied one', () => {
+    const fingerprintSha256 = 'a'.repeat(64);
+    useCertOpsForTokenMock.mockReturnValue(
+      hookState({
+        certificates: [cert({ source: 'cert_manager', fingerprintSha256 })],
+      })
+    );
+
+    renderPanel(certToken);
+
+    expect(screen.getByText(fingerprintSha256)).toBeInTheDocument();
+    expect(
+      screen.queryByText('Not reported (status-only observation)')
+    ).not.toBeInTheDocument();
   });
 });

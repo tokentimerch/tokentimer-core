@@ -265,6 +265,17 @@ workspace/cluster/managed-certificate ownership identity are rejected and are
 never adopted. TokenTimer does not automatically delete or roll back a
 Certificate.
 
+The fingerprint in a controller observation is optional. Ready condition,
+issuer, revision, validity, DNS names, and CertificateRequest identity are
+sufficient for a valid status-only observation without Secret access; the
+dashboard shows its fingerprint as `Not reported (status-only observation)`.
+Such an observation has no fingerprint-keyed instance row until a real public
+fingerprint is observed. Enable `secretFallback.enabled` only when that
+additional public metadata is required and the Secret-read tradeoff is
+accepted. TokenTimer never fabricates a fingerprint, and this status-only
+controller behavior does not weaken the agent's strict post-deployment
+fingerprint comparison.
+
 #### Pause, topology, and operations
 
 The workspace pause switch blocks new human provision intents and provisioning
@@ -282,11 +293,56 @@ chart, rendered as the `CERTOPS_ENABLED` env var) is a separate outer gate.
 
 When `networkPolicy.enabled` is also true,
 `networkPolicy.egress.kubeApiServerCidrs` must list the Kubernetes API server
-CIDRs, and `kubeApiServerPort` must match its destination port (443 by default).
+CIDRs, and `kubeApiServerPort` must match its effective destination port.
 The controller policy permits DNS, that Kubernetes API destination, and either
 the in-chart API Service or the explicit
 `networkPolicy.egress.controllerApiCidrs`/`controllerApiPort` allow-list. It has
 no ingress rule and grants no database, SMTP, or Pushgateway egress.
+
+Do not assume that the `kubernetes` Service ClusterIP and port `443` are the
+addresses a NetworkPolicy engine matches. kube-proxy or an eBPF datapath may
+translate the Service before egress policy is evaluated, so the policy may
+need the backing control-plane address and port instead. The ordering is
+CNI/platform-specific. A Service address that works on one cluster can time
+out on another even though both clusters expose the same in-Pod
+`KUBERNETES_SERVICE_HOST`.
+
+Discover candidates from the cluster being installed rather than copying an
+example:
+
+```bash
+# Service-facing address seen by normal in-cluster clients.
+kubectl -n default get service kubernetes \
+  -o jsonpath='{.spec.clusterIP}{":"}{.spec.ports[0].port}{"\n"}'
+
+# Backing addresses/ports commonly matched after Service DNAT. Include every
+# stable address for an HA control plane, as /32 CIDRs.
+kubectl -n default get endpointslice \
+  -l kubernetes.io/service-name=kubernetes \
+  -o jsonpath='{range .items[*]}{range .endpoints[*].addresses[*]}{.}{"\n"}{end}{range .ports[*]}{"port="}{.port}{"\n"}{end}{end}'
+```
+
+Confirm the selected CIDRs and port with the cluster's CNI documentation and a
+real controller readiness/observation test while policy enforcement is active.
+The chart deliberately has no universal API-server CIDR:
+
+- Kind commonly needs the dynamically discovered control-plane container
+  address and port `6443`; both values change between clusters and must not be
+  hardcoded.
+- Self-managed and HA clusters must include every stable control-plane or load
+  balancer destination actually matched by their CNI.
+- Managed Kubernetes and OpenShift control-plane endpoints, translation order,
+  and address stability are provider/network-plugin concerns. Use the
+  provider-supported stable CIDRs or egress mechanism and qualify it on the
+  actual production platform; a DNS name cannot be placed in an `ipBlock`.
+
+Set `networkPolicy.enabled=false` when the platform cannot provide stable
+effective API-server CIDRs, the CNI uses a different policy mechanism, or the
+cluster operator owns policy centrally. This disables all NetworkPolicy
+objects from this chart, not only the controller policy, so the operator must
+supply the complete replacement policy set. Keep controller egress limited to
+DNS, the real TokenTimer API destination, and the discovered Kubernetes API
+destinations; do not replace the list with `0.0.0.0/0`.
 
 Use the Pod's `/healthz` endpoint for liveness and `/readyz` for readiness.
 Readiness requires both Certificate watches, the CertificateRequest watches,

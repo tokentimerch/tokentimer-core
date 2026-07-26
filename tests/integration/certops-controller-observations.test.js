@@ -19,9 +19,13 @@ const {
   parsePublicCertificateMaterial,
 } = require("../../apps/api/services/certops/parser");
 const {
+  CERTOPS_CONTROLLER_OBSERVATION_CONFLICT,
   normalizeControllerObservation,
   persistControllerObservation,
 } = require("../../apps/api/services/certops/controllerObservations");
+const {
+  createObservationEnvelope,
+} = require("../../apps/k8s-controller/src/observation-envelope");
 const {
   createCertOpsExecutorRouter,
 } = require("../../apps/api/routes/certops-executor");
@@ -100,6 +104,17 @@ function observationWithKey(workspaceId, keyCharacter, overrides = {}) {
   });
 }
 
+function controllerObservationInput(workspaceId, overrides = {}) {
+  const {
+    idempotencyKey: _idempotencyKey,
+    observationId: _observationId,
+    observationSource: _observationSource,
+    schemaVersion: _schemaVersion,
+    ...input
+  } = rawObservation(workspaceId, overrides);
+  return input;
+}
+
 async function persistRawObservation({ apiTokenId, workspaceId, keyCharacter = "a", overrides = {} }) {
   const normalized = normalizeControllerObservation(
     observationWithKey(workspaceId, keyCharacter, overrides),
@@ -141,6 +156,97 @@ describe("CertOps controller observation persistence", function () {
   this.timeout(60000);
 
   before(async () => runMigrations());
+
+  it("replays an unchanged post-restart envelope without side effects and accepts real resource changes", async () => {
+    const { ownerId, workspaceId } = await createWorkspace("controller-restart-replay");
+    try {
+      const token = await createApiToken({
+        workspaceId,
+        name: "Restart replay controller",
+        scopes: ["certops:observations:write"],
+        controllerClusterId: "controller-a",
+        createdBy: ownerId,
+      });
+      const input = controllerObservationInput(workspaceId);
+      const firstEnvelope = createObservationEnvelope(input);
+      const firstNormalized = normalizeControllerObservation(firstEnvelope);
+      const first = await persistControllerObservation({
+        apiTokenId: token.token.id,
+        observation: firstNormalized.observation,
+        redaction: firstNormalized.redaction,
+      });
+      expect(first.duplicate).to.equal(false);
+      const firstCounts = await workspaceCounts(workspaceId);
+
+      const restartEnvelope = createObservationEnvelope({
+        ...input,
+        observedAt: "2026-07-21T10:05:00.000Z",
+      });
+      expect(restartEnvelope.idempotencyKey).to.equal(firstEnvelope.idempotencyKey);
+      const restartNormalized = normalizeControllerObservation(restartEnvelope);
+      const replay = await persistControllerObservation({
+        apiTokenId: token.token.id,
+        observation: restartNormalized.observation,
+        redaction: restartNormalized.redaction,
+      });
+      expect(replay).to.deep.equal({ ...first, duplicate: true });
+      expect(await workspaceCounts(workspaceId)).to.deep.equal(firstCounts);
+
+      const changedEnvelope = createObservationEnvelope({
+        ...input,
+        observedAt: "2026-07-21T10:06:00.000Z",
+        resourceVersion: "2",
+      });
+      expect(changedEnvelope.idempotencyKey).to.not.equal(firstEnvelope.idempotencyKey);
+      const changedNormalized = normalizeControllerObservation(changedEnvelope);
+      const changed = await persistControllerObservation({
+        apiTokenId: token.token.id,
+        observation: changedNormalized.observation,
+        redaction: changedNormalized.redaction,
+      });
+      expect(changed.duplicate).to.equal(false);
+      expect(changed).to.deep.include({
+        managedCertificateId: first.managedCertificateId,
+        targetId: first.targetId,
+        certificateInstanceId: first.certificateInstanceId,
+      });
+      expect(await workspaceCounts(workspaceId)).to.deep.include({
+        managed: 1,
+        targets: 1,
+        instances: 1,
+        evidence: 2,
+        audits: 2,
+        idempotency: 2,
+      });
+
+      const conflicting = normalizeControllerObservation({
+        ...firstEnvelope,
+        ready: false,
+      });
+      let conflict;
+      try {
+        await persistControllerObservation({
+          apiTokenId: token.token.id,
+          observation: conflicting.observation,
+          redaction: conflicting.redaction,
+        });
+      } catch (error) {
+        conflict = error;
+      }
+      expect(conflict?.code).to.equal(CERTOPS_CONTROLLER_OBSERVATION_CONFLICT);
+      expect(await workspaceCounts(workspaceId)).to.deep.include({
+        managed: 1,
+        targets: 1,
+        instances: 1,
+        evidence: 2,
+        audits: 2,
+        idempotency: 2,
+      });
+    } finally {
+      await TestUtils.execQuery("DELETE FROM workspaces WHERE id = $1", [workspaceId]);
+      await TestUtils.execQuery("DELETE FROM users WHERE id = $1", [ownerId]);
+    }
+  });
 
   it("atomically creates source-stable inventory, jobless evidence, and one acceptance audit", async () => {
     const { ownerId, workspaceId } = await createWorkspace("controller-observation");

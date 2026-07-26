@@ -15,31 +15,20 @@ function stableStringify(value) {
     .join(",")}}`;
 }
 
-function readyConditionIdentity(conditions) {
-  const ready = Array.isArray(conditions)
-    ? conditions.find((condition) => condition && condition.type === "Ready")
-    : null;
-  if (!ready) return null;
-  return {
-    lastTransitionTime: ready.lastTransitionTime || null,
-    message: ready.message || null,
-    reason: ready.reason || null,
-    status: ready.status || null,
-    type: "Ready",
-  };
-}
-
 function semanticTuple(observation) {
+  const {
+    idempotencyKey: _idempotencyKey,
+    observationId: _observationId,
+    observedAt: _observedAt,
+    ...semantic
+  } = {
+    ...observation,
+    schemaVersion: 1,
+    observationSource: "cert_manager",
+  };
   return {
-    certificateGeneration: observation.certificateGeneration ?? null,
-    certificateUid: observation.certificateUid || null,
-    clusterId: observation.clusterId || null,
-    fingerprintSha256: observation.publicCertificate?.fingerprintSha256 || null,
-    namespace: observation.namespace || null,
     protocolVersion: CONTROLLER_OBSERVATION_PROTOCOL_VERSION,
-    readyCondition: readyConditionIdentity(observation.conditions),
-    resourceVersion: observation.resourceVersion || null,
-    workspaceId: observation.workspaceId || null,
+    semantic,
   };
 }
 
@@ -82,7 +71,6 @@ module.exports = {
   createObservationEnvelope,
   deterministicUuidFromKey,
   idempotencyKeyFor,
-  readyConditionIdentity,
   semanticTuple,
   stableStringify,
 };

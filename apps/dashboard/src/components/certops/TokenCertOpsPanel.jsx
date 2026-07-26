@@ -97,6 +97,11 @@ function CertOpsPanelBody({ tokenId }) {
   ]
     .filter(Boolean)
     .join(' ');
+  const fingerprintLabel =
+    certificate.fingerprintSha256 ||
+    (certificate.source === 'cert_manager'
+      ? 'Not reported (status-only observation)'
+      : 'Not available');
 
   return (
     <>
@@ -196,7 +201,7 @@ function CertOpsPanelBody({ tokenId }) {
 
       <Field label='SHA-256 fingerprint' colSpan={{ base: 1, md: 2 }}>
         <Code fontSize='xs' whiteSpace='pre-wrap' wordBreak='break-all'>
-          {certificate.fingerprintSha256 || 'Not available'}
+          {fingerprintLabel}
         </Code>
       </Field>
 

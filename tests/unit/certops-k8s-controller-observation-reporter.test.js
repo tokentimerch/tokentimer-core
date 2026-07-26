@@ -69,12 +69,25 @@ function observation(overrides = {}) {
 describe("controller observation envelope", () => {
   it("uses a deterministic semantic idempotency key and UUID", () => {
     const first = createObservationEnvelope(observation());
-    const replay = createObservationEnvelope(observation({ observedAt: "2026-07-21T10:01:00.000Z" }));
+    const replay = createObservationEnvelope(observation({
+      idempotencyKey: "f".repeat(64),
+      observationId: "33333333-3333-4333-8333-333333333333",
+      observedAt: "2026-07-21T10:01:00.000Z",
+    }));
     assert.equal(first.idempotencyKey, replay.idempotencyKey);
     assert.equal(first.observationId, replay.observationId);
-    assert.notEqual(first.idempotencyKey, idempotencyKeyFor(observation({ resourceVersion: "43" })));
-    assert.notEqual(first.idempotencyKey, idempotencyKeyFor(observation({ certificateGeneration: 3 })));
-    assert.notEqual(first.idempotencyKey, idempotencyKeyFor(observation({ publicCertificate: { fingerprintSha256: "b".repeat(64) } })));
+    for (const changed of [
+      { certificateRequestRef: { name: "example-com-2", uid: "55555555-5555-4555-8555-555555555555" } },
+      { conditions: [{ type: "Ready", status: "False", reason: "Pending" }], ready: false },
+      { resourceVersion: "43" },
+      { certificateGeneration: 3 },
+      { certificateUid: "55555555-5555-4555-8555-555555555555" },
+      { publicCertificate: { fingerprintSha256: "b".repeat(64) } },
+      { workspaceId: "55555555-5555-4555-8555-555555555555" },
+      { clusterId: "controller-b" },
+    ]) {
+      assert.notEqual(first.idempotencyKey, idempotencyKeyFor(observation(changed)));
+    }
   });
 
   it("blocks private material before serialization", () => {
