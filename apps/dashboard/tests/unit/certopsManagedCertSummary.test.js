@@ -33,6 +33,37 @@ describe('summarizeManagedCertificates', () => {
     expect(summary.highlights.map(cert => cert.id)).toEqual(['a']);
   });
 
+  it('reports an unlinked non-provisioning certificate rather than hiding it', () => {
+    const summary = summarizeManagedCertificates([
+      linked({ id: 'orphan', tokenId: null, status: 'active' }),
+    ]);
+
+    expect(summary.linkedCount).toBe(0);
+    expect(summary.provisioningCount).toBe(0);
+    expect(summary.unlinkedCount).toBe(1);
+  });
+
+  // Silently dropping a row from both the list and every count is exactly how
+  // the original inventory bug stayed invisible.
+  it('never drops an active certificate from all three counts', () => {
+    const certificates = [
+      linked({ id: 'linked', tokenId: 1 }),
+      linked({ id: 'provisioning', tokenId: null, status: 'provisioning' }),
+      linked({ id: 'orphan-active', tokenId: null, status: 'active' }),
+      linked({ id: 'orphan-unknown', tokenId: null, status: 'weird-state' }),
+      linked({ id: 'retired', tokenId: 2, status: 'revoked' }),
+    ];
+
+    const summary = summarizeManagedCertificates(certificates);
+    const accounted =
+      summary.linkedCount + summary.provisioningCount + summary.unlinkedCount;
+    const activeTotal = certificates.filter(
+      cert => !['revoked', 'decommissioned'].includes(cert.status)
+    ).length;
+
+    expect(accounted).toBe(activeTotal);
+  });
+
   it('excludes retired certificates from both the list and every count', () => {
     const summary = summarizeManagedCertificates([
       linked({ id: 'revoked', tokenId: 1, status: 'revoked' }),
@@ -41,15 +72,17 @@ describe('summarizeManagedCertificates', () => {
 
     expect(summary.linkedCount).toBe(0);
     expect(summary.provisioningCount).toBe(0);
+    expect(summary.unlinkedCount).toBe(0);
     expect(summary.highlights).toEqual([]);
   });
 
-  it('does not count a retired certificate as provisioning', () => {
+  it('does not count a retired certificate as provisioning or unlinked', () => {
     const summary = summarizeManagedCertificates([
       linked({ id: 'a', tokenId: null, status: 'revoked' }),
     ]);
 
     expect(summary.provisioningCount).toBe(0);
+    expect(summary.unlinkedCount).toBe(0);
   });
 
   it('orders highlights by soonest expiry', () => {
@@ -94,6 +127,7 @@ describe('summarizeManagedCertificates', () => {
       const summary = summarizeManagedCertificates(input);
       expect(summary.linkedCount).toBe(0);
       expect(summary.provisioningCount).toBe(0);
+      expect(summary.unlinkedCount).toBe(0);
       expect(summary.highlights).toEqual([]);
     }
   });

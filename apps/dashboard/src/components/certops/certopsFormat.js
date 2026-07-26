@@ -208,9 +208,16 @@ export function isRetiredStatus(status) {
  * at reconciliation, because tokens.expiration is NOT NULL and an unissued
  * certificate has no honest expiry to record.
  *
- * Unlinked rows are therefore always mid-provisioning. They are reported as a
- * separate count rather than listed: with no expiry they cannot be sorted or
- * badged, and would read as broken inventory instead of work in flight.
+ * Unlinked rows are reported as counts rather than listed: with no expiry they
+ * cannot be sorted or badged, and would read as broken inventory instead of
+ * work in flight. They are split by whether being unlinked is expected:
+ *
+ * - `provisioningCount` is the normal case, an issuance still in flight.
+ * - `unlinkedCount` is everything else. No product path should produce it
+ *   (reconciliation promotes to active and links the token in one
+ *   transaction), so it is surfaced instead of being filtered into silence.
+ *   Dropping such a row from both the list and every count is what made the
+ *   original inventory bug invisible.
  *
  * @param {Array<object>} certificates
  * @param {{ highlightLimit?: number }} [options]
@@ -219,6 +226,7 @@ export function isRetiredStatus(status) {
  *   highlights: Array<object>,
  *   linkedCount: number,
  *   provisioningCount: number,
+ *   unlinkedCount: number,
  * }}
  */
 export function summarizeManagedCertificates(certificates, options = {}) {
@@ -229,10 +237,9 @@ export function summarizeManagedCertificates(certificates, options = {}) {
   const active = items.filter(cert => !isRetiredStatus(cert?.status));
 
   const linked = active.filter(cert => cert?.tokenId != null);
-  const provisioningCount = active.filter(
-    cert =>
-      cert?.tokenId == null &&
-      String(cert?.status || '').toLowerCase() === 'provisioning'
+  const unlinked = active.filter(cert => cert?.tokenId == null);
+  const provisioningCount = unlinked.filter(
+    cert => String(cert?.status || '').toLowerCase() === 'provisioning'
   ).length;
 
   // Soonest expiry first; a missing expiry sorts last rather than first, so an
@@ -252,6 +259,7 @@ export function summarizeManagedCertificates(certificates, options = {}) {
     highlights,
     linkedCount: linked.length,
     provisioningCount,
+    unlinkedCount: unlinked.length - provisioningCount,
   };
 }
 

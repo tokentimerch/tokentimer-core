@@ -1076,6 +1076,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     highlights: managedCertHighlights,
     linkedCount: managedCertCount,
     provisioningCount: provisioningCertCount,
+    unlinkedCount: unlinkedCertCount,
   } = useMemo(
     () => summarizeManagedCertificates(managedCertItems),
     [managedCertItems]
@@ -1105,6 +1106,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     if (provisioningCertCount > 0) {
       signals.push(`${provisioningCertCount} provisioning`);
     }
+    if (unlinkedCertCount > 0) {
+      signals.push(`${unlinkedCertCount} not linked to a token`);
+    }
     if (signals.length === 0) return 'Registered in this workspace';
     return `${signals.join(' · ')} · ${managedCertCount} registered`;
   }, [
@@ -1112,6 +1116,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     linkedManagedCerts,
     managedCertCount,
     provisioningCertCount,
+    unlinkedCertCount,
   ]);
 
   // Prefer the workspace-wide aggregate: neverExpires is a preview list capped
@@ -1607,8 +1612,10 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                             />
                             <InsightListShell
                               emptyMessage={
-                                provisioningCertCount > 0
-                                  ? `No managed certificates registered yet. ${provisioningCertCount} still provisioning.`
+                                provisioningCertCount + unlinkedCertCount > 0
+                                  ? `No managed certificates linked to a token yet. ${
+                                      provisioningCertCount + unlinkedCertCount
+                                    } not linked.`
                                   : 'No managed certificates registered in this workspace yet.'
                               }
                             >
