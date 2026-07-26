@@ -317,8 +317,14 @@ describe("certops issue operation plumbing", () => {
     assert.equal(dispatch._test.wireActionForOperation("deploy"), "deploy");
   });
 
-  it("raises the renewal-failure alert for a failed issuance", () => {
-    assert.ok(dispatch._test.RENEWAL_ALERTING_OPERATIONS.has("issue"));
+  it("does not raise a renewal alert for a failed issuance", () => {
+    // An issuance failure has no certificate identity worth alerting on yet:
+    // there is no token to anchor contact routing and nothing in the inventory
+    // the operator was already relying on. The job itself is visible in the
+    // dashboard and the audit trail. The set is asserted here AND exercised
+    // through the resolver in certops-renewal-failure-alerts.test.js, because
+    // the original bug was precisely a set that no test ever resolved against.
+    assert.ok(!dispatch._test.RENEWAL_ALERTING_OPERATIONS.has("issue"));
     assert.ok(dispatch._test.RENEWAL_ALERTING_OPERATIONS.has("renew"));
     assert.ok(!dispatch._test.RENEWAL_ALERTING_OPERATIONS.has("deploy"));
   });

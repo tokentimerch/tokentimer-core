@@ -171,7 +171,7 @@ describe("renewalFailureAlerts.queueCertRenewalFailedAlert", () => {
     );
   });
 
-  it("skips non-renew operations", async () => {
+  it("skips operations that do not alert", async () => {
     const { client } = createMockClient(happyPathHandler());
     const outcome = await queueCertRenewalFailedAlert({
       client,
@@ -179,7 +179,18 @@ describe("renewalFailureAlerts.queueCertRenewalFailedAlert", () => {
       workspaceId: WORKSPACE_A,
     });
     assert.equal(outcome.queued, false);
-    assert.equal(outcome.reason, "not_renew_operation");
+    assert.equal(outcome.reason, "operation_not_alerting");
+  });
+
+  it("skips issue jobs: an issuance failure has no certificate to alert on", async () => {
+    const { client } = createMockClient(happyPathHandler());
+    const outcome = await queueCertRenewalFailedAlert({
+      client,
+      job: renewJob({ operation: "issue" }),
+      workspaceId: WORKSPACE_A,
+    });
+    assert.equal(outcome.queued, false);
+    assert.equal(outcome.reason, "operation_not_alerting");
   });
 
   it("skips jobs without a managed_certificate subject", async () => {
@@ -337,13 +348,13 @@ function ingestHandler({ jobRow }) {
   };
 }
 
-describe("agentDispatch.ingestResult renewal-failure emission", () => {
+describe("agentDispatch.ingestResult outbox enqueue", () => {
   const silentLogger = { warn() {}, error() {}, info() {}, debug() {} };
 
-  it("emits on terminal renew failure inside the transaction", async () => {
+  it("records the alert intent in the outbox inside the transaction", async () => {
     const jobRow = lockedJobRow();
     const dbPool = createMockPool(ingestHandler({ jobRow }));
-    const calls = [];
+    const events = [];
 
     const result = await ingestResult({
       dbPool,
@@ -351,9 +362,9 @@ describe("agentDispatch.ingestResult renewal-failure emission", () => {
       body: resultBody(),
       deps: {
         consumeNonce: async () => ({ consumed: true }),
-        queueCertRenewalFailedAlert: async (options) => {
-          calls.push(options);
-          return { queued: true, alertKey: "cert_renewal_failed:42" };
+        enqueueOutboxEvent: async (options) => {
+          events.push(options);
+          return { enqueued: true, id: "outbox-1" };
         },
         logger: silentLogger,
       },
@@ -361,17 +372,21 @@ describe("agentDispatch.ingestResult renewal-failure emission", () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.status, "failed");
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].workspaceId, WORKSPACE_A);
-    assert.equal(calls[0].job.id, 42);
-    assert.equal(calls[0].job.operation, "renew");
-    assert.equal(calls[0].errorCode, "AGENT_RESULT_FAILED");
-    // Same transaction: the injected client is the pool's tx client.
-    assert.ok(calls[0].client, "transaction client expected");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].eventType, "renewal_alert_requested");
+    assert.equal(events[0].workspaceId, WORKSPACE_A);
+    assert.equal(events[0].dedupeKey, "42");
+    assert.equal(events[0].payload.operation, "renew");
+    assert.equal(events[0].payload.jobStatus, "failed");
+    assert.equal(events[0].payload.origin, "agent_result");
+    assert.equal(events[0].payload.errorCode, "AGENT_RESULT_FAILED");
+    // Same transaction: the enqueue gets the pool's tx client, so the terminal
+    // status and the intent commit together.
+    assert.ok(events[0].client, "transaction client expected");
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
-  it("does not emit on success", async () => {
+  it("does not enqueue on success", async () => {
     const jobRow = lockedJobRow();
     const dbPool = createMockPool((sql) => {
       const reconciliation = reconciliationNoopBranch(sql);
@@ -391,7 +406,7 @@ describe("agentDispatch.ingestResult renewal-failure emission", () => {
       }
       throw new Error(`unexpected query: ${sql}`);
     });
-    const calls = [];
+    const events = [];
 
     const result = await ingestResult({
       dbPool,
@@ -399,22 +414,22 @@ describe("agentDispatch.ingestResult renewal-failure emission", () => {
       body: resultBody({ status: "succeeded", errorMessage: undefined }),
       deps: {
         consumeNonce: async () => ({ consumed: true }),
-        queueCertRenewalFailedAlert: async (options) => {
-          calls.push(options);
-          return { queued: true };
+        enqueueOutboxEvent: async (options) => {
+          events.push(options);
+          return { enqueued: true };
         },
         logger: silentLogger,
       },
     });
 
     assert.equal(result.status, "succeeded");
-    assert.equal(calls.length, 0);
+    assert.equal(events.length, 0);
   });
 
-  it("does not emit for deploy jobs", async () => {
+  it("does not enqueue for deploy jobs", async () => {
     const jobRow = lockedJobRow({ operation: "deploy" });
     const dbPool = createMockPool(ingestHandler({ jobRow }));
-    const calls = [];
+    const events = [];
 
     const result = await ingestResult({
       dbPool,
@@ -422,50 +437,64 @@ describe("agentDispatch.ingestResult renewal-failure emission", () => {
       body: resultBody(),
       deps: {
         consumeNonce: async () => ({ consumed: true }),
-        queueCertRenewalFailedAlert: async (options) => {
-          calls.push(options);
-          return { queued: true };
+        enqueueOutboxEvent: async (options) => {
+          events.push(options);
+          return { enqueued: true };
         },
         logger: silentLogger,
       },
     });
 
     assert.equal(result.status, "failed");
-    assert.equal(calls.length, 0);
+    assert.equal(events.length, 0);
   });
 
-  it("a throwing alert dep does not break ingestion", async () => {
-    const jobRow = lockedJobRow();
+  it("does not enqueue for a failed issue job", async () => {
+    const jobRow = lockedJobRow({ operation: "issue" });
     const dbPool = createMockPool(ingestHandler({ jobRow }));
-    const warnings = [];
+    const events = [];
 
-    const result = await ingestResult({
+    await ingestResult({
       dbPool,
       agent: agentFixture(),
       body: resultBody(),
       deps: {
         consumeNonce: async () => ({ consumed: true }),
-        queueCertRenewalFailedAlert: async () => {
-          throw new Error("alert pipeline down");
+        enqueueOutboxEvent: async (options) => {
+          events.push(options);
+          return { enqueued: true };
         },
-        logger: {
-          ...silentLogger,
-          warn: (msg, meta) => warnings.push({ msg, meta }),
-        },
+        logger: silentLogger,
       },
     });
 
-    assert.equal(result.ok, true);
-    assert.equal(result.status, "failed");
-    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
-    assert.ok(
-      warnings.some((w) => w.msg === "certops-renewal-failed-alert-error"),
+    assert.equal(events.length, 0);
+  });
+
+  it("fails ingestion when the outbox enqueue fails, rather than losing the intent", async () => {
+    const jobRow = lockedJobRow();
+    const dbPool = createMockPool(ingestHandler({ jobRow }));
+
+    await assert.rejects(
+      ingestResult({
+        dbPool,
+        agent: agentFixture(),
+        body: resultBody(),
+        deps: {
+          consumeNonce: async () => ({ consumed: true }),
+          enqueueOutboxEvent: async () => {
+            throw new Error("outbox insert failed");
+          },
+          logger: silentLogger,
+        },
+      }),
+      /outbox insert failed/,
     );
-    // The savepoint protected the transaction.
-    const savepointRollback = dbPool.state.queries.find((q) =>
-      q.text.trim().toUpperCase().startsWith("ROLLBACK TO SAVEPOINT"),
-    );
-    assert.ok(savepointRollback, "savepoint rollback expected");
+
+    // The whole terminal transition rolls back. "Ingestion never fails" and
+    // "the intent is durable" cannot both hold, and durability is the one that
+    // an operator depends on.
+    assert.ok(dbPool.state.transaction.includes("ROLLBACK"));
   });
 });
 
@@ -502,10 +531,10 @@ function createReaperClient(rows) {
   };
 }
 
-describe("certops-worker lease reaper renewal-failure emission", () => {
+describe("certops-worker lease reaper outbox enqueue", () => {
   const silentLogger = { info() {}, warn() {}, error() {}, debug() {} };
 
-  it("emits for terminal agent_offline renew failures only", async () => {
+  it("enqueues for terminal renew failures only", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
@@ -549,14 +578,14 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         past_hard_grace: false,
       },
     ]);
-    const calls = [];
+    const events = [];
 
     const summary = await worker.reapExpiredLeases({
       client,
       log: silentLogger,
-      queueRenewalFailedAlert: async (options) => {
-        calls.push(options);
-        return { queued: true, alertKey: `cert_renewal_failed:${options.job.id}` };
+      recordOutboxEvent: async (options) => {
+        events.push(options);
+        return { enqueued: true };
       },
     });
 
@@ -566,15 +595,16 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
       failed: 2,
       deferred: 0,
     });
-    // Only the terminally failed renew job emits; deploy and requeued do not.
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].job.id, "job-renew");
-    assert.equal(calls[0].workspaceId, "ws-1");
-    assert.equal(calls[0].errorCode, "agent_offline");
+    // Only the terminally failed renew job enqueues; deploy and requeued do not.
+    assert.equal(events.length, 1);
+    assert.equal(events[0].dedupeKey, "job-renew");
+    assert.equal(events[0].workspaceId, "ws-1");
+    assert.equal(events[0].payload.errorCode, "agent_offline");
+    assert.equal(events[0].payload.origin, "lease_reaper");
     assert.strictEqual(client.queries.at(-1).sql, "COMMIT");
   });
 
-  it("a throwing alert dep does not break the reaper", async () => {
+  it("marks an orphaned renew high priority", async () => {
     const worker = await import(workerUrl);
     const client = createReaperClient([
       {
@@ -590,69 +620,217 @@ describe("certops-worker lease reaper renewal-failure emission", () => {
         past_hard_grace: false,
       },
     ]);
-    const warnings = [];
+    const events = [];
 
-    const summary = await worker.reapExpiredLeases({
+    await worker.reapExpiredLeases({
       client,
-      log: {
-        ...silentLogger,
-        warn: (msg, meta) => warnings.push({ msg, meta }),
+      log: silentLogger,
+      recordOutboxEvent: async (options) => {
+        events.push(options);
+        return { enqueued: true };
       },
-      queueRenewalFailedAlert: async () => {
+    });
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].payload.jobStatus, "orphaned_unknown_effect");
+    assert.equal(events[0].payload.priority, "high");
+  });
+});
+
+// --- Classification: origin, not status alone ---
+
+const {
+  classifyTerminalTransition,
+  TRANSITION_ORIGINS,
+  RENEWAL_ALERTING_OPERATIONS,
+} = require(
+  path.resolve(
+    __dirname,
+    "../../apps/api/services/certops/renewalAlertPolicy.js",
+  ),
+);
+
+describe("renewalAlertPolicy.classifyTerminalTransition", () => {
+  it("excludes issue from the alerting set so caller and resolver agree", () => {
+    assert.equal(RENEWAL_ALERTING_OPERATIONS.has("renew"), true);
+    assert.equal(RENEWAL_ALERTING_OPERATIONS.has("issue"), false);
+  });
+
+  const cases = [
+    // [description, operation, status, origin, expectedAlertWorthy]
+    ["agent execution failure", "renew", "failed", TRANSITION_ORIGINS.AGENT_RESULT, true],
+    ["agent policy rejection", "renew", "rejected", TRANSITION_ORIGINS.AGENT_RESULT, true],
+    ["human approval rejection", "renew", "rejected", TRANSITION_ORIGINS.APPROVAL_REJECTION, false],
+    ["human cancellation", "renew", "cancelled", TRANSITION_ORIGINS.OPERATOR_CANCEL, false],
+    ["agent blocked", "renew", "blocked", TRANSITION_ORIGINS.AGENT_RESULT, true],
+    ["lease expiry orphan", "renew", "orphaned_unknown_effect", TRANSITION_ORIGINS.LEASE_REAPER, true],
+    ["stale agent fencing", "renew", "orphaned_unknown_effect", TRANSITION_ORIGINS.STALE_AGENT, true],
+    ["forced retirement", "renew", "cancelled", TRANSITION_ORIGINS.FORCED_RETIREMENT, true],
+    ["dry run", "renew", "dry_run_complete", TRANSITION_ORIGINS.AGENT_RESULT, false],
+    ["success", "renew", "succeeded", TRANSITION_ORIGINS.AGENT_RESULT, false],
+    ["issue failure", "issue", "failed", TRANSITION_ORIGINS.AGENT_RESULT, false],
+    ["deploy failure", "deploy", "failed", TRANSITION_ORIGINS.AGENT_RESULT, false],
+  ];
+
+  for (const [label, operation, status, origin, expected] of cases) {
+    it(`${label}: alertWorthy=${expected}`, () => {
+      const outcome = classifyTerminalTransition({ operation, status, origin });
+      assert.equal(outcome.alertWorthy, expected, label);
+      // Every decision explains itself; a silent skip is the bug this replaced.
+      assert.ok(
+        typeof outcome.reason === "string" && outcome.reason.length > 0,
+        "reason expected",
+      );
+    });
+  }
+
+  it("distinguishes the same status by origin", () => {
+    const byAgent = classifyTerminalTransition({
+      operation: "renew",
+      status: "rejected",
+      origin: TRANSITION_ORIGINS.AGENT_RESULT,
+    });
+    const byHuman = classifyTerminalTransition({
+      operation: "renew",
+      status: "rejected",
+      origin: TRANSITION_ORIGINS.APPROVAL_REJECTION,
+    });
+    assert.equal(byAgent.alertWorthy, true);
+    assert.equal(byHuman.alertWorthy, false);
+    assert.notEqual(byAgent.reason, byHuman.reason);
+  });
+});
+
+// --- Outbox drain ---
+
+function createDrainPool(rows, { alertThrows = false, alertOutcome = null } = {}) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql, params = []) {
+      const normalized = normalizeSql(sql);
+      queries.push({ sql: normalized, params });
+      if (normalized.startsWith("WITH due AS")) return { rows };
+      return { rows: [], rowCount: 1 };
+    },
+    alertThrows,
+    alertOutcome,
+  };
+}
+
+function outboxRow(overrides = {}) {
+  return {
+    id: "outbox-1",
+    workspace_id: "ws-1",
+    event_type: "renewal_alert_requested",
+    dedupe_key: "job-1",
+    payload: { jobId: "job-1", errorCode: "AGENT_RESULT_FAILED" },
+    attempt_count: 1,
+    max_attempts: 5,
+    ...overrides,
+  };
+}
+
+describe("certops-worker outbox drain", () => {
+  const silentLogger = { info() {}, warn() {}, error() {}, debug() {} };
+
+  it("resolves a queued alert and marks the event succeeded", async () => {
+    const worker = await import(workerUrl);
+    const dbPool = createDrainPool([outboxRow()]);
+
+    const summary = await worker.drainCertOpsOutbox({
+      dbPool,
+      log: silentLogger,
+      alertResolver: async () => ({ queued: true, alertKey: "k" }),
+    });
+
+    assert.equal(summary.scanned, 1);
+    assert.equal(summary.succeeded, 1);
+    const update = dbPool.queries.find(
+      (q) => q.sql.includes("UPDATE certops_outbox") && q.params[0] === "succeeded",
+    );
+    assert.ok(update, "terminal succeeded update expected");
+    // Owner-scoped: the terminal write is conditional on this run's claim id.
+    assert.match(update.sql, /claim_id = \$4::uuid/);
+  });
+
+  it("marks a structural skip terminal, preserving the reason", async () => {
+    const worker = await import(workerUrl);
+    const dbPool = createDrainPool([outboxRow()]);
+
+    const summary = await worker.drainCertOpsOutbox({
+      dbPool,
+      log: silentLogger,
+      alertResolver: async () => ({ queued: false, reason: "no_linked_token" }),
+    });
+
+    assert.equal(summary.skipped, 1);
+    const update = dbPool.queries.find(
+      (q) => q.sql.includes("UPDATE certops_outbox") && q.params[0] === "skipped",
+    );
+    assert.ok(update, "terminal skipped update expected");
+    assert.equal(update.params[1], "no_linked_token");
+  });
+
+  it("retries a thrown error with backoff and keeps the row pending", async () => {
+    const worker = await import(workerUrl);
+    const dbPool = createDrainPool([outboxRow({ attempt_count: 1 })]);
+
+    const summary = await worker.drainCertOpsOutbox({
+      dbPool,
+      log: silentLogger,
+      alertResolver: async () => {
         throw new Error("alert pipeline down");
       },
     });
 
-    assert.deepStrictEqual(summary, {
-      scanned: 1,
-      requeued: 0,
-      failed: 1,
-      deferred: 0,
-    });
-    assert.strictEqual(client.queries.at(-1).sql, "COMMIT");
-    assert.ok(
-      warnings.some((w) => w.msg === "certops-renewal-failed-alert-error"),
+    assert.equal(summary.retried, 1);
+    assert.equal(summary.failed, 0);
+    const update = dbPool.queries.find((q) =>
+      q.sql.includes("SET status = CASE WHEN"),
     );
-    const savepointRollback = client.queries.find((q) =>
-      q.sql.startsWith("ROLLBACK TO SAVEPOINT"),
-    );
-    assert.ok(savepointRollback, "savepoint rollback expected");
+    assert.ok(update, "retry update expected");
+    assert.equal(update.params[0], false, "not exhausted yet");
+    assert.match(String(update.params[1]), /alert pipeline down/);
   });
 
-  it("logs a skip warning when the alert is not queued", async () => {
+  it("parks the row as failed once attempts are exhausted", async () => {
     const worker = await import(workerUrl);
-    const client = createReaperClient([
-      {
-        id: "job-renew",
-        workspace_id: "ws-1",
-        status: "running",
-        attempt_count: 3,
-        max_attempts: 3,
-        operation: "renew",
-        subject_type: "managed_certificate",
-        subject_id: "cert-1",
-        agent_alive: false,
-        past_hard_grace: false,
-      },
+    const dbPool = createDrainPool([
+      outboxRow({ attempt_count: 5, max_attempts: 5 }),
     ]);
-    const warnings = [];
 
-    await worker.reapExpiredLeases({
-      client,
-      log: {
-        ...silentLogger,
-        warn: (msg, meta) => warnings.push({ msg, meta }),
+    const summary = await worker.drainCertOpsOutbox({
+      dbPool,
+      log: silentLogger,
+      alertResolver: async () => {
+        throw new Error("still down");
       },
-      queueRenewalFailedAlert: async () => ({
-        queued: false,
-        reason: "no_linked_token",
-      }),
     });
 
-    const skip = warnings.find(
-      (w) => w.msg === "certops-renewal-failed-alert-skipped",
+    assert.equal(summary.failed, 1);
+    const update = dbPool.queries.find((q) =>
+      q.sql.includes("SET status = CASE WHEN"),
     );
-    assert.ok(skip, "skip warning expected");
-    assert.equal(skip.meta.reason, "no_linked_token");
+    assert.equal(update.params[0], true, "exhausted");
+  });
+
+  it("defers an event type whose handler is not implemented yet", async () => {
+    const worker = await import(workerUrl);
+    const dbPool = createDrainPool([
+      outboxRow({ event_type: "profile_derivation_requested" }),
+    ]);
+
+    const summary = await worker.drainCertOpsOutbox({
+      dbPool,
+      log: silentLogger,
+      alertResolver: async () => ({ queued: true }),
+    });
+
+    // Deferred, not dropped: recording the intent is pointless if the drain
+    // silently discards the event types it cannot handle yet.
+    assert.equal(summary.retried, 1);
+    assert.equal(summary.skipped, 0);
+    assert.equal(summary.succeeded, 0);
   });
 });

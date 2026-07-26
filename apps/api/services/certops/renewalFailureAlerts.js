@@ -1,11 +1,15 @@
 "use strict";
 
 /**
- * cert_renewal_failed alert emission.
+ * cert_renewal_failed alert resolution.
  *
- * When a renew job reaches a terminal 'failed' status, queue exactly one
- * cert_renewal_failed alert through the existing alert pipeline. CertOps
- * alerts ride the pipeline anchored on the linked token row
+ * This is the delivery half of the renewal-failure path. It does not decide
+ * whether to alert: that decision is made by renewalAlertPolicy.js at the
+ * moment of the terminal transition and recorded in certops_outbox, so the
+ * intent survives a failure here. This function resolves the recorded intent
+ * into an alert_queue row and is called by the outbox drain sweep.
+ *
+ * CertOps alerts ride the pipeline anchored on the linked token row
  * (alert_queue.token_id INTEGER NOT NULL): the anchor comes from the job's
  * subject managed_certificate row (managed_certificates.token_id). Jobs with
  * no managed_certificate subject or an unlinked certificate skip the insert
@@ -13,19 +17,19 @@
  *
  * Idempotency mirrors the endpoint_health pattern in
  * apps/worker/src/endpoint-check-worker.js: one alert_key per job
- * (cert_renewal_failed:<jobId>), existence-checked before insert. A retry
- * wave that fails again creates a new job, so no date suffix is needed.
+ * (cert_renewal_failed:<jobId>), existence-checked before insert. That anchor
+ * is what makes a redelivered outbox event safe. A retry wave that fails again
+ * creates a new job, so no date suffix is needed.
  *
  * Zero-custody: alert rows carry only ids and the frozen error code; the
  * delivery worker renders name/type from the joined token row. No payload
  * contents ever reach the queue.
- *
- * Callers MUST wrap this in try/catch: an alert failure must never fail
- * result ingestion or the lease reaper (see agentDispatch.ingestResult and
- * certops-worker.js call sites).
  */
 
 const { pool } = require("../../db/database");
+const {
+  RENEWAL_ALERTING_OPERATIONS,
+} = require("./renewalAlertPolicy");
 
 // Contact-group eligibility helpers. These mirror
 // apps/worker/src/shared/contactGroups.js exactly; that module is ESM and
@@ -134,8 +138,8 @@ async function queueCertRenewalFailedAlert({
   }
 
   const operation = jobRow.operation;
-  if (operation !== "renew") {
-    return { queued: false, reason: "not_renew_operation" };
+  if (!RENEWAL_ALERTING_OPERATIONS.has(operation)) {
+    return { queued: false, reason: "operation_not_alerting" };
   }
 
   const subjectType = jobRow.subjectType ?? jobRow.subject_type ?? null;

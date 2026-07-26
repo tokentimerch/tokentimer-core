@@ -42,7 +42,15 @@ const {
   computeJobPayloadApprovalHash,
   invalidateApprovalForClaim,
 } = require("./jobApprovals");
-const { queueCertRenewalFailedAlert } = require("./renewalFailureAlerts");
+const {
+  RENEWAL_ALERTING_OPERATIONS,
+  TRANSITION_ORIGINS,
+  classifyTerminalTransition,
+} = require("./renewalAlertPolicy");
+const {
+  OUTBOX_EVENT_TYPES,
+  enqueueOutboxEvent,
+} = require("./outbox");
 const {
   dispatchNonceTtlSeconds,
   jobLeaseSeconds,
@@ -121,11 +129,6 @@ const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
 function wireActionForOperation(operation) {
   return WIRE_ACTION_BY_OPERATION[operation] || operation;
 }
-
-// Operations whose terminal failure raises cert_renewal_failed. A failed
-// issuance is an operator-visible certificate failure exactly like a failed
-// renewal, and both resolve their contact groups the same way.
-const RENEWAL_ALERTING_OPERATIONS = new Set(["renew", "issue"]);
 
 // Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
 // `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
@@ -808,6 +811,13 @@ async function claimJobs({
 
     // B2/B5: agent lane only; match assigned agent, target selector, DNS
     // provider, and command profile when the job requires them.
+    //
+    // The operation filter compares against the agent's wire actions
+    // (supportedActions), not the control-plane operation column directly:
+    // "issue" is dispatched to agents as "renew" (see WIRE_ACTION_BY_OPERATION
+    // above) and no agent ever declares "issue" as a supported action, so
+    // without this translation issue jobs would sit at 'pending' forever.
+    // Keep this CASE in sync with WIRE_ACTION_BY_OPERATION if that map grows.
     const selected = await client.query(
       `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
               approved_payload_hash, approved_canonical_intent_hash,
@@ -820,7 +830,7 @@ async function claimJobs({
           AND executor_kind = 'agent'
           AND (scheduled_for IS NULL OR scheduled_for <= NOW())
           AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-          AND operation = ANY($2::text[])
+          AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])
           AND (assigned_agent_id IS NULL OR assigned_agent_id = $3::uuid)
           AND (
             required_target_selector IS NULL
@@ -1221,8 +1231,7 @@ async function ingestResult({
 } = {}) {
   const consume = deps.consumeNonce || consumeNonce;
   const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
-  const queueRenewalFailedAlert =
-    deps.queueCertRenewalFailedAlert || queueCertRenewalFailedAlert;
+  const recordOutboxEvent = deps.enqueueOutboxEvent || enqueueOutboxEvent;
   const log = deps.logger || logger;
 
   const jobStatus = RESULT_STATUS_TO_JOB_STATUS[body.status];
@@ -1420,46 +1429,39 @@ async function ingestResult({
       });
     }
 
-    // Terminal renew failures queue a cert_renewal_failed alert inside
-    // the same transaction. Alert failures must never fail result
-    // ingestion, so this is best-effort (endpoint-check-worker pattern).
-    if (isFailure && jobStatus === "failed" && RENEWAL_ALERTING_OPERATIONS.has(job.operation)) {
-      // Savepoint so a failed alert insert cannot abort the surrounding
-      // ingestion transaction.
-      try {
-        await client.query("SAVEPOINT certops_renewal_alert");
-        const alertOutcome = await queueRenewalFailedAlert({
-          client,
-          job: {
-            id: job.id,
-            workspace_id: agent.workspaceId,
-            operation: job.operation,
-            subject_type: job.subject_type,
-            subject_id: job.subject_id,
-          },
-          workspaceId: agent.workspaceId,
-          errorCode,
-        });
-        await client.query("RELEASE SAVEPOINT certops_renewal_alert");
-        if (!alertOutcome?.queued && log?.warn) {
-          log.warn("certops-renewal-failed-alert-skipped", {
-            jobId: String(job.id),
-            reason: alertOutcome?.reason || "unknown",
-          });
-        }
-      } catch (alertErr) {
-        try {
-          await client.query("ROLLBACK TO SAVEPOINT certops_renewal_alert");
-        } catch (_rollbackErr) {
-          // Savepoint may not exist if the SAVEPOINT statement itself failed.
-        }
-        if (log?.warn) {
-          log.warn("certops-renewal-failed-alert-error", {
-            jobId: String(job.id),
-            error: alertErr.message,
-          });
-        }
-      }
+    // Terminal transitions that warrant a notification record the intent in the
+    // outbox as part of this transaction. Contact resolution and the
+    // alert_queue insert happen later in the maintenance worker's drain sweep,
+    // so a slow or failing alert path cannot affect result ingestion, and an
+    // ingestion that commits can never lose the intent to alert.
+    const classification = classifyTerminalTransition({
+      operation: job.operation,
+      status: jobStatus,
+      origin: TRANSITION_ORIGINS.AGENT_RESULT,
+    });
+    if (classification.alertWorthy) {
+      await recordOutboxEvent({
+        client,
+        workspaceId: agent.workspaceId,
+        eventType: OUTBOX_EVENT_TYPES.RENEWAL_ALERT_REQUESTED,
+        dedupeKey: String(job.id),
+        payload: {
+          jobId: String(job.id),
+          operation: job.operation,
+          jobStatus,
+          origin: TRANSITION_ORIGINS.AGENT_RESULT,
+          classificationReason: classification.reason,
+          priority: classification.priority || null,
+          errorCode: errorCode || null,
+          subjectType: job.subject_type || null,
+          subjectId: job.subject_id ? String(job.subject_id) : null,
+        },
+      });
+    } else if (log?.debug) {
+      log.debug("certops-renewal-alert-not-queued", {
+        jobId: String(job.id),
+        reason: classification.reason,
+      });
     }
 
     return {

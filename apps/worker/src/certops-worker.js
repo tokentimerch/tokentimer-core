@@ -40,6 +40,7 @@ import {
 } from "./certops-metrics.js";
 import { safeInc } from "./shared/safeMetrics.js";
 import { createRequire } from "module";
+import { randomUUID } from "crypto";
 
 const require = createRequire(import.meta.url);
 const { sweepExpiredNonces } = require(
@@ -53,6 +54,13 @@ const { runRenewalSchedulerSweep } = require(
 );
 const { queueCertRenewalFailedAlert } = require(
   "../../api/services/certops/renewalFailureAlerts.js",
+);
+const {
+  TRANSITION_ORIGINS,
+  classifyTerminalTransition,
+} = require("../../api/services/certops/renewalAlertPolicy.js");
+const { enqueueOutboxEvent } = require(
+  "../../api/services/certops/outbox.js",
 );
 
 export const DEFAULT_AGENT_OFFLINE_AFTER_MS = 10 * 60 * 1000;
@@ -97,7 +105,17 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
     enableEnv: "CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_RENEWAL_SCHEDULER_TIMEOUT_MS",
   }),
+  "outbox-drain": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_OUTBOX_DRAIN_TIMEOUT_MS",
+  }),
 });
+
+export const DEFAULT_OUTBOX_DRAIN_BATCH_SIZE = 50;
+// Lease window for one outbox row. Long enough for contact resolution plus the
+// alert_queue insert, short enough that a crashed worker's rows come back
+// within one or two maintenance ticks.
+const OUTBOX_LEASE_MS = 60_000;
 
 export function resolveAgentOfflineAfterMs(env = process.env) {
   const raw = env.CERTOPS_AGENT_OFFLINE_AFTER_MS;
@@ -193,7 +211,7 @@ export async function reapExpiredLeases({
   offlineAfterMs = DEFAULT_AGENT_OFFLINE_AFTER_MS,
   hardGraceMs = DEFAULT_LEASE_HARD_GRACE_MS,
   log = logger,
-  queueRenewalFailedAlert = queueCertRenewalFailedAlert,
+  recordOutboxEvent = enqueueOutboxEvent,
 } = {}) {
   const summary = { scanned: 0, requeued: 0, failed: 0, deferred: 0 };
 
@@ -311,35 +329,33 @@ export async function reapExpiredLeases({
         });
         summary.failed += 1;
 
-        if (row.operation === "renew") {
-          try {
-            await client.query("SAVEPOINT certops_renewal_alert");
-            const alertOutcome = await queueRenewalFailedAlert({
-              client,
-              job: row,
-              workspaceId: row.workspace_id,
-              errorCode,
-            });
-            await client.query("RELEASE SAVEPOINT certops_renewal_alert");
-            if (!alertOutcome?.queued) {
-              log.warn?.("certops-renewal-failed-alert-skipped", {
-                jobId: String(row.id),
-                reason: alertOutcome?.reason || "unknown",
-              });
-            }
-          } catch (alertErr) {
-            try {
-              await client.query(
-                "ROLLBACK TO SAVEPOINT certops_renewal_alert",
-              );
-            } catch (_rollbackErr) {
-              // Savepoint may not exist if SAVEPOINT itself failed.
-            }
-            log.warn?.("certops-renewal-failed-alert-error", {
+        // Side effects may have landed and cannot be proven either way, so this
+        // is the one reaper outcome an operator must always hear about. Recorded
+        // in the outbox inside the reaper's transaction: the job's terminal
+        // status and the intent to notify commit together.
+        const classification = classifyTerminalTransition({
+          operation: row.operation,
+          status: "orphaned_unknown_effect",
+          origin: TRANSITION_ORIGINS.LEASE_REAPER,
+        });
+        if (classification.alertWorthy) {
+          await recordOutboxEvent({
+            client,
+            workspaceId: row.workspace_id,
+            eventType: "renewal_alert_requested",
+            dedupeKey: String(row.id),
+            payload: {
               jobId: String(row.id),
-              error: alertErr?.message,
-            });
-          }
+              operation: row.operation,
+              jobStatus: "orphaned_unknown_effect",
+              origin: TRANSITION_ORIGINS.LEASE_REAPER,
+              classificationReason: classification.reason,
+              priority: classification.priority || null,
+              errorCode,
+              subjectType: row.subject_type || null,
+              subjectId: row.subject_id ? String(row.subject_id) : null,
+            },
+          });
         }
       } else {
         // Never renewed but retry budget exhausted (or non-claimable state).
@@ -375,35 +391,29 @@ export async function reapExpiredLeases({
         });
         summary.failed += 1;
 
-        if (row.operation === "renew") {
-          try {
-            await client.query("SAVEPOINT certops_renewal_alert");
-            const alertOutcome = await queueRenewalFailedAlert({
-              client,
-              job: row,
-              workspaceId: row.workspace_id,
-              errorCode,
-            });
-            await client.query("RELEASE SAVEPOINT certops_renewal_alert");
-            if (!alertOutcome?.queued) {
-              log.warn?.("certops-renewal-failed-alert-skipped", {
-                jobId: String(row.id),
-                reason: alertOutcome?.reason || "unknown",
-              });
-            }
-          } catch (alertErr) {
-            try {
-              await client.query(
-                "ROLLBACK TO SAVEPOINT certops_renewal_alert",
-              );
-            } catch (_rollbackErr) {
-              // Savepoint may not exist if SAVEPOINT itself failed.
-            }
-            log.warn?.("certops-renewal-failed-alert-error", {
+        const classification = classifyTerminalTransition({
+          operation: row.operation,
+          status: "failed",
+          origin: TRANSITION_ORIGINS.LEASE_REAPER,
+        });
+        if (classification.alertWorthy) {
+          await recordOutboxEvent({
+            client,
+            workspaceId: row.workspace_id,
+            eventType: "renewal_alert_requested",
+            dedupeKey: String(row.id),
+            payload: {
               jobId: String(row.id),
-              error: alertErr?.message,
-            });
-          }
+              operation: row.operation,
+              jobStatus: "failed",
+              origin: TRANSITION_ORIGINS.LEASE_REAPER,
+              classificationReason: classification.reason,
+              priority: classification.priority || null,
+              errorCode,
+              subjectType: row.subject_type || null,
+              subjectId: row.subject_id ? String(row.subject_id) : null,
+            },
+          });
         }
       }
     }
@@ -516,6 +526,148 @@ async function runIsolated(name, log, fn, { enabled = true, timeoutMs } = {}) {
   }
 }
 
+/**
+ * Outbox drain. Executes intents recorded by the transactions that decided
+ * them (terminal job transitions, successful reconciliations).
+ *
+ * Each row is claimed under an owner-scoped lease and every terminal write is
+ * conditional on that claim id, so a second worker taking over an expired lease
+ * turns the first worker's late writes into no-ops. Claim-then-commit applies:
+ * the claim commits before any resolution work, so row locks are never held
+ * across the alert pipeline.
+ *
+ * Retry policy distinguishes two outcomes that look similar but are not:
+ * - A resolver that returns "not queued" for a structural reason (no linked
+ *   token, no contacts configured) is DONE. Retrying cannot change the answer,
+ *   so the row goes terminal as 'skipped' with the reason preserved.
+ * - A thrown error is transient until proven otherwise, so the row is retried
+ *   with backoff until max_attempts, then parked as 'failed' for an operator.
+ */
+export async function drainCertOpsOutbox({
+  dbPool = pool,
+  batchSize = DEFAULT_OUTBOX_DRAIN_BATCH_SIZE,
+  log = logger,
+  alertResolver = queueCertRenewalFailedAlert,
+} = {}) {
+  const summary = { scanned: 0, succeeded: 0, skipped: 0, retried: 0, failed: 0 };
+  const claimId = randomUUID();
+
+  const claimed = await dbPool.query(
+    `WITH due AS (
+       SELECT id
+         FROM certops_outbox
+        WHERE status = 'pending'
+          AND next_retry_at <= NOW()
+          AND (claimed_until IS NULL OR claimed_until < NOW())
+        ORDER BY next_retry_at ASC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+     )
+     UPDATE certops_outbox o
+        SET claim_id = $2::uuid,
+            claimed_until = NOW() + ($3 || ' milliseconds')::interval,
+            attempt_count = o.attempt_count + 1,
+            updated_at = NOW()
+       FROM due
+      WHERE o.id = due.id
+      RETURNING o.id, o.workspace_id, o.event_type, o.dedupe_key, o.payload,
+                o.attempt_count, o.max_attempts`,
+    [batchSize, claimId, String(OUTBOX_LEASE_MS)],
+  );
+  summary.scanned = claimed.rows.length;
+
+  for (const row of claimed.rows) {
+    const payload =
+      row.payload && typeof row.payload === "object" ? row.payload : {};
+    try {
+      let outcome = { queued: false, reason: "unsupported_event_type" };
+
+      if (row.event_type === "renewal_alert_requested") {
+        outcome = await alertResolver({
+          client: dbPool,
+          jobId: payload.jobId || row.dedupe_key,
+          workspaceId: row.workspace_id,
+          errorCode: payload.errorCode || null,
+        });
+      } else if (row.event_type === "profile_derivation_requested") {
+        // Landing with W7a. Until then the intent accumulates rather than being
+        // silently dropped, which is the whole point of recording it.
+        outcome = { queued: false, reason: "handler_not_implemented", defer: true };
+      }
+
+      if (outcome?.defer) {
+        await releaseOutboxLease(dbPool, row.id, claimId);
+        summary.retried += 1;
+        continue;
+      }
+
+      const terminalStatus = outcome?.queued ? "succeeded" : "skipped";
+      await dbPool.query(
+        `UPDATE certops_outbox
+            SET status = $1,
+                outcome_reason = $2,
+                claim_id = NULL,
+                claimed_until = NULL,
+                updated_at = NOW()
+          WHERE id = $3 AND claim_id = $4::uuid`,
+        [terminalStatus, outcome?.reason || null, row.id, claimId],
+      );
+      if (terminalStatus === "succeeded") summary.succeeded += 1;
+      else summary.skipped += 1;
+    } catch (error) {
+      const exhausted = row.attempt_count >= row.max_attempts;
+      await dbPool.query(
+        `UPDATE certops_outbox
+            SET status = CASE WHEN $1 THEN 'failed' ELSE 'pending' END,
+                last_error = $2,
+                next_retry_at = NOW() + ($3 || ' milliseconds')::interval,
+                claim_id = NULL,
+                claimed_until = NULL,
+                updated_at = NOW()
+          WHERE id = $4 AND claim_id = $5::uuid`,
+        [
+          exhausted,
+          String(error?.message || "unknown").slice(0, 2048),
+          String(computeBackoffMs(row.attempt_count)),
+          row.id,
+          claimId,
+        ],
+      );
+      if (exhausted) {
+        summary.failed += 1;
+        log.error?.("certops-outbox-event-exhausted", {
+          outboxId: String(row.id),
+          eventType: row.event_type,
+          dedupeKey: row.dedupe_key,
+          attemptCount: row.attempt_count,
+          error: error?.message,
+        });
+      } else {
+        summary.retried += 1;
+        log.warn?.("certops-outbox-event-retry", {
+          outboxId: String(row.id),
+          eventType: row.event_type,
+          attemptCount: row.attempt_count,
+          error: error?.message,
+        });
+      }
+    }
+  }
+
+  return summary;
+}
+
+async function releaseOutboxLease(dbPool, id, claimId) {
+  await dbPool.query(
+    `UPDATE certops_outbox
+        SET claim_id = NULL,
+            claimed_until = NULL,
+            updated_at = NOW()
+      WHERE id = $1 AND claim_id = $2::uuid`,
+    [id, claimId],
+  );
+}
+
 function safeGaugeSet(gauge, labelsOrValue, maybeValue) {
   try {
     if (maybeValue === undefined) gauge.set(labelsOrValue);
@@ -533,6 +685,7 @@ export async function runCertOpsMaintenance({
   nonceSweeper = sweepExpiredNonces,
   registrationReplaySweeper = sweepExpiredRegistrationReplays,
   renewalSweeper = runRenewalSchedulerSweep,
+  outboxDrainer = drainCertOpsOutbox,
   pushMetricsFn = pushMetrics,
 } = {}) {
   log.info("CertOps maintenance worker started");
@@ -630,6 +783,16 @@ export async function runCertOpsMaintenance({
     );
   }
 
+  results.outboxDrain = await runIsolated(
+    "outbox-drain",
+    log,
+    () => outboxDrainer({ dbPool, log }),
+    {
+      enabled: isSweepEnabled("outbox-drain", env),
+      timeoutMs: resolveSweepTimeoutMs("outbox-drain", env),
+    },
+  );
+
   log.info("CertOps maintenance worker finished", {
     leaseReaper:
       results.leaseReaper.status === "success"
@@ -651,6 +814,10 @@ export async function runCertOpsMaintenance({
       results.renewalScheduler.status === "success"
         ? results.renewalScheduler.result
         : results.renewalScheduler.status,
+    outboxDrain:
+      results.outboxDrain.status === "success"
+        ? results.outboxDrain.result
+        : results.outboxDrain.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>

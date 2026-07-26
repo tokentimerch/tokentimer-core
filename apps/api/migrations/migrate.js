@@ -2301,6 +2301,78 @@ const migrations = [
         );
     `,
   },
+  {
+    version: 35,
+    name: "certops_outbox",
+    sql: `
+      -- Transactional outbox for CertOps side effects that must survive the
+      -- transaction that decided them.
+      --
+      -- Before this table, a terminal renew failure resolved contacts and
+      -- inserted into alert_queue inline, wrapped in a savepoint so an alert
+      -- failure could never abort result ingestion. That made the two
+      -- guarantees mutually exclusive: ingestion never failed, but the intent
+      -- to alert was silently lost on any error (a lone log.warn, no retry, no
+      -- record). Operators saw a failed job and no notification.
+      --
+      -- Now the deciding transaction records the intent here and nothing else:
+      -- contact resolution and delivery move to a drain sweep in the certops
+      -- maintenance worker. The insert is cheap and local, so it can be part of
+      -- the terminal transaction proper rather than a best-effort savepoint. If
+      -- it fails, the terminal transaction fails, which is the honest outcome.
+      --
+      -- Deliberately generic and typed rather than alert-specific: profile
+      -- derivation after a successful issuance needs the same
+      -- decided-here-executed-later property, and a second bespoke table would
+      -- duplicate the claim/lease/backoff logic.
+      CREATE TABLE IF NOT EXISTS certops_outbox (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL
+          CHECK (event_type IN (
+            'renewal_alert_requested', 'profile_derivation_requested'
+          )),
+        -- Caller-supplied natural key for the intent (a job id, a certificate
+        -- id). Combined with event_type it makes the insert idempotent, so a
+        -- retried transaction cannot enqueue the same side effect twice.
+        dedupe_key TEXT NOT NULL
+          CHECK (char_length(btrim(dedupe_key)) BETWEEN 1 AND 256),
+        -- Ids and frozen codes only. Never payload contents, never credentials:
+        -- validated per event_type and run through the key-material detector
+        -- before persistence, same as every other CertOps public_metadata sink.
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'succeeded', 'skipped', 'failed')),
+        -- Terminal skip/failure explanation for the operator, e.g. the
+        -- no_linked_token / no_channels reasons the alert resolver returns.
+        outcome_reason TEXT NULL
+          CHECK (outcome_reason IS NULL OR char_length(outcome_reason) <= 256),
+        attempt_count INTEGER NOT NULL DEFAULT 0
+          CHECK (attempt_count >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 5
+          CHECK (max_attempts > 0),
+        next_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_error TEXT NULL
+          CHECK (last_error IS NULL OR char_length(last_error) <= 2048),
+        -- Owner-scoped lease, mirroring the worker-fleet convention
+        -- (alert_queue.delivery_claim_id, migration 17): every terminal write
+        -- in the drain sweep is conditional on its own claim id, so a second
+        -- worker taking over an expired lease turns the first one's late
+        -- writes into no-ops.
+        claim_id UUID NULL,
+        claimed_until TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certops_outbox_workspace_id UNIQUE (workspace_id, id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_certops_outbox_event_dedupe
+        ON certops_outbox(workspace_id, event_type, dedupe_key);
+      -- Drain-sweep scan path: due pending rows, oldest first.
+      CREATE INDEX IF NOT EXISTS idx_certops_outbox_due
+        ON certops_outbox(next_retry_at)
+        WHERE status = 'pending';
+    `,
+  },
 ];
 
 async function runMigrations() {
