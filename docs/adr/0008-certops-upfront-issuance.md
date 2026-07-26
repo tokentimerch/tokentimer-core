@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-07-26). Design decision D8.
+Accepted (2026-07-26). Design decision D9 in the CertOps plan's accepted
+architecture choices table.
 
 ## Context
 
