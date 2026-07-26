@@ -507,6 +507,11 @@ describe("registerIfNeeded", () => {
     assert.deepEqual(registerCall.declaredTargetSelectors, ["example.com"]);
     assert.deepEqual(registerCall.declaredCommandProfileNames, ["nginx-reload"]);
     assert.deepEqual(registerCall.supportedDnsProviders, []);
+    // This build's verify step always reports fingerprint + validTo evidence
+    // bound to the claim, so it must declare the capability issuance
+    // reconciliation gates on; otherwise every issue job would sit at
+    // 'pending' forever against a freshly registered agent.
+    assert.deepEqual(registerCall.declaredCapabilities, ["evidence-claim-binding-v1"]);
     // H1: registrationId must be sent and must match the pre-persisted key.
     assert.match(registerCall.registrationId, /^[0-9a-f-]{36}$/i);
     assert.equal(readRegistrationId(dir), null); // cleared after successful persist

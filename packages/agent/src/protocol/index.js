@@ -594,6 +594,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     nodeVersion = null,
     declaredTargetSelectors = [],
     declaredCommandProfileNames = [],
+    declaredCapabilities = [],
     registrationId = null,
     supportedDnsProviders = undefined,
   } = {}) {
@@ -614,6 +615,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
           nodeVersion,
           declaredTargetSelectors,
           declaredCommandProfileNames,
+          declaredCapabilities,
           ...(registrationId !== null && registrationId !== undefined
             ? { registrationId }
             : {}),

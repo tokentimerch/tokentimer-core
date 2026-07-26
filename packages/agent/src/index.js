@@ -227,6 +227,20 @@ const SUPPORTED_ACME_KINDS = ["certbot", "acme.sh"];
 const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
 
 /**
+ * Named behaviours this agent build supports, declared at registration (and
+ * refreshed at heartbeat) so the control plane's claim query can gate work
+ * that would otherwise be dispatched and then stall. This build's "verify"
+ * step already reports validation.passed evidence carrying fingerprintSha256
+ * and validTo for every ACME run (see runRenewal's verify tail below), which
+ * is exactly what issuance reconciliation requires to promote a provisioning
+ * certificate, so it is safe to declare unconditionally here rather than
+ * gating it on execution.enabled: an observe-only agent never claims work
+ * regardless (resolveClaimSupportedActions returns []), so the declaration
+ * is inert until execution is actually turned on.
+ */
+const AGENT_DECLARED_CAPABILITIES = Object.freeze(["evidence-claim-binding-v1"]);
+
+/**
  * Claim scope in observe-only mode (execution disabled): empty. An
  * observe-only agent must never advertise mutating/executable actions and
  * must never poll claim; an empty list is the wire-level expression of
@@ -3506,6 +3520,7 @@ async function registerIfNeeded({ client, config, configDir, env = process.env }
     nodeVersion: process.version,
     declaredTargetSelectors: config.declaredTargetSelectors,
     declaredCommandProfileNames: config.declaredCommandProfileNames,
+    declaredCapabilities: AGENT_DECLARED_CAPABILITIES,
     registrationId,
     supportedDnsProviders: listConfiguredDnsProviderIds(config.dnsProviders),
   }), config.protocolVersion);
