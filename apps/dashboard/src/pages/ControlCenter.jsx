@@ -42,10 +42,13 @@ import {
   useCertOpsAvailability,
   useWorkspaceCertOps,
 } from '../components/certops/useCertOps.js';
+import RenewalBadge from '../components/certops/RenewalBadge.jsx';
 import {
+  RENEWAL_STATES,
   expiryDescriptor,
   isRetiredStatus,
   keyModeLabel,
+  renewalDescriptor,
   statusLabel,
   statusScheme,
 } from '../components/certops/certopsFormat.js';
@@ -1092,10 +1095,22 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
         String(cert.status || '').toLowerCase()
       )
     ).length;
-    if (urgent > 0) {
-      return `${urgent} expiring or expired · ${managedCertCount} registered`;
+    // Only the explicit not-configured state is counted, so an API build that
+    // predates the renewal field cannot inflate this into a false alarm.
+    const notAutoRenewed = activeManagedCerts.filter(
+      cert =>
+        renewalDescriptor(cert.renewal).state === RENEWAL_STATES.notConfigured
+    ).length;
+    // Listed first when both apply: an expiring certificate is already visible
+    // from its own badge, whereas a certificate that will never auto-renew
+    // looks perfectly healthy right up until the day it expires.
+    const signals = [];
+    if (notAutoRenewed > 0) {
+      signals.push(`${notAutoRenewed} without auto-renewal`);
     }
-    return 'Registered in this workspace';
+    if (urgent > 0) signals.push(`${urgent} expiring or expired`);
+    if (signals.length === 0) return 'Registered in this workspace';
+    return `${signals.join(' · ')} · ${managedCertCount} registered`;
   }, [activeManagedCerts, certOpsLoading, managedCertCount]);
 
   // Prefer the workspace-wide aggregate: neverExpires is a preview list capped
@@ -1595,6 +1610,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                     const expiry = expiryDescriptor(
                                       cert.notAfter
                                     );
+                                    const renewal = renewalDescriptor(
+                                      cert.renewal
+                                    );
                                     return (
                                       <InsightListRow
                                         key={cert.id}
@@ -1633,12 +1651,15 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                             >
                                               {expiry.label}
                                             </Badge>
+                                            <RenewalBadge
+                                              renewal={cert.renewal}
+                                            />
                                           </HStack>
                                         }
                                         meta={
                                           cert.notAfter
-                                            ? `Expires ${formatDate(cert.notAfter)}`
-                                            : undefined
+                                            ? `Expires ${formatDate(cert.notAfter)} · ${renewal.label}`
+                                            : renewal.label
                                         }
                                       />
                                     );

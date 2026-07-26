@@ -104,7 +104,9 @@ the shared detector scans every outbound envelope.
   `pending_approval`. The gate exists so what an approver signs off on is
   bound by hash to what actually runs, rather than being re-resolved from a
   mutable profile row at dispatch. Scheduler-created renewals always carry a
-  complete snapshot.
+  complete snapshot, resolved from the certificate's linked
+  `certificate_profiles` row; for certificates TokenTimer issued, that row is a
+  **derived renewal profile** (below).
 - **Issue operation and `provisioning` status** - `issue` is the job operation
   that requests a brand-new certificate when no `managed_certificate` row
   exists yet, unlike `renew`/`deploy`/`reload`/`revoke`/`noop`, which all
@@ -121,17 +123,85 @@ the shared detector scans every outbound envelope.
   `dnsProvider`); a renewal profile snapshot is not valid on an `issue` job.
   `issue` is control-plane-only: at dispatch it is translated to
   `action: "renew"` in the signed payload, so the agent-facing action enum is
-  unchanged and already-deployed agents need no upgrade. On a successful
-  terminal result the control plane reconciles a still-`provisioning` subject
-  to `active`, backfilling fingerprint, validity dates, serial, subject, and
-  SANs from that job's `validation.passed` evidence. The trigger is the
-  subject still being `provisioning`, not the operation, so a retry via a
-  plain `renew` against the now-known `subjectId` reconciles identically. A
-  failed issuance raises the same `cert_renewal_failed` alert as a failed
-  renew and leaves the row `provisioning` for an operator to retry or retire;
-  there is no auto-cleanup. `provisioning` is non-terminal: the row can be
-  retired to `revoked`/`decommissioned` like any other and counts as active
+  unchanged and no `schemaVersion` bump was needed. Agents do, however, have to
+  declare the `evidence-claim-binding-v1` capability to be offered `issue` work
+  (see **Evidence claim binding** below). On a successful terminal result the
+  control plane reconciles a still-`provisioning` subject to `active`,
+  backfilling fingerprint, validity dates, serial, subject, and SANs from that
+  job's claim-bound `verify`-step evidence, and derives the certificate's
+  renewal profile in the same transaction. The trigger is the subject still
+  being `provisioning`, not the operation, so a retry via a plain `renew`
+  against the now-known `subjectId` reconciles identically. A failed issuance
+  does **not** raise a `cert_renewal_failed` alert (see **Renewal alert
+  policy**) and leaves the row `provisioning` for an operator to retry or
+  retire; there is no auto-cleanup. `provisioning` is non-terminal: the row can
+  be retired to `revoked`/`decommissioned` like any other and counts as active
   for quota purposes.
+- **Evidence claim binding** - `certificate_evidence` rows carry the `claim_id`
+  of the attempt that produced them plus the server's own `attempt_count`
+  (migration 36). The value comes from the job row after ownership is proven,
+  never from the agent, and an agent-supplied `claimId` that disagrees with the
+  job's current claim is rejected. Reconciliation needs it because a job can be
+  attempted more than once and evidence outlives the attempt that produced it,
+  so an unbound lookup could promote attempt 2 using attempt 1's fingerprint.
+  Agents that can send it declare the capability `evidence-claim-binding-v1`,
+  and the claim query offers `issue` jobs, plus `renew` jobs whose subject is
+  still `provisioning`, only to those agents. An agent without it keeps claiming
+  ordinary renewals of `active` certificates unchanged. See ADR-0002 and
+  ADR-0008 A1.2.
+- **Reconciliation reason** - `managed_certificates.reconciliation_reason`, why a
+  `provisioning` certificate was **not** promoted. Promotion requires evidence
+  whose `metadata.step` is `verify`, bound to the job's current claim, carrying
+  both a fingerprint and a parseable expiry. Expiry is mandatory because a
+  certificate without one cannot be scheduled for renewal or alerted on, so
+  activating without it produces a row that looks healthy and is silently
+  unmanaged. Values: `no_claim_bound_verify_evidence`,
+  `verify_evidence_missing_fingerprint`, `verify_evidence_missing_expiry`.
+  Cleared on successful promotion. Distinct from
+  `certificate_jobs.reconciliation_reason`, which explains why a **job** needs
+  operator reconciliation. See ADR-0008 A1.3.
+- **Derived renewal profile** - the `certificate_profiles` row created from an
+  `issue` job's payload and the verified certificate at reconciliation, linked
+  via `managed_certificates.profile_id`
+  (`apps/api/services/certops/renewalProfileDerivation.js`). It exists because
+  the renewal scheduler refuses any certificate without a complete profile, and
+  nothing else ever wrote one, so nothing TokenTimer issued could auto-renew.
+  Named `Derived: <common name>`, `source = 'api'`,
+  `source_ref = 'certops-issuance:<certificateId>'`. Required payload fields are
+  `caEndpoint`, `commandRef`, `dnsProvider`, `dnsZone`, and `certPath`; a missing
+  one fails the derivation by name rather than defaulting. SANs are pinned to
+  what the CA issued (`sanPolicy.mode = 'exact'`), not what the job requested.
+  Derivation never fails the issuance: it returns no profile, logs
+  `certops-renewal-profile-derivation-failed`, and the certificate is still
+  promoted. An operator-authored profile already linked to the certificate is
+  never overwritten. See ADR-0010.
+- **Renewal alert policy** - the single source of truth for whether a terminal
+  job transition notifies anyone
+  (`apps/api/services/certops/renewalAlertPolicy.js`, imported by both
+  `agentDispatch.js` and `renewalFailureAlerts.js` so the two cannot disagree).
+  `RENEWAL_ALERTING_OPERATIONS` is `{renew}`: a failed `issue` deliberately does
+  not alert, because there is no existing certificate at risk of expiring and no
+  linked token to route contacts through. Classification is by
+  `(operation, status, origin)`, where origin is what caused the transition
+  (`agent_result`, `approval_rejection`, `operator_cancel`, `lease_reaper`,
+  `stale_agent`, `forced_retirement`) rather than how the job was created:
+  agent-reported refusals and human approval rejections share the statuses
+  `rejected`/`blocked`, and only the former is actionable. Dry runs never alert.
+  `orphaned_unknown_effect` always alerts at high priority. Every decision
+  records a reason, skips included. See ADR-0009.
+- **CertOps outbox** - `certops_outbox` (migration 35), the transactional outbox
+  for side effects that must survive the transaction that decided them. The
+  deciding transaction records the intent as a plain local INSERT with no
+  savepoint, so a terminal job transition and its alert intent commit together
+  or not at all; if the enqueue fails, the transition fails. Delivery moves to
+  the `outbox-drain` sweep, which claims due rows under an owner-scoped lease and
+  retries with backoff. Idempotent on
+  `(workspace_id, event_type, dedupe_key)`. Payloads are allowlisted per event
+  type and carry ids and frozen codes only. A structural skip (no linked token,
+  no deliverable channel) goes terminal with its reason preserved; a thrown error
+  retries until `max_attempts` then parks as `failed`; an event type with no
+  handler defers rather than being consumed. Renewal alerting depends on this
+  sweep running. See ADR-0009.
 - **Per-CA cap** - limit on in-flight renewal jobs per `caEndpoint`
   (`CERTOPS_RENEWAL_PER_CA_CAP`, default 5) so one CA cannot be flooded.
   Enforced on **every** renewal creation path, not just the sweep: the

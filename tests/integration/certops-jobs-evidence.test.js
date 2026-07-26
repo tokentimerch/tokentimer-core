@@ -314,6 +314,8 @@ describe("CertOps jobs and evidence persistence", function () {
         operation: "deploy",
         source: "api",
         idempotencyKey: "deploy-cert-1",
+        subjectType: "managed_certificate",
+        subjectId: "cert-1",
         payload: { target: "kubernetes/default/other-cert" },
         requestedByUserId: ownerId,
       });
@@ -411,6 +413,8 @@ describe("CertOps jobs and evidence persistence", function () {
         await createCertificateJob({
           workspaceId: workspaceA,
           operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { nested: { tokenSecret: "not-allowed" } },
           requestedByUserId: ownerId,
         });
@@ -435,6 +439,8 @@ describe("CertOps jobs and evidence persistence", function () {
           await createCertificateJob({
             workspaceId: workspaceA,
             operation: "renew",
+            subjectType: "managed_certificate",
+            subjectId: "cert-1",
             payload,
             requestedByUserId: ownerId,
           });
@@ -456,6 +462,8 @@ describe("CertOps jobs and evidence persistence", function () {
       const safeJob = await createCertificateJob({
         workspaceId: workspaceA,
         operation: "renew",
+        subjectType: "managed_certificate",
+        subjectId: "cert-1",
         payload: { certificateId: "cert-1" },
         requestedByUserId: ownerId,
       });

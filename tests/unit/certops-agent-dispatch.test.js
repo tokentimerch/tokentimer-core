@@ -1024,6 +1024,81 @@ describe("agentDispatch.claimJobs", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
+  it("claims an 'issue' job against an agent that only declares 'renew' (ADR-0008 wire translation)", async () => {
+    // Regression for a bug where the claim query compared the raw
+    // operation column ('issue') against the agent's declared wire actions
+    // (which never include 'issue', since it is a control-plane-only
+    // concept per ADR-0008), so issue jobs could never be claimed by any
+    // agent and stayed 'pending' forever.
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) {
+        return { rows: [{ last_sequence: 0 }] };
+      }
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) {
+        return {
+          rows: [
+            {
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+            },
+          ],
+        };
+      }
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        // The agent only ever declares wire actions, never "issue" itself;
+        // the query must translate the stored operation before comparing.
+        assert.match(sql, /CASE operation WHEN 'issue' THEN 'renew' ELSE operation END\)\s*=\s*ANY/);
+        assert.deepEqual(params[1], ["renew"]);
+        return {
+          rows: [
+            {
+              id: "job-issue-1",
+              operation: "issue",
+              subject_type: "managed_certificate",
+              subject_id: "mc-issue-1",
+              payload: { certificateId: "mc-issue-1" },
+              executor_kind: "agent",
+            },
+          ],
+        };
+      }
+      if (sql.includes("SET status = 'claimed'")) {
+        return {
+          rows: [
+            {
+              id: "job-issue-1",
+              claim_id: "claim-issue-1",
+              lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
+              attempt_count: 1,
+              operation: "issue",
+              subject_type: "managed_certificate",
+              subject_id: "mc-issue-1",
+              payload: { certificateId: "mc-issue-1" },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const result = await claimJobs({
+      dbPool,
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["renew"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    assert.equal(result.jobs.length, 1);
+    assert.equal(
+      result.jobs[0].action,
+      "renew",
+      "issue jobs must dispatch to the agent as the 'renew' wire action",
+    );
+  });
+
   it("excludes controller-lane jobs from agent claims (B2)", async () => {
     let claimSql = null;
     const dbPool = createMockPool((sql) => {

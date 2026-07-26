@@ -5,6 +5,7 @@ import {
   AlertIcon,
   Box,
   Button,
+  ButtonGroup,
   Checkbox,
   Collapse,
   FormControl,
@@ -62,6 +63,7 @@ import {
   useCertOpsCanManage,
 } from '../../components/certops/useCertOps.js';
 import { useCertOpsJobs } from '../../components/certops/useCertOpsJobs.js';
+import { useCertOpsAgents } from '../../components/certops/useCertOpsAgents.js';
 import { truncationSummary } from '../../components/certops/certopsPagination.js';
 import {
   DashboardActionButton,
@@ -100,6 +102,38 @@ const SUBJECT_ID_PLACEHOLDERS = {
   external: 'e.g. a reference from an external system',
 };
 const DEFAULT_SUBJECT_ID_PLACEHOLDER = 'e.g. a managed certificate ID';
+
+// Subject types that are always free-text/manual references (a human typed
+// them in, or they came from an external system): a job against one of
+// these can never be claimed by an agent (agents only match against
+// declared target selectors, which are certificate/instance/target-backed),
+// so pinning an agent to them would be misleading and is hidden.
+const MANUAL_ONLY_SUBJECT_TYPES = ['domain', 'endpoint', 'external'];
+
+// Mirrors SUBJECT_REQUIRED_OPERATIONS in
+// apps/api/services/certops/jobs.js: these operations act on an existing
+// entity, so the API rejects them without a subjectType/subjectId pair.
+// "issue" forbids a subject (nothing exists yet) and "noop" stays optional.
+const SUBJECT_REQUIRED_OPERATIONS = new Set([
+  'renew',
+  'deploy',
+  'reload',
+  'revoke',
+]);
+
+// Shown as the JSON textarea's placeholder for both "issue" (where these
+// keys are required) and every other operation (where they're optional but
+// this is still the shape a renew/deploy/reload job reads), so switching
+// to JSON mode never loses the example that guided the structured fields.
+const PAYLOAD_JSON_EXAMPLE = `{
+  "target": { "type": "domain", "reference": "example.com" },
+  "sans": ["example.com"],
+  "commandRef": "certbot-csr",
+  "caEndpoint": "https://acme-v02.api.letsencrypt.org/directory",
+  "dnsZone": "example.com",
+  "dnsProvider": "cloudflare",
+  "certPath": "/etc/ssl/example/example.com.pem"
+}`;
 
 // Only subject types backed by an existing, workspace-scoped list endpoint
 // get live suggestions; the rest (domain, endpoint, external) stay a plain
@@ -142,6 +176,26 @@ const SUBJECT_ID_SUGGESTION_LOADERS = {
     }));
   },
 };
+
+/**
+ * Agent selector label: `name` (an operator-chosen label set at install
+ * time, see the agent-configuration doc) when present, otherwise
+ * `hostname`. Always appends the full, untruncated `agentId` in
+ * parentheses: multiple agents can run on the same host (e.g. one per
+ * environment or one per certificate domain) and share the same
+ * name/hostname, and the part of a default `candidate-<hostname>-<pid>` id
+ * that actually disambiguates them is the pid at the *end*, not the start,
+ * so this deliberately does not truncate it the way short-id displays
+ * elsewhere in the app do (a native <select>'s options aren't clipped the
+ * way a table cell is, so there's no layout reason to shorten it).
+ */
+function agentSelectLabel(agent) {
+  const id = agent?.agentId || agent?.id || '';
+  const primary = agent?.name || agent?.hostname || id || 'Unnamed agent';
+  const idSuffix = primary === id || !id ? '' : ` (${id})`;
+  const offlineSuffix = agent?.status === 'offline' ? ' (offline)' : '';
+  return `${primary}${idSuffix}${offlineSuffix}`;
+}
 
 function createJobErrorMessage(err) {
   const code = err?.response?.data?.code;
@@ -190,12 +244,22 @@ function approvalDecisionErrorMessage(err, decision) {
  */
 function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   const { workspaceId } = useWorkspace();
+  const { agents } = useCertOpsAgents();
   const [operation, setOperation] = useState('');
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
+  const [assignedAgentId, setAssignedAgentId] = useState('');
+  const [payloadMode, setPayloadMode] = useState('fields');
   const [payloadText, setPayloadText] = useState('');
   const [payloadError, setPayloadError] = useState('');
+  const [fieldTarget, setFieldTarget] = useState('');
+  const [fieldSans, setFieldSans] = useState('');
+  const [fieldCommandRef, setFieldCommandRef] = useState('');
+  const [fieldCaEndpoint, setFieldCaEndpoint] = useState('');
+  const [fieldDnsZone, setFieldDnsZone] = useState('');
+  const [fieldDnsProvider, setFieldDnsProvider] = useState('');
+  const [fieldCertPath, setFieldCertPath] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [subjectSuggestions, setSubjectSuggestions] = useState([]);
@@ -207,13 +271,45 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   // job (the new inventory row) and must not be duplicated by a retry.
   const isIssue = operation === 'issue';
 
+  // renew/deploy/reload/revoke always act on something that already
+  // exists, so the API requires subjectType+subjectId for these (see
+  // SUBJECT_REQUIRED_OPERATIONS in services/certops/jobs.js). noop is the
+  // only other operation that stays optional, since it exists purely to
+  // exercise the pipeline without a real target.
+  const subjectRequiredForOperation = SUBJECT_REQUIRED_OPERATIONS.has(operation);
+
+  // Only agents that can still be handed a job: a retired agent can never
+  // claim anything, so pinning to one would silently strand the job.
+  const assignableAgents = agents.filter(agent => agent.status !== 'retired');
+
+  // domain/endpoint/external subjects are free-text references an agent
+  // can never match against (see MANUAL_ONLY_SUBJECT_TYPES above), so the
+  // pin-to-agent control would imply a capability that doesn't exist here.
+  const hidesAgentField =
+    !isIssue && MANUAL_ONLY_SUBJECT_TYPES.includes(subjectType);
+
+  // Clears a stale pin left over from a previous subjectType selection so a
+  // hidden field can never silently submit a leftover assignedAgentId.
+  useEffect(() => {
+    if (hidesAgentField) setAssignedAgentId('');
+  }, [hidesAgentField]);
+
   const resetForm = () => {
     setOperation('');
     setSubjectType('');
     setSubjectId('');
     setIdempotencyKey('');
+    setAssignedAgentId('');
+    setPayloadMode('fields');
     setPayloadText('');
     setPayloadError('');
+    setFieldTarget('');
+    setFieldSans('');
+    setFieldCommandRef('');
+    setFieldCaEndpoint('');
+    setFieldDnsZone('');
+    setFieldDnsProvider('');
+    setFieldCertPath('');
     setRequiresApproval(false);
     setSubjectSuggestions([]);
   };
@@ -253,14 +349,30 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
 
   const subjectPairComplete =
     (!subjectType || Boolean(subjectId.trim())) &&
-    (!subjectId.trim() || Boolean(subjectType));
+    (!subjectId.trim() || Boolean(subjectType)) &&
+    (!subjectRequiredForOperation || Boolean(subjectType && subjectId.trim()));
+
+  const fieldsRequiredForIssueMet =
+    payloadMode !== 'fields' ||
+    !isIssue ||
+    Boolean(
+      fieldTarget.trim() &&
+        fieldCommandRef.trim() &&
+        fieldCaEndpoint.trim() &&
+        fieldDnsZone.trim() &&
+        fieldDnsProvider.trim() &&
+        fieldCertPath.trim()
+    );
+
   const canSubmit =
     Boolean(operation) &&
     Boolean(workspaceId) &&
     !submitting &&
+    fieldsRequiredForIssueMet &&
     (isIssue
-      ? Boolean(idempotencyKey.trim()) && !payloadError
-      : subjectPairComplete && !payloadError);
+      ? Boolean(idempotencyKey.trim()) &&
+        (payloadMode === 'fields' || !payloadError)
+      : subjectPairComplete && (payloadMode === 'fields' || !payloadError));
 
   const handlePayloadChange = event => {
     const text = event.target.value;
@@ -275,6 +387,29 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     } catch {
       setPayloadError('Payload must be valid JSON.');
     }
+  };
+
+  // Structured fields cover the common execution payload shape (target,
+  // SANs, ACME command/CA, DNS-01 zone/provider, deploy path) so an operator
+  // does not have to hand-write JSON for the everyday case; the JSON
+  // textarea stays available for anything the fields do not cover (custom
+  // metadata, less common execution keys, etc).
+  const buildFieldsPayload = () => {
+    const payload = {};
+    if (fieldTarget.trim()) {
+      payload.target = { type: 'domain', reference: fieldTarget.trim() };
+    }
+    const sans = fieldSans
+      .split(/[\n,]+/)
+      .map(value => value.trim())
+      .filter(Boolean);
+    if (sans.length) payload.sans = sans;
+    if (fieldCommandRef.trim()) payload.commandRef = fieldCommandRef.trim();
+    if (fieldCaEndpoint.trim()) payload.caEndpoint = fieldCaEndpoint.trim();
+    if (fieldDnsZone.trim()) payload.dnsZone = fieldDnsZone.trim();
+    if (fieldDnsProvider.trim()) payload.dnsProvider = fieldDnsProvider.trim();
+    if (fieldCertPath.trim()) payload.certPath = fieldCertPath.trim();
+    return payload;
   };
 
   const handleOperationChange = event => {
@@ -296,7 +431,10 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
       if (!isIssue && subjectType) body.subjectType = subjectType;
       if (!isIssue && subjectId.trim()) body.subjectId = subjectId.trim();
       if (idempotencyKey.trim()) body.idempotencyKey = idempotencyKey.trim();
-      if (payloadText.trim()) body.payload = JSON.parse(payloadText);
+      if (assignedAgentId) body.assignedAgentId = assignedAgentId;
+      const payload =
+        payloadMode === 'fields' ? buildFieldsPayload() : JSON.parse(payloadText || '{}');
+      if (Object.keys(payload).length) body.payload = payload;
       if (requiresApproval) body.requiresApproval = true;
       const { job } = await createJob(workspaceId, body);
       showSuccess(
@@ -358,7 +496,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
             </FormControl>
             {isIssue ? null : (
               <>
-                <FormControl isRequired={Boolean(subjectId.trim())}>
+                <FormControl
+                  isRequired={subjectRequiredForOperation || Boolean(subjectId.trim())}
+                >
                   <FormLabel fontSize='sm'>Subject type</FormLabel>
                   <Select
                     size='sm'
@@ -376,10 +516,14 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                     ))}
                   </Select>
                   <FormHelperText>
-                    Required together with subject ID, or leave both empty.
+                    {subjectRequiredForOperation
+                      ? 'Required for this operation, together with subject ID.'
+                      : 'Required together with subject ID, or leave both empty.'}
                   </FormHelperText>
                 </FormControl>
-                <FormControl isRequired={Boolean(subjectType)}>
+                <FormControl
+                  isRequired={subjectRequiredForOperation || Boolean(subjectType)}
+                >
                   <FormLabel fontSize='sm'>Subject ID</FormLabel>
                   <Input
                     size='sm'
@@ -398,7 +542,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                     autoComplete='off'
                   />
                   <FormHelperText>
-                    Required together with subject type, or leave both empty.
+                    {subjectRequiredForOperation
+                      ? 'Required for this operation, together with subject type.'
+                      : 'Required together with subject type, or leave both empty.'}
                   </FormHelperText>
                   {subjectSuggestions.length ? (
                     <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
@@ -413,6 +559,28 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   ) : null}
                 </FormControl>
               </>
+            )}
+            {hidesAgentField ? null : (
+              <FormControl>
+                <FormLabel fontSize='sm'>Agent</FormLabel>
+                <Select
+                  size='sm'
+                  placeholder='Any eligible agent (default)'
+                  value={assignedAgentId}
+                  onChange={event => setAssignedAgentId(event.target.value)}
+                >
+                  {assignableAgents.map(agent => (
+                    <option key={agent.id} value={agent.id}>
+                      {agentSelectLabel(agent)}
+                    </option>
+                  ))}
+                </Select>
+                <FormHelperText>
+                  Optional. Leave unset to let any agent whose declared
+                  selectors/profiles/DNS providers match claim the job first;
+                  pin to one agent to force a specific host to run it.
+                </FormHelperText>
+              </FormControl>
             )}
             <FormControl isRequired={isIssue}>
               <FormLabel fontSize='sm'>Idempotency key</FormLabel>
@@ -429,27 +597,154 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
               </FormHelperText>
             </FormControl>
-            <FormControl isInvalid={Boolean(payloadError)}>
-              <FormLabel fontSize='sm'>Payload (JSON)</FormLabel>
-              <Textarea
-                size='sm'
-                fontFamily='mono'
-                fontSize='xs'
-                rows={6}
-                value={payloadText}
-                onChange={handlePayloadChange}
-                placeholder={
-                  isIssue
-                    ? '{\n  "target": { "type": "domain", "reference": "example.com" },\n  "sans": ["example.com"],\n  "commandRef": "certbot-csr",\n  "caEndpoint": "https://acme-v02.api.letsencrypt.org/directory",\n  "dnsZone": "example.com",\n  "dnsProvider": "cloudflare",\n  "certPath": "/etc/ssl/example/example.com.pem"\n}'
-                    : '{}'
-                }
-              />
-              <FormHelperText>
-                {payloadError ||
-                  (isIssue
-                    ? 'Required: at minimum a target, sans, commandRef, and caEndpoint. See the certops-agent-install runbook for the full field list.'
-                    : 'Optional. Free-form JSON merged into the job payload.')}
-              </FormHelperText>
+            <FormControl isInvalid={payloadMode === 'json' && Boolean(payloadError)}>
+              <HStack justify='space-between' align='center' mb={1}>
+                <FormLabel fontSize='sm' mb={0}>
+                  Payload
+                </FormLabel>
+                <ButtonGroup size='sm' isAttached variant='outline'>
+                  <Button
+                    colorScheme={payloadMode === 'fields' ? 'blue' : undefined}
+                    variant={payloadMode === 'fields' ? 'solid' : 'outline'}
+                    onClick={() => setPayloadMode('fields')}
+                  >
+                    Fields
+                  </Button>
+                  <Button
+                    colorScheme={payloadMode === 'json' ? 'blue' : undefined}
+                    variant={payloadMode === 'json' ? 'solid' : 'outline'}
+                    onClick={() => {
+                      // Switching to JSON seeds the textarea from whatever
+                      // was entered in the fields tab, so nothing is lost
+                      // and an operator can start from the structured
+                      // fields and drop into raw JSON only to add what the
+                      // fields do not cover.
+                      const seeded = buildFieldsPayload();
+                      if (Object.keys(seeded).length && !payloadText.trim()) {
+                        setPayloadText(JSON.stringify(seeded, null, 2));
+                      }
+                      setPayloadMode('json');
+                    }}
+                  >
+                    JSON
+                  </Button>
+                </ButtonGroup>
+              </HStack>
+              {payloadMode === 'fields' ? (
+                <VStack align='stretch' spacing={2}>
+                  <FormControl isRequired={isIssue}>
+                    <FormLabel fontSize='xs' mb={0.5}>
+                      Target domain
+                    </FormLabel>
+                    <Input
+                      size='sm'
+                      value={fieldTarget}
+                      onChange={event => setFieldTarget(event.target.value)}
+                      placeholder='e.g. example.com'
+                      autoComplete='off'
+                    />
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel fontSize='xs' mb={0.5}>
+                      SANs
+                    </FormLabel>
+                    <Input
+                      size='sm'
+                      value={fieldSans}
+                      onChange={event => setFieldSans(event.target.value)}
+                      placeholder='Comma or newline separated (defaults to target)'
+                      autoComplete='off'
+                    />
+                  </FormControl>
+                  <SimpleGrid columns={2} spacing={2}>
+                    <FormControl isRequired={isIssue}>
+                      <FormLabel fontSize='xs' mb={0.5}>
+                        Command ref
+                      </FormLabel>
+                      <Input
+                        size='sm'
+                        value={fieldCommandRef}
+                        onChange={event => setFieldCommandRef(event.target.value)}
+                        placeholder='e.g. certbot-csr'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                    <FormControl isRequired={isIssue}>
+                      <FormLabel fontSize='xs' mb={0.5}>
+                        DNS provider
+                      </FormLabel>
+                      <Input
+                        size='sm'
+                        value={fieldDnsProvider}
+                        onChange={event => setFieldDnsProvider(event.target.value)}
+                        placeholder='e.g. cloudflare'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                  </SimpleGrid>
+                  <FormControl isRequired={isIssue}>
+                    <FormLabel fontSize='xs' mb={0.5}>
+                      CA endpoint
+                    </FormLabel>
+                    <Input
+                      size='sm'
+                      value={fieldCaEndpoint}
+                      onChange={event => setFieldCaEndpoint(event.target.value)}
+                      placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
+                      autoComplete='off'
+                    />
+                  </FormControl>
+                  <SimpleGrid columns={2} spacing={2}>
+                    <FormControl isRequired={isIssue}>
+                      <FormLabel fontSize='xs' mb={0.5}>
+                        DNS zone
+                      </FormLabel>
+                      <Input
+                        size='sm'
+                        value={fieldDnsZone}
+                        onChange={event => setFieldDnsZone(event.target.value)}
+                        placeholder='e.g. example.com'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                    <FormControl isRequired={isIssue}>
+                      <FormLabel fontSize='xs' mb={0.5}>
+                        Cert file path
+                      </FormLabel>
+                      <Input
+                        size='sm'
+                        value={fieldCertPath}
+                        onChange={event => setFieldCertPath(event.target.value)}
+                        placeholder='e.g. /etc/ssl/example.com.pem'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                  </SimpleGrid>
+                  <FormHelperText>
+                    {isIssue
+                      ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
+                      : 'Optional. Fills the same execution payload keys a renew/deploy job reads. Switch to JSON for anything not listed here.'}
+                  </FormHelperText>
+                </VStack>
+              ) : (
+                <>
+                  <Textarea
+                    size='sm'
+                    fontFamily='mono'
+                    fontSize='xs'
+                    rows={6}
+                    value={payloadText}
+                    onChange={handlePayloadChange}
+                    placeholder={PAYLOAD_JSON_EXAMPLE}
+                  />
+                  <FormHelperText>
+                    {payloadError ||
+                      (isIssue
+                        ? 'Required: target, commandRef, caEndpoint, dnsZone, dnsProvider, and certPath. sans defaults to [target] when omitted.'
+                        : 'Optional. Free-form JSON merged into the job payload.')}
+                  </FormHelperText>
+                </>
+              )}
             </FormControl>
             <FormControl>
               <Checkbox

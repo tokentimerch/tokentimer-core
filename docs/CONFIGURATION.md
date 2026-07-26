@@ -198,14 +198,14 @@ the origins users and integrations actually use in the browser.
 | `CERTOPS_AGENT_MIN_PROTOCOL_VERSION` / `CERTOPS_AGENT_MAX_PROTOCOL_VERSION` | Supported agent protocol version window used to compute fleet `compatibilityState`. | `1.0.0` / `1.999.999` | API |
 | `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION` | Supported agent build version window used to compute fleet `compatibilityState`. | `0.1.0` / `99.999.999` | API |
 | `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS` | Absolute clock-offset thresholds used to compute fleet `clockDriftState` (`warn`/`alert`). | `5000` / `30000` | API |
-| `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Schedule a renewal when a managed certificate expires within this many days. | `30` | API + Worker |
+| `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Schedule a renewal when a managed certificate expires within this many days. This is the fleet-wide default; a certificate whose renewal profile sets `certificate_profiles.renew_before_days` uses that value instead (`COALESCE(renew_before_days, <this>)`). Editing the profile is the supported way to give one certificate a longer runway than the rest of the fleet. | `30` | API + Worker |
 | `CERTOPS_RENEWAL_PER_CA_CAP` | Maximum in-flight renewals per CA endpoint per workspace, so one CA cannot be flooded. Enforced on **every** renew creation path (scheduler sweep, manual job, bulk renew): the sweep skips over-cap certificates and retries them next tick, while manual and bulk creation fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. | `5` | API + Worker |
 | `CERTOPS_JOB_LEASE_SECONDS` | How long an agent's claim on a job stays valid before it must be renewed. Raise this if legitimate renewals routinely take longer. | `900` | API |
 | `CERTOPS_LEASE_HARD_GRACE_MS` | Extra time a still-heartbeating agent gets before its expired-lease job is judged. | `3600000` (1 hour) | API + Worker |
 
 ### CertOps maintenance sweeps (worker)
 
-The `certops` worker target runs five independent sweeps. Each has an enable
+The `certops` worker target runs six independent sweeps. Each has an enable
 flag (default enabled) and a per-sweep timeout (default `120000` ms,
 `DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an operational escape hatch,
 not a normal configuration.
@@ -229,6 +229,15 @@ schedule is the CronJob's own `schedule` field. Set
 | Nonce cache | `CERTOPS_SWEEP_NONCE_ENABLED` | `CERTOPS_SWEEP_NONCE_TIMEOUT_MS` | Expires consumed job nonces |
 | Registration replay | `CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED` | `CERTOPS_SWEEP_REGISTRATION_REPLAY_TIMEOUT_MS` | Expires registration-replay credential rows |
 | Renewal scheduler | `CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED` | `CERTOPS_SWEEP_RENEWAL_SCHEDULER_TIMEOUT_MS` | Creates renewal jobs for certificates near expiry |
+| Outbox drain | `CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED` | `CERTOPS_SWEEP_OUTBOX_DRAIN_TIMEOUT_MS` | Delivers recorded CertOps side effects from `certops_outbox`: resolves alert contacts and queues `cert_renewal_failed`, with backoff under an owner-scoped lease |
+
+**The outbox drain is not optional if you rely on renewal-failure alerts.** A
+terminal renewal failure records its *intent* to alert in `certops_outbox` inside
+the same transaction that decided the failure, and this sweep is what turns that
+intent into a queued alert. With the sweep disabled or the worker not deployed,
+intents accumulate as `pending` rather than being lost, so nothing is
+unrecoverable, but **no renewal-failure notification is delivered** in the
+meantime. See `docs/adr/0009-certops-durable-side-effects-and-alert-policy.md`.
 
 `CERTOPS_ENABLED` must be set for the worker too, not just the API. If the
 worker's value is out of sync, the renewal scheduler treats every workspace

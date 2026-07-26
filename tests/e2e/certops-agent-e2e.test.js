@@ -325,8 +325,8 @@ async function createRenewJob() {
     workspaceId: seeded.workspaceId,
     operation: "renew",
     source: "api",
-    subjectType: null,
-    subjectId: null,
+    subjectType: "domain",
+    subjectId: `e2e-${RUN_ID}.example.test`,
     payload: {
       action: "renew",
       domains: [`e2e-${RUN_ID}.example.test`],

@@ -39,3 +39,23 @@ make an agent do arbitrary things.
 - The agent is testable in isolation against the frozen envelope.
 - TODO (agent protocol phase): per-message body schemas, registration/enrollment trust, agent
   credential storage (0700/0600, rotation), supply-chain integrity.
+- Addendum (2026-07-26, release 0.11.0): declared capabilities became a
+  dispatch-time gate, and evidence gained a claim binding. Both are additive to
+  the envelope and neither is a `schemaVersion` change.
+  - Agents declare capability strings at `register` and `heartbeat`. The control
+    plane matches on them when offering work, so a capability an agent does not
+    declare simply means it is not offered those jobs. This is a matching
+    predicate, not a rejection: the operator-visible symptom of an out-of-date
+    agent is an unclaimed `pending` job rather than an error. Capability names are
+    contract surfaces under the README's change-control rule.
+  - The first such capability is `evidence-claim-binding-v1`, required to claim
+    `issue` jobs and `renew` jobs whose subject certificate is still
+    `provisioning`. See
+    [ADR-0008 A1.2](0008-certops-upfront-issuance.md#a12-agents-are-no-longer-upgrade-free-for-issue-amends-5).
+  - Evidence envelopes carry the `claimId` of the attempt that produced them, and
+    `certificate_evidence` persists it alongside the server's own attempt
+    counter. The value written is taken from the job row **after** ownership is
+    proven, never from the agent, and an agent-supplied `claimId` that disagrees
+    with the job's current claim is rejected outright. This preserves the
+    agent-local authority principle above while making evidence attributable to a
+    single attempt, which reconciliation now depends on.

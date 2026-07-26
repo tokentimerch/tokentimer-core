@@ -825,7 +825,17 @@ function normalizeExplicitLifecycleTimestamps(options) {
   };
 }
 
-function normalizeSubject(options) {
+// renew/deploy/reload/revoke always act on something that must already
+// exist (a certificate, domain, endpoint, etc.), so a subject reference is
+// mandatory, though its type may be "managed_certificate" (agent-executable,
+// dashboard-linked) or a free-text type like "domain"/"endpoint"/"external"
+// (an audit-trail job for something an external executor already handles,
+// not yet adopted as a managed certificate). "issue" forbids a subject
+// (issuance.js: it creates the certificate identity itself). "noop" is a
+// pure heartbeat/connectivity check with nothing to reference.
+const SUBJECT_REQUIRED_OPERATIONS = new Set(["renew", "deploy", "reload", "revoke"]);
+
+function normalizeSubject(options, operation) {
   const subjectType = normalizeOptionalEnum(
     options.subjectType,
     SUBJECT_TYPE_SET,
@@ -838,6 +848,12 @@ function normalizeSubject(options) {
   }
   if (subjectType && !subjectId) {
     throw serviceError("subjectId is required with subjectType", CERTOPS_JOB_INVALID);
+  }
+  if (!subjectType && SUBJECT_REQUIRED_OPERATIONS.has(operation)) {
+    throw serviceError(
+      `subjectType and subjectId are required for the ${operation} operation`,
+      CERTOPS_JOB_INVALID,
+    );
   }
   return { subjectType, subjectId };
 }
@@ -1231,7 +1247,7 @@ async function createCertificateJob(options) {
     "source",
     "api",
   );
-  const { subjectType, subjectId } = normalizeSubject(options);
+  const { subjectType, subjectId } = normalizeSubject(options, operation);
   const requestedByUserId = normalizeRequesterIdentity(
     options.requestedByUserId,
     "requestedByUserId",

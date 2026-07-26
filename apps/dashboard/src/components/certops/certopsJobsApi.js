@@ -162,6 +162,7 @@ export async function createJob(
     payload,
     idempotencyKey,
     requiresApproval,
+    assignedAgentId,
   } = {}
 ) {
   const body = { operation };
@@ -170,6 +171,7 @@ export async function createJob(
   if (payload !== undefined) body.payload = payload;
   if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
   if (requiresApproval !== undefined) body.requiresApproval = requiresApproval;
+  if (assignedAgentId !== undefined) body.assignedAgentId = assignedAgentId;
 
   const res = await apiClient.post(`${workspaceBase(workspaceId)}/jobs`, body);
   return res.data;

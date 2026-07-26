@@ -311,12 +311,16 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
     await createCertificateJob({
       client,
       workspaceId: WORKSPACE_B,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-2",
       payload: { certificateId: "cert-2" },
     });
 
@@ -349,6 +353,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
 
@@ -384,6 +390,8 @@ describe("CertOps jobs service", () => {
             workspaceId: WORKSPACE_A,
             operation: "renew",
             status: staleStatus,
+            subjectType: "managed_certificate",
+            subjectId: "cert-1",
             payload: { certificateId: "cert-1" },
           }),
         (error) => error?.code === CERTOPS_JOB_STATUS_INVALID,
@@ -397,6 +405,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
       status: "pending_approval",
     });
@@ -483,6 +493,8 @@ describe("CertOps jobs service", () => {
         client,
         workspaceId: WORKSPACE_A,
         operation: "renew",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${terminalStatus}`,
         payload: { certificateId: `cert-${terminalStatus}` },
         status: terminalStatus,
         errorCode: terminalStatus === "failed" ? "DEPLOY_FAILED" : null,
@@ -525,6 +537,8 @@ describe("CertOps jobs service", () => {
         client,
         workspaceId: WORKSPACE_A,
         operation: "renew",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${currentStatus}-${staleStatus}`,
         payload: { certificateId: `cert-${currentStatus}-${staleStatus}` },
         status: currentStatus,
         errorCode: "EXECUTOR_CONTEXT",
@@ -561,6 +575,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-active-replay",
       payload: { certificateId: "cert-active-replay" },
       status: "running",
     });
@@ -592,6 +608,8 @@ describe("CertOps jobs service", () => {
         client,
         workspaceId: WORKSPACE_A,
         operation: "renew",
+        subjectType: "managed_certificate",
+        subjectId: `cert-rejected-${status}`,
         payload: { certificateId: `cert-rejected-${status}` },
         status,
       });
@@ -610,6 +628,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-rejected-after-success",
       payload: { certificateId: "cert-rejected-after-success" },
       status: "succeeded",
     });
@@ -629,6 +649,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-running",
       payload: { certificateId: "cert-running" },
       status: "running",
     });
@@ -636,6 +658,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-blocked",
       payload: { certificateId: "cert-blocked" },
       status: "blocked",
     });
@@ -643,6 +667,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-cancelled",
       payload: { certificateId: "cert-cancelled" },
       status: "cancelled",
     });
@@ -659,6 +685,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
       status: "running",
     });
@@ -699,6 +727,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
 
@@ -743,6 +773,8 @@ describe("CertOps jobs service", () => {
           client,
           workspaceId: WORKSPACE_A,
           operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { nested: { privateKeyPem: PRIVATE_KEY_PEM } },
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
@@ -754,6 +786,8 @@ describe("CertOps jobs service", () => {
           client,
           workspaceId: WORKSPACE_A,
           operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { attachment: SUSPICIOUS_ENCRYPTED_PKCS8_DER.toString("base64") },
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
@@ -765,6 +799,8 @@ describe("CertOps jobs service", () => {
           client,
           workspaceId: WORKSPACE_A,
           operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { certificateId: "cert-1" },
           resultMetadata: { apiKey: "not-allowed" },
         }),
@@ -775,6 +811,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
 
@@ -1097,6 +1135,8 @@ describe("CertOps jobs service", () => {
         operation: "deploy",
         source: "api",
         idempotencyKey: `explicit-${testCase.name}`,
+        subjectType: "managed_certificate",
+        subjectId: `cert-${testCase.name}`,
         payload: { certificateId: `cert-${testCase.name}` },
         ...testCase.request,
       };
@@ -1119,6 +1159,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { certificateId: "cert-1" },
     });
 
@@ -1155,6 +1197,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: publicMetadata,
       resultMetadata: publicMetadata,
     });
@@ -1223,6 +1267,8 @@ describe("CertOps jobs service", () => {
           client,
           workspaceId: WORKSPACE_A,
           operation: "renew",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { note: "Cookie: session=not-allowed" },
         }),
       (error) => error?.code === PRIVATE_KEY_MATERIAL_REJECTED,
@@ -1277,6 +1323,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       source: "automation",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: {
         target: "example.com",
         commandRef: "acme-renew-default",
@@ -1343,6 +1391,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { target: "example.com" },
     });
 
@@ -1381,6 +1431,8 @@ describe("CertOps jobs service", () => {
             workspaceId: WORKSPACE_A,
             operation: "renew",
             source: "automation",
+            subjectType: "managed_certificate",
+            subjectId: "cert-1",
             payload: { target: "example.com", ...fields },
           }),
         (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
@@ -1401,6 +1453,8 @@ describe("CertOps jobs service", () => {
             workspaceId: WORKSPACE_A,
             operation,
             source: "api",
+            subjectType: "managed_certificate",
+            subjectId: "cert-1",
             payload: { caEndpoint: "https://acme.example.com/directory" },
           }),
         (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
@@ -1415,6 +1469,8 @@ describe("CertOps jobs service", () => {
           workspaceId: WORKSPACE_A,
           operation: "deploy",
           source: "api",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { acmeKind: "certbot" },
         }),
       (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
@@ -1425,6 +1481,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "deploy",
       source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: {
         certPath: "/etc/ssl/live/example.com/cert.pem",
         reloadService: "nginx",
@@ -1446,6 +1504,8 @@ describe("CertOps jobs service", () => {
           workspaceId: WORKSPACE_A,
           operation: "deploy",
           source: "api",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: {
             certificatePem:
               "-----BEGIN CERTIFICATE-----\nRkFLRQ==\n-----END CERTIFICATE-----",
@@ -1461,6 +1521,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { target: "host/web" },
     });
     assert.equal(job.mode, "real");
@@ -1509,6 +1571,8 @@ describe("CertOps jobs service", () => {
       client,
       workspaceId: WORKSPACE_A,
       operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
       payload: { target: "host/web" },
     });
     assert.equal(job.completedAt, null);
@@ -1545,6 +1609,8 @@ describe("CertOps jobs service", () => {
           workspaceId: WORKSPACE_A,
           operation: "renew",
           source: "automation",
+          subjectType: "managed_certificate",
+          subjectId: "cert-1",
           payload: { certificateId: "cert-1" },
         }),
       (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
@@ -1566,6 +1632,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-a",
       payload: { certificateId: "cert-a", caEndpoint },
       idempotencyKey: "manual-cert-a",
       env,
@@ -1575,6 +1643,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-b",
       payload: { certificateId: "cert-b", caEndpoint },
       idempotencyKey: "scheduler-cert-b",
       env,
@@ -1590,6 +1660,8 @@ describe("CertOps jobs service", () => {
           workspaceId: WORKSPACE_A,
           operation: "renew",
           source: "api",
+          subjectType: "managed_certificate",
+          subjectId: "cert-c",
           payload: { certificateId: "cert-c", caEndpoint },
           idempotencyKey: "manual-cert-c",
           env,
@@ -1603,6 +1675,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-a",
       payload: { certificateId: "cert-a", caEndpoint },
       idempotencyKey: "manual-cert-a",
       env,
@@ -1617,6 +1691,8 @@ describe("CertOps jobs service", () => {
       workspaceId: WORKSPACE_A,
       operation: "renew",
       source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-d",
       payload: {
         certificateId: "cert-d",
         caEndpoint: "https://other.example/directory",

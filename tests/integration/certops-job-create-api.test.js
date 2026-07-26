@@ -515,7 +515,11 @@ describe("CertOps manual job creation API", function () {
     const response = await request(BASE)
       .post(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs`)
       .set("Cookie", fixture.managerSession.cookie)
-      .send({ operation: "reload" })
+      .send({
+        operation: "reload",
+        subjectType: "managed_certificate",
+        subjectId: `scoped-subject-${crypto.randomUUID()}`,
+      })
       .expect(201);
 
     const crossWorkspaceFetch = await request(BASE)
