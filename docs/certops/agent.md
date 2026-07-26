@@ -291,6 +291,45 @@ reports the median, because the Date header has 1-second resolution and
 individual samples are contaminated by network latency. This is a coarse
 drift detector for the signed-job time window, not an NTP replacement.
 
+### Which agent gets a job: exclusivity vs assignment
+
+Two independent mechanisms, routinely conflated, and both matter once a
+workspace runs more than one agent.
+
+**Claim exclusivity** is guaranteed by the claim transaction itself
+(`FOR UPDATE SKIP LOCKED` in `claimJobs`, `apps/api/services/certops/agentDispatch.js`).
+Simultaneous pollers each get different jobs; a claimed job carries a lease
+and cannot be claimed again while that lease lives.
+
+**Assignment** decides *which* agent is eligible in the first place, and
+exclusivity says nothing about it. The claim matcher is
+`assigned_agent_id IS NULL OR assigned_agent_id = $3::uuid`, so a job with
+neither `assignedAgentId` nor `requiredTargetSelector` is claimable by **any**
+online agent declaring support for the operation, including one with no
+relationship to the certificate. Because certificate work is host-specific
+(renewing `/etc/nginx/ssl/site.pem` only means anything on the host where
+that file exists), `createCertificateJob` defaults `assignedAgentId` from the
+certificate's discovering agent for `agent_filesystem`-sourced
+`managed_certificates` rows
+(`resolveManagedCertificateJobDefaults`, reading
+`public_metadata.controllerObservation.agentId`). An explicit
+`assignedAgentId` from the caller always wins, which is the supported
+re-homing/hand-off path.
+
+Consequences:
+
+- A job pinned to an offline agent **waits at `pending`** rather than failing
+  over to a healthy agent, since a different host is not a valid substitute.
+  Check the fleet panel first when a job appears stuck.
+- Jobs pinned to a retired/rebuilt host never run. Pass an explicit
+  `assignedAgentId`, or let the replacement agent rediscover the certificate.
+- Certificates with no agent key custody are rejected at creation instead
+  (`409 CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE`, see
+  `AGENT_DEPLOYABLE_KEY_MODES`), rather than being dispatched to an agent
+  that must fail and surface a misleading `cert_renewal_failed` alert.
+- Target selectors still apply on top of assignment: they are the coarse
+  routing tool (role/environment), assignment is the exact one.
+
 ### Dry-run and reconciliation statuses
 
 Job `mode` is an immutable control-plane field on the claimed job. Result
@@ -774,6 +813,32 @@ never carry secrets: every provider response excerpt is bounded to 1024
 chars and replaced wholesale with `[redacted]` if it contains a
 `PRIVATE KEY` marker or any of the credential strings themselves.
 
+Hook exit contract (`src/dns/hook.js`) — the whole interface to certbot /
+acme.sh is the exit code plus the two streams:
+
+| Exit | Meaning |
+|------|---------|
+| `0` | TXT record published (or removed) **and** verified per `dnsPropagation` |
+| `1` | Operational failure: policy rejection, missing/unreadable `dnsProviders` config or credentials file, provider API error, or propagation timeout |
+| `2` | Usage error: unknown mode (not `present`/`cleanup`), or missing `CERTBOT_DOMAIN`/`CERTBOT_VALIDATION` (`ACME_DOMAIN`/`ACME_TXT_VALUE`) |
+
+`2` means the hook was wired up wrong and never reached the provider; `1`
+means it tried and something refused. **stdout** carries one JSON object per
+line of structured progress, including a `dns.propagation` event (provider,
+zone, record name, attempts, elapsed, resolvers consulted) — the stream to
+read when a challenge is slow rather than broken. **stderr** carries
+failures: policy rejections and provider errors as machine-readable JSON
+verdict objects, usage errors as plain text prefixed `certops-dns-hook:`.
+
+The hook **fails loud and never fails open**: any unresolvable zone,
+unreadable credential, policy refusal, or unconfirmed propagation exits
+nonzero so the ACME client aborts *before* asking the CA to validate. A
+silent "success" leaving no TXT record would burn a validation attempt and,
+with some CAs, count against a rate limit. Because credentials are excluded
+from every log line, evidence record, and error message (including the JSON
+verdicts), an authentication failure shows *that* auth failed and never the
+token that failed — verify credentials against the provider directly.
+
 ## 6. Zero-custody guarantees
 
 Layers, from outermost in:
@@ -917,6 +982,24 @@ Common terminal states and what to look for:
   is corrupted. Re-register the agent to re-pin.
 - **Heartbeat stops and the process exits with a "retired" log line**: the
   control plane returned HTTP 410; this is a clean, intentional shutdown.
+  The exit status is **86**, paired with `RestartPreventExitStatus=86` in the
+  unit; `systemctl status` shows `inactive (dead)` with `status=86`. Do not
+  confuse this with `activating (auto-restart)` + `status=1/FAILURE`, which
+  *is* a real startup/registration failure and needs
+  `journalctl -u tokentimer-agent -n 50 --no-pager`.
+- **A job stays `pending` and this agent never claims it**: the job is pinned
+  to a different agent (normally the one that discovered the certificate) or
+  requires a target selector this agent does not declare. See "Which agent
+  gets a job" above; this is routing, not an agent fault.
+- **Renew job creation refused for a certificate visible in inventory**:
+  `409 CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE`. The certificate was only
+  observed (endpoint/domain monitor), so no agent holds its key. Install an
+  agent on the host that actually serves it.
+- **Agent healthy but automatic renewals never happen**: a control-plane
+  problem, not an agent one. The `certops` worker target
+  (`worker-certops` / `cronjob-certops`) creates renewal jobs; without it,
+  or with `CERTOPS_ENABLED` out of sync between API and worker, the
+  scheduler counts every certificate as skipped and nothing renews.
 
 ### Fleet compatibility, clock drift, and liveness (control plane)
 
@@ -960,20 +1043,51 @@ Kubernetes: `cronjob-certops`, `worker.cronjobs.certops.enabled`) for
 
 ### Forced agent retirement and in-flight work
 
-When an operator force-retires an agent (`POST .../agents/:id/retire` with
-`force: true`), the control plane does **not** wait for the lease reaper:
+A retire without `force` is **refused** while the agent still holds actively
+leased jobs (`countActivelyLeasedJobs` in `agentRegistry.js`):
+`409 CERTOPS_AGENT_RETIRE_BLOCKED` with a `dependencies.leasedJobs` count.
+Waiting for the job to finish is the normal path.
+
+`force: true` requires an attributable `reason`, enforced server-side
+(`400 CERTOPS_AGENT_RETIRE_REASON_INVALID`), not merely in the dashboard
+form: a forced retire can abandon real work, so the audit trail must say
+why. When an operator force-retires an agent (`POST .../agents/:id/retire`
+with `force: true`), the control plane does **not** wait for the lease
+reaper:
 
 1. Jobs still in `claimed` (no execution start reported) are immediately
-   `cancelled`.
+   `cancelled` with `error_code: CERTOPS_AGENT_FORCE_RETIRED`.
 2. Jobs in `running` are moved to `orphaned_unknown_effect` with
    `needsOperatorReconciliation: true`, because a side effect (for example a
    deploy) may already have happened without a reported result.
 3. Subsequent result/evidence submissions from that agent are rejected with
    HTTP 410.
 
+The response reports both id lists (`fenced.cancelledJobIds`,
+`fenced.orphanedJobIds`) and the `CERTOPS_AGENT_RETIRED` audit event records
+`force`, `reason`, `leasedJobs`, and both lists. Retirement is idempotent:
+retiring an already-retired agent returns 200 with the original `retiredAt`
+and fences nothing a second time.
+
 Operators must review the jobs list for `needsOperatorReconciliation` (or
 status `orphaned_unknown_effect`) and reconcile hosts manually before
 re-dispatching work for the same certificate/target.
+
+### Clean exit on retirement (exit code 86)
+
+A retired agent that learns of its own retirement (heartbeat/claim answered
+410) exits with **`AGENT_RETIRED_EXIT_CODE = 86`**
+(`packages/agent/src/index.js`), matched by `RestartPreventExitStatus=86` in
+`scripts/tokentimer-agent.service`. The unit is `Restart=always`, so without
+that pairing systemd would respawn a decommissioned agent into an endless
+heartbeat-410 loop (ADR-0002 clean retirement).
+
+Operational consequence worth stating for support: a unit sitting
+`inactive (dead)` with `status=86` is **not** a crash. It is the designed
+terminal state of a retired agent, and it is visually easy to confuse with
+the `activating (auto-restart)` / `status=1/FAILURE` loop that a genuine
+startup or registration failure produces. Only the latter needs
+`journalctl -u tokentimer-agent` triage.
 
 Log lines are prefixed `tokentimer-agent:` on stderr. Evidence for rejected
 jobs arrives as `policy.checked` items; execution steps report

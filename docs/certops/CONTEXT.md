@@ -95,13 +95,48 @@ the shared detector scans every outbound envelope.
   protocol envelopes and enforced server-side (compare-and-swap on
   `certops_agents.last_sequence`, 409 on regression, generation reset on
   re-register). Defense in depth over the nonce replay cache.
-- **Per-CA cap** - sweep-time limit on in-flight renewal jobs per
-  `caEndpoint` (`CERTOPS_RENEWAL_PER_CA_CAP`) so the scheduler cannot flood
-  one CA; skipped certificates are reported in the sweep summary and picked
-  up by later sweeps.
+- **Renewal profile snapshot** - the immutable renewal configuration frozen
+  into a `renew` job's payload at creation time. Optional when a job is
+  created manually or via bulk renew, but **required and fully validated at
+  approval time** (`validateRenewalProfileOnPayload(..., { required: true })`
+  in `jobApprovals.js`), so approving a thin payload fails with
+  `400 CERTOPS_RENEWAL_PROFILE_INCOMPLETE` and the job stays at
+  `pending_approval`. The gate exists so what an approver signs off on is
+  bound by hash to what actually runs, rather than being re-resolved from a
+  mutable profile row at dispatch. Scheduler-created renewals always carry a
+  complete snapshot.
+- **Per-CA cap** - limit on in-flight renewal jobs per `caEndpoint`
+  (`CERTOPS_RENEWAL_PER_CA_CAP`, default 5) so one CA cannot be flooded.
+  Enforced on **every** renewal creation path, not just the sweep: the
+  scheduler skips over-cap certificates and reports them in the sweep
+  summary (picked up by later sweeps), while manual and bulk creation
+  reserve against the same per-workspace/per-CA counter inside the creating
+  transaction and fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`.
+- **Agent-deployable key custody** - only `key_mode` `agent-local` or
+  `proxy-agent-local` can carry an agent-executed `renew`/`deploy`/`reload`/
+  `revoke` job. A certificate that was merely *observed* (endpoint/domain
+  monitor, `key_mode` NULL) has no agent holding its key, so creating such a
+  job fails at creation time with `409
+  CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE` rather than dispatching to an
+  agent that must fail. See `AGENT_DEPLOYABLE_KEY_MODES` in
+  `apps/api/services/certops/jobs.js`.
+- **Job assignment** - distinct from claim exclusivity. Claiming is
+  transactional (`FOR UPDATE SKIP LOCKED`), so two agents never take the
+  same job; but a job with neither `assignedAgentId` nor
+  `requiredTargetSelector` is claimable by *any* online agent declaring the
+  operation, including one unrelated to the certificate. For
+  `agent_filesystem`-sourced certificates, `assignedAgentId` therefore
+  defaults to the discovering agent at creation time
+  (`resolveManagedCertificateJobDefaults`), pinning host-specific work to
+  the host that actually holds the files. An explicit `assignedAgentId`
+  always wins.
 - **Bulk renew** - `POST .../certops/jobs/bulk-renew`: many certificates
   through the same creation path as single renew (validation, approval
   gates, kill switch identical) with a per-item partial-failure envelope.
+  Items without an explicit `idempotencyKey` derive a stable one
+  (`bulk-renew:auto:<certificateId>`), which is permanent: re-running after
+  cancelling the created jobs returns the original terminal jobs instead of
+  creating new ones. Pass a fresh key to force a genuine re-run.
 
 ## Dashboard certificate visibility (D6)
 

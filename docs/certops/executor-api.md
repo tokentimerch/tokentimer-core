@@ -117,9 +117,11 @@ A successful submission returns **HTTP 202** (Accepted), not 200/201:
   returns 202, `idempotent: true`); replaying it with a different payload
   returns 409 `CERTOPS_EXECUTOR_EVENT_CONFLICT`.
 - Job status transitions are monotonic. Once a job reaches a terminal status
-  (`succeeded`, `failed`, `rejected`, `blocked`, `cancelled`), later events
-  are still accepted (202, logged) but do not reopen or change the stored
-  status.
+  (`succeeded`, `failed`, `rejected`, `blocked`, `cancelled`,
+  `dry_run_complete`, `orphaned_unknown_effect` — the full
+  `TERMINAL_JOB_STATUSES` set in `apps/api/services/certops/jobs.js`), later
+  events are still accepted (202, logged) but do not reopen or change the
+  stored status.
 - Unknown top-level fields are rejected, not silently dropped.
 - If the body's `workspaceId`/`jobId` conflicts with the per-job route's path
   parameters, the request is rejected with 403

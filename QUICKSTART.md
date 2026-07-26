@@ -154,7 +154,7 @@ Default worker runner schedules:
 |--------|------------------|---------------|
 | Alert Discovery | `*/5 * * * *` | No |
 | Alert Delivery | `1/5 * * * *` | No |
-| Auto Sync | `0 * * * *` | No |
+| Auto Sync | `*/1 * * * *` | No |
 | Endpoint Check | `*/1 * * * *` | No |
 | Weekly Digest | `0 9 * * 1` | No |
 | CertOps Maintenance | `*/1 * * * *` | No |

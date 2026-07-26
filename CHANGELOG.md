@@ -28,7 +28,7 @@ CertOps agent and cert-manager controller: the first end-to-end path for TokenTi
 
 ### Changed
 
-- `packages/contracts/api/certops-route-compat.contract.json` bumped to `0.16.0` (`agent-runtime-stable`): the four `/api/v1/certops/agent` routes are now live, Ed25519-signed control-plane endpoints, and the executor surface gained controller observation and provisioning transport.
+- `packages/contracts/api/certops-route-compat.contract.json` bumped to `0.17.0` (`agent-runtime-stable`): the five `/api/v1/certops/agent` routes (register, heartbeat, jobs/claim, jobs/:jobId/lease, jobs/results) are now live, Ed25519-signed control-plane endpoints, the workspace-scoped agent-lifecycle and approval-gate routes are contracted, and the executor surface gained controller observation and provisioning transport.
 - Version metadata bumped to 0.11.0 across all manifests, contracts, and Helm chart.
 
 ## [0.10.3] - 2026-07-23
@@ -66,7 +66,7 @@ CertOps agent and cert-manager controller: the first end-to-end path for TokenTi
 
 ### Changed
 
-- **CertOps enabled by default in Helm and Compose** — new `config.certopsEnabled` Helm value (default `true`, explicit `false` correctly honored via a ternary that distinguishes "unset" from "false") wires `CERTOPS_ENABLED` into the shared ConfigMap consumed by the API and worker pods. Compose (`docker-compose.yml`, `docker-compose.dev.yml`) now defaults `CERTOPS_ENABLED` to `true` for the `api` and `worker-endpoint-check` services instead of leaving it unset (previously the app-level default was `false` when unset). `docs/CONFIGURATION.md` documents the app-level default alongside the Helm/Compose deployment defaults.
+- **CertOps enabled by default in Helm and Compose** — new `config.certopsEnabled` Helm value (default `true`, explicit `false` correctly honored via a ternary that distinguishes "unset" from "false") wires `CERTOPS_ENABLED` into the shared ConfigMap consumed by the API and worker pods. Compose (`docker-compose.yml`, `docker-compose.dev.yml`) now defaults `CERTOPS_ENABLED` to `true` for the `api` and `worker-endpoint-check` services instead of leaving it unset (previously the app-level default was `false` when unset; the `worker-certops` service added later in 0.11.0 sets it too, so all three CertOps-aware services share the default). `docs/CONFIGURATION.md` documents the app-level default alongside the Helm/Compose deployment defaults.
 - Version metadata bumped to 0.10.1 across all manifests, contracts, and Helm chart.
 
 ## [0.10.0] - 2026-07-21
