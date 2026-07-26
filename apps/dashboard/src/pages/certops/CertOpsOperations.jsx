@@ -193,14 +193,27 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   const [operation, setOperation] = useState('');
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
+  const [idempotencyKey, setIdempotencyKey] = useState('');
+  const [payloadText, setPayloadText] = useState('');
+  const [payloadError, setPayloadError] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [subjectSuggestions, setSubjectSuggestions] = useState([]);
+
+  // "issue" has no existing subject to act on (ADR-0008): the control
+  // plane creates the managed_certificate row itself, so passing
+  // subjectType/subjectId is a validation error. idempotencyKey is
+  // mandatory on issue because the request has a side effect beyond the
+  // job (the new inventory row) and must not be duplicated by a retry.
+  const isIssue = operation === 'issue';
 
   const resetForm = () => {
     setOperation('');
     setSubjectType('');
     setSubjectId('');
+    setIdempotencyKey('');
+    setPayloadText('');
+    setPayloadError('');
     setRequiresApproval(false);
     setSubjectSuggestions([]);
   };
@@ -245,15 +258,45 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     Boolean(operation) &&
     Boolean(workspaceId) &&
     !submitting &&
-    subjectPairComplete;
+    (isIssue
+      ? Boolean(idempotencyKey.trim()) && !payloadError
+      : subjectPairComplete && !payloadError);
+
+  const handlePayloadChange = event => {
+    const text = event.target.value;
+    setPayloadText(text);
+    if (!text.trim()) {
+      setPayloadError('');
+      return;
+    }
+    try {
+      JSON.parse(text);
+      setPayloadError('');
+    } catch {
+      setPayloadError('Payload must be valid JSON.');
+    }
+  };
+
+  const handleOperationChange = event => {
+    const nextOperation = event.target.value;
+    setOperation(nextOperation);
+    if (nextOperation === 'issue') {
+      // A subject on issue is a validation error (ADR-0008): the
+      // certificate does not exist yet, so there is nothing to point at.
+      setSubjectType('');
+      setSubjectId('');
+    }
+  };
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
       const body = { operation };
-      if (subjectType) body.subjectType = subjectType;
-      if (subjectId.trim()) body.subjectId = subjectId.trim();
+      if (!isIssue && subjectType) body.subjectType = subjectType;
+      if (!isIssue && subjectId.trim()) body.subjectId = subjectId.trim();
+      if (idempotencyKey.trim()) body.idempotencyKey = idempotencyKey.trim();
+      if (payloadText.trim()) body.payload = JSON.parse(payloadText);
       if (requiresApproval) body.requiresApproval = true;
       const { job } = await createJob(workspaceId, body);
       showSuccess(
@@ -297,7 +340,7 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                 size='sm'
                 placeholder='Select an operation'
                 value={operation}
-                onChange={event => setOperation(event.target.value)}
+                onChange={handleOperationChange}
               >
                 {CERTOPS_JOB_OPERATIONS.map(op => (
                   <option key={op} value={op}>
@@ -305,56 +348,108 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   </option>
                 ))}
               </Select>
+              {isIssue ? (
+                <FormHelperText>
+                  Issue creates a new managed certificate; TokenTimer assigns
+                  its ID once the request is accepted, so subject fields
+                  below are hidden.
+                </FormHelperText>
+              ) : null}
             </FormControl>
-            <FormControl isRequired={Boolean(subjectId.trim())}>
-              <FormLabel fontSize='sm'>Subject type</FormLabel>
-              <Select
-                size='sm'
-                placeholder='No subject'
-                value={subjectType}
-                onChange={event => {
-                  setSubjectType(event.target.value);
-                  setSubjectId('');
-                }}
-              >
-                {MANUAL_JOB_SUBJECT_TYPES.map(type => (
-                  <option key={type} value={type}>
-                    {subjectTypeLabel(type)}
-                  </option>
-                ))}
-              </Select>
-              <FormHelperText>
-                Required together with subject ID, or leave both empty.
-              </FormHelperText>
-            </FormControl>
-            <FormControl isRequired={Boolean(subjectType)}>
-              <FormLabel fontSize='sm'>Subject ID</FormLabel>
+            {isIssue ? null : (
+              <>
+                <FormControl isRequired={Boolean(subjectId.trim())}>
+                  <FormLabel fontSize='sm'>Subject type</FormLabel>
+                  <Select
+                    size='sm'
+                    placeholder='No subject'
+                    value={subjectType}
+                    onChange={event => {
+                      setSubjectType(event.target.value);
+                      setSubjectId('');
+                    }}
+                  >
+                    {MANUAL_JOB_SUBJECT_TYPES.map(type => (
+                      <option key={type} value={type}>
+                        {subjectTypeLabel(type)}
+                      </option>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    Required together with subject ID, or leave both empty.
+                  </FormHelperText>
+                </FormControl>
+                <FormControl isRequired={Boolean(subjectType)}>
+                  <FormLabel fontSize='sm'>Subject ID</FormLabel>
+                  <Input
+                    size='sm'
+                    value={subjectId}
+                    onChange={event => setSubjectId(event.target.value)}
+                    maxLength={SUBJECT_ID_MAX_LENGTH}
+                    placeholder={
+                      SUBJECT_ID_PLACEHOLDERS[subjectType] ||
+                      DEFAULT_SUBJECT_ID_PLACEHOLDER
+                    }
+                    list={
+                      subjectSuggestions.length
+                        ? MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID
+                        : undefined
+                    }
+                    autoComplete='off'
+                  />
+                  <FormHelperText>
+                    Required together with subject type, or leave both empty.
+                  </FormHelperText>
+                  {subjectSuggestions.length ? (
+                    <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
+                      {subjectSuggestions.map(item => (
+                        <option
+                          key={item.id}
+                          value={item.id}
+                          label={item.label}
+                        />
+                      ))}
+                    </datalist>
+                  ) : null}
+                </FormControl>
+              </>
+            )}
+            <FormControl isRequired={isIssue}>
+              <FormLabel fontSize='sm'>Idempotency key</FormLabel>
               <Input
                 size='sm'
-                value={subjectId}
-                onChange={event => setSubjectId(event.target.value)}
-                maxLength={SUBJECT_ID_MAX_LENGTH}
-                placeholder={
-                  SUBJECT_ID_PLACEHOLDERS[subjectType] ||
-                  DEFAULT_SUBJECT_ID_PLACEHOLDER
-                }
-                list={
-                  subjectSuggestions.length
-                    ? MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID
-                    : undefined
-                }
+                value={idempotencyKey}
+                onChange={event => setIdempotencyKey(event.target.value)}
+                placeholder='e.g. a client-generated request id'
                 autoComplete='off'
               />
               <FormHelperText>
-                Required together with subject type, or leave both empty.
+                {isIssue
+                  ? 'Required for issue: a retried request with the same key returns the existing job instead of provisioning a second certificate.'
+                  : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
               </FormHelperText>
-              {subjectSuggestions.length ? (
-                <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
-                  {subjectSuggestions.map(item => (
-                    <option key={item.id} value={item.id} label={item.label} />
-                  ))}
-                </datalist>
-              ) : null}
+            </FormControl>
+            <FormControl isInvalid={Boolean(payloadError)}>
+              <FormLabel fontSize='sm'>Payload (JSON)</FormLabel>
+              <Textarea
+                size='sm'
+                fontFamily='mono'
+                fontSize='xs'
+                rows={6}
+                value={payloadText}
+                onChange={handlePayloadChange}
+                placeholder={
+                  isIssue
+                    ? '{\n  "target": { "type": "domain", "reference": "example.com" },\n  "sans": ["example.com"],\n  "commandRef": "certbot-csr",\n  "caEndpoint": "https://acme-v02.api.letsencrypt.org/directory",\n  "dnsZone": "example.com",\n  "dnsProvider": "cloudflare",\n  "certPath": "/etc/ssl/example/example.com.pem"\n}'
+                    : '{}'
+                }
+              />
+              <FormHelperText>
+                {payloadError ||
+                  (isIssue
+                    ? 'Required: at minimum a target, sans, commandRef, and caEndpoint. See the certops-agent-install runbook for the full field list.'
+                    : 'Optional. Free-form JSON merged into the job payload.')}
+              </FormHelperText>
             </FormControl>
             <FormControl>
               <Checkbox
@@ -524,7 +619,10 @@ function ExecutorJobsPanel() {
         decision === 'approve' ? 'Approve failed' : 'Reject failed',
         approvalDecisionErrorMessage(err, decision)
       );
-      if (err?.response?.data?.code === 'CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL') {
+      if (
+        err?.response?.data?.code ===
+        'CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL'
+      ) {
         setDecisionTarget(null);
         refresh();
       }
@@ -614,7 +712,10 @@ function ExecutorJobsPanel() {
                   >
                     {jobOperationLabel(job.operation)}
                   </Text>
-                  <Box flexShrink={0} onClick={event => event.stopPropagation()}>
+                  <Box
+                    flexShrink={0}
+                    onClick={event => event.stopPropagation()}
+                  >
                     <CopyableId id={job.id} display={truncateId(job.id)} />
                   </Box>
                   <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>

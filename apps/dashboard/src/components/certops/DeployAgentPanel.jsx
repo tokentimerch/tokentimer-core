@@ -381,8 +381,7 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
             Agents run on your infrastructure and connect outbound-only. Keys
             never leave the agent host. Deploying takes three steps: run the
             install command on the target host, create a single-use bootstrap
-            token to paste at its prompt, then wait for the agent to
-            register.
+            token to paste at its prompt, then wait for the agent to register.
           </AlertDescription>
         </Alert>
       </Box>
@@ -418,9 +417,9 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
                 monospace
               />
               <Text fontSize='xs' color={muted}>
-                The command does not include a token. The installer will
-                pause with a hidden prompt asking for one; create a bootstrap
-                token in step 2 below and paste it there, or set the
+                The command does not include a token. The installer will pause
+                with a hidden prompt asking for one; create a bootstrap token in
+                step 2 below and paste it there, or set the
                 TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
                 running.
               </Text>
@@ -482,8 +481,8 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
               </Button>
 
               <Text fontSize='xs' color={muted}>
-                Once you have pasted the token at the installer's prompt in
-                step 1 and it is proceeding, watch for the agent to register:
+                Once you have pasted the token at the installer's prompt in step
+                1 and it is proceeding, watch for the agent to register:
               </Text>
               <Button
                 size='sm'
@@ -683,8 +682,8 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
                 monospace
               />
               <Text fontSize='xs' color={muted}>
-                The install command in step 1 does not contain the token.
-                Paste it at the installer's hidden prompt now.
+                The install command in step 1 does not contain the token. Paste
+                it at the installer's hidden prompt now.
               </Text>
             </VStack>
           </ModalBody>

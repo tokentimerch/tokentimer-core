@@ -21,6 +21,7 @@ export const CERTOPS_JOB_STATUSES = [
 ];
 
 export const CERTOPS_JOB_OPERATIONS = [
+  'issue',
   'renew',
   'deploy',
   'reload',
@@ -154,7 +155,14 @@ export async function listJobEvidence(
  */
 export async function createJob(
   workspaceId,
-  { operation, subjectType, subjectId, payload, idempotencyKey, requiresApproval } = {}
+  {
+    operation,
+    subjectType,
+    subjectId,
+    payload,
+    idempotencyKey,
+    requiresApproval,
+  } = {}
 ) {
   const body = { operation };
   if (subjectType !== undefined) body.subjectType = subjectType;

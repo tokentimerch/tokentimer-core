@@ -175,7 +175,10 @@ export async function retireCertificate(
  * updateWorkspaceCertOpsPauseState).
  * @returns {Promise<{ workspaceId: string, certOpsPaused: boolean, certOpsEnabled: boolean, certOpsActive: boolean }>}
  */
-export async function getWorkspaceCertOpsPauseState(workspaceId, { signal } = {}) {
+export async function getWorkspaceCertOpsPauseState(
+  workspaceId,
+  { signal } = {}
+) {
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/settings`, {
     signal,
   });

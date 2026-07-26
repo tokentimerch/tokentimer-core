@@ -27,6 +27,7 @@ const JOB_STATUS_LABELS = {
 };
 
 const JOB_OPERATION_LABELS = {
+  issue: 'Issue (new certificate)',
   renew: 'Renew',
   deploy: 'Deploy',
   reload: 'Reload',

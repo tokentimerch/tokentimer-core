@@ -113,7 +113,12 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
             />
           </Box>
           {error ? (
-            <Alert status='error' borderRadius='md' variant='left-accent' mt={3}>
+            <Alert
+              status='error'
+              borderRadius='md'
+              variant='left-accent'
+              mt={3}
+            >
               <AlertIcon />
               <AlertDescription fontSize='sm'>{error}</AlertDescription>
             </Alert>
@@ -197,9 +202,9 @@ export default function WorkspaceKillSwitchPanel() {
         ) : null}
       </HStack>
       <Text fontSize='sm' color={muted} mb={3}>
-        Pausing stops new provisioning intent and command delivery to agents
-        for this workspace only. Already-leased jobs keep running, and agents
-        can still report observations and evidence while paused.
+        Pausing stops new provisioning intent and command delivery to agents for
+        this workspace only. Already-leased jobs keep running, and agents can
+        still report observations and evidence while paused.
       </Text>
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}

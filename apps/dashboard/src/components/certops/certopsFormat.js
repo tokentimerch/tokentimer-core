@@ -50,6 +50,7 @@ export function expiryDescriptor(notAfter) {
 }
 
 const STATUS_SCHEMES = {
+  provisioning: 'purple',
   active: 'green',
   discovered: 'blue',
   renewing: 'blue',
@@ -64,6 +65,7 @@ export function statusScheme(status) {
 }
 
 const STATUS_LABELS = {
+  provisioning: 'Provisioning',
   active: 'Active',
   discovered: 'Discovered',
   renewing: 'Renewing',

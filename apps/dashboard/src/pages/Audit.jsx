@@ -816,8 +816,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     try {
       const md = ev?.metadata || {};
       const parts = [];
-      if (md.bootstrap_token_id)
-        parts.push(`Token: ${md.bootstrap_token_id}`);
+      if (md.bootstrap_token_id) parts.push(`Token: ${md.bootstrap_token_id}`);
       if (md.name) parts.push(`Name: ${md.name}`);
       if (md.token_prefix) parts.push(`Prefix: ${md.token_prefix}`);
       if (md.status) parts.push(`Status: ${md.status}`);
@@ -851,7 +850,9 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.certOpsPaused != null)
         parts.push(`Paused: ${md.certOpsPaused ? 'yes' : 'no'}`);
       if (md.previousCertOpsPaused != null)
-        parts.push(`Previously: ${md.previousCertOpsPaused ? 'paused' : 'active'}`);
+        parts.push(
+          `Previously: ${md.previousCertOpsPaused ? 'paused' : 'active'}`
+        );
       if (md.certOpsActive != null)
         parts.push(`Active: ${md.certOpsActive ? 'yes' : 'no'}`);
       if (md.reason) parts.push(`Reason: ${md.reason}`);

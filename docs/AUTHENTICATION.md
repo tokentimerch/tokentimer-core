@@ -113,8 +113,16 @@ change. All five rules are mandatory and none of them are configurable:
 - at least one **number**
 - at least one **special character** (`!@#$%^&*()_+-=[]{};':"\|,.<>/?`)
 
-A rejected password returns `400` with `code: "VALIDATION_ERROR"`, `error` set
-to the first failing rule, and `details` listing every failing rule.
+Password reset additionally rejects passwords that *start with* a common
+sequence (`password`, `123456`, `qwerty`, `admin`, `letmein`, `welcome`,
+`monkey`, `dragon`), so a password can satisfy all five rules above and still be
+refused on that route.
+
+A rejected password returns `400`. On invitation acceptance and password reset
+the body carries `code: "VALIDATION_ERROR"`, `error` set to the first failing
+rule, and `details` listing every failing rule. Password *change*
+(`POST /api/account/change-password`) returns only `error`, set to a single fixed
+message listing the rules, with no `code` or `details`.
 
 ## API Endpoints
 

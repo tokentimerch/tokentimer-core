@@ -65,13 +65,7 @@ export function useCertOpsAgents(externalRefreshSignal) {
       cancelled = true;
       controller.abort();
     };
-  }, [
-    workspaceId,
-    enabled,
-    canManage,
-    reloadTick,
-    externalRefreshSignal,
-  ]);
+  }, [workspaceId, enabled, canManage, reloadTick, externalRefreshSignal]);
 
   return { enabled, agents, loading, error, refresh };
 }

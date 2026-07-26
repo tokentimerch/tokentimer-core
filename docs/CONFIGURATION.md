@@ -95,19 +95,22 @@ the origins users and integrations actually use in the browser.
 
 ## Authentication and security
 
+> **Auth tuning is not configurable.** `LOCAL_AUTH_ENABLED`,
+> `REQUIRE_EMAIL_VERIFICATION`, `TWO_FACTOR_ENABLED`, `SESSION_MAX_AGE`,
+> `CSRF_ENABLED`, `MIN_PASSWORD_LENGTH`, `REQUIRE_UPPERCASE` and
+> `REQUIRE_NUMBERS` were previously listed here as supported variables. They are
+> parsed by `packages/config` but never read, so setting them has no effect. The
+> real behavior is fixed in code: a 2-hour rolling session cookie, CSRF always on
+> outside tests, local auth and TOTP always available, and a fixed 12-character
+> 5-class password policy. See [AUTHENTICATION.md](AUTHENTICATION.md).
+>
+> The cookie, CORS, and proxy variables below _are_ live.
+
 | Variable                                   | Description                                                                     | Default value                          | Scope        |
 | ------------------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------- | ------------ |
-| `LOCAL_AUTH_ENABLED`                       | Enable local email/password auth                                                | `true`                                 | API auth     |
-| `REQUIRE_EMAIL_VERIFICATION`               | Require verified email before access                                            | `true`                                 | API auth     |
-| `TWO_FACTOR_ENABLED`                       | Enable 2FA features                                                             | `true`                                 | API auth     |
-| `SESSION_MAX_AGE`                          | Session max age in ms                                                           | `86400000`                             | API auth     |
 | `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE` | Allow insecure session cookies in production only when `APP_URL` and `API_URL` are both local HTTP (`localhost` / `127.0.0.1`); ignored otherwise | `false`                                | API auth     |
 | `SESSION_COOKIE_DOMAIN`                    | Optional parent domain for session/CSRF cookies (e.g. `.example.com`) when you need cookies shared across subdomains; not required for typical split-host API calls | `unset`                                | API auth     |
 | `ALLOW_LOCAL_DEV_CORS`                     | In production, also allow `http://localhost:*` and `http://127.0.0.1:*` in CORS (local troubleshooting only) | `false`                                | API security |
-| `CSRF_ENABLED`                             | Enable CSRF protection                                                          | `true`                                 | API security |
-| `MIN_PASSWORD_LENGTH`                      | Minimum password length                                                         | `8`                                    | API auth     |
-| `REQUIRE_UPPERCASE`                        | Enforce uppercase in passwords                                                  | `true`                                 | API auth     |
-| `REQUIRE_NUMBERS`                          | Enforce numeric chars in passwords                                              | `true`                                 | API auth     |
 | `PHONE_HASH_SALT`                          | Optional salt for phone hashing                                                 | `unset`                                | API privacy  |
 | `TRUST_PROXY_HOPS`                         | Number of trusted reverse-proxy hops in front of the API (affects `req.ip` and `req.protocol` resolution). `0` = no proxy, `1` = single ingress/reverse proxy, `2` = LB -> ingress. | `2`                                    | API security |
 | `WORKER_API_KEY`                           | Worker-to-API auth key                                                          | `unset (falls back to SESSION_SECRET)` | Worker, API  |
