@@ -6077,10 +6077,14 @@ components:
                   Why the scheduler will not renew this certificate, or null when it will.
                   auto_renew_disabled is an operator decision and is reversible from the
                   profile controls; the others are defects that no toggle will fix.
+                  not_agent_deployable means no agent holds the private key (typically an
+                  externally observed certificate), so renewal is impossible regardless of
+                  the profile, and is reported ahead of any profile problem.
                 enum:
                   - auto_renew_disabled
                   - no_profile
                   - incomplete_profile
+                  - not_agent_deployable
                   - unknown_expiry
               renewBeforeDays:
                 type: integer

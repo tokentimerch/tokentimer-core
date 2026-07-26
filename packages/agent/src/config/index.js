@@ -212,8 +212,8 @@ function ensureConfigDir(configDir) {
   } catch (_err) {
     // POSIX modes are not meaningful on win32 (no chmod-equivalent ACL model
     // here), so enforcement is best-effort there. This is a defense-in-depth
-    // measure for the POSIX hosts the agent primarily runs on per the plan's
-    // Linux-host framing; nothing on win32 depends on this call succeeding.
+    // measure for the POSIX hosts the agent primarily runs on; nothing on
+    // win32 depends on this call succeeding.
   }
 }
 

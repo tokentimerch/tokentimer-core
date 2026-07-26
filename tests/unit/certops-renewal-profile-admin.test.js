@@ -599,6 +599,97 @@ describe("CertOps upcoming renewals coverage", () => {
     assert.equal(item.blockedReason, null);
   });
 
+  // Key custody is the one blocker the sweep does not express in SQL: the row
+  // survives findCertificatesDueForRenewal and is refused later, at job
+  // creation, as skipped_not_agent_deployable. So a certificate with a valid
+  // profile and no agent-manageable key looked covered here while never
+  // renewing. These four cases pin the predicate to the one job creation uses.
+  it("reports an observed-only certificate as not agent-deployable", async () => {
+    // key_mode NULL is an endpoint or domain monitor: there is no key anywhere
+    // for an agent to rotate, so no profile can make this renewable.
+    const { item } = await listOne({ key_mode: null });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "not_agent_deployable");
+  });
+
+  it("reports an externally held key as not agent-deployable", async () => {
+    // external-unknown is the schema's value for "a key exists but not here".
+    const { item } = await listOne({ key_mode: "external-unknown" });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "not_agent_deployable");
+  });
+
+  it("reports every non-agent custody mode the schema allows", async () => {
+    // managed_certificates_key_mode_check permits these, and none of them put a
+    // key on an agent's filesystem. Enumerated explicitly so adding a custody
+    // mode to the schema without deciding its renewal story fails here.
+    for (const keyMode of [
+      "cert-manager-managed",
+      "appliance-managed",
+      "hsm-managed",
+      "vault-managed",
+      "os-store-managed",
+      "external-unknown",
+    ]) {
+      const { item } = await listOne({ key_mode: keyMode });
+      assert.equal(
+        item.blockedReason,
+        "not_agent_deployable",
+        `${keyMode} should not be reported as renewable`,
+      );
+    }
+  });
+
+  it("treats agent-local custody as renewable", async () => {
+    const { item } = await listOne({ key_mode: "agent-local" });
+
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+  });
+
+  it("treats proxy-agent-local custody as renewable", async () => {
+    const { item } = await listOne({ key_mode: "proxy-agent-local" });
+
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+  });
+
+  it("uses the same custody predicate as job creation", async () => {
+    // A second copy of the key-mode list would drift silently, and the drift
+    // shows up as this view promising a renewal the scheduler refuses.
+    const { isAgentDeployableKeyMode } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    for (const keyMode of [
+      null,
+      "external-unknown",
+      "vault-managed",
+      "agent-local",
+      "proxy-agent-local",
+    ]) {
+      const { item } = await listOne({ key_mode: keyMode });
+      assert.equal(
+        item.blockedReason === "not_agent_deployable",
+        !isAgentDeployableKeyMode(keyMode),
+        `custody verdict diverged for key_mode=${keyMode}`,
+      );
+    }
+  });
+
+  it("reports custody before profile completeness", async () => {
+    // Both are wrong here. Custody is the one that cannot be fixed by
+    // re-issuing a profile, so naming it first points at the real remedy.
+    const { item } = await listOne({
+      key_mode: null,
+      profile_id: null,
+      profile_public_metadata: null,
+    });
+
+    assert.equal(item.blockedReason, "not_agent_deployable");
+  });
+
   it("never returns the profile body, which carries deployment topology", async () => {
     const { item } = await listOne();
 

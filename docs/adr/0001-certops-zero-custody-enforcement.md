@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; to be finalized before ratification.
+Proposed (2026-06-25). Skeleton record; to be finalized before ratification.
 
 ## Context
 

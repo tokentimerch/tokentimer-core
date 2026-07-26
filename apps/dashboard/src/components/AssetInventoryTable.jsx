@@ -156,7 +156,7 @@ const SORT_HEADER_BUTTON_PROPS = {
   },
 };
 
-/** Column keys per inventory mode (Phase 2 plan). */
+/** Column keys per inventory mode. */
 export const columnsByMode = {
   mixed: [
     'name',

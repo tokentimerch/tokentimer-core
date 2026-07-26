@@ -2,8 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-26). Design decision D9 in the CertOps plan's accepted
-architecture choices table.
+Accepted (2026-07-26).
 
 **Amended (2026-07-26, release 0.11.0).** Decision points 4, 5, 6, and 8 are
 revised by [Amendment 1](#amendment-1-2026-07-26-issuance-hardening-and-renewal-enablement-0110)

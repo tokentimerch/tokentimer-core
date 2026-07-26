@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-28). Design decision D6.
+Accepted (2026-06-28).
 
 ## Context
 
@@ -54,7 +54,8 @@ list). Minimal wiring edits only.
   `apps/dashboard/src/pages/certops/` inventory pages.
 - Cloud and Enterprise overlays mirror the same enrichment pattern on their
   token surfaces.
-- Reviewers should treat token-surface enrichment as aligned with D6 even when
+- Reviewers should treat token-surface enrichment as aligned with this decision
+  even when
   it lands before backend endpoints are complete, provided contracts and paired
   backend PRs are tracked (see ADR-0007 for retire UI pairing).
 - Implementation note: the first orchestration page is

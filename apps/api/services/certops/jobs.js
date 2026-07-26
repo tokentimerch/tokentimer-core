@@ -808,7 +808,7 @@ function initialLifecycleTimestamps(options, status) {
       ? now
       : null);
   // The database column retains the American spelling for compatibility. The
-  // public job state and service option use the plan's canonical "cancelled".
+  // public job state and service option use the canonical "cancelled".
   const cancelledAt =
     options.cancelledAt ||
     (status === "cancelled" ? now : null);
@@ -953,6 +953,31 @@ const AGENT_MUTATING_OPERATIONS = new Set([
   "revoke",
 ]);
 const AGENT_DEPLOYABLE_KEY_MODES = new Set(["agent-local", "proxy-agent-local"]);
+
+/**
+ * Can an agent actually deploy to this certificate's key?
+ *
+ * The single source of truth for that question. Job creation refuses a
+ * renew/deploy/reload/revoke against anything else, and the renewal scheduler
+ * counts the refusal as skipped_not_agent_deployable, so any other view that
+ * predicts whether a certificate will renew has to ask the same question here
+ * rather than restate the key-mode list. A second copy of this list is a second
+ * place for the answer to drift, and the drift is silent: a view that says a
+ * certificate is covered while the scheduler refuses it is worse than no view.
+ *
+ * A NULL key_mode means the certificate was only ever observed (an endpoint or
+ * domain monitor), so there is no key anywhere for an agent to rotate.
+ *
+ * @param {{ key_mode?: string|null }|string|null} certificateOrKeyMode
+ * @returns {boolean}
+ */
+function isAgentDeployableKeyMode(certificateOrKeyMode) {
+  const keyMode =
+    certificateOrKeyMode && typeof certificateOrKeyMode === "object"
+      ? certificateOrKeyMode.key_mode
+      : certificateOrKeyMode;
+  return AGENT_DEPLOYABLE_KEY_MODES.has(keyMode);
+}
 const SUBJECT_ID_UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -1024,7 +1049,7 @@ async function resolveManagedCertificateJobDefaults({
   const row = result.rows[0];
   if (!row) return { autoAssignedAgentId: null };
 
-  if (!AGENT_DEPLOYABLE_KEY_MODES.has(row.key_mode)) {
+  if (!isAgentDeployableKeyMode(row)) {
     throw serviceError(
       "This certificate has no agent-manageable key custody (it was only " +
         "observed, e.g. via an endpoint or domain monitor) and cannot be " +
@@ -1893,6 +1918,7 @@ module.exports = {
   fieldNameLooksForbidden,
   findActiveJobForSubject,
   getCertificateJobById,
+  isAgentDeployableKeyMode,
   isTerminalJobStatus,
   jobCreationRequestFingerprint,
   jobFromRow,

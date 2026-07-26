@@ -48,17 +48,19 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0003](0003-certops-job-signing-and-replay-protection.md) | CertOps job signing and replay protection | Proposed |
 | [0004](0004-certops-certmanager-secret-handling.md) | CertOps Kubernetes cert-manager Secret handling | Proposed |
 | [0005](0005-certops-threat-model.md) | CertOps threat model | Proposed |
-| [0006](0006-certops-dashboard-ux-split.md) | CertOps dashboard UX split (D6) | Accepted |
-| [0007](0007-certops-certificate-removal-lifecycle.md) | CertOps certificate removal and lifecycle model (D7) | Accepted |
-| [0008](0008-certops-upfront-issuance.md) | CertOps upfront issuance and provisioning lifecycle (D9) | Accepted, amended 2026-07-26 |
+| [0006](0006-certops-dashboard-ux-split.md) | CertOps dashboard UX split | Accepted |
+| [0007](0007-certops-certificate-removal-lifecycle.md) | CertOps certificate removal and lifecycle model | Accepted |
+| [0008](0008-certops-upfront-issuance.md) | CertOps upfront issuance and provisioning lifecycle | Accepted, amended 2026-07-26 |
 | [0009](0009-certops-durable-side-effects-and-alert-policy.md) | CertOps durable side effects and renewal alert policy | Accepted |
 | [0010](0010-certops-derived-renewal-profiles.md) | CertOps renewal profiles are derived at issuance | Accepted, amended 2026-07-26 |
+| [0011](0011-certops-machine-initiated-audit-events.md) | CertOps machine-initiated lifecycle events are audited | Accepted |
 
-ADR-0001 through ADR-0005 were authored as Phase 0 skeletons to unblock
+ADR-0001 through ADR-0005 were authored as early skeletons to unblock
 parallel inventory and executor work. They remain `Proposed` until ratification moves them to
-`Accepted` and their TODO markers are resolved. ADR-0006 and ADR-0007 record
-design decisions D6 and D7 and are `Accepted` as of 2026-06-28. ADR-0008 records
-design decision D9 and is `Accepted` as of 2026-07-26; it extends the ADR-0007
+`Accepted` and their TODO markers are resolved. ADR-0006 and ADR-0007 record the
+dashboard UX split and the removal/lifecycle model and are `Accepted` as of
+2026-06-28. ADR-0008 records upfront issuance and is `Accepted` as of 2026-07-26;
+it extends the ADR-0007
 lifecycle model with a `provisioning` pre-active status and establishes the
 control-plane `operation` versus agent-facing `action` distinction relative to
 ADR-0002.
@@ -77,6 +79,13 @@ others exist: derivation made automatic renewal live, which turned "what may an
 operator change about a renewal" from a theoretical question into a shipping one.
 It owns the profile-level off switch, the immutability boundary on deployment
 details, and why there is no create route.
+
+ADR-0011 closes the third consequence of the same change. Derivation turned
+promotion, scheduled renewal, and profile creation into live unattended paths, and
+none of them were audited: a certificate TokenTimer issued and now renews by
+itself had a one-row trail. ADR-0011 owns which machine-initiated events are
+written, that they commit with the state change they describe, and why job
+successes and replays deliberately produce nothing.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.

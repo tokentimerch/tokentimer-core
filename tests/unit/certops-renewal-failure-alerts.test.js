@@ -249,7 +249,7 @@ describe("renewalFailureAlerts.queueCertRenewalFailedAlert", () => {
 // --- Emission point 1: agentDispatch.ingestResult ---
 
 function createMockPool(handler) {
-  const state = { queries: [], released: false, transaction: [] };
+  const state = { queries: [], released: false, transaction: [], audits: [] };
   const client = {
     query: async (text, params) => {
       const sql = typeof text === "string" ? text : text?.text || "";
@@ -261,6 +261,14 @@ function createMockPool(handler) {
         trimmed === "ROLLBACK"
       ) {
         state.transaction.push(trimmed);
+        return { rows: [] };
+      }
+      // Result ingestion also audits terminal failures. Absorbed here so these
+      // tests stay about the alert outbox, while still running the real
+      // writeAudit against this client (which is what proves the audit row and
+      // the job transition share one transaction).
+      if (sql.includes("INSERT INTO audit_events")) {
+        state.audits.push({ action: params[2], metadata: params[6] });
         return { rows: [] };
       }
       if (

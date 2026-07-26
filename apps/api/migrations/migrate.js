@@ -2193,9 +2193,7 @@ const migrations = [
       -- 'agent-host', which the check constraint rejected outright. Every
       -- agent filesystem-discovery evidence report has been failing with an
       -- HTTP 500 (23514 check-constraint violation) since #91/#92 shipped.
-      -- Found manually re-running the real agent against a live backend
-      -- (certops-m4-m5-manual-review-and-test-plan-dev-b.md Part 2 section
-      -- 7's "real Core backend rehearsal" item).
+      -- Found manually re-running the real agent against a live backend.
       ALTER TABLE certificate_targets
         DROP CONSTRAINT IF EXISTS certificate_targets_target_type_check;
       ALTER TABLE certificate_targets
@@ -2425,8 +2423,15 @@ const migrations = [
       --
       -- The deployed path plus the agent that owns it is the stable correlation
       -- key, since it is known at request time and unchanged by renewal, unlike
-      -- the fingerprint. Issuance records it here so a subsequent scan resolves
-      -- to the existing row instead of inserting a parallel one.
+      -- the fingerprint. Issuance records it here, and the partial unique index
+      -- below reserves the pair.
+      --
+      -- Recording it is only the prerequisite. The discovery ingest upsert
+      -- (inventory.js) still conflicts on (workspace_id, source, source_ref) and
+      -- does not read these columns, so a later 'agent_filesystem' scan of an
+      -- 'agent_issuance' path still inserts a parallel row. Closing that needs a
+      -- resolve-by-(agent, path) lookup ahead of the upsert; until then these
+      -- columns are the recorded identity, not an enforced deduplication.
       ALTER TABLE managed_certificates
         ADD COLUMN IF NOT EXISTS deployed_cert_path TEXT NULL
           CHECK (

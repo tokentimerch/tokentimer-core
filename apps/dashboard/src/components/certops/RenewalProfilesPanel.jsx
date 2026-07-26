@@ -44,7 +44,7 @@ import {
 import { truncationSummary } from './certopsPagination';
 
 /**
- * Renewal profiles (W8).
+ * Renewal profiles.
  *
  * The profile is what the scheduler hands an agent at renewal time, so this
  * panel is deliberately narrow: it shows the whole stored contract read-only and

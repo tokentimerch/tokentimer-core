@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * CertOps renewal-profile administration (W8).
+ * CertOps renewal-profile administration.
  *
  * A renewal profile is not inert configuration. Every field on
  * public_metadata.renewalProfile is mapped onto agent job-payload execution
@@ -47,6 +47,7 @@ const {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
 } = require("./renewalScheduler");
+const { isAgentDeployableKeyMode } = require("./jobs");
 
 const CERTOPS_PROFILE_NOT_FOUND = "CERTOPS_PROFILE_NOT_FOUND";
 const CERTOPS_PROFILE_INVALID = "CERTOPS_PROFILE_INVALID";
@@ -486,6 +487,7 @@ const RENEWAL_BLOCKED_NO_PROFILE = "no_profile";
 const RENEWAL_BLOCKED_INCOMPLETE_PROFILE = "incomplete_profile";
 const RENEWAL_BLOCKED_AUTO_RENEW_DISABLED = "auto_renew_disabled";
 const RENEWAL_BLOCKED_UNKNOWN_EXPIRY = "unknown_expiry";
+const RENEWAL_BLOCKED_NOT_AGENT_DEPLOYABLE = "not_agent_deployable";
 
 /**
  * Classifies one row exactly as the sweep would.
@@ -494,6 +496,14 @@ const RENEWAL_BLOCKED_UNKNOWN_EXPIRY = "unknown_expiry";
  * reported as switched off even if it is also incomplete, because that is the
  * state the operator chose and the one they can undo. Everything else is a
  * defect they need to fix.
+ *
+ * Key custody is checked through jobs.isAgentDeployableKeyMode rather than a
+ * local key-mode list. The sweep does not filter on custody in SQL: it reaches
+ * job creation, which throws CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE, and the
+ * sweep counts that as skipped_not_agent_deployable. So a certificate with a
+ * perfectly valid profile but no agent-manageable key never renews, and without
+ * this check the schedule reported it as covered. That is the same class of
+ * false all-clear this view exists to prevent, one layer further in.
  */
 function classifyRenewalBlock(row) {
   if (
@@ -504,6 +514,9 @@ function classifyRenewalBlock(row) {
     return RENEWAL_BLOCKED_AUTO_RENEW_DISABLED;
   }
   if (row.not_after == null) return RENEWAL_BLOCKED_UNKNOWN_EXPIRY;
+  if (!isAgentDeployableKeyMode(row)) {
+    return RENEWAL_BLOCKED_NOT_AGENT_DEPLOYABLE;
+  }
   if (!row.profile_id) return RENEWAL_BLOCKED_NO_PROFILE;
   try {
     resolveRenewalProfileSnapshot(row);
@@ -634,6 +647,7 @@ module.exports = {
   RENEWAL_BLOCKED_AUTO_RENEW_DISABLED,
   RENEWAL_BLOCKED_INCOMPLETE_PROFILE,
   RENEWAL_BLOCKED_NO_PROFILE,
+  RENEWAL_BLOCKED_NOT_AGENT_DEPLOYABLE,
   RENEWAL_BLOCKED_UNKNOWN_EXPIRY,
   SAN_POLICY_MODES,
   SETTABLE_PROFILE_STATUSES,

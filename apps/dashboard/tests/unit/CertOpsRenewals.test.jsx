@@ -226,10 +226,34 @@ describe('CertOpsRenewals page', () => {
     expect(await screen.findByText('No profile')).toBeInTheDocument();
     expect(
       screen.getByText(
-        '1 certificate cannot be renewed automatically because its renewal profile is missing or unusable. Affected certificates will expire unless they are renewed by hand.'
+        '1 certificate will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
       )
     ).toBeInTheDocument();
     expect(screen.queryByText('Off')).not.toBeInTheDocument();
+  });
+
+  it('flags a certificate no agent can renew, separately from a profile problem', async () => {
+    // The blocker the schedule used to hide: a valid profile is not enough if no
+    // agent holds the key. The scheduler only refuses this at job creation, so
+    // this row previously read as covered while never renewing. It must not be
+    // labelled a profile fault, because re-issuing a profile cannot fix it.
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: false,
+          blockedReason: 'not_agent_deployable',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('No key access')).toBeInTheDocument();
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
+    expect(screen.queryByText('No profile')).not.toBeInTheDocument();
   });
 
   it('flags a profile the scheduler cannot execute', async () => {

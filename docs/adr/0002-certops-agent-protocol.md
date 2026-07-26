@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton; details land with the agent protocol
+Proposed (2026-06-25). Skeleton record; details land with the agent protocol
 phase.
 
 ## Context

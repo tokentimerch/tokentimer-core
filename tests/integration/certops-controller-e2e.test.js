@@ -642,7 +642,7 @@ describe("CertOps controller end-to-end composition", function () {
     }
   });
 
-  it("preserves source identity through replay, rotation, UID replacement, and both D7 terminal states", async () => {
+  it("preserves source identity through replay, rotation, UID replacement, and both terminal removal states", async () => {
     const fixture = await createWorkspace("controller-e2e-inventory");
     const server = await startApiServer(fixture.ownerId);
     let tokenFile;

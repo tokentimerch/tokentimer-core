@@ -259,7 +259,7 @@ the shared detector scans every outbound envelope.
   cancelling the created jobs returns the original terminal jobs instead of
   creating new ones. Pass a fresh key to force a genuine re-run.
 
-## Dashboard certificate visibility (D6)
+## Dashboard certificate visibility
 
 Certificate inventory stays on existing token surfaces; CertOps enriches them
 rather than adding a parallel inventory page. See ADR-0006.
@@ -281,7 +281,7 @@ rather than adding a parallel inventory page. See ADR-0006.
   and from a Workspace Preferences entry (last section, shown only when
   `certops.enabled` is on).
 
-## Certificate removal (D7)
+## Certificate removal
 
 Removing a tracked certificate is retire-first, not row delete. See ADR-0007.
 

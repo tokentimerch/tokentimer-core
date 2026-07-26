@@ -21,7 +21,7 @@ import { expiryDescriptor, formatDate } from './certopsFormat';
 import { truncationSummary } from './certopsPagination';
 
 /**
- * Upcoming automatic renewals (W8).
+ * Upcoming automatic renewals.
  *
  * Answers one question an operator could not previously ask: what is the
  * scheduler going to do next, and is anything expiring that it will not act on.
@@ -52,6 +52,11 @@ const BLOCKED_REASONS = {
     tooltip:
       'This certificate has a renewal profile the scheduler cannot execute, so no renewal job will ever be created from it. Re-issue the certificate to rebuild a working profile.',
   },
+  not_agent_deployable: {
+    label: 'No key access',
+    tooltip:
+      'No agent holds this certificate\'s private key, so no agent can renew it. This is typical of a certificate that was only observed from the outside, such as by an endpoint or domain monitor. Renewing it automatically requires issuing it through CertOps.',
+  },
   unknown_expiry: {
     label: 'No expiry',
     tooltip:
@@ -81,14 +86,19 @@ function renewalWindowLabel(renewsFrom) {
 /**
  * One sentence naming what is wrong, so the operator does not have to hover
  * every badge to find out whether they are looking at a choice or a fault.
+ *
+ * The two groups are kept apart rather than totalled because they need
+ * different responses, and the wording avoids naming a single cause: the
+ * uncovered group can be a missing profile, an unusable one, absent key
+ * custody, or an unknown expiry, and each badge names its own reason.
  */
 function warningSentence(switchedOff, uncovered) {
   const parts = [];
   if (uncovered.length > 0) {
     parts.push(
       uncovered.length === 1
-        ? '1 certificate cannot be renewed automatically because its renewal profile is missing or unusable'
-        : `${uncovered.length} certificates cannot be renewed automatically because their renewal profiles are missing or unusable`
+        ? '1 certificate will not be renewed automatically, for the reason shown against it'
+        : `${uncovered.length} certificates will not be renewed automatically, for the reasons shown against them`
     );
   }
   if (switchedOff.length > 0) {

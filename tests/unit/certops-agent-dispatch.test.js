@@ -42,6 +42,7 @@ function createMockPool(handler) {
     queries: [],
     released: false,
     transaction: [],
+    audits: [],
   };
   const client = {
     query: async (text, params) => {
@@ -54,6 +55,22 @@ function createMockPool(handler) {
         trimmed === "ROLLBACK"
       ) {
         state.transaction.push(trimmed);
+        return { rows: [] };
+      }
+      // Audit inserts are absorbed here rather than in each per-test handler, and
+      // the real writeAudit is left in the call path deliberately: that is what
+      // proves these events are written on the ingesting transaction's own
+      // client, so an agent result cannot commit while its audit row is lost.
+      if (sql.includes("INSERT INTO audit_events")) {
+        state.audits.push({
+          actorUserId: params[0],
+          subjectUserId: params[1],
+          action: params[2],
+          targetType: params[3],
+          targetId: params[4],
+          metadata: params[6],
+          workspaceId: params[7],
+        });
         return { rows: [] };
       }
       return handler(sql, params, state);

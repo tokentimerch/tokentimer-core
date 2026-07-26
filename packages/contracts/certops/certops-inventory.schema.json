@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://tokentimer.io/contracts/certops/certops-inventory.schema.json",
   "title": "CertOps Managed Certificate Inventory Record",
-  "description": "Public-material-only inventory record for a CertOps managed certificate. Frozen in Phase 0; descriptive fields expanded with the inventory milestone. A conforming record MUST NOT contain private key material under any property (enforced at runtime by apps/api/utils/secretMaterial.js and the API rejection boundary).",
+  "description": "Public-material-only inventory record for a CertOps managed certificate. The namespace is frozen; descriptive fields expand with inventory work. A conforming record MUST NOT contain private key material under any property (enforced at runtime by apps/api/utils/secretMaterial.js and the API rejection boundary).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "id", "workspaceId", "status"],

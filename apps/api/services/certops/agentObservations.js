@@ -8,7 +8,7 @@
  *   1. advance the agent sequence, prove ownership, and insert evidence rows
  *      in one transaction (safe retry);
  *   2. upsert managed certificate / target / instance inventory rows in that
- *      same transaction so discovered certs become inventory-visible (M4);
+ *      same transaction so discovered certs become inventory-visible;
  *   3. never let client metadata override server-owned fields (agentId,
  *      summary/fingerprint attribution, created_by_agent_id).
  */

@@ -1,0 +1,21 @@
+diff --git a/apps/api/migrations/migrate.js b/apps/api/migrations/migrate.js
+--- a/apps/api/migrations/migrate.js
++++ b/apps/api/migrations/migrate.js
+@@ -2425,8 +2425,15 @@ const migrations = [
+       --
+       -- The deployed path plus the agent that owns it is the stable correlation
+       -- key, since it is known at request time and unchanged by renewal, unlike
+-      -- the fingerprint. Issuance records it here so a subsequent scan resolves
+-      -- to the existing row instead of inserting a parallel one.
++      -- the fingerprint. Issuance records it here, and the partial unique index
++      -- below reserves the pair.
++      --
++      -- Recording it is only the prerequisite. The discovery ingest upsert
++      -- (inventory.js) still conflicts on (workspace_id, source, source_ref) and
++      -- does not read these columns, so a later 'agent_filesystem' scan of an
++      -- 'agent_issuance' path still inserts a parallel row. Closing that needs a
++      -- resolve-by-(agent, path) lookup ahead of the upsert; until then these
++      -- columns are the recorded identity, not an enforced deduplication.
+       ALTER TABLE managed_certificates
+         ADD COLUMN IF NOT EXISTS deployed_cert_path TEXT NULL
+           CHECK (

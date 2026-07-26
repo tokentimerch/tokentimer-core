@@ -19,7 +19,7 @@ against an untrusted or compromised control plane.
 The agent is outbound-only. It opens HTTPS connections to the control plane
 and never accepts inbound connections. No listening port, no firewall holes.
 
-Two milestone scopes ship in this package:
+Two capability scopes ship in this package:
 
 - **Observe-only bootstrap**: config and credential storage, agent-local policy engine
   (default deny), the register/heartbeat/claim/result/evidence protocol

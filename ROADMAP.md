@@ -55,9 +55,9 @@ rejects key material at every write surface (CI-enforced).
 
 - [x] **Visibility**: managed certificate inventory (`managed_certificates`,
   `certificate_instances`), public-PEM import with private-key rejection and
-  Unicode/homograph identity safety, endpoint-monitor bridge (D8 monitor-source
-  identity), retire-first lifecycle (D7), key-locality display, `CERTOPS_ENABLED`
-  fail-closed rollout flag. No new dashboard route (D6: enriches Tokens /
+  Unicode/homograph identity safety, endpoint-monitor bridge (monitor-source
+  identity), retire-first lifecycle, key-locality display, `CERTOPS_ENABLED`
+  fail-closed rollout flag. No new dashboard route (enriches Tokens /
   Control Center / token detail).
 - [x] **External execution reporting**: machine API tokens (scoped,
   hashed, show-once), executor event/evidence ingestion with idempotent

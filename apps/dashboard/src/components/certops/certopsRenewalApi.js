@@ -1,7 +1,7 @@
 import apiClient from '../../utils/apiClient';
 
 /**
- * CertOps renewal-profile API helpers (W8).
+ * CertOps renewal-profile API helpers.
  *
  * A renewal profile is the execution contract the renewal scheduler hands to an
  * agent: SAN policy, key parameters, CA endpoint, ACME command, DNS provider,

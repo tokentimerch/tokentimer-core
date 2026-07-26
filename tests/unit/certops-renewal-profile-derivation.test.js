@@ -198,6 +198,13 @@ function createClient({ existingProfileId = null, inserted = true } = {}) {
       if (sql.includes("UPDATE managed_certificates")) {
         return { rows: [], rowCount: 1 };
       }
+      // The real writeAudit is routed through this mock rather than replaced, so
+      // the tests prove the event is written on the derivation transaction's own
+      // client. A profile granting recurring host authority must not be able to
+      // commit while its audit row rolls back.
+      if (sql.includes("INSERT INTO audit_events")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     },
   };

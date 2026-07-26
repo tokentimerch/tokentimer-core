@@ -48,6 +48,7 @@ const {
   normalizeCaBucket,
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
+const { writeAudit } = require("../audit");
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
@@ -328,6 +329,7 @@ async function createRenewalJobForCertificate({
   jobCreator,
   env,
   mode = "real",
+  auditWriter = writeAudit,
 }) {
   // Resolve the immutable execution contract BEFORE opening the insert
   // transaction. Incomplete profiles never create a job row.
@@ -366,10 +368,45 @@ async function createRenewalJobForCertificate({
       returnOutcome: true,
     });
 
+    const job = outcome?.job || outcome;
+    const created = outcome?.created === true;
+
+    // Mirrors CERTOPS_JOB_CREATED_MANUAL for the scheduler. Without it the
+    // audit log contains only the jobs a human asked for, so unattended renewal
+    // is precisely the activity it cannot account for. Only genuinely new jobs
+    // are audited: an idempotent replay created nothing.
+    if (created) {
+      await auditWriter({
+        client,
+        actorUserId: null,
+        subjectUserId: null,
+        action: "CERTOPS_JOB_CREATED_AUTOMATIC",
+        targetType: "certificate_job",
+        targetId: null,
+        workspaceId: certificate.workspace_id,
+        metadata: {
+          jobId: String(job.id),
+          operation: job.operation,
+          mode,
+          subjectType: job.subjectType || "managed_certificate",
+          subjectId: String(certificate.id),
+          commonName: certificate.common_name || null,
+          notAfter:
+            certificate.not_after instanceof Date
+              ? certificate.not_after.toISOString()
+              : certificate.not_after || null,
+          profileId: certificate.profile_id
+            ? String(certificate.profile_id)
+            : null,
+          source: "automation",
+          trigger: "renewal_scheduler",
+        },
+      });
+    }
+
     await client.query("COMMIT");
     transactionStarted = false;
-    const job = outcome?.job || outcome;
-    return { job, created: outcome?.created === true };
+    return { job, created };
   } catch (error) {
     if (transactionStarted) {
       try {
@@ -418,6 +455,7 @@ async function runRenewalSchedulerSweep({
   batchSize = DEFAULT_BATCH_SIZE,
   logger = null,
   mode = "real",
+  auditWriter = writeAudit,
 } = {}) {
   const thresholdDays = resolveRenewalThresholdDays(env);
   const perCaCap = resolveRenewalPerCaCap(env);
@@ -508,6 +546,7 @@ async function runRenewalSchedulerSweep({
           jobCreator,
           env,
           mode,
+          auditWriter,
         });
         if (created) {
           summary.created += 1;

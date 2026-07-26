@@ -4,7 +4,7 @@ import CertOpsRenewals from './CertOpsRenewals.jsx';
 
 /**
  * Router for the /certops/* splat route (plan 11.0: single wiring point in
- * App.jsx). Orchestration-only surfaces (D6): jobs, evidence, machine tokens.
+ * App.jsx). Orchestration-only surfaces: jobs, evidence, machine tokens.
  * Future CertOps pages (agents, approvals) mount here without touching App.jsx.
  */
 export default function CertOpsRoutes({ session, onLogout, onAccountClick }) {

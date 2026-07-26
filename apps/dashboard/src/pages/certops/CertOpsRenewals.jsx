@@ -13,7 +13,7 @@ import UpcomingRenewalsPanel from '../../components/certops/UpcomingRenewalsPane
 import { useCertOpsAvailability } from '../../components/certops/useCertOps.js';
 
 /**
- * Renewal automation page (W8).
+ * Renewal automation page.
  *
  * Automatic renewal became live for every agent-issued certificate once profiles
  * started being derived from issuance. This page is the control surface for that:

@@ -451,15 +451,23 @@ describe("certops provisioning reconciliation", () => {
     metadata = COMPLETE_VERIFY_METADATA,
     evidenceRows = null,
     tokenId = null,
+    commonName = null,
   } = {}) {
-    const state = { updates: [], evidenceQueries: [] };
+    const state = { updates: [], evidenceQueries: [], audits: [] };
     const client = {
       query: async (text, params) => {
         const sql = typeof text === "string" ? text : text?.text || "";
         if (sql.includes("FROM managed_certificates")) {
           return {
             rows: provisioning
-              ? [{ id: NEW_CERT_ID, source: "agent_issuance", token_id: tokenId }]
+              ? [
+                  {
+                    id: NEW_CERT_ID,
+                    source: "agent_issuance",
+                    common_name: commonName,
+                    token_id: tokenId,
+                  },
+                ]
               : [],
           };
         }
@@ -470,6 +478,21 @@ describe("certops provisioning reconciliation", () => {
         }
         if (sql.includes("UPDATE managed_certificates")) {
           state.updates.push(params);
+          return { rows: [] };
+        }
+        // Captured rather than stubbed at the writeAudit boundary on purpose:
+        // routing the real writeAudit through this mock is what proves the audit
+        // row is written on the reconciliation transaction's own client, so a
+        // promotion cannot commit without its event.
+        if (sql.includes("INSERT INTO audit_events")) {
+          state.audits.push({
+            actorUserId: params[0],
+            action: params[2],
+            targetType: params[3],
+            targetId: params[4],
+            metadata: params[6],
+            workspaceId: params[7],
+          });
           return { rows: [] };
         }
         throw new Error(`unexpected query: ${sql}`);
@@ -484,6 +507,15 @@ describe("certops provisioning reconciliation", () => {
     return async (options) => {
       calls.push(options);
       return 77;
+    };
+  }
+
+  // Renewal profile derivation has its own dedicated test file; here it is
+  // stubbed so these assertions stay about what reconciliation feeds it.
+  function stubEnsureRenewalProfile(calls) {
+    return async (options) => {
+      calls.push(options);
+      return { profileId: null, created: false, reason: "stubbed" };
     };
   }
 
@@ -547,6 +579,30 @@ describe("certops provisioning reconciliation", () => {
       new Date("Oct 24 10:00:00 2026 GMT").toISOString(),
     );
     assert.equal(linkCalls[0].certificate.fingerprintSha256, "a".repeat(64));
+  });
+
+  it("derives commonName from the certificate row, not agent evidence", async () => {
+    // The agent's verify evidence only ever carries the raw X.509 "subject" DN
+    // string (e.g. "CN=web-01.example.com"), never a parsed "commonName"
+    // field. Before this fix, both linkToken and ensureRenewalProfile read
+    // metadata.commonName, which is always undefined, so token linking lost
+    // its commonName silently and profile derivation threw "Reconciled
+    // certificate has no common name" on every real issuance -- the "headline
+    // fix" of section 13.1 never actually fired outside its own unit tests.
+    const { client } = reconcileClient({ commonName: "web-01.example.com" });
+    const linkCalls = [];
+    const profileCalls = [];
+
+    await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+      linkToken: stubLinkToken(linkCalls),
+      ensureRenewalProfile: stubEnsureRenewalProfile(profileCalls),
+    });
+
+    assert.equal(linkCalls[0].certificate.commonName, "web-01.example.com");
+    assert.equal(profileCalls[0].certificate.commonName, "web-01.example.com");
   });
 
   it("is a no-op when the subject is already active", async () => {
@@ -642,6 +698,129 @@ describe("certops provisioning reconciliation", () => {
         client,
         workspaceId: WORKSPACE_A,
         job: { ...jobFixture, subject_id: null },
+      }),
+      null,
+    );
+    assert.equal(state.updates.length, 0);
+  });
+});
+
+describe("refreshRenewedCertificateEvidence (renewal of an already-active certificate)", () => {
+  // reconcileProvisionedCertificate only ever locks rows WHERE status =
+  // 'provisioning', so a plain renew succeeding against an already-'active'
+  // certificate needs its own client shape: the managed_certificates lookup
+  // must reflect that current status, distinctly from the "provisioning"
+  // fixture above.
+  const CLAIM_ID = "44444444-4444-4444-8444-444444444444";
+  const ACTIVE_CERT_ID = "55555555-5555-4555-8555-555555555555";
+  const jobFixture = {
+    id: 99,
+    operation: "renew",
+    subject_type: "managed_certificate",
+    subject_id: ACTIVE_CERT_ID,
+    claim_id: CLAIM_ID,
+  };
+  const FRESH_VERIFY_METADATA = {
+    step: "verify",
+    fingerprintSha256: "c".repeat(64),
+    serialNumber: "05CCDD",
+    subject: "CN=web-01.example.com",
+    issuer: "CN=Staging Fake LE",
+    validFrom: "Sep 01 10:00:00 2026 GMT",
+    validTo: "Nov 30 10:00:00 2026 GMT",
+    subjectAltNames: "web-01.example.com",
+  };
+
+  function activeClient({ found = true, metadata = FRESH_VERIFY_METADATA } = {}) {
+    const state = { updates: [] };
+    const client = {
+      query: async (text, params) => {
+        const sql = typeof text === "string" ? text : text?.text || "";
+        if (sql.includes("FROM managed_certificates")) {
+          return { rows: found ? [{ id: ACTIVE_CERT_ID }] : [] };
+        }
+        if (sql.includes("FROM certificate_evidence")) {
+          return { rows: metadata ? [{ metadata }] : [] };
+        }
+        if (sql.includes("UPDATE managed_certificates")) {
+          state.updates.push(params);
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    return { state, client };
+  }
+
+  it("refreshes fingerprint and not_after from fresh verify evidence", async () => {
+    const { state, client } = activeClient();
+    const result = await dispatch._test.refreshRenewedCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+    });
+
+    assert.deepEqual(result, {
+      certificateId: String(ACTIVE_CERT_ID),
+      refreshed: true,
+      fingerprintSha256: "c".repeat(64),
+      notAfter: new Date("Nov 30 10:00:00 2026 GMT").toISOString(),
+    });
+    assert.equal(state.updates.length, 1);
+    const params = state.updates[0];
+    assert.equal(params[2], "c".repeat(64));
+    assert.equal(params[8], "web-01.example.com");
+  });
+
+  // This is the exact regression this function exists to close: without it,
+  // findCertificatesDueForRenewal's idempotency key (certificate id +
+  // not_after) never changes after the first renewal, so every later sweep
+  // collides with the already-succeeded job and automatic renewal only ever
+  // fires once per certificate.
+  it("is the only write path that advances not_after past the first reconciliation", async () => {
+    const { state, client } = activeClient();
+    await dispatch._test.refreshRenewedCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+    });
+    assert.equal(
+      state.updates[0][7],
+      new Date("Nov 30 10:00:00 2026 GMT").toISOString(),
+    );
+  });
+
+  it("is a no-op when the certificate is not active (e.g. still provisioning)", async () => {
+    const { state, client } = activeClient({ found: false });
+    const result = await dispatch._test.refreshRenewedCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+    });
+    assert.equal(result, null);
+    assert.equal(state.updates.length, 0);
+  });
+
+  it("does not overwrite a known-good row with incomplete evidence", async () => {
+    const { state, client } = activeClient({
+      metadata: { step: "verify", fingerprintSha256: "d".repeat(64) },
+    });
+    const result = await dispatch._test.refreshRenewedCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+    });
+    assert.equal(result, null);
+    assert.equal(state.updates.length, 0);
+  });
+
+  it("skips jobs with no managed_certificate subject", async () => {
+    const { state, client } = activeClient();
+    assert.equal(
+      await dispatch._test.refreshRenewedCertificateEvidence({
+        client,
+        workspaceId: WORKSPACE_A,
+        job: { ...jobFixture, subject_type: "external" },
       }),
       null,
     );

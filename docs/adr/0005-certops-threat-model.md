@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-06-25). Phase 0 skeleton (P0.2). To be finalized before
+Proposed (2026-06-25). Skeleton record. To be finalized before
 ratification.
 
 ## Context
@@ -42,7 +42,7 @@ Adopt the threat / mitigation table below. Every mitigation must have a test.
 ## Alternatives considered
 
 - Defer the threat model to implementation - rejected: the mitigations dictate
-  contract and schema shape, so they must be fixed in Phase 0.
+  contract and schema shape, so they must be fixed up front.
 
 ## Consequences
 

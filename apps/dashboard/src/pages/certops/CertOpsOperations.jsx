@@ -1099,7 +1099,7 @@ function ExecutorJobsPanel() {
 }
 
 /**
- * CertOps orchestration page (D6): machine executor jobs, evidence timelines,
+ * CertOps orchestration page: machine executor jobs, evidence timelines,
  * and scoped machine API-token management. Mounted via the /certops/* splat
  * route so orchestration surfaces stay out of the read-only Control Center.
  */

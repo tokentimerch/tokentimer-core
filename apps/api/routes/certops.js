@@ -2307,7 +2307,7 @@ router.post(
   (req, res) => importCertificatesHandler(req, res, "api", 201),
 );
 
-// Renewal-profile administration (W8). Reads are manager-gated, matching the
+// Renewal-profile administration. Reads are manager-gated, matching the
 // agent and machine-token routes rather than the certificates inventory: a
 // profile body carries deployment topology (certPath, keyPath, reloadService,
 // deployment owner/group, ACME command refs, CA account refs, DNS zone), which

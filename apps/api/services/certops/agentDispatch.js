@@ -66,6 +66,7 @@ const {
   redactPrivateKeyMaterial,
   assertNoPrivateKeyMaterial,
 } = require("../../utils/secretMaterial");
+const { writeAudit } = require("../audit");
 const { logger } = require("../../utils/logger");
 const {
   computeAgentCompatibility,
@@ -336,6 +337,7 @@ async function registerAgent({
   const ensureKey = deps.ensureActiveSigningKey || ensureActiveSigningKey;
   const generateCredential =
     deps.generateAgentCredential || generateAgentCredential;
+  const auditWriter = deps.writeAudit || writeAudit;
   const registrationId = body.registrationId;
 
   return await withTransaction(dbPool, async (client) => {
@@ -503,6 +505,37 @@ async function registerAgent({
         Math.floor(registrationReplayTtlMs() / 1000),
       ],
     );
+
+    // Enrollment is the moment a new machine principal gains the right to run
+    // commands on hosts in this workspace, and it is the only record of a
+    // bootstrap token being spent (a consumed token is marked 'used', which
+    // produces no revocation event). Written after the replay row, inside the
+    // registration transaction, so an enrollment cannot commit unaudited.
+    //
+    // A replayed registration returns earlier and is deliberately not audited
+    // again: the same enrollment reported twice would read as two agents.
+    await auditWriter({
+      client,
+      actorUserId: null,
+      subjectUserId: null,
+      action: "CERTOPS_AGENT_REGISTERED",
+      targetType: "certops_agent",
+      targetId: null,
+      workspaceId: bootstrapToken.workspaceId,
+      metadata: {
+        agentId: response.agentId,
+        hostname: body.hostname ?? null,
+        platform: body.platform ?? null,
+        agentVersion: body.agentVersion ?? null,
+        protocolVersion: response.protocolVersion,
+        credentialPrefix: credential.credentialPrefix,
+        bootstrapTokenId: String(bootstrapToken.id),
+        signingKeyId: response.signingKeyId,
+        declaredTargetSelectors: body.declaredTargetSelectors || [],
+        declaredCommandProfileNames: body.declaredCommandProfileNames || [],
+        declaredCapabilities: normalizeStringList(body.declaredCapabilities, 64),
+      },
+    });
 
     return response;
   });
@@ -1215,13 +1248,15 @@ async function reconcileProvisionedCertificate({
   client,
   workspaceId,
   job,
+  agent = null,
   linkToken = linkReconciledCertificateToken,
   ensureRenewalProfile = ensureDerivedRenewalProfile,
+  auditWriter = writeAudit,
 }) {
   if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
 
   const locked = await client.query(
-    `SELECT id, source, deployed_cert_path, deployed_agent_id, token_id
+    `SELECT id, source, common_name, deployed_cert_path, deployed_agent_id, token_id
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2::uuid
@@ -1270,6 +1305,29 @@ async function reconcileProvisionedCertificate({
           AND id = $2::uuid`,
       [workspaceId, job.subject_id, reason],
     );
+    // A succeeded job whose certificate could not be promoted is the most
+    // misleading state CertOps can produce: the job history says the work
+    // completed while the certificate is not usable and will not renew. The
+    // reason lives on the row, but the row only ever shows its latest value, so
+    // without an event there is no record that this happened at all, nor when.
+    await auditWriter({
+      client,
+      actorUserId: null,
+      subjectUserId: null,
+      action: "CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED",
+      targetType: "managed_certificate",
+      targetId: null,
+      workspaceId,
+      metadata: {
+        managedCertificateId: String(job.subject_id),
+        commonName: text(certificate.common_name),
+        jobId: String(job.id),
+        operation: job.operation || null,
+        claimId: job.claim_id ? String(job.claim_id) : null,
+        agentId: agent?.agentId || null,
+        reconciliationReason: reason,
+      },
+    });
     return { certificateId: String(job.subject_id), promoted: false, reason };
   }
 
@@ -1321,7 +1379,11 @@ async function reconcileProvisionedCertificate({
     workspaceId,
     certificateId: String(job.subject_id),
     certificate: {
-      commonName: text(metadata.commonName),
+      // The agent's verify evidence never carries a parsed "commonName" field
+      // (only the raw X.509 "subject" DN string), so this has to come from
+      // the row itself: it was set authoritatively from the issue request's
+      // target.reference when the provisioning row was created.
+      commonName: text(certificate.common_name),
       subject: text(metadata.subject),
       subjectAltNames: sans
         ? sans.split(",").map((name) => name.trim()).filter(Boolean)
@@ -1347,10 +1409,45 @@ async function reconcileProvisionedCertificate({
     certificateId: String(job.subject_id),
     payload: job.payload || {},
     certificate: {
-      commonName: text(metadata.commonName),
+      commonName: text(certificate.common_name),
       subjectAltNames: sans
         ? sans.split(",").map((name) => name.trim()).filter(Boolean)
         : [],
+    },
+  });
+
+  // The moment the certificate exists. Everything above this line is the only
+  // point in the product where a certificate comes into being without a human
+  // request immediately preceding it: a scheduled renewal reaches here with no
+  // operator in the loop at all. Written in the reconciliation transaction, so a
+  // certificate cannot become active unaudited.
+  //
+  // No actor: the agent is a machine principal and audit_events.actor_user_id
+  // is a users FK. The acting agent is identified in metadata instead.
+  await auditWriter({
+    client,
+    actorUserId: null,
+    subjectUserId: null,
+    action: "CERTOPS_CERTIFICATE_ISSUED",
+    targetType: "managed_certificate",
+    targetId: null,
+    workspaceId,
+    metadata: {
+      managedCertificateId: String(job.subject_id),
+      commonName: text(certificate.common_name),
+      jobId: String(job.id),
+      // 'issue' is a first issuance; 'renew' here means a retry against a
+      // certificate that never reconciled, which is worth telling apart.
+      operation: job.operation || null,
+      source: certificate.source || null,
+      agentId: agent?.agentId || null,
+      fingerprintSha256: fingerprint,
+      serialNumber: text(metadata.serialNumber),
+      issuer: text(metadata.issuer),
+      notAfter,
+      subjectAltNames: sans,
+      deployedCertPath: text(certificate.deployed_cert_path),
+      profileId: derivation?.profileId || null,
     },
   });
 
@@ -1359,6 +1456,116 @@ async function reconcileProvisionedCertificate({
     promoted: true,
     reason: null,
     profileId: derivation?.profileId || null,
+  };
+}
+
+/**
+ * A successful 'renew' against a certificate that is already 'active' never
+ * reaches reconcileProvisionedCertificate's UPDATE: that function only locks
+ * rows WHERE status = 'provisioning' and returns null for anything else, by
+ * design (it exists to promote a first issuance, not to touch a certificate
+ * that already went through that promotion). Without a second write path,
+ * fingerprint_sha256/not_after would freeze at whatever the FIRST successful
+ * reconciliation set and never advance again -- silently, since the job
+ * itself still reports 'succeeded' and carries a perfectly good verify
+ * evidence row. Two compounding effects follow: the dashboard shows a
+ * permanently stale expiry past the first renewal, and the renewal
+ * scheduler's idempotency key (certificate id + not_after, see
+ * renewalIdempotencyKey in renewalScheduler.js) keeps colliding with the
+ * already-succeeded job on every later sweep -- so a certificate would only
+ * ever be renewed automatically once, not on every cycle, which defeats the
+ * entire point of the scheduler. This function is the missing refresh: same
+ * evidence source as reconcileProvisionedCertificate, but for the
+ * already-active case, and deliberately narrower (no status transition, no
+ * token linking, no profile derivation -- those already happened once and
+ * are not re-run on every renewal).
+ */
+async function refreshRenewedCertificateEvidence({ client, workspaceId, job }) {
+  if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
+
+  const locked = await client.query(
+    `SELECT id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+        AND status = 'active'
+      FOR UPDATE`,
+    [workspaceId, job.subject_id],
+  );
+  if (!locked.rows[0]) return null;
+
+  const evidence = await client.query(
+    `SELECT metadata
+       FROM certificate_evidence
+      WHERE workspace_id = $1
+        AND job_id = $2
+        AND evidence_type = 'validation.passed'
+        AND claim_id = $3::uuid
+        AND metadata->>'step' = 'verify'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [workspaceId, job.id, job.claim_id],
+  );
+  const metadata = evidence.rows[0]?.metadata || null;
+  if (!metadata) return null;
+
+  const text = (value) =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+  const timestamp = (value) => {
+    const parsed = text(value) ? Date.parse(value) : Number.NaN;
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  };
+
+  const fingerprint = text(metadata.fingerprintSha256);
+  const notAfter = timestamp(metadata.validTo);
+  // Same completeness bar as first reconciliation: a renewal that cannot
+  // prove what it deployed must not silently overwrite a known-good row with
+  // half of a new one.
+  if (!fingerprint || !notAfter) return null;
+
+  const sans = text(metadata.subjectAltNames);
+
+  await client.query(
+    `UPDATE managed_certificates
+        SET fingerprint_sha256 = $3,
+            serial_number = COALESCE($4, serial_number),
+            subject = COALESCE($5, subject),
+            issuer = COALESCE($6, issuer),
+            not_before = COALESCE($7::timestamptz, not_before),
+            not_after = $8::timestamptz,
+            subject_alt_names = CASE
+              WHEN $9::text IS NULL THEN subject_alt_names
+              ELSE (
+                SELECT ARRAY(
+                  SELECT DISTINCT BTRIM(name)
+                    FROM regexp_split_to_table($9::text, '\\s*,\\s*') AS name
+                   WHERE BTRIM(name) <> ''
+                )
+              )
+            END,
+            reconciliation_reason = NULL,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+        AND status = 'active'`,
+    [
+      workspaceId,
+      job.subject_id,
+      fingerprint,
+      text(metadata.serialNumber),
+      text(metadata.subject),
+      text(metadata.issuer),
+      timestamp(metadata.validFrom),
+      notAfter,
+      sans,
+    ],
+  );
+
+  return {
+    certificateId: String(job.subject_id),
+    refreshed: true,
+    fingerprintSha256: fingerprint,
+    notAfter,
   };
 }
 
@@ -1378,6 +1585,7 @@ async function ingestResult({
   const consume = deps.consumeNonce || consumeNonce;
   const enforceSequence = deps.enforceAgentSequence || enforceAgentSequence;
   const recordOutboxEvent = deps.enqueueOutboxEvent || enqueueOutboxEvent;
+  const auditWriter = deps.writeAudit || writeAudit;
   const log = deps.logger || logger;
 
   const jobStatus = RESULT_STATUS_TO_JOB_STATUS[body.status];
@@ -1406,7 +1614,7 @@ async function ingestResult({
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode,
-              payload
+              source, payload
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -1569,10 +1777,61 @@ async function ingestResult({
     // transaction, so the job's terminal status and the certificate becoming
     // active are never observable apart.
     if (jobStatus === "succeeded") {
-      await reconcileProvisionedCertificate({
+      const provisioned = await reconcileProvisionedCertificate({
         client,
         workspaceId: agent.workspaceId,
         job,
+        agent,
+        auditWriter,
+      });
+      // null means "not a still-provisioning certificate" (already active, or
+      // not a managed_certificate subject at all): try the refresh path
+      // instead so an ordinary renewal of an already-active certificate still
+      // advances its stored fingerprint/not_after. See
+      // refreshRenewedCertificateEvidence for why this is required, not
+      // optional.
+      if (!provisioned) {
+        await refreshRenewedCertificateEvidence({
+          client,
+          workspaceId: agent.workspaceId,
+          job,
+        });
+      }
+    }
+
+    // Successes are not audited here: CERTOPS_CERTIFICATE_ISSUED already records
+    // the outcome that matters, and a row per successful renewal per certificate
+    // would bury the failures in the same log. Failures are audited because
+    // certificate_jobs holds only the latest error, so a job that failed and was
+    // then retried loses its own history, and orphaned_unknown_effect is the one
+    // outcome where the real-world state is unknown and someone must intervene.
+    if (isFailure) {
+      await auditWriter({
+        client,
+        actorUserId: null,
+        subjectUserId: null,
+        action: "CERTOPS_JOB_FAILED",
+        targetType: "certificate_job",
+        targetId: null,
+        workspaceId: agent.workspaceId,
+        metadata: {
+          jobId: String(job.id),
+          operation: job.operation || null,
+          jobStatus,
+          source: job.source || null,
+          mode: jobMode,
+          agentId: agent.agentId || null,
+          claimId: job.claim_id ? String(job.claim_id) : null,
+          errorCode: errorCode || null,
+          // Already scrubbed of key material and generic secrets above.
+          errorMessage,
+          subjectType: job.subject_type || null,
+          subjectId: job.subject_id ? String(job.subject_id) : null,
+          needsOperatorReconciliation: Boolean(
+            row.needs_operator_reconciliation,
+          ),
+          reconciliationReason: row.reconciliation_reason || null,
+        },
       });
     }
 
@@ -1585,8 +1844,7 @@ async function ingestResult({
       operation: job.operation,
       status: jobStatus,
       origin: TRANSITION_ORIGINS.AGENT_RESULT,
-    });
-    if (classification.alertWorthy) {
+    });    if (classification.alertWorthy) {
       await recordOutboxEvent({
         client,
         workspaceId: agent.workspaceId,
@@ -1718,6 +1976,7 @@ module.exports = {
     normalizeStringList,
     parseReconciliationFromErrorMessage,
     reconcileProvisionedCertificate,
+    refreshRenewedCertificateEvidence,
     registrationReplayResponse,
     registrationReplayTtlMs,
     safeParseJson,

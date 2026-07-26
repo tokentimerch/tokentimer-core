@@ -232,9 +232,9 @@ describe("handleClaimedJob", () => {
     // executionContext) must strictly reject them instead of echoing them.
     const outcome = await handleClaimedJob({
       job: {
-        jobId: "job-m4",
-        claimId: "claim-m4-1",
-        nonce: "nonce-m4-0123456789abcdef",
+        jobId: "job-unsigned",
+        claimId: "claim-unsigned-1",
+        nonce: "nonce-unsigned-0123456789abcdef",
         target: { type: "domain", reference: "example.com" },
       },
       policyEngine,
@@ -247,7 +247,7 @@ describe("handleClaimedJob", () => {
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "rejected");
     assert.equal(result.rejectionReason, "job_integrity_failed");
-    assert.match(result.attemptId, /^local-job-m4-/);
+    assert.match(result.attemptId, /^local-job-unsigned-/);
   });
 
   it("skips jobs without a jobId without reporting anything", async () => {
@@ -681,7 +681,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     const nowMs = Date.now();
     const job = {
       schemaVersion: 1,
-      jobId: overrides.jobId || "job-m5-1",
+      jobId: overrides.jobId || "job-signed-1",
       workspaceId: "11111111-2222-3333-4444-555555555555",
       certificateId: "cert-1",
       action: "noop",
@@ -829,7 +829,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
 
   it("passes job.claimId/job.nonce and a claim-derived attemptId through on a success report", async () => {
     const client = createRecordingClient();
-    const job = makeSignedJob({ claimId: "claim-m5-1" });
+    const job = makeSignedJob({ claimId: "claim-ok-1" });
 
     const outcome = await handleClaimedJob({
       job,
@@ -842,9 +842,9 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(outcome.status, "succeeded");
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "succeeded");
-    assert.equal(result.claimId, "claim-m5-1");
+    assert.equal(result.claimId, "claim-ok-1");
     assert.equal(result.nonce, job.nonce);
-    assert.equal(result.attemptId, "claim-m5-1");
+    assert.equal(result.attemptId, "claim-ok-1");
   });
 
   it("prefers a server-assigned attemptId over claimId, and falls back to a local id", async () => {
@@ -879,7 +879,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     // renew without commandRef fails inside executeJob (dryRun off).
     const job = makeSignedJob({
       action: "renew",
-      claimId: "claim-m5-fail",
+      claimId: "claim-fail-1",
       certPath: path.join(workDir, "deployed", "cert.pem"),
     });
 
@@ -894,13 +894,13 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(outcome.status, "failed");
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "failed");
-    assert.equal(result.claimId, "claim-m5-fail");
+    assert.equal(result.claimId, "claim-fail-1");
     assert.equal(result.nonce, job.nonce);
   });
 
   it("passes job.claimId/job.nonce through on a rejection report", async () => {
     const client = createRecordingClient();
-    const job = makeSignedJob({ claimId: "claim-m5-rej" });
+    const job = makeSignedJob({ claimId: "claim-rej-1" });
     job.action = "renew"; // mutate after signing -> job_integrity_failed
 
     const outcome = await handleClaimedJob({
@@ -915,7 +915,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     const result = client.calls.reportResult[0];
     assert.equal(result.status, "rejected");
     assert.equal(result.rejectionReason, "job_integrity_failed");
-    assert.equal(result.claimId, "claim-m5-rej");
+    assert.equal(result.claimId, "claim-rej-1");
     assert.equal(result.nonce, job.nonce);
   });
 
@@ -2538,7 +2538,7 @@ describe("lease fail-closed + side-effect journal + multi-target transaction", (
   });
 });
 
-describe("renew chain deployment (W5)", () => {
+describe("renew chain deployment", () => {
   const CERTIFICATE_ID = "certificate-chain";
   const RENEW_JOB_ID = "job-chain";
   const CA_ENDPOINT = "https://acme.example/dir";

@@ -113,8 +113,12 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_API_TOKEN_CREATED',
   'CERTOPS_API_TOKEN_REVOKED',
   'CERTOPS_JOB_CREATED_MANUAL',
+  'CERTOPS_JOB_CREATED_AUTOMATIC',
+  'CERTOPS_JOB_FAILED',
   'CERTOPS_CERTIFICATE_REGISTERED',
   'CERTOPS_CERTIFICATE_IMPORTED',
+  'CERTOPS_CERTIFICATE_ISSUED',
+  'CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED',
   'CERTOPS_CERTIFICATE_RETIRED',
   'CERTOPS_KEY_MATERIAL_REJECTED',
   'CERTOPS_EVIDENCE_REJECTED',
@@ -125,7 +129,10 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_JOB_APPROVAL_REJECTED',
   'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED',
   'CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED',
+  'CERTOPS_AGENT_REGISTERED',
   'CERTOPS_AGENT_RETIRED',
+  'CERTOPS_RENEWAL_PROFILE_DERIVED',
+  'CERTOPS_RENEWAL_PROFILE_UPDATED',
   'CERTOPS_WORKSPACE_PAUSED',
   'CERTOPS_WORKSPACE_RESUMED',
   'CERTOPS_CONTROLLER_PROVISION_INTENT_CREATED',
@@ -717,6 +724,138 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
+  function formatCertOpsIssuedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.commonName) parts.push(`Certificate: ${md.commonName}`);
+      if (md.managedCertificateId) parts.push(`ID: ${md.managedCertificateId}`);
+      // 'issue' is a first issuance; 'renew' here is a retry against a
+      // certificate that had not reconciled, which is worth telling apart.
+      if (md.operation) parts.push(`Operation: ${md.operation}`);
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.notAfter) parts.push(`Expires: ${md.notAfter}`);
+      if (md.serialNumber) parts.push(`Serial: ${md.serialNumber}`);
+      if (md.issuer) parts.push(`Issuer: ${md.issuer}`);
+      if (md.fingerprintSha256)
+        parts.push(`Fingerprint: ${md.fingerprintSha256}`);
+      if (md.deployedCertPath) parts.push(`Path: ${md.deployedCertPath}`);
+      if (md.profileId) parts.push(`Renewal profile: ${md.profileId}`);
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsUnreconciledMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.commonName) parts.push(`Certificate: ${md.commonName}`);
+      if (md.managedCertificateId) parts.push(`ID: ${md.managedCertificateId}`);
+      // The reason is the actionable part: it names the proof that was missing.
+      if (md.reconciliationReason) parts.push(`Reason: ${md.reconciliationReason}`);
+      if (md.operation) parts.push(`Operation: ${md.operation}`);
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsJobFailedMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.operation) parts.push(`Operation: ${md.operation}`);
+      if (md.jobStatus) parts.push(`Status: ${md.jobStatus}`);
+      // Leads with the flag an operator has to act on rather than burying it
+      // among identifiers.
+      if (md.needsOperatorReconciliation)
+        parts.push('Needs operator reconciliation');
+      if (md.reconciliationReason) parts.push(`Reason: ${md.reconciliationReason}`);
+      if (md.errorCode) parts.push(`Error code: ${md.errorCode}`);
+      if (md.errorMessage) {
+        // Agent error text is multi-line command output. Rows are single-line
+        // label/value pairs, so the newlines have to collapse or the whole row
+        // becomes an unreadable blob. Pipes are stripped because this string is
+        // joined with ' | ' and would otherwise split into fake fields.
+        const collapsed = String(md.errorMessage)
+          .replace(/\s+/g, ' ')
+          .replace(/\|/g, '/')
+          .trim();
+        parts.push(
+          `Error: ${collapsed.length > 300 ? `${collapsed.slice(0, 300)}...` : collapsed}`,
+        );
+      }
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.subjectId) parts.push(`Subject ID: ${md.subjectId}`);
+      if (md.source) parts.push(`Source: ${md.source}`);
+      if (md.mode) parts.push(`Mode: ${md.mode}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsRenewalProfileMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.profileName) parts.push(`Profile: ${md.profileName}`);
+      if (md.profileId) parts.push(`ID: ${md.profileId}`);
+      if (md.managedCertificateId)
+        parts.push(`Certificate: ${md.managedCertificateId}`);
+      // What the profile actually runs, and where. These are the fields that
+      // decide the real-world effect of every future renewal.
+      if (md.commandRef) parts.push(`Command: ${md.commandRef}`);
+      if (md.caEndpoint) parts.push(`CA: ${md.caEndpoint}`);
+      if (md.certPath) parts.push(`Path: ${md.certPath}`);
+      if (md.dnsProvider) parts.push(`DNS: ${md.dnsProvider}`);
+      if (md.dnsZone) parts.push(`Zone: ${md.dnsZone}`);
+      if (md.renewBeforeDays != null)
+        parts.push(`Renew before: ${md.renewBeforeDays} days`);
+      if (md.changes && typeof md.changes === 'object') {
+        const changed = Object.keys(md.changes);
+        if (changed.length > 0) parts.push(`Changed: ${changed.join(', ')}`);
+      }
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function formatCertOpsAgentRegisteredMetadata(ev) {
+    try {
+      const md = ev?.metadata || {};
+      const parts = [];
+      if (md.agentId) parts.push(`Agent: ${md.agentId}`);
+      if (md.hostname) parts.push(`Host: ${md.hostname}`);
+      if (md.platform) parts.push(`Platform: ${md.platform}`);
+      if (md.agentVersion) parts.push(`Version: ${md.agentVersion}`);
+      // The scope the agent asked for. Sent only at registration, so this event
+      // is the only record of it.
+      if (Array.isArray(md.declaredTargetSelectors) && md.declaredTargetSelectors.length > 0)
+        parts.push(`Targets: ${formatArrayValue(md.declaredTargetSelectors)}`);
+      if (
+        Array.isArray(md.declaredCommandProfileNames) &&
+        md.declaredCommandProfileNames.length > 0
+      )
+        parts.push(`Commands: ${formatArrayValue(md.declaredCommandProfileNames)}`);
+      if (Array.isArray(md.declaredCapabilities) && md.declaredCapabilities.length > 0)
+        parts.push(`Capabilities: ${formatArrayValue(md.declaredCapabilities)}`);
+      if (md.credentialPrefix) parts.push(`Credential: ${md.credentialPrefix}`);
+      if (md.bootstrapTokenId) parts.push(`Bootstrap token: ${md.bootstrapTokenId}`);
+      if (md.signingKeyId) parts.push(`Signing key: ${md.signingKeyId}`);
+      return parts.length > 0 ? parts.join(' | ') : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   function formatCertOpsKeyMaterialRejectedMetadata(ev) {
     try {
       const md = ev?.metadata || {};
@@ -1281,8 +1420,39 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (formatted) return formatted;
     }
 
-    if (action === 'CERTOPS_JOB_CREATED_MANUAL') {
+    if (
+      action === 'CERTOPS_JOB_CREATED_MANUAL' ||
+      action === 'CERTOPS_JOB_CREATED_AUTOMATIC'
+    ) {
       const formatted = formatCertOpsJobMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_JOB_FAILED') {
+      const formatted = formatCertOpsJobFailedMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_CERTIFICATE_ISSUED') {
+      const formatted = formatCertOpsIssuedMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED') {
+      const formatted = formatCertOpsUnreconciledMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (
+      action === 'CERTOPS_RENEWAL_PROFILE_DERIVED' ||
+      action === 'CERTOPS_RENEWAL_PROFILE_UPDATED'
+    ) {
+      const formatted = formatCertOpsRenewalProfileMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_AGENT_REGISTERED') {
+      const formatted = formatCertOpsAgentRegisteredMetadata(ev);
       if (formatted) return formatted;
     }
 

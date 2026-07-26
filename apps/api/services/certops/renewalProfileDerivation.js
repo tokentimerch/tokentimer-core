@@ -37,6 +37,7 @@ const {
   RENEWAL_PROFILE_SCHEMA_VERSION,
   validateRenewalProfile,
 } = require("./renewalProfile");
+const { writeAudit } = require("../audit");
 
 // A derived profile is named after the certificate it was derived from, so an
 // operator browsing profiles can tell at a glance which are machine-derived and
@@ -240,6 +241,7 @@ async function ensureDerivedRenewalProfile({
   certificate,
   renewBeforeDays = null,
   logger = null,
+  auditWriter = writeAudit,
 } = {}) {
   const linked = await client.query(
     `SELECT profile_id FROM managed_certificates
@@ -322,6 +324,40 @@ async function ensureDerivedRenewalProfile({
         AND profile_id IS NULL`,
     [workspaceId, certificateId, profileId],
   );
+
+  // A derived profile is standing authority: it lets the scheduler re-run this
+  // command, on this host, against this CA, indefinitely and with no operator in
+  // the loop. Granting that has to be a recorded event, not an inferred one.
+  // Without it the trail shows CERTOPS_RENEWAL_PROFILE_UPDATED events against a
+  // profile that, as far as the audit log is concerned, never came into
+  // existence.
+  await auditWriter({
+    client,
+    actorUserId: null,
+    subjectUserId: null,
+    action: "CERTOPS_RENEWAL_PROFILE_DERIVED",
+    targetType: "certificate_profile",
+    targetId: null,
+    workspaceId,
+    metadata: {
+      profileId,
+      profileName: name,
+      created: upserted.rows[0].inserted === true,
+      managedCertificateId: String(certificateId),
+      renewBeforeDays,
+      acmeKind: profile.acme?.kind ?? null,
+      // The three fields that decide what actually runs where: which ACME
+      // command profile the agent invokes, which CA it orders from, and which
+      // file on which host receives the result.
+      commandRef: profile.acme?.commandRef ?? null,
+      caEndpoint: profile.ca?.endpoint ?? null,
+      certPath: profile.deploymentTargets?.[0]?.certPath ?? null,
+      dnsProvider: profile.dns?.provider ?? null,
+      dnsZone: profile.dns?.zone ?? null,
+      keyAlgorithm: profile.keyAlgorithm ?? null,
+      keySize: profile.keySize ?? null,
+    },
+  });
 
   return {
     profileId,

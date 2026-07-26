@@ -620,7 +620,7 @@ function redactPrivateKeyMaterial(value) {
  * material is rejected before traversal; this helper must never be used as a
  * fallback that converts prohibited key material into accepted data.
  *
- * Phase 0 baseline; the secret pattern set expands with evidence redaction.
+ * The secret pattern set expands as evidence redaction needs grow.
  * @param {*} value
  * @returns {*} redacted copy
  */

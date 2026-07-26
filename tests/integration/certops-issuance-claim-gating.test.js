@@ -22,7 +22,7 @@ const EVIDENCE_CLAIM_BINDING_CAPABILITY =
  * managed_certificates.status combined with a boolean capability parameter.
  * Service-level unit tests stub the database, so they can only assert that a
  * query was issued, not that the predicate selects the right rows. Every bug
- * this workstream fixed was of exactly that shape, so these run against real
+ * found here was of exactly that shape, so these run against real
  * PostgreSQL.
  */
 describe("CertOps issuance claim gating (real database)", function () {

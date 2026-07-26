@@ -8,7 +8,7 @@ import {
 import { useCertOpsEnabled } from './useCertOps.js';
 
 /**
- * Renewal-profile data hooks (W8).
+ * Renewal-profile data hooks.
  *
  * Reads are not gated on a client-side role check. A boolean permission flag
  * cannot distinguish "still resolving" and "lookup failed" from "denied", and
