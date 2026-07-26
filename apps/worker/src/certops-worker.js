@@ -591,9 +591,17 @@ export async function drainCertOpsOutbox({
           errorCode: payload.errorCode || null,
         });
       } else if (row.event_type === "profile_derivation_requested") {
-        // Landing with W7a. Until then the intent accumulates rather than being
-        // silently dropped, which is the whole point of recording it.
-        outcome = { queued: false, reason: "handler_not_implemented", defer: true };
+        // Reserved but unreachable: derivation landed inline in the
+        // reconciliation transaction (ADR-0010) rather than through the outbox,
+        // so nothing enqueues this type. Kept because narrowing the event_type
+        // CHECK after release costs more than an unused enum value. Deferring
+        // rather than skipping means an unexpected enqueue is preserved for an
+        // operator instead of being silently consumed.
+        outcome = {
+          queued: false,
+          reason: "handler_not_implemented",
+          defer: true,
+        };
       }
 
       if (outcome?.defer) {
