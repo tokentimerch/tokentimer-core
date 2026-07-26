@@ -385,8 +385,12 @@ export function getWorkerConfig(
   if (schedule.mode === "cron" && !hasLocalRunOnStartDefault) {
     runOnStartDefault = worker.cronRunOnStartDefault ?? false;
   }
+  // Treat an empty per-worker value as unset so the global WORKER_RUN_ON_START
+  // is still honored. Compose passthroughs render as "" when the operator does
+  // not set them, and a bare ?? would let that "" mask the global.
+  const perWorkerRunOnStart = env[worker.runOnStartEnv];
   const runOnStartValue =
-    env[worker.runOnStartEnv] ??
+    (perWorkerRunOnStart === "" ? undefined : perWorkerRunOnStart) ??
     (worker.runOnStartDefault && !hasLocalRunOnStartDefault
       ? env.WORKER_RUN_ON_START
       : undefined);

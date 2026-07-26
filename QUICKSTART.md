@@ -55,7 +55,10 @@ ADMIN_NAME=Administrator
 APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 
-# Optional host port remap for Docker Compose only.
+# Optional host port remap. These set the published host ports for Docker
+# Compose. Note pnpm dev also reads them for its port-availability preflight,
+# while the Vite dev server itself is pinned to 5173 (strictPort), so remapping
+# DASHBOARD_PORT here makes that preflight check the wrong port for pnpm dev.
 # Change these only if ports 4000/5173 are already used on your host.
 # If you remap, keep APP_URL/API_URL in sync with the new host ports.
 # API_PORT=4000
@@ -68,6 +71,14 @@ API_URL=http://localhost:4000
 # SMTP_PASS=your_smtp_password
 # FROM_EMAIL=noreply@example.com
 # FROM_EMAIL_NAME=TokenTimer
+
+# Required only if you plan to connect a CertOps agent. Compose enables CertOps
+# by default (CERTOPS_ENABLED:-true); without these two keys the CertOps UI
+# appears but agent registration and job dispatch fail closed with HTTP 500.
+# Generate each with: openssl rand -hex 32
+# CERTOPS_SIGNING_ENCRYPTION_KEY=
+# CERTOPS_REGISTRATION_ENCRYPTION_KEY=
+# Or set CERTOPS_ENABLED=false if you do not use CertOps at all.
 ```
 
 > [!WARNING]
@@ -140,17 +151,15 @@ APP_URL=http://localhost:5173
 API_URL=http://localhost:4000
 ```
 
-### 3. Run Migrations
-
-```bash
-pnpm run migrate
-```
-
-### 4. Start Development Servers
+### 3. Start Development Servers
 
 ```bash
 pnpm run dev
 ```
+
+The API applies pending migrations itself on startup, so there is no separate migration step.
+
+This starts PostgreSQL in Docker, then:
 
 This starts PostgreSQL in Docker, then:
 
@@ -169,16 +178,30 @@ Default worker runner schedules:
 | Weekly Digest | `0 9 * * 1` | No |
 | CertOps Maintenance | `*/1 * * * *` | No |
 
-Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes.
+Use `pnpm run dev:noDB` when PostgreSQL is already running and you only need the app processes. In that case apply migrations yourself first with `pnpm run migrate`, since that command talks to an existing database and does not start one.
 
-### 5. Access the Dashboard
+### 4. Access the Dashboard
 
 Open `http://localhost:5173` in your browser.
 
 ## Option 3: Kubernetes (Helm)
 
 > [!NOTE]
-> All configurable values are documented in [`deploy/helm/values.yaml`](deploy/helm/values.yaml). For a full environment variable reference, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+> All configurable values are documented in [`deploy/helm/values.yaml`](deploy/helm/values.yaml). For a full environment variable reference, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md). For the chart's own reference (value precedence, `existingSecret` semantics, private registries, autoscaling, the CertOps controller) see [`deploy/helm/README.md`](deploy/helm/README.md).
+
+> [!IMPORTANT]
+> **Prerequisite: the CloudNativePG operator.** The chart defaults to `postgresql.cloudnative.enabled=true`, which creates a CNPG `Cluster` resource. Without the operator installed, nothing reconciles that resource: no database pods appear and the API pod never becomes ready.
+>
+> ```bash
+> helm repo add cnpg https://cloudnative-pg.github.io/charts
+> helm repo update
+> helm install cnpg-operator cnpg/cloudnative-pg \
+>   --namespace cnpg-system --create-namespace \
+>   --version 0.23.0 \
+>   --wait
+> ```
+>
+> To use an existing external PostgreSQL instead, set `postgresql.cloudnative.enabled=false` and configure `postgresql.external.*`. See [`deploy/helm/README.md`](deploy/helm/README.md).
 
 ### 1. Install the Helm Chart
 

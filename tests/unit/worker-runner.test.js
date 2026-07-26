@@ -190,6 +190,32 @@ describe("worker runner helpers", () => {
     );
   });
 
+  it("treats an empty per-worker run-on-start value as unset", async () => {
+    const runner = await import(runnerUrl);
+    const discovery = runner.workerDefinitions.discovery;
+
+    // Compose renders an unset passthrough as "". That empty value must not
+    // mask the global flag, otherwise adding the passthrough would silently
+    // disable run-on-start for operators who only set WORKER_RUN_ON_START.
+    assert.strictEqual(
+      runner.getWorkerConfig(discovery, {
+        WORKER_DISCOVERY_RUN_ON_START: "",
+        WORKER_RUN_ON_START: "true",
+      }).runOnStart,
+      true,
+      "an empty per-worker value must fall through to WORKER_RUN_ON_START",
+    );
+
+    // An explicit per-worker value still wins over the global.
+    assert.strictEqual(
+      runner.getWorkerConfig(discovery, {
+        WORKER_DISCOVERY_RUN_ON_START: "false",
+        WORKER_RUN_ON_START: "true",
+      }).runOnStart,
+      false,
+    );
+  });
+
   it("keeps weekly digest from inheriting global run-on-start", async () => {
     const runner = await import(runnerUrl);
     const weeklyDigest = runner.workerDefinitions["weekly-digest"];
