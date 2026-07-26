@@ -161,8 +161,6 @@ The API applies pending migrations itself on startup, so there is no separate mi
 
 This starts PostgreSQL in Docker, then:
 
-This starts PostgreSQL in Docker, then:
-
 - API on `http://localhost:4000`
 - Worker runner with cron schedules matching the Kubernetes defaults
 - Dashboard on `http://localhost:5173`
