@@ -200,6 +200,62 @@ export function isRetiredStatus(status) {
 }
 
 /**
+ * Partitions the workspace CertOps inventory for the Control Center summary.
+ *
+ * The panel is titled around certificates linked to the token inventory, so
+ * only linked rows are listed and counted. A certificate is linked the moment
+ * it becomes real: discovery creates the token up front, and issuance links it
+ * at reconciliation, because tokens.expiration is NOT NULL and an unissued
+ * certificate has no honest expiry to record.
+ *
+ * Unlinked rows are therefore always mid-provisioning. They are reported as a
+ * separate count rather than listed: with no expiry they cannot be sorted or
+ * badged, and would read as broken inventory instead of work in flight.
+ *
+ * @param {Array<object>} certificates
+ * @param {{ highlightLimit?: number }} [options]
+ * @returns {{
+ *   linked: Array<object>,
+ *   highlights: Array<object>,
+ *   linkedCount: number,
+ *   provisioningCount: number,
+ * }}
+ */
+export function summarizeManagedCertificates(certificates, options = {}) {
+  const highlightLimit = Number.isFinite(options.highlightLimit)
+    ? options.highlightLimit
+    : 5;
+  const items = Array.isArray(certificates) ? certificates : [];
+  const active = items.filter(cert => !isRetiredStatus(cert?.status));
+
+  const linked = active.filter(cert => cert?.tokenId != null);
+  const provisioningCount = active.filter(
+    cert =>
+      cert?.tokenId == null &&
+      String(cert?.status || '').toLowerCase() === 'provisioning'
+  ).length;
+
+  // Soonest expiry first; a missing expiry sorts last rather than first, so an
+  // unparseable date cannot masquerade as the most urgent certificate.
+  const highlights = [...linked]
+    .sort((a, b) => {
+      const left = a?.notAfter ? new Date(a.notAfter).getTime() : Infinity;
+      const right = b?.notAfter ? new Date(b.notAfter).getTime() : Infinity;
+      const l = Number.isFinite(left) ? left : Infinity;
+      const r = Number.isFinite(right) ? right : Infinity;
+      return l - r;
+    })
+    .slice(0, highlightLimit);
+
+  return {
+    linked,
+    highlights,
+    linkedCount: linked.length,
+    provisioningCount,
+  };
+}
+
+/**
  * Deterministic ordering for multiple managed certificates that reference the
  * same token (the backend allows e.g. one imported + one monitor-observed row).
  * Ordering: active (non-retired) certificates before retired ones, then most

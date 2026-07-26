@@ -46,11 +46,11 @@ import RenewalBadge from '../components/certops/RenewalBadge.jsx';
 import {
   RENEWAL_STATES,
   expiryDescriptor,
-  isRetiredStatus,
   keyModeLabel,
   renewalDescriptor,
   statusLabel,
   statusScheme,
+  summarizeManagedCertificates,
 } from '../components/certops/certopsFormat.js';
 import {
   DashboardActionButton,
@@ -1071,33 +1071,26 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
   const { items: managedCertItems, loading: certOpsLoading } =
     useWorkspaceCertOps();
 
-  const activeManagedCerts = useMemo(
-    () => managedCertItems.filter(cert => !isRetiredStatus(cert.status)),
+  const {
+    linked: linkedManagedCerts,
+    highlights: managedCertHighlights,
+    linkedCount: managedCertCount,
+    provisioningCount: provisioningCertCount,
+  } = useMemo(
+    () => summarizeManagedCertificates(managedCertItems),
     [managedCertItems]
   );
 
-  const managedCertHighlights = useMemo(() => {
-    return [...activeManagedCerts]
-      .sort((a, b) => {
-        const left = a.notAfter ? new Date(a.notAfter).getTime() : Infinity;
-        const right = b.notAfter ? new Date(b.notAfter).getTime() : Infinity;
-        return left - right;
-      })
-      .slice(0, 5);
-  }, [activeManagedCerts]);
-
-  const managedCertCount = activeManagedCerts.length;
-
   const managedCertSummaryDetail = useMemo(() => {
     if (certOpsLoading) return 'Loading inventory...';
-    const urgent = activeManagedCerts.filter(cert =>
+    const urgent = linkedManagedCerts.filter(cert =>
       ['expiring', 'expired', 'renewing'].includes(
         String(cert.status || '').toLowerCase()
       )
     ).length;
     // Only the explicit not-configured state is counted, so an API build that
     // predates the renewal field cannot inflate this into a false alarm.
-    const notAutoRenewed = activeManagedCerts.filter(
+    const notAutoRenewed = linkedManagedCerts.filter(
       cert =>
         renewalDescriptor(cert.renewal).state === RENEWAL_STATES.notConfigured
     ).length;
@@ -1109,9 +1102,17 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
       signals.push(`${notAutoRenewed} without auto-renewal`);
     }
     if (urgent > 0) signals.push(`${urgent} expiring or expired`);
+    if (provisioningCertCount > 0) {
+      signals.push(`${provisioningCertCount} provisioning`);
+    }
     if (signals.length === 0) return 'Registered in this workspace';
     return `${signals.join(' · ')} · ${managedCertCount} registered`;
-  }, [activeManagedCerts, certOpsLoading, managedCertCount]);
+  }, [
+    certOpsLoading,
+    linkedManagedCerts,
+    managedCertCount,
+    provisioningCertCount,
+  ]);
 
   // Prefer the workspace-wide aggregate: neverExpires is a preview list capped
   // by the backend (LIMIT 12), so its length undercounts large inventories.
@@ -1604,7 +1605,13 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                               value={managedCertCount}
                               detail={managedCertSummaryDetail}
                             />
-                            <InsightListShell emptyMessage='No managed certificates registered in this workspace yet.'>
+                            <InsightListShell
+                              emptyMessage={
+                                provisioningCertCount > 0
+                                  ? `No managed certificates registered yet. ${provisioningCertCount} still provisioning.`
+                                  : 'No managed certificates registered in this workspace yet.'
+                              }
+                            >
                               {managedCertHighlights.length > 0
                                 ? managedCertHighlights.map(cert => {
                                     const expiry = expiryDescriptor(

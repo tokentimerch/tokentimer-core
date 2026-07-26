@@ -10,6 +10,7 @@ const {
   formatSourceEntry,
   buildPrivilegeHighlight,
   formatAutoSyncStatusRow,
+  SQL_EXCLUDE_RETIRED_CERTS,
 } = require("../src/shared/controlCenterStatsHelpers");
 
 /**
@@ -47,6 +48,8 @@ function clampOffset(offset) {
 
 /**
  * Paginated "never expires" (perpetual asset) list, ordered by name.
+ * Retired (revoked/decommissioned) certificates are excluded, matching
+ * fetchControlCenterStats so the panel count and its list agree.
  *
  * @param {string} workspaceId
  * @param {{ limit?: number, offset?: number }} [options]
@@ -70,6 +73,7 @@ async function fetchNeverExpiresPage(workspaceId, options = {}) {
             OR t.expiration::text LIKE '2099%'
             OR t.expiration::text LIKE '9999%'
           )
+          ${SQL_EXCLUDE_RETIRED_CERTS}
         ORDER BY LOWER(t.name) ASC
         LIMIT $2 OFFSET $3`,
       [workspaceId, limit, offset],
@@ -82,7 +86,8 @@ async function fetchNeverExpiresPage(workspaceId, options = {}) {
             t.expiration >= DATE '9999-01-01'
             OR t.expiration::text LIKE '2099%'
             OR t.expiration::text LIKE '9999%'
-          )`,
+          )
+          ${SQL_EXCLUDE_RETIRED_CERTS}`,
       [workspaceId],
     ),
   ]);
@@ -134,6 +139,7 @@ async function fetchPrivilegeHighlightsPage(workspaceId, options = {}) {
         WHERE t.workspace_id = $1
           AND t.privileges IS NOT NULL
           AND LENGTH(TRIM(t.privileges)) > 0
+          ${SQL_EXCLUDE_RETIRED_CERTS}
         ORDER BY LENGTH(t.privileges) DESC, LOWER(t.name) ASC
         LIMIT $2`,
       [workspaceId, PRIVILEGE_CANDIDATE_POOL_CAP],
@@ -143,7 +149,8 @@ async function fetchPrivilegeHighlightsPage(workspaceId, options = {}) {
          FROM tokens t
         WHERE t.workspace_id = $1
           AND t.privileges IS NOT NULL
-          AND LENGTH(TRIM(t.privileges)) > 0`,
+          AND LENGTH(TRIM(t.privileges)) > 0
+          ${SQL_EXCLUDE_RETIRED_CERTS}`,
       [workspaceId],
     ),
   ]);
@@ -168,6 +175,10 @@ async function fetchPrivilegeHighlightsPage(workspaceId, options = {}) {
  * The `neverExpires` and `privilegeHighlights` arrays only contain the
  * first page (see LIST_PAGE_SIZE_DEFAULT); use fetchNeverExpiresPage /
  * fetchPrivilegeHighlightsPage with an offset to load more.
+ *
+ * Every count here excludes tokens whose CertOps lifecycle is retired
+ * (revoked/decommissioned), so asset health reflects live inventory only.
+ * Retired assets remain visible in the main dashboard asset list, badged.
  *
  * @param {string} workspaceId
  * @returns {Promise<{
@@ -200,8 +211,9 @@ async function fetchControlCenterStats(workspaceId) {
   ] = await Promise.all([
     pool.query(
       `SELECT COUNT(*)::int AS total
-         FROM tokens
-        WHERE workspace_id = $1`,
+         FROM tokens t
+        WHERE t.workspace_id = $1
+          ${SQL_EXCLUDE_RETIRED_CERTS}`,
       [workspaceId],
     ),
     pool.query(
@@ -210,6 +222,7 @@ async function fetchControlCenterStats(workspaceId) {
            SELECT ${bucketCase} AS bucket
              FROM tokens t
             WHERE t.workspace_id = $1
+              ${SQL_EXCLUDE_RETIRED_CERTS}
          ) grouped
         GROUP BY bucket`,
       [workspaceId, timezone],
@@ -219,6 +232,7 @@ async function fetchControlCenterStats(workspaceId) {
               COUNT(*)::int AS count
          FROM tokens t
         WHERE t.workspace_id = $1
+          ${SQL_EXCLUDE_RETIRED_CERTS}
         GROUP BY source_key
         ORDER BY count DESC, source_key ASC`,
       [workspaceId],
@@ -237,6 +251,7 @@ async function fetchControlCenterStats(workspaceId) {
             OR t.expiration::text LIKE '9999%'
           )
           AND (t.expiration - (NOW() AT TIME ZONE $2)::date) <= 30
+          ${SQL_EXCLUDE_RETIRED_CERTS}
         ORDER BY (t.expiration - (NOW() AT TIME ZONE $2)::date) ASC,
                  LOWER(t.name) ASC
         LIMIT 10`,
