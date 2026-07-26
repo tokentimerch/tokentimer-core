@@ -8,6 +8,7 @@ const {
   requireWorkspaceMembership,
   authorize,
   getUserWorkspaceRole,
+  hasAtLeastRole,
 } = require("../services/rbac");
 const { MEMBER_LIMITS } = require("../services/planLimits");
 const {
@@ -1016,6 +1017,55 @@ router.delete(
 
 // Section endpoints removed: sections have been simplified to a free-text token field.
 
+/**
+ * Deployment topology (paths, CA endpoint, command reference, DNS zone/provider)
+ * that a small number of machine-initiated CertOps audit events carry in
+ * metadata, keyed by the action that carries it.
+ *
+ * These events are written for operator troubleshooting (ADR-0011) and are not
+ * wrong to record. The gap is on the read side: this audit feed is intentionally
+ * viewer-readable (see docs-selfhosted/audit.mdx "workspace scope"), while the
+ * renewal-profile routes gate the identical information behind
+ * workspace_manager because it discloses where a certificate's private key
+ * lives and what deploys to it (see the CertOps profile-read hardening work).
+ * Returning it here for any workspace member would defeat that gate through a
+ * second, unguarded path. Redacting at read time keeps the full row available
+ * to whoever runs the direct DB/export path documented for admins, while
+ * closing the gap for the one endpoint every member can call.
+ */
+const AUDIT_TOPOLOGY_FIELDS_BY_ACTION = Object.freeze({
+  CERTOPS_RENEWAL_PROFILE_DERIVED: [
+    "commandRef",
+    "caEndpoint",
+    "certPath",
+    "dnsProvider",
+    "dnsZone",
+  ],
+  CERTOPS_CERTIFICATE_ISSUED: ["deployedCertPath"],
+});
+
+function redactAuditTopologyForRole(row, role) {
+  if (hasAtLeastRole(role, "workspace_manager")) return row;
+  const fields = AUDIT_TOPOLOGY_FIELDS_BY_ACTION[row?.action];
+  if (!fields || !row.metadata || typeof row.metadata !== "object") return row;
+
+  const metadata = { ...row.metadata };
+  let redactedAny = false;
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(metadata, field)) {
+      delete metadata[field];
+      redactedAny = true;
+    }
+  }
+  if (!redactedAny) return row;
+
+  // A marker rather than a null value: null would be indistinguishable from
+  // "this row never had a deployedCertPath", which is a different fact than
+  // "you are not allowed to see it".
+  metadata.topologyRedacted = true;
+  return { ...row, metadata };
+}
+
 // Audit feed (workspace-scoped)
 router.get("/api/v1/audit", getApiLimiter(), requireAuth, async (req, res) => {
   try {
@@ -1046,7 +1096,10 @@ router.get("/api/v1/audit", getApiLimiter(), requireAuth, async (req, res) => {
     }
     sql += " ORDER BY occurred_at DESC LIMIT $2 OFFSET $3";
     const { rows } = await pool.query(sql, params);
-    return res.json({ items: rows, pagination: { limit, offset } });
+    return res.json({
+      items: rows.map((row) => redactAuditTopologyForRole(row, role)),
+      pagination: { limit, offset },
+    });
   } catch (err) {
     logger.error("Failed to fetch audit events", { error: err.message });
     return res
@@ -1056,3 +1109,7 @@ router.get("/api/v1/audit", getApiLimiter(), requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports._test = {
+  redactAuditTopologyForRole,
+  AUDIT_TOPOLOGY_FIELDS_BY_ACTION,
+};
