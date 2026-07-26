@@ -87,6 +87,7 @@ export function statusLabel(status) {
  */
 export const RENEWAL_STATES = {
   auto: 'auto',
+  disabled: 'disabled',
   notConfigured: 'not-configured',
   notEligible: 'not-eligible',
   notApplicable: 'not-applicable',
@@ -124,6 +125,21 @@ export function renewalDescriptor(renewal) {
         (days
           ? `Renewal is attempted automatically from ${days} days before expiry.`
           : 'Renewal is attempted automatically before expiry.'),
+      isWarning: false,
+    };
+  }
+
+  if (state === RENEWAL_STATES.disabled) {
+    // Chosen, not broken, so this is not warning-level like 'not-configured'.
+    // It is still shown in a colour that reads as "acting on your instruction"
+    // rather than green, because the certificate does expire on its own.
+    return {
+      state,
+      label: 'Auto-renewal off',
+      scheme: 'yellow',
+      help:
+        renewal?.detail ||
+        'Automatic renewal is switched off for this certificate. It will expire unless it is renewed manually.',
       isWarning: false,
     };
   }

@@ -79,6 +79,7 @@ const {
   validateJobPayloadForOperation,
 } = require("../services/certops/jobs");
 const {
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
   resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
@@ -1988,6 +1989,7 @@ async function importCertificatesHandler(req, res, source, statusCode) {
  * the client.
  */
 const CERTOPS_RENEWAL_STATE_AUTO = "auto";
+const CERTOPS_RENEWAL_STATE_DISABLED = "disabled";
 const CERTOPS_RENEWAL_STATE_NOT_CONFIGURED = "not-configured";
 const CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE = "not-eligible";
 const CERTOPS_RENEWAL_STATE_NOT_APPLICABLE = "not-applicable";
@@ -2076,6 +2078,24 @@ function deriveCertificateRenewalState(row, { env = process.env } = {}) {
     env,
   );
 
+  // Deliberate operator intent, so it is reported before profile completeness:
+  // a switched-off certificate is not misconfigured and telling the operator to
+  // go fix its profile would be wrong. Mirrors
+  // AUTO_RENEW_DISABLED_PROFILE_STATUSES in the scheduler, which excludes these
+  // rows from the scan entirely.
+  const profileStatus = String(row?.profile_status || "").toLowerCase();
+  if (
+    row?.profile_id &&
+    AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(profileStatus)
+  ) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_DISABLED,
+      renewBeforeDays,
+      detail: `Automatic renewal is switched off for this certificate because its renewal profile is ${profileStatus}. It will expire unless it is renewed manually or the profile is re-enabled.`,
+    };
+  }
+
   let incompleteReason = null;
   try {
     resolveRenewalProfileSnapshot(row);
@@ -2140,6 +2160,7 @@ async function loadCertificateRenewalRows({
             mc.subject_alt_names,
             mc.profile_id,
             cp.name AS profile_name,
+            cp.status AS profile_status,
             cp.key_mode AS profile_key_mode,
             cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days

@@ -180,6 +180,73 @@ describe("CertOps certificate renewal-state derivation", () => {
     assert.equal(renewal.state, "auto");
   });
 
+  it("reports disabled when the profile switched auto-renewal off", () => {
+    for (const profileStatus of ["disabled", "archived"]) {
+      const renewal = deriveCertificateRenewalState(
+        certificateRow({ profile_status: profileStatus }),
+        { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+      );
+
+      assert.equal(renewal.state, "disabled", `status=${profileStatus}`);
+      assert.equal(renewal.renewBeforeDays, 30);
+      assert.match(renewal.detail, /switched off/i);
+    }
+  });
+
+  it("reports an active profile as auto rather than disabled", () => {
+    const renewal = deriveCertificateRenewalState(
+      certificateRow({ profile_status: "active" }),
+      { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+    );
+
+    assert.equal(renewal.state, "auto");
+  });
+
+  it("prefers disabled over not-configured so a switched-off certificate is not called broken", () => {
+    // Deliberate intent must win over profile completeness: telling the
+    // operator to fix a profile they themselves switched off would send them
+    // chasing a non-problem.
+    const renewal = deriveCertificateRenewalState(
+      certificateRow({
+        profile_status: "disabled",
+        profile_public_metadata: {},
+      }),
+      { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+    );
+
+    assert.equal(renewal.state, "disabled");
+  });
+
+  it("keeps not-eligible ahead of disabled for custody no agent can renew", () => {
+    // Key custody is a hard impossibility; the off switch is a choice. Reporting
+    // 'disabled' here would imply re-enabling the profile is enough to make it
+    // renew, which is false.
+    const renewal = deriveCertificateRenewalState(
+      certificateRow({
+        key_mode: "external-unknown",
+        profile_status: "disabled",
+      }),
+      { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+    );
+
+    assert.equal(renewal.state, "not-eligible");
+  });
+
+  it("does not report disabled for a certificate with no linked profile", () => {
+    // profile_status is NULL when the LEFT JOIN matched nothing, which is the
+    // incomplete-profile case, mirroring the scheduler's IS NULL branch.
+    const renewal = deriveCertificateRenewalState(
+      certificateRow({
+        profile_id: null,
+        profile_status: null,
+        profile_public_metadata: null,
+      }),
+      { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+    );
+
+    assert.equal(renewal.state, "not-configured");
+  });
+
   it("reports not-applicable for lifecycle states the scheduler refuses", () => {
     for (const status of ["revoked", "decommissioned", "provisioning"]) {
       const renewal = deriveCertificateRenewalState(

@@ -42,6 +42,18 @@ describe('RenewalBadge', () => {
     ).toBeInTheDocument();
   });
 
+  it('distinguishes a deliberately switched-off certificate from a misconfigured one', () => {
+    renderBadge({ state: RENEWAL_STATES.disabled });
+
+    expect(screen.getByText('Auto-renewal off')).toBeInTheDocument();
+    // Must not reuse the not-configured copy: that tells the operator to go fix
+    // a profile, which is wrong when they switched it off on purpose.
+    expect(screen.queryByText('No auto-renewal')).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/switched off/i)
+    ).toBeInTheDocument();
+  });
+
   it('never renders a reassuring badge when the API omits the renewal field', () => {
     renderBadge(undefined);
 
