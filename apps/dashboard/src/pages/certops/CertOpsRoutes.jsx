@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router';
 import CertOpsOperations from './CertOpsOperations.jsx';
+import CertOpsRenewals from './CertOpsRenewals.jsx';
 
 /**
  * Router for the /certops/* splat route (plan 11.0: single wiring point in
@@ -13,6 +14,16 @@ export default function CertOpsRoutes({ session, onLogout, onAccountClick }) {
         path='operations'
         element={
           <CertOpsOperations
+            session={session}
+            onLogout={onLogout}
+            onAccountClick={onAccountClick}
+          />
+        }
+      />
+      <Route
+        path='renewals'
+        element={
+          <CertOpsRenewals
             session={session}
             onLogout={onLogout}
             onAccountClick={onAccountClick}
