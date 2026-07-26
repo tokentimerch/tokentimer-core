@@ -39,8 +39,8 @@ TokenTimer separates **installation-wide administration** from **workspace owner
 | | System admin | Workspace owner |
 |--|--------------|-----------------|
 | **Stored as** | `users.is_admin = TRUE` | `workspace_memberships.role = 'admin'` |
-| **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, Enterprise SSO admin APIs) | One workspace (delete workspace, transfer tokens, org-scoped audit for that workspace) |
-| **Dashboard** | **System Settings** nav (when `session.user.isAdmin`) | **Workspaces** owner actions (rename, delete, transfer tokens) |
+| **Scope** | Whole installation (System Settings, SMTP, grant/revoke system admin, Enterprise SSO admin APIs) | One workspace (rename, delete workspace, org-scoped audit for that workspace) |
+| **Dashboard** | **System Settings** nav (when `session.user.isAdmin`) | **Workspaces** owner actions (rename, delete) |
 | **How to grant** | **Workspaces → Members → System admin** toggle (system admins only), or Enterprise SSO `admin` group mapping | Automatic when **creating** a workspace; not assignable from Members tab |
 | **How many** | Multiple system admins supported | One owner per workspace in normal operation (creator at provision time) |
 
@@ -98,9 +98,23 @@ docker compose restart
 ### For Invited Users
 
 1. Receive invitation email (or link from admin)
-2. Click invitation link: `https://your-instance.com/auth/verify-email/<token>`
-3. Set password (min 8 characters, uppercase + number required)
+2. Click invitation link: `https://your-instance.com/register?token=<token>&email=<email>`
+3. Set password (see [Password requirements](#password-requirements) below)
 4. Account created and automatically added to workspace with assigned role
+
+### Password requirements
+
+Enforced server-side on invitation acceptance, password reset, and password
+change. All five rules are mandatory and none of them are configurable:
+
+- at least **12** characters
+- at least one **lowercase** letter
+- at least one **uppercase** letter
+- at least one **number**
+- at least one **special character** (`!@#$%^&*()_+-=[]{};':"\|,.<>/?`)
+
+A rejected password returns `400` with `code: "VALIDATION_ERROR"`, `error` set
+to the first failing rule, and `details` listing every failing rule.
 
 ## API Endpoints
 
@@ -204,10 +218,10 @@ POST /auth/logout
 |---|---|
 | Admin bootstrap (env vars) | Enabled by default |
 | User invitations (admin only) | Always available |
-| Local email/password auth | Enabled by default |
-| Two-factor authentication (TOTP) | Enabled by default |
-| CSRF protection | Enabled by default |
-| Email verification | Configurable (`REQUIRE_EMAIL_VERIFICATION`) |
+| Local email/password auth | Always available (not configurable) |
+| Two-factor authentication (TOTP) | Always available, opt-in per user |
+| CSRF protection | Always on (not configurable) |
+| Email verification | Enforced for local accounts only (`auth_method = 'local'`); not env-configurable |
 
 ## Configuration
 
@@ -232,18 +246,28 @@ When deploying via the Helm chart, `config.adminEmail` is required. The admin
 password is auto-generated if not provided (retrieve it from the Kubernetes
 secret after install). See [deploy/helm/README.md](../deploy/helm/README.md).
 
-### Auth Tuning (all optional, sensible defaults)
+### Auth tuning
 
-```bash
-LOCAL_AUTH_ENABLED=true
-REQUIRE_EMAIL_VERIFICATION=true
-TWO_FACTOR_ENABLED=true
-SESSION_MAX_AGE=86400000          # 24h in ms
-MIN_PASSWORD_LENGTH=8
-REQUIRE_UPPERCASE=true
-REQUIRE_NUMBERS=true
-CSRF_ENABLED=true
-```
+There is no auth-tuning environment surface in Core today. The following
+variables are parsed into an internal config object but **no code reads the
+result**, so setting any of them has no effect:
+
+`LOCAL_AUTH_ENABLED`, `REQUIRE_EMAIL_VERIFICATION`, `TWO_FACTOR_ENABLED`,
+`SESSION_MAX_AGE`, `MIN_PASSWORD_LENGTH`, `REQUIRE_UPPERCASE`,
+`REQUIRE_NUMBERS`, `CSRF_ENABLED`.
+
+The actual, non-configurable behavior is:
+
+| Behavior | Actual value | Where |
+|---|---|---|
+| Session cookie lifetime | 2 hours, `rolling` (renewed on activity) | `apps/api/session-cookie-options.js` |
+| CSRF protection | Always on (double-submit cookie), with a fixed exempt list for machine-token routes | `apps/api/index.js`, `apps/api/middleware/csrf-exempt.js` |
+| Local email/password auth | Always available | `apps/api/routes/auth.js` |
+| Two-factor (TOTP) | Always available, opt-in per user | `apps/api/routes/auth.js` |
+| Password rules | Fixed 5 rules, see [Password requirements](#password-requirements) | `apps/api/routes/auth.js` |
+
+To change any of these today you must change code. Do not document or promise
+these variables to operators.
 
 ## Security Considerations
 
@@ -258,7 +282,8 @@ CSRF_ENABLED=true
 **Requirements**:
 
 - Admin must securely share invitation links if SMTP is not configured
-- Admin password should be strong (min 8 chars, uppercase + number)
+- Invitation tokens never expire; cancel unused invitations instead of relying on a timeout
+- Admin password should be strong (see [Password requirements](#password-requirements))
 - `ADMIN_PASSWORD` should be removed from env after bootstrap
 
 ## Best Practices
@@ -271,7 +296,10 @@ CSRF_ENABLED=true
 2. **Invitation Management**:
    - Invite users with appropriate roles (viewer by default)
    - Send invitation links via secure channel
-   - Set invitation expiry (default 7 days)
+   - Cancel invitations you no longer expect to be accepted: invitation tokens
+     **never expire** (`workspace_invitations` has no `expires_at` column), so a
+     leaked link stays redeemable until it is accepted or cancelled via
+     `DELETE /api/v1/workspaces/:id/invitations/:invitationId`
    - Review audit log for invitation history
 
 3. **Two-Factor Authentication**:
@@ -319,7 +347,16 @@ System-admin expansion (manual toggle, SSO admin grant, or login provisioning) a
 
 ### Q: Can I make a second workspace owner on Default?
 
-**A**: Not through the dashboard or public API today. Workspace owner is assigned at workspace creation only. You can grant a second user **system admin** from **Workspaces → Members**, which gives installation-wide settings access but not workspace-owner powers (delete workspace, transfer tokens, etc.). Multiple workspace owners per workspace are planned for [v1.0.0](../ROADMAP.md#v100----rbac-and-role-model-cleanup).
+**A**: Not through the dashboard or public API today. Workspace owner is assigned at workspace creation only. You can grant a second user **system admin** from **Workspaces → Members**, which gives installation-wide settings access but not workspace-owner powers (delete workspace, etc.). Multiple workspace owners per workspace are planned for [v1.0.0](../ROADMAP.md#v100----rbac-and-role-model-cleanup).
+
+### Q: Who can transfer tokens between workspaces?
+
+**A**: Not owner-only. `POST` transfer requires a membership in **both** the
+source and target workspace, where each membership is `admin` **or**
+`workspace_manager`. If either side is `workspace_manager`, the caller must also
+hold at least **2** workspace memberships in total. Otherwise the request is
+rejected with `403 FORBIDDEN`. The move is transactional and audited as
+`TOKENS_TRANSFERRED_BETWEEN_WORKSPACES`.
 
 ## Contact
 

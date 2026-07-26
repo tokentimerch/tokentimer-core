@@ -54,8 +54,9 @@ Upgrade (preserves `/opt/tokentimer-agent/state`):
 1. Verify the new tarball checksum.
 2. Extract and run `sudo ./scripts/install-agent.sh ...` with the same
    `--api-url` / `--workspace-id` / `--write-path` / `--reload-service` values.
-3. The installer stages into `app.staging.$$`, swaps atomically, and restarts
-   the systemd unit. Credentials and keys in `state/` are left untouched.
+3. The installer stages into `app.staging.$$`, swaps atomically, then restarts
+   the systemd unit so the new tree is actually loaded. Credentials and keys in
+   `state/` are left untouched.
 
 Rollback:
 

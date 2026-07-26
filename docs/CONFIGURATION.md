@@ -202,11 +202,22 @@ the origins users and integrations actually use in the browser.
 
 ### CertOps maintenance sweeps (worker)
 
-The `certops` worker target (Compose service `worker-certops`, Kubernetes
-`cronjob-certops`, schedule `WORKER_CERTOPS_CRON`) runs five independent
-sweeps. Each has an enable flag (default enabled) and a per-sweep timeout
-(default `120000` ms, `DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an
-operational escape hatch, not a normal configuration.
+The `certops` worker target runs five independent sweeps. Each has an enable
+flag (default enabled) and a per-sweep timeout (default `120000` ms,
+`DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an operational escape hatch,
+not a normal configuration.
+
+How it is scheduled depends on the deployment:
+
+| Deployment | Unit | Schedule set by |
+|---|---|---|
+| Compose | service `worker-certops` (cron runner) | `WORKER_CERTOPS_CRON`, default `*/1 * * * *` |
+| Kubernetes | `cronjob-certops` (one-shot `node apps/worker/src/certops-worker.js`) | `worker.cronjobs.certops.schedule` in Helm values, default `*/1 * * * *` |
+
+`WORKER_CERTOPS_CRON` has no effect in Kubernetes: the CronJob invokes the
+one-shot entrypoint directly, not the cron-scheduling runner, so the Kubernetes
+schedule is the CronJob's own `schedule` field. Set
+`worker.cronjobs.certops.enabled=false` to turn the sweeps off there.
 
 | Sweep | Enable | Timeout | What it does |
 | ----- | ------ | ------- | ------------ |

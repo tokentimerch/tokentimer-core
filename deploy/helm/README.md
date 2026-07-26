@@ -86,9 +86,9 @@ kubectl get secret -n tokentimer tokentimer-secrets \
 
 Open http://localhost:8080 and log in with your admin credentials.
 
-> When installing from a local checkout, run
-> `helm dependency update ./deploy/helm` first, then use `./deploy/helm`
-> instead of the OCI URL.
+> When installing from a local checkout, use `./deploy/helm` instead of the
+> OCI URL. The chart declares no subchart dependencies, so there is no
+> `helm dependency update` step.
 
 > **TLS Warning:** With `NODE_ENV=production`, the API sets the `Secure` flag on session cookies and enforces CSRF protection. Browsers will not persist or send secure cookies over plain HTTP, and mutating requests (including login) over `http://localhost` port-forwards will fail with 403 CSRF errors. For local testing, set `config.nodeEnv=development`, or inject `SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE=true` on the API via `api.envFrom`. For anything beyond local port-forwarding, place HTTPS in front of the API and dashboard (via Ingress with TLS or a reverse proxy).
 
@@ -139,13 +139,34 @@ worker:
 
 ### Secrets Management
 
-The chart generates a Kubernetes Secret with auto-generated values for `SESSION_SECRET`, `DB_PASSWORD`, and `ADMIN_PASSWORD` (when `adminEmail` is set). You only need to provide explicit passwords for production stability (auto-generated values change on each `helm upgrade`).
+The chart generates a Kubernetes Secret with auto-generated values for `SESSION_SECRET`, `DB_PASSWORD`, `ADMIN_PASSWORD` (when `adminEmail` is set), and, when CertOps is enabled, `CERTOPS_SIGNING_ENCRYPTION_KEY` and `CERTOPS_REGISTRATION_ENCRYPTION_KEY`.
+
+Generated values are **not** regenerated on upgrade: each is read back from the existing release Secret via `lookup`, so `helm upgrade` preserves them. Set them explicitly if you manage secrets externally, or if you render manifests with `helm template` (which runs without cluster access and therefore cannot read the existing Secret back, producing a fresh value on every render).
+
+#### CertOps encryption keys
+
+`config.certopsEnabled` defaults to `true`, and the API fails closed without these two keys: agent registration and signed job dispatch reject with `CERTOPS_REGISTRATION_ENCRYPTION_KEY_MISSING` / `CERTOPS_SIGNING_ENCRYPTION_KEY_MISSING`. Each must be **64 hex characters** (32 bytes):
+
+```bash
+openssl rand -hex 32
+```
+
+```yaml
+config:
+  certopsSigningEncryptionKey: "<64 hex chars>"
+  certopsRegistrationEncryptionKey: "<64 hex chars>"
+```
+
+These wrap, at rest, the job-signing private keys and the agent registration-replay credentials. **Rotating either value makes the data it wrapped unreadable**: signing keys must be re-issued and agents must re-register. Treat them like `SESSION_SECRET`, back them up, and set them explicitly in any GitOps or `helm template` workflow.
 
 For production, use pre-existing secrets instead of setting plaintext values:
 
 ```yaml
 config:
-  existingSecret: "my-tokentimer-secrets"  # must contain SESSION_SECRET
+  existingSecret: "my-tokentimer-secrets"  # must contain SESSION_SECRET; also
+                                           # CERTOPS_SIGNING_ENCRYPTION_KEY and
+                                           # CERTOPS_REGISTRATION_ENCRYPTION_KEY
+                                           # when CertOps is enabled
 
 postgresql:
   external:
@@ -249,8 +270,8 @@ Certificate.
 The workspace pause switch blocks new human provision intents and provisioning
 command delivery. It does not delete queued/running records, and passive
 observations plus the existing executor event/evidence surfaces remain
-available. The deployment-wide `certops.enabled` rollout flag is a separate
-outer gate.
+available. The deployment-wide rollout flag (`config.certopsEnabled` in this
+chart, rendered as the `CERTOPS_ENABLED` env var) is a separate outer gate.
 
 | From | To | Direction and purpose |
 |---|---|---|

@@ -550,7 +550,11 @@ fi
 
 run systemctl daemon-reload
 run systemctl enable "$UNIT_NAME"
-run systemctl start "$UNIT_NAME"
+# restart, not start: on a re-run (upgrade) the unit is usually already active,
+# and `start` is a no-op there, so the freshly swapped app dir would keep being
+# ignored while the old process ran on. restart also starts a stopped/fresh
+# unit, so it is the correct verb for both the install and the upgrade path.
+run systemctl restart "$UNIT_NAME"
 
 log ""
 log "Install complete. Next steps:"

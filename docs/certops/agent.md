@@ -64,13 +64,27 @@ that the dashboard's Deploy-an-agent panel generates a command for. It:
 - creates a dedicated system user and install directory;
 - writes a `config.json` skeleton and stores the bootstrap token in a
   0600-mode file consumed once at first start;
-- installs, enables, and starts the hardened systemd unit
+- installs, enables, and (re)starts the hardened systemd unit
   (`packages/agent/scripts/tokentimer-agent.service`, `ProtectSystem=strict`
-  among other directives).
+  among other directives). Re-running the installer to upgrade restarts the
+  unit, so the atomically swapped app dir is what actually runs.
 
-`--dry-run` prints every action without touching the system; `--uninstall`
-removes the unit, user, and install directory. The script is POSIX shell and
-requires root (or sudo) for the real install. The recommended flow is:
+`--dry-run` prints every action without touching the system.
+
+`--uninstall` stops and disables the service, then removes the app directory,
+the unit file, the drop-in override, and the polkit rule. It deliberately
+**preserves the state directory and the system user**, because the state dir
+holds the agent credential and its signing-key pin. Nothing is wiped for you:
+
+```bash
+# after --uninstall, only if you are sure you will not re-register this agent
+sudo rm -rf /opt/tokentimer-agent
+sudo userdel tokentimer-agent
+```
+
+Retire the agent in the dashboard as well, otherwise the control plane keeps
+listing it until the stale-agent sweep marks it offline. The script is POSIX
+shell and requires root (or sudo) for the real install. The recommended flow is:
 create a bootstrap token in the dashboard (shown exactly once), copy the
 generated install command, run it on the target host, and watch the
 dashboard's agent fleet panel flip the agent to registered on first
@@ -1031,8 +1045,10 @@ The persisted `certops_agents.status` column (`active` / `offline` /
 `retired`) only ever moves *toward* `active` on the agent's own
 register/heartbeat/claim calls; it is demoted to `offline` exclusively by the
 periodic stale-agent sweep (`sweepStaleAgents` in
-`apps/worker/src/certops-worker.js`, the `certops` worker/CronJob target,
-`WORKER_CERTOPS_CRON` default `*/1 * * * *`). `livenessState` is derived from
+`apps/worker/src/certops-worker.js`, the `certops` worker/CronJob target;
+Compose schedules it with `WORKER_CERTOPS_CRON`, Kubernetes with
+`worker.cronjobs.certops.schedule`, both defaulting to `*/1 * * * *`).
+`livenessState` is derived from
 the same `CERTOPS_AGENT_OFFLINE_AFTER_MS` threshold on every list/read call,
 so the fleet panel shows `stale` immediately even in the window between
 sweeps, or if the `certops` worker/CronJob is not deployed at all. The

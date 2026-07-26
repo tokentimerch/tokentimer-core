@@ -11,6 +11,16 @@ Get TokenTimer Core running in under 5 minutes.
 - Or Node.js >= 22.0.0 + PostgreSQL 15+
 - pnpm (recommended package manager for this monorepo)
 
+For Option 3 (Kubernetes) additionally:
+
+- Kubernetes >= 1.29 and Helm >= 3.14
+- The [CloudNativePG operator](https://cloudnative-pg.io/), because the chart
+  defaults to `postgresql.cloudnative.enabled=true` and renders a CNPG
+  `Cluster` that nothing reconciles without it (the API pod then waits forever
+  for a database). Install the operator, or point the chart at an external
+  Postgres with `postgresql.external.*`. See
+  [deploy/helm/README.md](deploy/helm/README.md) for both paths.
+
 ## Option 1: Docker Compose (Fastest)
 
 ### 1. Clone and Configure
@@ -426,7 +436,7 @@ curl http://localhost:4000/health
 helm upgrade tokentimer ./deploy/helm -n tokentimer
 
 # Monitor rollout
-kubectl rollout status deployment/tokentimer-api
+kubectl rollout status deployment/tokentimer-api -n tokentimer
 ```
 
 ## Uninstalling
@@ -446,7 +456,7 @@ docker compose down -v
 ### Kubernetes
 
 ```bash
-helm uninstall tokentimer
+helm uninstall tokentimer -n tokentimer
 ```
 
 ## Getting Help
