@@ -14,6 +14,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
 
 const {
   ISSUANCE_KEY_MODE,
@@ -371,6 +372,44 @@ describe("certops issue operation plumbing", () => {
     assert.equal(dispatch._test.wireActionForOperation("issue"), "renew");
     assert.equal(dispatch._test.wireActionForOperation("renew"), "renew");
     assert.equal(dispatch._test.wireActionForOperation("deploy"), "deploy");
+  });
+
+  it("keeps the claim SQL's operation translation in sync with the mapper", () => {
+    // The claim predicate translates operations to wire actions in SQL, while
+    // dispatch does it in JS. Two copies of one mapping drift, and the failure
+    // mode is silent: a new operation whose SQL arm is missing simply never
+    // matches, so the job is created, sits pending forever, and no error is
+    // raised anywhere. Assert the SQL arms are exactly the operations whose
+    // wire action differs from their own name.
+    const source = fs.readFileSync(
+      path.join(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
+      "utf8",
+    );
+    const caseMatch = source.match(
+      /CASE operation\s+((?:WHEN '[a-z-]+' THEN '[a-z-]+'\s*)+)ELSE operation END/,
+    );
+    assert.ok(caseMatch, "the claim SQL must contain the translation CASE");
+
+    const sqlArms = new Map(
+      [...caseMatch[1].matchAll(/WHEN '([a-z-]+)' THEN '([a-z-]+)'/g)].map(
+        (arm) => [arm[1], arm[2]],
+      ),
+    );
+    const translated = new Map(
+      JOB_OPERATIONS.filter(
+        (operation) =>
+          dispatch._test.wireActionForOperation(operation) !== operation,
+      ).map((operation) => [
+        operation,
+        dispatch._test.wireActionForOperation(operation),
+      ]),
+    );
+
+    assert.deepEqual(
+      [...sqlArms.entries()].sort(),
+      [...translated.entries()].sort(),
+      "every operation whose wire action differs needs exactly one SQL arm",
+    );
   });
 
   it("does not raise a renewal alert for a failed issuance", () => {
