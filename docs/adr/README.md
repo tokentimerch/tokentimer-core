@@ -52,7 +52,7 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0007](0007-certops-certificate-removal-lifecycle.md) | CertOps certificate removal and lifecycle model (D7) | Accepted |
 | [0008](0008-certops-upfront-issuance.md) | CertOps upfront issuance and provisioning lifecycle (D9) | Accepted, amended 2026-07-26 |
 | [0009](0009-certops-durable-side-effects-and-alert-policy.md) | CertOps durable side effects and renewal alert policy | Accepted |
-| [0010](0010-certops-derived-renewal-profiles.md) | CertOps renewal profiles are derived at issuance | Accepted |
+| [0010](0010-certops-derived-renewal-profiles.md) | CertOps renewal profiles are derived at issuance | Accepted, amended 2026-07-26 |
 
 ADR-0001 through ADR-0005 were authored as Phase 0 skeletons to unblock
 parallel inventory and executor work. They remain `Proposed` until ratification moves them to
@@ -71,6 +71,12 @@ owns durable side effects and the alerting rule. ADR-0010 revises point 4 and
 owns renewal profile derivation. Neither record rewrites the original decision
 text; where amendment and original disagree, the amendment is authoritative and
 says so.
+
+ADR-0010 carries its own Amendment 1, added the same day, for the same reason the
+others exist: derivation made automatic renewal live, which turned "what may an
+operator change about a renewal" from a theoretical question into a shipping one.
+It owns the profile-level off switch, the immutability boundary on deployment
+details, and why there is no create route.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.

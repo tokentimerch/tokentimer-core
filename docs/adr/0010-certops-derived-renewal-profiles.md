@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-07-26). Amends [ADR-0008](0008-certops-upfront-issuance.md)
+Accepted (2026-07-26), amended 2026-07-26 (Amendment 1: the control surface for a
+derived profile). Amends [ADR-0008](0008-certops-upfront-issuance.md)
 decision point 4, revised by
 [Amendment 1, section A1.1](0008-certops-upfront-issuance.md#a11-renewal-configuration-is-derived-not-operator-authored-amends-4)
 of that record.
@@ -172,11 +173,14 @@ in ADR-0009.
   a behaviour change for existing `provisioning` rows only at their next
   reconciliation; certificates already `active` from before this change have no
   profile and will not gain one retroactively. Operators with such certificates
-  must author a profile once, or re-issue.
+  must author a profile once, or re-issue. *(Amendment 1 resolves this: authoring
+  is not offered, so re-issuing is the path. See A1.3.)*
 - Profile lists now contain machine-derived entries. The `Derived:` prefix and
   the `derivedFrom` metadata are the operator's signal, and dashboards should not
   present derived profiles as read-only, since editing `renew_before_days` on
-  them is the supported per-certificate override.
+  them is the supported per-certificate override. *(Amendment 1 makes this
+  precise: the lead time and the on/off switch are editable, the deployment
+  details are not. See A1.2.)*
 - `skipped_incomplete_profile` becoming non-zero is now an actionable alert
   condition for operators, and it is the series to watch after this change.
 - Derivation failures are visible only in API logs
@@ -189,3 +193,89 @@ in ADR-0009.
 - Cloud and Enterprise inherit this through the shared reconciliation path when
   they re-pin core. No migration is required by this ADR: `certificate_profiles`,
   `renew_before_days`, and `profile_id` all predate it.
+
+## Amendment 1 (2026-07-26): the control surface for a derived profile
+
+Derivation made automatic renewal live for everything TokenTimer issues. It also
+made it **unconditional**: a profile appeared by itself, the scheduler acted on
+it, and nothing in the product could inspect or stop it. The original
+consequences section understated this by treating it as a documentation and
+dashboard concern. An automation that turns itself on and cannot be turned off is
+a defect regardless of how well it is described.
+
+This amendment records the surface added in response. It does not revise any
+decision above; it decides what an operator may change about a derived profile,
+and what they may not.
+
+### A1.1 The profile is the unit of renewal control, and `status` is the switch
+
+`certificate_profiles.status` is now read by the scheduler as "is automatic
+renewal on". `disabled` and `archived` exclude every certificate linked to the
+profile, counted as `skipped_auto_renew_disabled` and surfaced per certificate as
+the `disabled` renewal state.
+
+The switch lives on the profile rather than on `managed_certificates` because
+derivation already produces one profile per issued certificate, so the profile
+*is* the per-certificate control in practice. A parallel per-certificate flag
+would be a second source of truth for the same question, and the scheduler would
+have to reconcile two answers.
+
+`archived` is not settable through the API. It exists for profiles retired by
+other means, and overloading the renewal switch to archive things would conflate
+"stop renewing this" with "retire this record".
+
+### A1.2 Deployment details are immutable after derivation
+
+The API exposes list, read, and a narrow `PATCH`. `acme`, `ca`, `dns`,
+`target`, `deploymentTargets`, `schemaVersion` and `profileId` are refused with
+`422 CERTOPS_PROFILE_FIELD_IMMUTABLE`, naming the fields.
+
+The editable subset is exactly the fields that cannot change what executes on a
+host: `sanPolicy`, `keyAlgorithm`, `keySize`, `keyRotationPolicy`,
+`verification`, `preferredChain`, plus `renew_before_days` and the switch.
+
+The reason is the same one that made derivation right in the first place. Those
+fields are trustworthy *because* a real ACME order proved them against a real
+host. Letting them be edited would recreate the failure mode derivation removed:
+a profile full of values nobody has executed, discovered to be wrong by an
+unattended renewal against a rate-limited CA. Repointing where a live
+certificate is written is a re-issuance, not a settings change, and re-issuing
+re-derives the profile from what actually worked.
+
+Every write still passes `validateRenewalProfile`, the gate the scheduler admits
+on, so the API cannot persist a profile the scheduler would later refuse.
+
+### A1.3 There is no create and no delete
+
+A profile exists because an issuance produced it. Consequence 1 above says
+operators with pre-existing `active` certificates "must author a profile once, or
+re-issue"; **authoring is not offered, so re-issuing is the only path.** That is
+the intended reading, and it follows from A1.2: a hand-authored profile is
+precisely the untested-values case the immutability boundary exists to prevent.
+
+The cost is real and accepted: a certificate TokenTimer did not issue
+(`agent_filesystem` discovery, PEM import) cannot be brought under automatic
+renewal without issuing it through CertOps.
+
+### A1.4 Reading the schedule is not gated on a client-side role check
+
+Reads (`GET /certops/profiles`, `GET /certops/renewals/upcoming`) require manager
+or above; writes require workspace admin (`certops.renewal_profile.manage`).
+
+The dashboard deliberately does **not** pre-filter reads on a locally computed
+permission. A boolean that starts `false` and collapses lookup failures into
+`false` cannot distinguish "resolving" or "denied" from "no data", and rendering
+an empty schedule for any of those makes a workspace of expiring certificates
+read as all-clear. On this surface a false negative is the worst available
+failure, so the server is the only authority and a refusal is rendered as a
+refusal. Write affordances are still hidden from non-admins, but only to avoid
+offering a button that would 403.
+
+### A1.5 Switched-off certificates stay visible
+
+A certificate with renewal switched off is listed in the upcoming schedule rather
+than filtered out of it, with a standing count. A switched-off certificate and an
+empty schedule are indistinguishable otherwise, and only one of them is safe.
+
+Switching off asks for confirmation and states how many certificates the profile
+covers. Switching on does not: the safe direction should not carry friction.

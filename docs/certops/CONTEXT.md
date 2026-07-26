@@ -175,6 +175,29 @@ the shared detector scans every outbound envelope.
   `certops-renewal-profile-derivation-failed`, and the certificate is still
   promoted. An operator-authored profile already linked to the certificate is
   never overwritten. See ADR-0010.
+- **Auto-renewal switch** - `certificate_profiles.status` read as "is automatic
+  renewal on for the certificates using this profile"
+  (`AUTO_RENEW_DISABLED_PROFILE_STATUSES` in
+  `apps/api/services/certops/renewalScheduler.js`, `{disabled, archived}`). The
+  scheduler excludes those profiles and counts them as
+  `skippedAutoRenewDisabled`; the certificates API reports the certificate's
+  renewal state as `disabled`. It lives on the profile, not on
+  `managed_certificates`, because derivation already produces one profile per
+  issued certificate, so the profile *is* the per-certificate control and a
+  second flag would be a second source of truth. `disabled` is settable through
+  the API; `archived` is not. See ADR-0010 A1.1.
+- **Safe-subset profile edit** - the deliberately narrow write surface on a
+  renewal profile (`apps/api/services/certops/renewalProfileAdmin.js`,
+  `PATCH /certops/profiles/:profileId`, permission
+  `certops.renewal_profile.manage`). `EDITABLE_PROFILE_FIELDS` is the set that
+  cannot change what executes on a host; `IMMUTABLE_PROFILE_FIELDS` (`acme`,
+  `ca`, `dns`, `target`, `deploymentTargets`, `schemaVersion`, `profileId`) is
+  refused with `CERTOPS_PROFILE_FIELD_IMMUTABLE` naming the offending fields.
+  Those values are trustworthy because a real ACME order proved them against a
+  real host, so changing them is a re-issuance rather than a settings change.
+  There is no create and no delete: a profile exists because an issuance produced
+  it. Every write revalidates through `validateRenewalProfile`, the same gate the
+  scheduler admits on. See ADR-0010 A1.2 and A1.3.
 - **Renewal alert policy** - the single source of truth for whether a terminal
   job transition notifies anyone
   (`apps/api/services/certops/renewalAlertPolicy.js`, imported by both
