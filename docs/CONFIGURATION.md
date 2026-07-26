@@ -195,6 +195,33 @@ the origins users and integrations actually use in the browser.
 | `CERTOPS_AGENT_MIN_PROTOCOL_VERSION` / `CERTOPS_AGENT_MAX_PROTOCOL_VERSION` | Supported agent protocol version window used to compute fleet `compatibilityState`. | `1.0.0` / `1.999.999` | API |
 | `CERTOPS_AGENT_MIN_AGENT_VERSION` / `CERTOPS_AGENT_MAX_AGENT_VERSION` | Supported agent build version window used to compute fleet `compatibilityState`. | `0.1.0` / `99.999.999` | API |
 | `CERTOPS_AGENT_CLOCK_DRIFT_WARN_MS` / `CERTOPS_AGENT_CLOCK_DRIFT_ALERT_MS` | Absolute clock-offset thresholds used to compute fleet `clockDriftState` (`warn`/`alert`). | `5000` / `30000` | API |
+| `CERTOPS_RENEWAL_THRESHOLD_DAYS` | Schedule a renewal when a managed certificate expires within this many days. | `30` | API + Worker |
+| `CERTOPS_RENEWAL_PER_CA_CAP` | Maximum in-flight renewals per CA endpoint per workspace, so one CA cannot be flooded. Enforced on **every** renew creation path (scheduler sweep, manual job, bulk renew): the sweep skips over-cap certificates and retries them next tick, while manual and bulk creation fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`. | `5` | API + Worker |
+| `CERTOPS_JOB_LEASE_SECONDS` | How long an agent's claim on a job stays valid before it must be renewed. Raise this if legitimate renewals routinely take longer. | `900` | API |
+| `CERTOPS_LEASE_HARD_GRACE_MS` | Extra time a still-heartbeating agent gets before its expired-lease job is judged. | `3600000` (1 hour) | API + Worker |
+
+### CertOps maintenance sweeps (worker)
+
+The `certops` worker target (Compose service `worker-certops`, Kubernetes
+`cronjob-certops`, schedule `WORKER_CERTOPS_CRON`) runs five independent
+sweeps. Each has an enable flag (default enabled) and a per-sweep timeout
+(default `120000` ms, `DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an
+operational escape hatch, not a normal configuration.
+
+| Sweep | Enable | Timeout | What it does |
+| ----- | ------ | ------- | ------------ |
+| Lease reaper | `CERTOPS_SWEEP_LEASE_REAPER_ENABLED` | `CERTOPS_SWEEP_LEASE_REAPER_TIMEOUT_MS` | Requeues or flags jobs whose lease expired |
+| Stale agents | `CERTOPS_SWEEP_STALE_AGENTS_ENABLED` | `CERTOPS_SWEEP_STALE_AGENTS_TIMEOUT_MS` | Persists `status='offline'` for agents past `CERTOPS_AGENT_OFFLINE_AFTER_MS` |
+| Nonce cache | `CERTOPS_SWEEP_NONCE_ENABLED` | `CERTOPS_SWEEP_NONCE_TIMEOUT_MS` | Expires consumed job nonces |
+| Registration replay | `CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED` | `CERTOPS_SWEEP_REGISTRATION_REPLAY_TIMEOUT_MS` | Expires registration-replay credential rows |
+| Renewal scheduler | `CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED` | `CERTOPS_SWEEP_RENEWAL_SCHEDULER_TIMEOUT_MS` | Creates renewal jobs for certificates near expiry |
+
+`CERTOPS_ENABLED` must be set for the worker too, not just the API. If the
+worker's value is out of sync, the renewal scheduler treats every workspace
+as ineligible and counts each certificate as "skipped, paused" without
+logging an error, so **nothing renews automatically** while the API and
+dashboard look healthy. See `docs/certops/agent.md` for the liveness/sweep
+interaction.
 
 **Deployment defaults differ from the app-level default above.** The Helm chart (`config.certopsEnabled`, see `deploy/helm/values.yaml`) and the Docker Compose files (`CERTOPS_ENABLED:-true` in `deploy/compose/docker-compose.yml` / `docker-compose.dev.yml`) both set `CERTOPS_ENABLED=true` unless explicitly overridden, so CertOps is **enabled by default** for Helm and Compose deployments. Set `config.certopsEnabled: false` (Helm) or `CERTOPS_ENABLED=false` (Compose `.env`) to opt out.
 
