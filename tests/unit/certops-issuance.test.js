@@ -77,6 +77,9 @@ function createIssuanceClient({
     query: async (text, params) => {
       const sql = typeof text === "string" ? text : text?.text || "";
       state.queries.push({ sql, params });
+      if (sql.includes("pg_advisory_xact_lock")) {
+        return { rows: [] };
+      }
       if (sql.includes("FROM managed_certificates") && sql.includes("source_ref")) {
         return { rows: existingCertificateId ? [{ id: existingCertificateId }] : [] };
       }
@@ -176,6 +179,25 @@ describe("certops issuance request validation", () => {
     );
   });
 
+  it("rejects a certPath that is a directory or not absolute", () => {
+    // Both shapes fail agent-side only after the ACME order has been placed,
+    // burning a rate-limited order and stranding the row in provisioning.
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          validRequest({ payload: { certPath: "/etc/ssl/tokentimer/" } }),
+        ),
+      /must be a file path, not a directory/,
+    );
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          validRequest({ payload: { certPath: "etc/ssl/web-01.pem" } }),
+        ),
+      /must be an absolute path/,
+    );
+  });
+
   it("rejects a target reference that is not a DNS name", () => {
     assert.throws(
       () =>
@@ -220,6 +242,40 @@ describe("certops issuance job creation", () => {
       jobOptions.payload.certificateId,
       NEW_CERT_ID,
       "server-assigned certificateId must match the row it reconciles",
+    );
+    assert.equal(
+      insert[9],
+      "/etc/ssl/tokentimer/web-01.example.com.pem",
+      "deployed_cert_path correlates the later filesystem scan of the same path",
+    );
+  });
+
+  it("takes the identity advisory lock before reading the identity", async () => {
+    // The workspace kill-switch lock is FOR SHARE and does not serialize two
+    // issuance requests. Without this lock, concurrent POSTs with one key both
+    // read "no certificate" and race the unique index into an opaque 500.
+    const { state, client } = createIssuanceClient();
+    await createCertificateIssuanceJob({
+      ...validRequest(),
+      client,
+      jobCreatorOverride: async () => ({ job: { id: "job-1" }, created: true }),
+    });
+
+    const lockIndex = state.queries.findIndex((q) =>
+      q.sql.includes("pg_advisory_xact_lock"),
+    );
+    const readIndex = state.queries.findIndex(
+      (q) => q.sql.includes("FROM managed_certificates") && q.sql.includes("source_ref"),
+    );
+    assert.ok(lockIndex >= 0, "an identity advisory lock is expected");
+    assert.ok(
+      lockIndex < readIndex,
+      "the lock must be held before the read-then-insert",
+    );
+    assert.equal(
+      typeof state.queries[lockIndex].params[0],
+      "string",
+      "the lock key is a stable signed bigint passed as a string",
     );
   });
 

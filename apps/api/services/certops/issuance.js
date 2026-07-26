@@ -27,6 +27,8 @@
  * never key material.
  */
 
+const crypto = require("crypto");
+
 const { createCertificateJob } = require("./jobs");
 const { assertNoPrivateKeyMaterial } = require("../../utils/secretMaterial");
 
@@ -150,16 +152,46 @@ function normalizeIssuanceRequest(options) {
   if (typeof certPath !== "string" || certPath.trim() === "") {
     throw issuanceError("issue jobs require payload.certPath");
   }
+  const trimmedCertPath = certPath.trim();
+  // A file path, not a directory. Live issuance against a directory path fails
+  // agent-side only after the ACME order has already been placed, which burns a
+  // real rate-limited order and leaves the row stuck in provisioning. Rejecting
+  // it here costs nothing and the agent's own deploy step enforces the same
+  // shape. A relative path is equally unusable: the agent resolves it against
+  // an unspecified working directory.
+  if (!trimmedCertPath.startsWith("/")) {
+    throw issuanceError(
+      "payload.certPath must be an absolute path (the agent resolves it on the host filesystem)",
+    );
+  }
+  if (trimmedCertPath.endsWith("/")) {
+    throw issuanceError(
+      "payload.certPath must be a file path, not a directory (e.g. /etc/ssl/certs/example.com.pem)",
+    );
+  }
 
-  return { idempotencyKey, commonName, sans, certPath: certPath.trim() };
+  return { idempotencyKey, commonName, sans, certPath: trimmedCertPath };
+}
+
+/**
+ * Stable signed bigint for pg_advisory_xact_lock, scoped to one issuance
+ * identity within one workspace.
+ */
+function advisoryLockKeyForIssuance(workspaceId, idempotencyKey) {
+  const digest = crypto
+    .createHash("sha256")
+    .update(`certops-issuance-identity:${workspaceId}:${idempotencyKey}`)
+    .digest();
+  return digest.readBigInt64BE(0).toString();
 }
 
 async function insertProvisioningCertificate(client, options) {
   const result = await client.query(
     `INSERT INTO managed_certificates (
        workspace_id, status, source, source_ref, name, common_name,
-       subject_alt_names, key_mode, key_reference, public_metadata
-     ) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9::jsonb)
+       subject_alt_names, key_mode, key_reference, public_metadata,
+       deployed_cert_path, deployed_agent_id
+     ) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9::jsonb, $10, $11)
      RETURNING id, status, source, source_ref, common_name`,
     [
       options.workspaceId,
@@ -176,6 +208,11 @@ async function insertProvisioningCertificate(client, options) {
           certPath: options.certPath,
         },
       }),
+      // Correlation key for the later filesystem scan of this same path, so the
+      // certificate this operator requested and the one an agent subsequently
+      // discovers are one identity rather than two.
+      options.certPath,
+      options.assignedAgentId || null,
     ],
   );
   return result.rows[0];
@@ -209,6 +246,20 @@ async function createCertificateIssuanceJob(options = {}) {
   // would either collide on the source_ref unique index or, worse, leave an
   // orphan provisioning row behind when createCertificateJob then replayed the
   // original job.
+  //
+  // The workspace kill-switch lock is FOR SHARE, which is correct for its own
+  // purpose (it conflicts with the FOR UPDATE pause transition) but does NOT
+  // serialize two issuance requests against each other. So two concurrent POSTs
+  // with the same idempotency key could both read "no existing certificate" and
+  // both attempt the insert: one wins, the other fails on the unique index with
+  // a raw 23505 surfacing as an opaque 500, when the honest answer is the same
+  // job the first request created. An advisory lock on the identity makes the
+  // read-then-insert atomic without serializing unrelated issuance in the same
+  // workspace (unlike promoting the workspace lock to FOR UPDATE).
+  await client.query("SELECT pg_advisory_xact_lock($1)", [
+    advisoryLockKeyForIssuance(workspaceId, idempotencyKey),
+  ]);
+
   const existing = await client.query(
     `SELECT id FROM managed_certificates
       WHERE workspace_id = $1 AND source = $2 AND source_ref = $3
@@ -243,6 +294,10 @@ async function createCertificateIssuanceJob(options = {}) {
       commonName,
       sans,
       certPath,
+      // Mirrors the resolution createCertificateJob performs for the job row, so
+      // the certificate is correlated to the same agent that will deploy it.
+      assignedAgentId:
+        jobOptions.assignedAgentId ?? options.payload?.assignedAgentId ?? null,
     });
     certificateId = certificate.id;
   }
