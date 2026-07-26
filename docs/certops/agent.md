@@ -222,7 +222,7 @@ Top level:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `allowedCommands` | object | Maps profile name to `{ argv: string[] }`. Every argv element is rejected at load time if it contains a shell metacharacter (`; \| & $ ` > <` or CR/LF). |
+| `allowedCommands` | object | Maps profile name to `{ argv: string[] }`. `argv` is the allowlisted **executable plus any fixed leading flags you want to require**, not the whole command line: for the built-in certbot/acme.sh CSR flows the adapter appends the subcommand and its own flags (`certonly`/`--signcsr`, `--csr <path>`, the DNS hook flags, `--server <caEndpoint>`, output paths) itself, so repeating them in `argv` duplicates them and the tool fails to parse. See the argv table in `src/acme/index.js`. Every argv element is rejected at load time if it contains a shell metacharacter (`; \| & $ ` > <` or CR/LF). |
 | `allowedPaths` | string[] | Normalized to absolute paths; containment is segment-aware (no sibling-prefix collisions). |
 | `allowedCaEndpoints` | string[] | Full-URL exact match after trailing-slash normalization. |
 | `allowedDnsZones` | string[] | Suffix match with dot boundary (`sub.example.com` covered by `example.com`, `evilexample.com` is not). |
