@@ -185,6 +185,46 @@ describe("loadAgentConfig", () => {
     );
   });
 
+  it("carries dnsPropagation.verificationMode/quorumCount through to the loaded config", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://cp.example.test",
+        dnsPropagation: {
+          verificationMode: "quorum",
+          quorumCount: 2,
+          resolvers: ["1.1.1.1", "8.8.8.8"],
+        },
+      }),
+      "utf8",
+    );
+
+    const config = loadAgentConfig({ configDir: dir });
+    // Regression: the loader used to strip these two fields, and because
+    // src/dns/hook.js re-normalizes this object every invocation, a quorum
+    // policy configured by the operator silently degraded back to "all".
+    assert.equal(config.dnsPropagation.verificationMode, "quorum");
+    assert.equal(config.dnsPropagation.quorumCount, 2);
+    assert.deepEqual(config.dnsPropagation.resolvers, ["1.1.1.1", "8.8.8.8"]);
+  });
+
+  it("rejects dnsPropagation.verificationMode 'quorum' without a quorumCount", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://cp.example.test",
+        dnsPropagation: { verificationMode: "quorum" },
+      }),
+      "utf8",
+    );
+
+    assert.throws(() => loadAgentConfig({ configDir: dir }), /quorumCount is required/);
+  });
+
   it("falls back to config.json values when env vars are unset", () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);

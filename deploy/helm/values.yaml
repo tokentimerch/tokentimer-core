@@ -465,6 +465,21 @@ config:
   # Precedence: this value > System Settings DB > code default (disabled).
   certopsEnabled: true
 
+  # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
+  # These wrap, at rest, the job-signing private keys and the agent
+  # registration-replay credentials. The API fails closed without them:
+  # agent registration and signed job dispatch throw
+  # CERTOPS_{SIGNING,REGISTRATION}_ENCRYPTION_KEY_MISSING.
+  # Left empty, the chart generates them and reuses the values already
+  # stored in the release Secret on every subsequent `helm upgrade`.
+  # Set them explicitly if you manage secrets externally or render with
+  # `helm template` (which cannot read back the existing Secret).
+  # Rotating either value makes the data it wrapped unreadable: signing
+  # keys must be re-issued and agents must re-register.
+  #   openssl rand -hex 32
+  certopsSigningEncryptionKey: ""
+  certopsRegistrationEncryptionKey: ""
+
 # -- SMTP (optional) ----------------------------------------------------------
 # Can also be configured after deployment via the admin System Settings UI.
 # Precedence: System Settings DB (admin UI) > env vars here > code defaults.

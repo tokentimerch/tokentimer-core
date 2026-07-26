@@ -56,6 +56,9 @@ Worker CronJobs:
 {{- if .Values.worker.cronjobs.autoSync.enabled }}
   Auto Sync:        {{ .Values.worker.cronjobs.autoSync.schedule }}
 {{- end }}
+{{- if .Values.worker.cronjobs.certops.enabled }}
+  CertOps:          {{ .Values.worker.cronjobs.certops.schedule }}
+{{- end }}
 
 {{- if and .Values.config.adminEmail (not .Values.config.adminPassword) (not .Values.config.existingSecret) }}
 

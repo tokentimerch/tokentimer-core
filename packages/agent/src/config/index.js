@@ -27,6 +27,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { normalizePropagationConfig } = require("../dns/propagate.js");
 const {
   assertNoPrivateKeyMaterial,
 } = require("../../vendor/log-scrub/secret-material.js");
@@ -413,67 +414,20 @@ function listConfiguredDnsProviderIds(dnsProviders) {
 }
 
 /**
- * Validates optional dnsPropagation config (timeout/interval/resolvers).
- * Delegates shape rules to src/dns/propagate.normalizePropagationConfig
- * semantics, duplicated here so config stays free of a dns import cycle.
+ * Validates optional dnsPropagation config.
+ *
+ * Delegates to src/dns/propagate.normalizePropagationConfig so the two callers
+ * (startup config load and the per-invocation normalize in src/dns/hook.js)
+ * cannot drift. A previous local copy of the rules here silently dropped
+ * verificationMode/quorumCount, which made those two documented fields
+ * unreachable: hook.js re-normalizes the object this returns, so any key the
+ * copy failed to carry over was replaced by its default.
  *
  * @param {*} raw
  * @returns {object}
  */
 function normalizeDnsPropagationConfig(raw) {
-  const DEFAULT_TIMEOUT_MS = 120 * 1000;
-  const DEFAULT_INTERVAL_MS = 2 * 1000;
-
-  if (raw === undefined || raw === null) {
-    return {
-      timeoutMs: DEFAULT_TIMEOUT_MS,
-      intervalMs: DEFAULT_INTERVAL_MS,
-      resolvers: [],
-      checkAuthoritative: true,
-    };
-  }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(
-      "tokentimer-agent: dnsPropagation in config.json must be an object " +
-        "({ timeoutMs?, intervalMs?, resolvers?, checkAuthoritative? })",
-    );
-  }
-
-  const timeoutMs = raw.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : raw.timeoutMs;
-  const intervalMs = raw.intervalMs === undefined ? DEFAULT_INTERVAL_MS : raw.intervalMs;
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new Error(
-      `tokentimer-agent: dnsPropagation.timeoutMs must be a positive integer, got ${JSON.stringify(timeoutMs)}`,
-    );
-  }
-  if (!Number.isInteger(intervalMs) || intervalMs <= 0) {
-    throw new Error(
-      `tokentimer-agent: dnsPropagation.intervalMs must be a positive integer, got ${JSON.stringify(intervalMs)}`,
-    );
-  }
-
-  let resolvers = [];
-  if (raw.resolvers !== undefined) {
-    if (
-      !Array.isArray(raw.resolvers) ||
-      raw.resolvers.some((entry) => typeof entry !== "string" || entry.length === 0)
-    ) {
-      throw new Error(
-        "tokentimer-agent: dnsPropagation.resolvers must be an array of non-empty resolver IP strings",
-      );
-    }
-    resolvers = [...raw.resolvers];
-  }
-
-  const checkAuthoritative =
-    raw.checkAuthoritative === undefined ? true : raw.checkAuthoritative;
-  if (typeof checkAuthoritative !== "boolean") {
-    throw new Error(
-      "tokentimer-agent: dnsPropagation.checkAuthoritative must be a boolean when provided",
-    );
-  }
-
-  return { timeoutMs, intervalMs, resolvers, checkAuthoritative };
+  return normalizePropagationConfig(raw);
 }
 
 /**
