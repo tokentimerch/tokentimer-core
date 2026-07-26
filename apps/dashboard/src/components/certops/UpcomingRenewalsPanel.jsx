@@ -15,6 +15,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsUpcomingRenewals } from './useCertOpsRenewals.js';
 import { expiryDescriptor, formatDate } from './certopsFormat';
 import { truncationSummary } from './certopsPagination';
@@ -34,21 +35,9 @@ function renewalWindowLabel(renewsFrom) {
   const from = new Date(renewsFrom);
   if (Number.isNaN(from.getTime())) return '--';
   return from.getTime() <= Date.now()
-    ? 'In the renewal window now'
+    ? 'Due now'
     : `From ${formatDate(renewsFrom)}`;
 }
-
-const LAST_ATTEMPT_SCHEMES = {
-  succeeded: 'green',
-  failed: 'red',
-  rejected: 'red',
-  blocked: 'red',
-  cancelled: 'gray',
-  running: 'blue',
-  leased: 'blue',
-  queued: 'blue',
-  pending_approval: 'yellow',
-};
 
 export default function UpcomingRenewalsPanel({ refreshSignal }) {
   const { renewals, total, loading, error } =
@@ -95,6 +84,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
         </HStack>
       ) : null}
 
+      {/* Only claim the schedule is empty once a read actually succeeded.
+          "Nothing scheduled" reads as "all clear", so it must never stand in
+          for a refused or failed read. */}
       {!loading && !error && renewals.length === 0 ? (
         <Box py={6} textAlign='center'>
           <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
@@ -116,16 +108,13 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                   <Th>Certificate</Th>
                   <Th>Expires</Th>
                   <Th>Renewal window</Th>
-                  <Th>Automatic renewal</Th>
+                  <Th>Auto-renew</Th>
                   <Th>Last attempt</Th>
                 </Tr>
               </Thead>
               <Tbody>
                 {renewals.map(item => {
                   const expiry = expiryDescriptor(item.notAfter);
-                  const attempt = String(
-                    item.lastRenewJobStatus || ''
-                  ).toLowerCase();
                   return (
                     <Tr key={item.certificateId}>
                       <Td>
@@ -191,16 +180,8 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                         )}
                       </Td>
                       <Td>
-                        {attempt ? (
-                          <Badge
-                            colorScheme={LAST_ATTEMPT_SCHEMES[attempt] || 'gray'}
-                            variant='subtle'
-                            textTransform='none'
-                            fontWeight='medium'
-                            fontSize='xs'
-                          >
-                            {attempt.replace(/_/g, ' ')}
-                          </Badge>
+                        {item.lastRenewJobStatus ? (
+                          <JobStatusBadge status={item.lastRenewJobStatus} />
                         ) : (
                           <Text fontSize='xs' color={muted}>
                             Never renewed

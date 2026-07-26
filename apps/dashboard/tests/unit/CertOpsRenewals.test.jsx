@@ -57,7 +57,6 @@ vi.mock('../../src/utils/toast.js', () => ({
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
   useCertOpsEnabled: () => true,
-  useCertOpsCanManage: () => true,
   useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
 }));
 
@@ -175,9 +174,7 @@ describe('CertOpsRenewals page', () => {
     // a stale date would read as "nothing happening until then".
     renderPage();
 
-    expect(
-      await screen.findByText('In the renewal window now')
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Due now')).toBeInTheDocument();
   });
 
   it('warns when a listed certificate will not renew automatically', async () => {
@@ -407,6 +404,58 @@ describe('CertOpsRenewals page', () => {
     expect(
       await screen.findByText('Failed to list upcoming renewals')
     ).toBeInTheDocument();
+    // The all-clear message must not accompany a failed read.
+    expect(
+      screen.queryByText('Nothing scheduled to renew.')
+    ).not.toBeInTheDocument();
+  });
+
+  it('says a refused read was refused instead of showing an empty schedule', async () => {
+    // A 403 carries no body worth showing, so without special handling it would
+    // degrade into "nothing scheduled to renew" and read as all-clear.
+    listUpcomingRenewalsMock.mockRejectedValue({ response: { status: 403 } });
+    listRenewalProfilesMock.mockRejectedValue({ response: { status: 403 } });
+
+    renderPage();
+
+    expect(
+      await screen.findAllByText(
+        'You do not have permission to view renewal automation for this workspace.'
+      )
+    ).toHaveLength(2);
+    expect(
+      screen.queryByText('Nothing scheduled to renew.')
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('No renewal profiles yet.')).not.toBeInTheDocument();
+  });
+
+  it('shows loading rather than an all-clear while a read is still in flight', async () => {
+    // The regression this guards: an unresolved read rendering the empty state
+    // makes a workspace full of expiring certificates look safe.
+    listUpcomingRenewalsMock.mockReturnValue(new Promise(() => {}));
+    listRenewalProfilesMock.mockReturnValue(new Promise(() => {}));
+
+    renderPage();
+
+    expect(
+      await screen.findByText('Loading renewal schedule...')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Nothing scheduled to renew.')
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('No renewal profiles yet.')).not.toBeInTheDocument();
+  });
+
+  it('reads the schedule for a manager, leaving the write refusal to the server', async () => {
+    // Reads are not gated client-side: a role lookup that has not resolved or
+    // has failed must not be able to hide an expiring certificate.
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+
+    renderPage();
+
+    expect(await screen.findByText('app.example.com')).toBeInTheDocument();
+    expect(listUpcomingRenewalsMock).toHaveBeenCalled();
+    expect(listRenewalProfilesMock).toHaveBeenCalled();
   });
 
   it('does not render renewal data when CertOps is disabled for the workspace', async () => {

@@ -279,7 +279,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                 <Tr>
                   <Th>Profile</Th>
                   <Th>Certificates</Th>
-                  <Th>Automatic renewal</Th>
+                  <Th>Auto-renew</Th>
                   <Th>Lead time</Th>
                   <Th>Key</Th>
                   {isAdmin ? <Th textAlign='right'>Actions</Th> : null}
