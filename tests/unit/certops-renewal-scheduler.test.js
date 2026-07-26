@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const {
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   DEFAULT_RENEWAL_PER_CA_CAP,
   DEFAULT_RENEWAL_THRESHOLD_DAYS,
   UNKNOWN_CA_BUCKET,
@@ -121,6 +122,7 @@ function createSchedulerPool({
   dueRows = [],
   inFlightRows = [],
   pausedWorkspaces = new Set(),
+  autoRenewDisabledCount = 0,
 } = {}) {
   const clients = [];
   const scanQueries = [];
@@ -130,6 +132,11 @@ function createSchedulerPool({
     async query(sql, params) {
       const normalized = normalizeSql(sql);
       scanQueries.push({ sql: normalized, params });
+      // Checked before the generic COUNT(*) branch: the auto-renew-disabled
+      // count is also a COUNT(*) query, so ordering here matters.
+      if (normalized.includes("disabled_count")) {
+        return { rows: [{ disabled_count: autoRenewDisabledCount }] };
+      }
       if (normalized.includes("COUNT(*)")) {
         return { rows: inFlightRows };
       }
@@ -232,6 +239,78 @@ describe("certops renewal scheduler", () => {
     assert.match(sql, /profile_public_metadata/);
     assert.strictEqual(params[0], "30");
     assert.deepStrictEqual(params[1], ["succeeded", "failed"]);
+  });
+
+  it("excludes certificates whose profile switched auto-renewal off", async () => {
+    const pool = createSchedulerPool({ dueRows: [] });
+
+    await findCertificatesDueForRenewal({
+      db: pool,
+      thresholdDays: 30,
+      terminalStatuses: ["succeeded", "failed"],
+    });
+
+    const { sql, params } = pool.scanQueries[0];
+    // The IS NULL half is load-bearing: cp.status is NULL when the LEFT JOIN
+    // matched no profile, and `NULL = ANY(...)` is NULL, so without it every
+    // profile-less certificate would be dropped from the scan and would stop
+    // being reported as an incomplete profile.
+    assert.match(
+      sql,
+      /\(cp\.status IS NULL OR NOT \(cp\.status = ANY\(\$4::text\[\]\)\)\)/,
+    );
+    assert.deepStrictEqual(params[3], ["disabled", "archived"]);
+    assert.deepStrictEqual(
+      AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+      ["disabled", "archived"],
+    );
+  });
+
+  it("reports switched-off certificates so they are not mistaken for nothing due", async () => {
+    const pool = createSchedulerPool({
+      dueRows: [],
+      autoRenewDisabledCount: 4,
+    });
+
+    const summary = await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      jobCreator: async () => {
+        throw new Error("no certificate was due, nothing should be created");
+      },
+    });
+
+    assert.strictEqual(summary.scanned, 0);
+    assert.strictEqual(summary.created, 0);
+    assert.strictEqual(summary.skippedAutoRenewDisabled, 4);
+    assert.deepStrictEqual(summary.errors, []);
+  });
+
+  it("keeps creating renewals when the switched-off count query fails", async () => {
+    const pool = createSchedulerPool({ dueRows: [dueCertificate()] });
+    const originalQuery = pool.query.bind(pool);
+    pool.query = async (sql, params) => {
+      if (normalizeSql(sql).includes("disabled_count")) {
+        throw new Error("count exploded");
+      }
+      return originalQuery(sql, params);
+    };
+    const warnings = [];
+
+    const summary = await runRenewalSchedulerSweep({
+      dbPool: pool,
+      env: {},
+      logger: { warn: (event) => warnings.push(event) },
+      jobCreator: async () => ({ job: { id: "job-1" }, created: true }),
+    });
+
+    // An observability query must never cost a real renewal.
+    assert.strictEqual(summary.created, 1);
+    assert.strictEqual(summary.skippedAutoRenewDisabled, 0);
+    assert.deepStrictEqual(summary.errors, []);
+    assert.ok(
+      warnings.includes("certops-renewal-scheduler-disabled-count-failed"),
+    );
   });
 
   it("creates an automation renew job with a resolved renewal profile snapshot", async () => {

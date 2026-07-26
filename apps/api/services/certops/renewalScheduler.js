@@ -67,6 +67,22 @@ const NON_RENEWABLE_CERTIFICATE_STATUSES = Object.freeze([
   "decommissioned",
 ]);
 
+// Profile statuses that switch automatic renewal off for every certificate
+// linked to the profile. certificate_profiles.status has carried these values
+// since the table was created, but the sweep never read the column, so setting
+// a profile to 'disabled' silently did nothing. Since renewal profiles are now
+// derived automatically at issuance (ADR-0010), this column is the operator's
+// only per-certificate way to stop automatic renewal, so the sweep has to
+// honour it.
+//
+// Filtered in SQL rather than skipped in JS: a disabled profile is not a
+// candidate at all, so it must not consume a slot in the batch LIMIT and delay
+// certificates that do renew.
+const AUTO_RENEW_DISABLED_PROFILE_STATUSES = Object.freeze([
+  "disabled",
+  "archived",
+]);
+
 function resolveRenewalThresholdDays(env = process.env) {
   const raw = env[RENEWAL_THRESHOLD_ENV];
   if (raw == null || String(raw).trim() === "") {
@@ -186,9 +202,10 @@ function renewalIdempotencyKey(certificateId, notAfter) {
 
 /**
  * Certificates due for renewal: managed, expiring within the threshold, not
- * retired, and without an existing non-terminal renew job for the same
- * subject. terminalStatuses is derived from jobs.js isTerminalJobStatus so
- * the SQL dedupe stays aligned with the service's terminal set.
+ * retired, linked to a profile that has not been switched off, and without an
+ * existing non-terminal renew job for the same subject. terminalStatuses is
+ * derived from jobs.js isTerminalJobStatus so the SQL dedupe stays aligned with
+ * the service's terminal set.
  *
  * Also loads the linked certificate_profiles row (including
  * public_metadata.renewalProfile) needed to resolve an executable payload.
@@ -231,6 +248,11 @@ async function findCertificatesDueForRenewal({
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
           (status) => `'${status}'`,
         ).join(", ")})
+        -- cp.status IS NULL means the LEFT JOIN found no profile at all, which
+        -- is a different (incomplete-profile) outcome resolved further down,
+        -- not a disabled one. Without the explicit IS NULL test the ANY()
+        -- comparison yields NULL for those rows and silently drops them.
+        AND (cp.status IS NULL OR NOT (cp.status = ANY($4::text[])))
         AND NOT EXISTS (
           SELECT 1
             FROM certificate_jobs cj
@@ -242,9 +264,62 @@ async function findCertificatesDueForRenewal({
         )
       ORDER BY mc.not_after ASC
       LIMIT $3`,
-    [String(thresholdDays), terminalStatuses, batchSize],
+    [
+      String(thresholdDays),
+      terminalStatuses,
+      batchSize,
+      AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+    ],
   );
   return result.rows;
+}
+
+/**
+ * Count certificates that WOULD be due but whose profile has automatic renewal
+ * switched off.
+ *
+ * findCertificatesDueForRenewal excludes them in SQL, so without this they
+ * would be invisible: `scanned` would not include them and no skip counter
+ * would fire, making a workspace that has disabled everything look identical to
+ * one with nothing due. An operator needs to be able to tell "nothing is
+ * expiring" from "things are expiring and I told you not to renew them".
+ *
+ * Deliberately not gated on profile completeness or key custody: this counts
+ * intent (renewal is switched off), not eligibility.
+ */
+async function countCertificatesWithAutoRenewDisabled({
+  db = pool,
+  thresholdDays,
+  terminalStatuses,
+} = {}) {
+  const result = await db.query(
+    `SELECT COUNT(*)::int AS disabled_count
+       FROM managed_certificates mc
+       JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.not_after IS NOT NULL
+        AND mc.not_after <= NOW()
+              + (COALESCE(cp.renew_before_days, $1) || ' days')::interval
+        AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
+          (status) => `'${status}'`,
+        ).join(", ")})
+        AND cp.status = ANY($3::text[])
+        AND NOT EXISTS (
+          SELECT 1
+            FROM certificate_jobs cj
+           WHERE cj.workspace_id = mc.workspace_id
+             AND cj.operation = 'renew'
+             AND cj.subject_type = 'managed_certificate'
+             AND cj.subject_id = mc.id::text
+             AND NOT (cj.status = ANY($2::text[]))
+        )`,
+    [
+      String(thresholdDays),
+      terminalStatuses,
+      AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+    ],
+  );
+  return Number(result.rows?.[0]?.disabled_count) || 0;
 }
 
 async function createRenewalJobForCertificate({
@@ -312,7 +387,8 @@ async function createRenewalJobForCertificate({
 /**
  * One renewal-planning pass. Returns a summary:
  * { thresholdDays, perCaCap, lockAcquired, scanned, created, replayed,
- *   skippedPaused, skippedByCaCap, skippedIncompleteProfile, errors }.
+ *   skippedPaused, skippedByCaCap, skippedIncompleteProfile,
+ *   skippedNotAgentDeployable, skippedAutoRenewDisabled, errors }.
  *
  * Single-flight: the whole sweep runs under a session advisory lock
  * (pg_try_advisory_lock). A second worker starting a sweep while one is in
@@ -330,6 +406,10 @@ async function createRenewalJobForCertificate({
  * Incomplete profiles: certificates whose linked renewal profile cannot be
  * resolved into a complete executable snapshot are skipped (never insert a
  * job), counted in skippedIncompleteProfile, and logged/alerted.
+ *
+ * Switched off: certificates whose profile status is 'disabled'/'archived' are
+ * excluded by the scan query and reported in skippedAutoRenewDisabled, so an
+ * operator can distinguish "nothing due" from "renewal deliberately off".
  */
 async function runRenewalSchedulerSweep({
   dbPool = pool,
@@ -361,6 +441,7 @@ async function runRenewalSchedulerSweep({
     skippedByCaCap: 0,
     skippedIncompleteProfile: 0,
     skippedNotAgentDeployable: 0,
+    skippedAutoRenewDisabled: 0,
     errors: [],
   };
 
@@ -388,6 +469,25 @@ async function runRenewalSchedulerSweep({
       db: dbPool,
       terminalStatuses,
     });
+
+    // Observability only, and deliberately outside the loop below: these
+    // certificates were excluded by the scan query, so nothing in the loop can
+    // count them. A failure here must not abort a sweep that is otherwise able
+    // to create renewals.
+    try {
+      summary.skippedAutoRenewDisabled =
+        await countCertificatesWithAutoRenewDisabled({
+          db: dbPool,
+          thresholdDays,
+          terminalStatuses,
+        });
+    } catch (error) {
+      if (logger?.warn) {
+        logger.warn("certops-renewal-scheduler-disabled-count-failed", {
+          error: error?.message,
+        });
+      }
+    }
 
     summary.scanned = dueCertificates.length;
 
@@ -483,6 +583,7 @@ async function runRenewalSchedulerSweep({
 }
 
 module.exports = {
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   DEFAULT_RENEWAL_PER_CA_CAP,
   DEFAULT_RENEWAL_THRESHOLD_DAYS,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
@@ -493,6 +594,7 @@ module.exports = {
   caCapKey,
   certificateCaBucket,
   certificateCaEndpointRaw,
+  countCertificatesWithAutoRenewDisabled,
   countInFlightRenewalJobsByCaEndpoint,
   findCertificatesDueForRenewal,
   isValidCaEndpointUrl,
