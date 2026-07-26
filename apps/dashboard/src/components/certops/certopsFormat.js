@@ -81,12 +81,104 @@ export function statusLabel(status) {
 }
 
 /**
+ * Renewal-automation states returned as `certificate.renewal.state` by
+ * GET /certops/certificates. Kept in sync with
+ * apps/api/routes/certops.js deriveCertificateRenewalState.
+ */
+export const RENEWAL_STATES = {
+  auto: 'auto',
+  notConfigured: 'not-configured',
+  notEligible: 'not-eligible',
+  notApplicable: 'not-applicable',
+};
+
+const RENEWAL_STATE_FALLBACK_HELP =
+  'TokenTimer could not determine whether this certificate renews automatically. Treat it as manual until confirmed.';
+
+/**
+ * Presentation descriptor for a certificate's renewal automation.
+ *
+ * `not-configured` is the state this whole surface exists for: the scheduler
+ * will not touch such a certificate, so it silently expires unless an operator
+ * renews it by hand. It is therefore the only warning-level scheme here.
+ * An unknown or missing `renewal` object (older API build, or a response that
+ * predates the field) is also shown as a caution rather than silently as
+ * "fine", so a stale server never renders a reassuring badge.
+ *
+ * @returns {{ state: string, label: string, scheme: string, help: string, isWarning: boolean }}
+ */
+export function renewalDescriptor(renewal) {
+  const state = renewal?.state ? String(renewal.state) : null;
+
+  if (state === RENEWAL_STATES.auto) {
+    const from = renewal?.renewsFrom ? formatDate(renewal.renewsFrom) : null;
+    const days = Number.isFinite(Number(renewal?.renewBeforeDays))
+      ? Number(renewal.renewBeforeDays)
+      : null;
+    return {
+      state,
+      label: from ? `Auto-renews from ${from}` : 'Auto-renews',
+      scheme: 'green',
+      help:
+        renewal?.detail ||
+        (days
+          ? `Renewal is attempted automatically from ${days} days before expiry.`
+          : 'Renewal is attempted automatically before expiry.'),
+      isWarning: false,
+    };
+  }
+
+  if (state === RENEWAL_STATES.notConfigured) {
+    return {
+      state,
+      label: 'No auto-renewal',
+      scheme: 'orange',
+      help:
+        renewal?.detail ||
+        'This certificate will not renew automatically and will expire unless it is renewed manually.',
+      isWarning: true,
+    };
+  }
+
+  if (state === RENEWAL_STATES.notEligible) {
+    return {
+      state,
+      label: 'Monitored only',
+      scheme: 'gray',
+      help:
+        renewal?.detail ||
+        'TokenTimer does not hold this certificate key, so it is monitored only and cannot be renewed by an agent.',
+      isWarning: false,
+    };
+  }
+
+  if (state === RENEWAL_STATES.notApplicable) {
+    return {
+      state,
+      label: 'Renewal not applicable',
+      scheme: 'gray',
+      help:
+        renewal?.detail ||
+        'Automatic renewal does not apply to this certificate lifecycle state.',
+      isWarning: false,
+    };
+  }
+
+  return {
+    state: state || 'unknown',
+    label: 'Renewal unknown',
+    scheme: 'yellow',
+    help: RENEWAL_STATE_FALLBACK_HELP,
+    isWarning: true,
+  };
+}
+
+/**
  * Retired lifecycle states. A managed certificate in
  * one of these states is hidden from the dashboard by default and its linked
  * token can no longer be hard-deleted, only revoked/decommissioned.
  */
 export const RETIRE_STATUSES = ['revoked', 'decommissioned'];
-
 export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
 }

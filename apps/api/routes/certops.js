@@ -80,10 +80,12 @@ const {
 } = require("../services/certops/jobs");
 const {
   NON_RENEWABLE_CERTIFICATE_STATUSES,
+  resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
 const {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
+  resolveRenewalProfileSnapshot,
 } = require("../services/certops/renewalProfile");
 const {
   CERTOPS_EVIDENCE_INVALID,
@@ -496,6 +498,11 @@ function jobCreateOptionsFromRequest(req) {
     subjectId: req.body?.subjectId,
     payload: req.body?.payload,
     idempotencyKey: req.body?.idempotencyKey,
+    // Optional pin to a specific agent (jobs.js: explicit assignment always
+    // wins over auto-assignment from the certificate's discovery agent).
+    // Lets an operator route a manual job to a known-good host instead of
+    // whichever eligible agent happens to poll first.
+    assignedAgentId: req.body?.assignedAgentId,
     // Per-job approval gate: an explicitly requested boolean true makes
     // the job start at pending_approval; anything else defaults to false.
     requiresApproval: req.body?.requiresApproval === true,
@@ -1968,6 +1975,232 @@ async function importCertificatesHandler(req, res, source, statusCode) {
   }
 }
 
+/**
+ * Renewal-automation state exposed with every inventory row.
+ *
+ * The renewal scheduler only creates automatic renew jobs for certificates
+ * with agent-deployable key custody AND a linked certificate_profiles row
+ * whose public_metadata.renewalProfile resolves to a complete, executable
+ * contract; everything else is counted as skippedIncompleteProfile and never
+ * renews. Without this projection an `active` certificate that will silently
+ * expire looked identical to one that renews itself, so the decision is
+ * derived here from the scheduler's own inputs instead of being guessed by
+ * the client.
+ */
+const CERTOPS_RENEWAL_STATE_AUTO = "auto";
+const CERTOPS_RENEWAL_STATE_NOT_CONFIGURED = "not-configured";
+const CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE = "not-eligible";
+const CERTOPS_RENEWAL_STATE_NOT_APPLICABLE = "not-applicable";
+
+// Mirrors AGENT_DEPLOYABLE_KEY_MODES in services/certops/jobs.js. Any other
+// custody mode (observed-only endpoint/domain monitor rows included) means no
+// agent can ever write a renewed keypair back, so renewal is impossible by
+// design rather than misconfigured.
+const AGENT_DEPLOYABLE_KEY_MODES = new Set([
+  "agent-local",
+  "proxy-agent-local",
+]);
+
+// Lifecycle states where renewal is moot rather than missing: the scheduler
+// refuses NON_RENEWABLE_CERTIFICATE_STATUSES outright, and a provisioning
+// certificate has no issued lifetime to renew yet.
+const RENEWAL_MOOT_CERTIFICATE_STATUSES = new Set([
+  ...NON_RENEWABLE_CERTIFICATE_STATUSES,
+  "provisioning",
+]);
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Effective renewal lead time: the per-profile override when it is a usable
+ * positive integer, else the deployment-wide threshold. Matches the
+ * COALESCE(cp.renew_before_days, threshold) the scheduler scans with.
+ */
+function effectiveRenewBeforeDays(profileRenewBeforeDays, env) {
+  const parsed = Number.parseInt(profileRenewBeforeDays, 10);
+  if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  return resolveRenewalThresholdDays(env);
+}
+
+function renewalWindowStart(notAfter, renewBeforeDays) {
+  if (!notAfter) return null;
+  const expiry = new Date(notAfter);
+  if (Number.isNaN(expiry.getTime())) return null;
+  return new Date(
+    expiry.getTime() - renewBeforeDays * MS_PER_DAY,
+  ).toISOString();
+}
+
+/**
+ * Derives the renewal state for one managed_certificates row joined with its
+ * certificate_profiles row (same column names the scheduler selects).
+ *
+ * Profile completeness is answered by resolveRenewalProfileSnapshot, the
+ * function the scheduler itself admits on, so the badge can never claim
+ * "auto" for a certificate the sweep would refuse. `renewsFrom` is when the
+ * sweep starts picking the certificate up (not_after minus the effective lead
+ * time), not a promise of the exact renewal moment.
+ */
+function deriveCertificateRenewalState(row, { env = process.env } = {}) {
+  const keyMode = row?.key_mode || null;
+  const base = {
+    schemaVersion: 1,
+    keyMode,
+    profileId: row?.profile_id ? String(row.profile_id) : null,
+    profileName:
+      typeof row?.profile_name === "string" ? row.profile_name : null,
+    renewBeforeDays: null,
+    renewsFrom: null,
+  };
+
+  const status = String(row?.status || "").toLowerCase();
+  if (RENEWAL_MOOT_CERTIFICATE_STATUSES.has(status)) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_APPLICABLE,
+      detail: `Automatic renewal does not apply while this certificate is ${status}.`,
+    };
+  }
+
+  if (!AGENT_DEPLOYABLE_KEY_MODES.has(keyMode)) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE,
+      detail:
+        "TokenTimer does not hold this certificate's key, so it is monitored only and cannot be renewed by an agent.",
+    };
+  }
+
+  const renewBeforeDays = effectiveRenewBeforeDays(
+    row?.profile_renew_before_days,
+    env,
+  );
+
+  let incompleteReason = null;
+  try {
+    resolveRenewalProfileSnapshot(row);
+  } catch (error) {
+    if (
+      error?.code !== CERTOPS_RENEWAL_PROFILE_INCOMPLETE &&
+      error?.code !== CERTOPS_RENEWAL_PROFILE_INVALID
+    ) {
+      throw error;
+    }
+    incompleteReason = error.message || "renewal profile is incomplete";
+  }
+
+  if (incompleteReason) {
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
+      renewBeforeDays,
+      detail: `This certificate will not renew automatically: ${incompleteReason}.`,
+    };
+  }
+
+  const renewsFrom = renewalWindowStart(row?.not_after, renewBeforeDays);
+  if (!renewsFrom) {
+    // The scheduler only scans rows with a not_after, so a complete profile
+    // still never produces a job without a recorded expiry.
+    return {
+      ...base,
+      state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
+      renewBeforeDays,
+      detail:
+        "This certificate will not renew automatically: no expiry date is recorded, so no renewal window can be computed.",
+    };
+  }
+
+  return {
+    ...base,
+    state: CERTOPS_RENEWAL_STATE_AUTO,
+    renewBeforeDays,
+    renewsFrom,
+    detail: `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
+  };
+}
+
+/**
+ * Renewal inputs for the listed certificates, joined to their profile exactly
+ * the way findCertificatesDueForRenewal joins it. Read here rather than in the
+ * inventory projection so the public-only inventory record keeps its shape and
+ * profile metadata never leaks into it verbatim.
+ */
+async function loadCertificateRenewalRows({
+  db = pool,
+  workspaceId,
+  certificateIds,
+}) {
+  const result = await db.query(
+    `SELECT mc.id,
+            mc.status,
+            mc.key_mode,
+            mc.not_after,
+            mc.common_name,
+            mc.subject_alt_names,
+            mc.profile_id,
+            cp.name AS profile_name,
+            cp.key_mode AS profile_key_mode,
+            cp.public_metadata AS profile_public_metadata,
+            cp.renew_before_days AS profile_renew_before_days
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.workspace_id = $1
+        AND mc.id = ANY($2::uuid[])`,
+    [workspaceId, certificateIds],
+  );
+  return result.rows;
+}
+
+/**
+ * Snake_case view of an inventory record, used when the renewal join returned
+ * no row for it (retired between the two reads). It carries no profile
+ * metadata, so the fallback can only ever resolve to a non-auto state: the UI
+ * degrades to "not configured", never to a false "auto".
+ */
+function renewalRowFromInventoryRecord(certificate) {
+  return {
+    id: certificate?.id,
+    status: certificate?.status,
+    key_mode: certificate?.keyMode,
+    not_after: certificate?.notAfter,
+    common_name: certificate?.commonName,
+    subject_alt_names: certificate?.subjectAltNames,
+    profile_id: certificate?.profileId,
+  };
+}
+
+async function withRenewalState({
+  db = pool,
+  env = process.env,
+  workspaceId,
+  certificates,
+}) {
+  const items = Array.isArray(certificates) ? certificates : [];
+  const certificateIds = items
+    .map((certificate) => certificate?.id)
+    .filter(Boolean)
+    .map(String);
+  if (certificateIds.length === 0) return items;
+
+  const rows = await loadCertificateRenewalRows({
+    db,
+    workspaceId,
+    certificateIds,
+  });
+  const rowsById = new Map(rows.map((row) => [String(row.id), row]));
+
+  return items.map((certificate) => ({
+    ...certificate,
+    renewal: deriveCertificateRenewalState(
+      rowsById.get(String(certificate.id)) ||
+        renewalRowFromInventoryRecord(certificate),
+      { env },
+    ),
+  }));
+}
+
 router.get(
   "/api/v1/workspaces/:id/certops/certificates",
   getApiLimiter(),
@@ -1979,7 +2212,13 @@ router.get(
         limit: req.query.limit,
         offset: req.query.offset,
       });
-      return res.json(result);
+      return res.json({
+        ...result,
+        items: await withRenewalState({
+          workspaceId: req.workspace.id,
+          certificates: result.items,
+        }),
+      });
     } catch (err) {
       logger.error("CertOps certificate list failed", {
         error: err.message,
@@ -2136,7 +2375,11 @@ router.get(
         });
       }
 
-      return res.json({ certificate });
+      const [enriched] = await withRenewalState({
+        workspaceId: req.workspace.id,
+        certificates: [certificate],
+      });
+      return res.json({ certificate: enriched || certificate });
     } catch (err) {
       logger.error("CertOps certificate detail failed", {
         error: err.message,
@@ -2167,8 +2410,10 @@ module.exports._test = {
   createManualCertificateJobHandler,
   bulkRenewCertificatesHandler,
   bulkRenewItemIdempotencyKey,
-  parseBulkRenewRequest,
   createControllerProvisionIntentHandler,
+  deriveCertificateRenewalState,
+  parseBulkRenewRequest,
   requireCertOpsSessionUser,
   handleCertOpsError,
+  withRenewalState,
 };

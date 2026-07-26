@@ -5,6 +5,11 @@
 Accepted (2026-07-26). Design decision D9 in the CertOps plan's accepted
 architecture choices table.
 
+**Amended (2026-07-26, release 0.11.0).** Decision points 4, 5, 6, and 8 are
+revised by [Amendment 1](#amendment-1-2026-07-26-issuance-hardening-and-renewal-enablement-0110)
+at the end of this record. Read the amendment before relying on those four
+points: two of them (agents need no upgrade, alerting unchanged) no longer hold.
+
 ## Context
 
 CertOps job operations are `renew`, `deploy`, `reload`, `revoke`, and `noop`.
@@ -203,3 +208,142 @@ inventory field.
 - The `operation` (control plane) versus `action` (wire) distinction is now a
   real part of the model. Future operations may also be control-plane-only, and
   reviewers should not assume the two enums must converge.
+
+## Amendment 1 (2026-07-26): issuance hardening and renewal enablement (0.11.0)
+
+The original record was written before `issue` had been exercised end to end
+against a live stack. First contact produced four corrections. The original
+decision text above is kept verbatim; this section is authoritative where the
+two disagree.
+
+### A1.1 Renewal configuration is derived, not operator-authored (amends 4)
+
+Decision point 4 ends "Renewal configuration is set on the row after it becomes
+`active`", which read as an operator task deferred to later. It was neither
+deferred nor a task: nothing in the product wrote `certificate_profiles` and
+nothing set `managed_certificates.profile_id`, so the renewal scheduler counted
+every issued certificate as `skippedIncompleteProfile` on every sweep, forever.
+The result was the exact failure this ADR set out to avoid, one step later in
+the lifecycle: a dashboard-visible `active` certificate with a real expiry date
+that nothing would ever renew.
+
+The renewal profile is now **derived from the issue job payload that just
+succeeded** and persisted during the same reconciliation transaction that
+promotes the certificate
+(`apps/api/services/certops/renewalProfileDerivation.js`). A successful issuance
+is the only moment where every field the profile needs is both known and proven
+to work against the real CA. See ADR-0010 for the derivation contract, the SAN
+pinning decision, and the failure modes.
+
+Point 4's prohibition on a `renewalProfile` **snapshot in the issue job payload**
+stands unchanged. The caller still may not supply one. What changed is who
+produces it afterwards, and when.
+
+### A1.2 Agents are no longer upgrade-free for `issue` (amends 5)
+
+Decision point 5 and the third consequence bullet both state that field agents
+accept `issue` jobs with no upgrade, on the grounds that they only ever see
+`action: "renew"`. That is still true of the wire contract, and no protocol
+schema or `schemaVersion` change was needed. It turned out to be insufficient.
+
+Reconciliation (point 6, tightened in A1.3) requires evidence bound to the
+specific job claim being executed. An agent that does not bind evidence to its
+claim can complete an issuance perfectly and still leave the certificate at
+`provisioning` forever, with real material deployed on the host and no way for
+the control plane to prove what is there. Dispatching to such an agent produces
+the worst available outcome: work done, nothing recorded.
+
+The claim query therefore gates on a declared agent capability,
+`evidence-claim-binding-v1`, for both shapes of job that need claim-bound
+evidence:
+
+- `operation = 'issue'`, and
+- `operation = 'renew'` where the subject certificate is still `provisioning`,
+  which is the retry path point 6 deliberately created.
+
+An agent without the capability keeps claiming ordinary renewals of `active`
+certificates exactly as before, so this is not a fleet-wide upgrade requirement.
+It is a requirement on whichever hosts should run issuance. The operator-visible
+symptom of a fleet that is behind is an `issue` job that stays `pending` and is
+never claimed, with no error: the capability is a matching predicate, not a
+rejection. That is a deliberate trade (no work is better than unreconcilable
+work), and it is why the gate is documented on the operator-facing issuance page
+rather than only here.
+
+The capability name is a contract surface under the README's change-control
+rule. Agents declare it during registration and heartbeat; see ADR-0002.
+
+### A1.3 Promotion requires claim-bound verify-step evidence (tightens 6)
+
+Decision point 6 says promotion backfills from "that job's `validation.passed`
+evidence". Two ambiguities in that phrasing were exploitable in practice:
+
+1. **Which `validation.passed`.** The agent emits it twice per run: once when the
+   ACME order returns, and once after the deployed file has been read back and
+   fingerprinted. Only the second describes what is on the host. Accepting the
+   first records the certificate the control plane asked for rather than the one
+   that exists.
+2. **From which attempt.** A job can be attempted more than once and evidence
+   from an earlier attempt outlives it, so an unbound lookup can promote attempt
+   2 using attempt 1's fingerprint.
+
+Promotion now requires evidence whose `metadata.step` is `verify`, whose
+`claim_id` equals the job's current claim, and which carries **both** a
+fingerprint and a parseable expiry. Expiry is mandatory because a certificate
+without one cannot be scheduled for renewal or alerted on, so activating without
+it produces a row that looks healthy and is silently unmanaged, which is the
+same class of defect as the one in A1.1.
+
+When a check fails the row stays `provisioning` and records a
+`reconciliation_reason` an operator can read:
+`no_claim_bound_verify_evidence`, `verify_evidence_missing_fingerprint`, or
+`verify_evidence_missing_expiry`. The reason is cleared on successful promotion.
+Point 7's "failure leaves the row in place" therefore now covers a second case:
+not only a failed job, but a succeeded job whose evidence was insufficient.
+
+Request validation was tightened for the same reason, one step earlier:
+`payload.certPath` must be an absolute file path, rejected at request time
+rather than agent-side after the ACME order has been placed. A rejection after
+the order burns a real rate-limited order and leaves a stuck `provisioning` row,
+which is a needlessly expensive way to learn about a trailing slash. Identity
+resolution is additionally serialized on a per-identity advisory lock, so the
+concurrent-retry case described in point 3 returns the same job instead of a
+constraint violation surfaced as an HTTP 500.
+
+### A1.4 Alerting is not unchanged: a failed issuance does not alert (replaces 8)
+
+Decision point 8 asserted that a failed `issue` job raises the same
+`cert_renewal_failed` alert as a failed `renew`. It did not, and the way it
+failed to is instructive: the dispatcher's alerting operation set said
+`{renew, issue}` while the alert resolver hard-rejected anything but `renew`, so
+failed issuances were dispatched into an alert path that silently discarded
+them. Point 8 documented an intent that the code never had.
+
+Rather than make the code match point 8, the decision itself is reversed:
+**a failed `issue` job deliberately does not raise a renewal-failure alert.**
+The reasoning is the one this ADR already relies on elsewhere:
+
+- A failed **renewal** means a certificate that exists, is serving traffic, and
+  has a real expiry was not replaced. There is a deadline, and inaction breaks
+  something. That is what an alert is for.
+- A failed **issuance** means a certificate that was never created. Nothing is
+  serving it, nothing is expiring, and there is no deadline. Per point 7 the
+  operator already has a visible, non-terminal `provisioning` row with the
+  failed job and its evidence attached, which is a better record than a
+  notification. There is also nothing to route through: renewal alerts are
+  addressed via the certificate's linked token, and per A1.3 the token is only
+  linked once a verified expiry exists.
+
+Once an issued certificate reaches `active`, its subsequent renewals alert
+normally, so this is a difference in the first attempt only.
+
+The rule now lives in exactly one place,
+`apps/api/services/certops/renewalAlertPolicy.js`, imported by both the
+dispatcher and the resolver, precisely so the two cannot disagree again. See
+ADR-0009, which also covers how the intent to alert is made durable.
+
+**Operator-facing consequence:** watch `provisioning` certificates for issuance
+problems and alerts for renewal problems. The dashboard must therefore make
+`provisioning` visually distinct (already required by the fourth consequence
+bullet above); with A1.4 that requirement is load-bearing rather than cosmetic.
+
