@@ -110,7 +110,7 @@ function normalizePropagationConfig(raw) {
   }
 
   let quorumCount = null;
-  if (raw.quorumCount !== undefined) {
+  if (raw.quorumCount !== undefined && raw.quorumCount !== null) {
     if (!isPositiveInt(raw.quorumCount)) {
       throw new Error(
         `tokentimer-agent: dnsPropagation.quorumCount must be a positive integer, got ${JSON.stringify(raw.quorumCount)}`,

@@ -57,6 +57,8 @@
  *                "--server", caEndpoint,
  *                "-d", domain      (repeated per domain, in input order),
  *                "--cert-path", outCertPath,
+ *                "--chain-path", "<outCertPath sibling>.chain.pem",
+ *                "--fullchain-path", "<outCertPath sibling>.fullchain.pem",
  *                "--config-dir", "<stateDir>/acme/certbot/config",
  *                "--work-dir",   "<stateDir>/acme/certbot/work",
  *                "--logs-dir",   "<stateDir>/acme/certbot/logs",
@@ -350,6 +352,17 @@ function buildAdapterArgs(kind, {
     // part of this string — only the hook binary path + mode.
     const authHook = `${dnsHookPath} present`;
     const cleanupHook = `${dnsHookPath} cleanup`;
+    // certbot's --csr mode defaults --chain-path/--fullchain-path to
+    // ./chain.pem / ./fullchain.pem (relative to its cwd), NOT next to
+    // --cert-path. Left unset, that resolves against wherever the agent
+    // process happens to be running (e.g. a systemd-sandboxed "/", which
+    // is read-only) and certbot aborts after the ACME order already
+    // succeeded. Pin both explicitly next to outCertPath so save always
+    // lands in the job-scoped keysDir this adapter actually controls.
+    const outCertDir = path.dirname(outCertPath);
+    const outCertBase = path.basename(outCertPath, ".pem");
+    const chainPath = path.join(outCertDir, `${outCertBase}.chain.pem`);
+    const fullchainPath = path.join(outCertDir, `${outCertBase}.fullchain.pem`);
     // No --dry-run here: certbot rejects --dry-run combined with --csr, and
     // this adapter always issues via --csr. runRenewal rejects dryRun:true
     // for kind === "certbot" before this function is ever called.
@@ -370,6 +383,10 @@ function buildAdapterArgs(kind, {
       ...domainFlags,
       "--cert-path",
       outCertPath,
+      "--chain-path",
+      chainPath,
+      "--fullchain-path",
+      fullchainPath,
       "--config-dir",
       paths.certbotConfigDir,
       "--work-dir",

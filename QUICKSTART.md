@@ -297,7 +297,7 @@ The worker runner uses explicit cron schedules and will:
 To test immediately, check the `alert_queue` table:
 
 ```sql
-SELECT * FROM alert_queue ORDER BY queued_at DESC LIMIT 10;
+SELECT * FROM alert_queue ORDER BY created_at DESC LIMIT 10;
 ```
 
 ## Troubleshooting
@@ -389,7 +389,6 @@ Expected response:
   "status": "healthy",
   "timestamp": "2026-03-19T12:00:00.000Z",
   "uptime": 123.456,
-  "memory": { "rss": 52428800 },
   "environment": "production"
 }
 ```
@@ -418,12 +417,23 @@ docker compose exec -T postgres psql -U tokentimer tokentimer < backup.sql
 
 ### Docker Compose
 
-```bash
-# Pull latest images
-docker compose pull
+Which commands you need depends on which of the two patterns from [Start All Services](#3-start-all-services) you deployed.
 
-# Restart services
-docker compose up -d
+Build from local source (the default: app services declare `build:` with no `image:`, so `docker compose pull` has nothing to fetch for them):
+
+```bash
+git pull
+docker compose up -d --build
+
+# Verify health
+curl http://localhost:4000/health
+```
+
+Prebuilt images (the `docker-compose.images.yml` override):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.images.yml pull
+docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
 
 # Verify health
 curl http://localhost:4000/health
