@@ -61,7 +61,7 @@ When a user without membership logs in (local or SSO):
 - **Promote** an existing member to workspace owner via the role dropdown (only Viewer and Manager).
 - **Demote or remove** a workspace owner via the Members tab (API blocks changes to `admin` membership rows).
 
-To add another workspace owner today you would need a direct database change; the product intentionally supports a single owner per workspace until [v1.0.0](ROADMAP.md#v100----rbac-and-role-model-cleanup) adds co-owner management.
+To add another workspace owner today you would need a direct database change; the product intentionally supports a single owner per workspace until [v1.0.0](../ROADMAP.md#v100----rbac-and-role-model-cleanup) adds co-owner management.
 
 ### Granting a second system admin
 

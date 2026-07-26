@@ -1078,9 +1078,10 @@ re-dispatching work for the same certificate/target.
 A retired agent that learns of its own retirement (heartbeat/claim answered
 410) exits with **`AGENT_RETIRED_EXIT_CODE = 86`**
 (`packages/agent/src/index.js`), matched by `RestartPreventExitStatus=86` in
-`scripts/tokentimer-agent.service`. The unit is `Restart=always`, so without
-that pairing systemd would respawn a decommissioned agent into an endless
-heartbeat-410 loop (ADR-0002 clean retirement).
+`packages/agent/scripts/tokentimer-agent.service`. The unit is
+`Restart=always`, so without that pairing systemd would respawn a
+decommissioned agent into an endless heartbeat-410 loop (ADR-0002 clean
+retirement).
 
 Operational consequence worth stating for support: a unit sitting
 `inactive (dead)` with `status=86` is **not** a crash. It is the designed
