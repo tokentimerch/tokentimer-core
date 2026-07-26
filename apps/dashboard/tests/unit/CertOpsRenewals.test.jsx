@@ -126,6 +126,7 @@ function upcoming(overrides = {}) {
     profileId: 'profile-1',
     profileName: 'Derived: app.example.com',
     autoRenewEnabled: true,
+    blockedReason: null,
     renewBeforeDays: 30,
     lastRenewJobStatus: 'succeeded',
     ...overrides,
@@ -181,7 +182,12 @@ describe('CertOpsRenewals page', () => {
     // The failure this page exists to prevent: a certificate counting down to
     // expiry with renewal quietly switched off.
     listUpcomingRenewalsMock.mockResolvedValue({
-      items: [upcoming({ autoRenewEnabled: false })],
+      items: [
+        upcoming({
+          autoRenewEnabled: false,
+          blockedReason: 'auto_renew_disabled',
+        }),
+      ],
       total: 1,
       limit: 50,
       offset: 0,
@@ -191,9 +197,57 @@ describe('CertOpsRenewals page', () => {
 
     expect(
       await screen.findByText(
-        '1 certificate below will not renew automatically and will expire unless it is renewed by hand.'
+        '1 certificate has automatic renewal switched off. Affected certificates will expire unless they are renewed by hand.'
       )
     ).toBeInTheDocument();
+  });
+
+  it('distinguishes a missing renewal profile from a deliberate switch-off', async () => {
+    // These need different words because they need different responses. A
+    // switched-off certificate is a decision the operator can reverse from the
+    // panel below; one with no profile is a broken issuance no toggle will fix.
+    // Labelling both "Off" would send them to a control that cannot help.
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: false,
+          blockedReason: 'no_profile',
+          profileId: null,
+          profileName: null,
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('No profile')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '1 certificate cannot be renewed automatically because its renewal profile is missing or unusable. Affected certificates will expire unless they are renewed by hand.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
+  });
+
+  it('flags a profile the scheduler cannot execute', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({
+          autoRenewEnabled: false,
+          blockedReason: 'incomplete_profile',
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Incomplete')).toBeInTheDocument();
   });
 
   it('reports a certificate that has never been renewed instead of leaving the cell blank', async () => {
@@ -387,7 +441,7 @@ describe('CertOpsRenewals page', () => {
     renderPage();
 
     expect(
-      await screen.findByText('Nothing scheduled to renew.')
+      await screen.findByText('No renewable certificates.')
     ).toBeInTheDocument();
     expect(
       await screen.findByText('No renewal profiles yet.')
@@ -406,7 +460,7 @@ describe('CertOpsRenewals page', () => {
     ).toBeInTheDocument();
     // The all-clear message must not accompany a failed read.
     expect(
-      screen.queryByText('Nothing scheduled to renew.')
+      screen.queryByText('No renewable certificates.')
     ).not.toBeInTheDocument();
   });
 
@@ -424,7 +478,7 @@ describe('CertOpsRenewals page', () => {
       )
     ).toHaveLength(2);
     expect(
-      screen.queryByText('Nothing scheduled to renew.')
+      screen.queryByText('No renewable certificates.')
     ).not.toBeInTheDocument();
     expect(screen.queryByText('No renewal profiles yet.')).not.toBeInTheDocument();
   });
@@ -441,7 +495,7 @@ describe('CertOpsRenewals page', () => {
       await screen.findByText('Loading renewal schedule...')
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('Nothing scheduled to renew.')
+      screen.queryByText('No renewable certificates.')
     ).not.toBeInTheDocument();
     expect(screen.queryByText('No renewal profiles yet.')).not.toBeInTheDocument();
   });

@@ -25,6 +25,7 @@ const {
   CERTOPS_PROFILE_NO_CHANGES,
   EDITABLE_PROFILE_FIELDS,
   applyRenewalProfilePatch,
+  listUpcomingRenewals,
   normalizeRenewBeforeDays,
   updateRenewalProfile,
 } = admin;
@@ -459,5 +460,154 @@ describe("CertOps renewal-profile update transaction", () => {
       }),
       (error) => error.code === CERTOPS_PROFILE_INVALID,
     );
+  });
+});
+
+/**
+ * The all-clear is the dangerous answer.
+ *
+ * This view's only purpose is to expose certificates that will not renew
+ * themselves. An earlier implementation inner-joined certificate_profiles, so
+ * every certificate without a profile (the exact population at risk, since a
+ * failed derivation leaves profile_id NULL) was omitted, and the page rendered
+ * "nothing scheduled to renew" for a workspace where nothing renewed at all.
+ * These tests exist so that failure mode cannot come back quietly.
+ */
+describe("CertOps upcoming renewals coverage", () => {
+  function certificateRow(overrides = {}) {
+    return {
+      id: "22222222-0000-4000-8000-000000000001",
+      common_name: "app.example.com",
+      subject_alt_names: ["app.example.com"],
+      not_after: new Date(Date.now() + 5 * 86400000),
+      status: "active",
+      key_mode: "agent-local",
+      profile_id: "11111111-0000-4000-8000-000000000001",
+      profile_name: "Derived: app.example.com",
+      profile_status: "active",
+      profile_key_mode: "agent-local",
+      profile_public_metadata: { renewalProfile: storedProfile() },
+      profile_renew_before_days: 30,
+      renews_from: new Date(Date.now() - 86400000),
+      last_renew_job_status: null,
+      ...overrides,
+    };
+  }
+
+  function listPool(rows) {
+    const seen = [];
+    return {
+      seen,
+      async query(sql, params = []) {
+        const normalized = String(sql).replace(/\s+/g, " ").trim();
+        seen.push(normalized);
+        if (normalized.includes("COUNT(*)")) {
+          return { rows: [{ total: rows.length }] };
+        }
+        return { rows };
+      },
+    };
+  }
+
+  async function listOne(overrides) {
+    const pool = listPool([certificateRow(overrides)]);
+    const result = await listUpcomingRenewals({
+      db: pool,
+      workspaceId: "ws-1",
+      thresholdDays: 30,
+    });
+    return { item: result.items[0], queries: pool.seen };
+  }
+
+  it("reports a certificate with no profile instead of hiding it", async () => {
+    const { item } = await listOne({
+      profile_id: null,
+      profile_name: null,
+      profile_status: null,
+      profile_public_metadata: null,
+      profile_renew_before_days: null,
+    });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "no_profile");
+    // Falls back to the deployment threshold so the row still shows a window.
+    assert.equal(item.renewBeforeDays, 30);
+  });
+
+  it("does not join profiles in a way that can drop certificates", async () => {
+    const { queries } = await listOne();
+    const selects = queries.filter((sql) =>
+      sql.includes("FROM managed_certificates"),
+    );
+    assert.ok(selects.length > 0, "expected a certificate query");
+    for (const sql of selects) {
+      assert.ok(
+        !/(?<!LEFT )JOIN certificate_profiles/.test(sql),
+        `inner join would hide unprotected certificates: ${sql}`,
+      );
+    }
+  });
+
+  it("counts the same population it lists", async () => {
+    // A total computed over a narrower population than the page produces a
+    // truncation notice that contradicts the table.
+    const { queries } = await listOne();
+    const countQuery = queries.find((sql) => sql.includes("COUNT(*)"));
+    assert.ok(countQuery);
+    assert.ok(!countQuery.includes("JOIN certificate_profiles"));
+    assert.ok(countQuery.includes("status NOT IN"));
+  });
+
+  it("reports a profile the scheduler cannot execute as incomplete", async () => {
+    const { item } = await listOne({
+      profile_public_metadata: { renewalProfile: { schemaVersion: 1 } },
+    });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "incomplete_profile");
+  });
+
+  it("reports an empty renewalProfile body as incomplete, not as enabled", async () => {
+    const { item } = await listOne({ profile_public_metadata: {} });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "incomplete_profile");
+  });
+
+  it("prefers the operator's switch-off over an incompleteness defect", async () => {
+    // Both are true here. Reporting the reversible decision is what lets the
+    // operator recognise their own action instead of chasing a phantom bug.
+    const { item } = await listOne({
+      profile_status: "disabled",
+      profile_public_metadata: {},
+    });
+
+    assert.equal(item.blockedReason, "auto_renew_disabled");
+  });
+
+  it("reports a certificate with no expiry rather than implying a schedule", async () => {
+    const { item } = await listOne({ not_after: null, renews_from: null });
+
+    assert.equal(item.autoRenewEnabled, false);
+    assert.equal(item.blockedReason, "unknown_expiry");
+  });
+
+  it("marks a fully resolvable certificate as covered", async () => {
+    const { item } = await listOne();
+
+    assert.equal(item.autoRenewEnabled, true);
+    assert.equal(item.blockedReason, null);
+  });
+
+  it("never returns the profile body, which carries deployment topology", async () => {
+    const { item } = await listOne();
+
+    for (const key of Object.keys(item)) {
+      assert.ok(
+        !/publicMetadata|renewalProfile|deploymentTargets|certPath/i.test(key),
+        `unexpected topology field on the response: ${key}`,
+      );
+    }
+    assert.equal(JSON.stringify(item).includes(CERT_PATH), false);
   });
 });

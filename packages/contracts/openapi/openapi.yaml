@@ -3564,15 +3564,18 @@ paths:
       summary: List upcoming automatic renewals
       operationId: listCertOpsUpcomingRenewals
       description: |
-        Returns active certificates that have a renewal profile, ordered by
-        expiry, with the date the renewal scheduler starts attempting each one
+        Returns every renewable certificate in the workspace, ordered by expiry,
+        with the date the renewal scheduler starts attempting each one
         (`renewsFrom`, computed as notAfter minus the effective lead time) and
-        whether automatic renewal is switched on.
+        whether the scheduler would actually renew it.
 
-        Certificates with `autoRenewEnabled` false are still listed: an operator
-        needs to see that a certificate is expiring AND that renewal was
-        deliberately switched off, which is otherwise indistinguishable from
-        nothing being due.
+        Deliberately NOT restricted to certificates that will renew. A
+        certificate with no renewal profile, or with a profile the scheduler
+        cannot execute, is exactly the certificate that will silently expire, so
+        excluding it would make this endpoint report an all-clear for a workspace
+        where nothing renews at all. Every row that will not be renewed carries a
+        `blockedReason` naming the cause, distinguishing an operator's deliberate
+        switch-off from a defect.
 
         Manager-only, matching the profile routes: each row carries the profile's
         lead time and identity, and the view exists to be read alongside them.
@@ -6044,6 +6047,10 @@ components:
               commonName:
                 type: string
                 nullable: true
+              certificateStatus:
+                type: string
+                nullable: true
+                description: Inventory status of the certificate. Non-renewable statuses (revoked, decommissioned) are excluded from this list entirely.
               notAfter:
                 type: string
                 format: date-time
@@ -6062,6 +6069,19 @@ components:
                 nullable: true
               autoRenewEnabled:
                 type: boolean
+                description: True only when the scheduler would actually create a renewal job for this certificate. False whenever anything prevents that, with blockedReason naming the cause.
+              blockedReason:
+                type: string
+                nullable: true
+                description: >-
+                  Why the scheduler will not renew this certificate, or null when it will.
+                  auto_renew_disabled is an operator decision and is reversible from the
+                  profile controls; the others are defects that no toggle will fix.
+                enum:
+                  - auto_renew_disabled
+                  - no_profile
+                  - incomplete_profile
+                  - unknown_expiry
               renewBeforeDays:
                 type: integer
                 description: Effective lead time, falling back to the deployment threshold when the profile does not set one.

@@ -36,11 +36,17 @@ const { pool } = require("../../db/database");
 const { writeAudit } = require("../audit");
 const {
   ACME_KINDS,
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+  CERTOPS_RENEWAL_PROFILE_INVALID,
   KEY_ALGORITHMS,
   SAN_POLICY_MODES,
+  resolveRenewalProfileSnapshot,
   validateRenewalProfile,
 } = require("./renewalProfile");
-const { AUTO_RENEW_DISABLED_PROFILE_STATUSES } = require("./renewalScheduler");
+const {
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  NON_RENEWABLE_CERTIFICATE_STATUSES,
+} = require("./renewalScheduler");
 
 const CERTOPS_PROFILE_NOT_FOUND = "CERTOPS_PROFILE_NOT_FOUND";
 const CERTOPS_PROFILE_INVALID = "CERTOPS_PROFILE_INVALID";
@@ -70,6 +76,18 @@ const SETTABLE_PROFILE_STATUSES = Object.freeze(["active", "disabled"]);
  *   - acme.commandRef, acme.kind
  *   - ca.endpoint, ca.accountRef, ca.eabRef
  *   - dns.provider, dns.zone
+ *
+ * KNOWN LIMITATION (2026-07-26, external review blocker 4). Edits made here are
+ * not durable against re-derivation. ensureDerivedRenewalProfile upserts on
+ * (workspace_id, LOWER(name)) where the name is `Derived: <commonName>`, and its
+ * DO UPDATE replaces public_metadata wholesale. So issuing a second certificate
+ * with the same common name overwrites every field below with freshly derived
+ * values, and reports created:false, which reads as a benign idempotent replay.
+ * The fix belongs to the derivation identity (it should key on something
+ * certificate-scoped such as source_ref), not here: guarding the write on this
+ * side would preserve an operator's edit on top of a profile whose deployment
+ * details now describe a different host, which is worse. Until that lands, treat
+ * a same-CN re-issuance as resetting these fields.
  */
 const EDITABLE_PROFILE_FIELDS = Object.freeze([
   "sanPolicy",
@@ -457,14 +475,69 @@ async function updateRenewalProfile({
 }
 
 /**
+ * Why a certificate will not be renewed automatically, or null when it will.
+ *
+ * Resolved with resolveRenewalProfileSnapshot, the exact function the scheduler
+ * admits on, so this view cannot claim a certificate is covered when the sweep
+ * would refuse it. The two failure codes the resolver raises are collapsed into
+ * operator-meaningful causes rather than surfaced raw.
+ */
+const RENEWAL_BLOCKED_NO_PROFILE = "no_profile";
+const RENEWAL_BLOCKED_INCOMPLETE_PROFILE = "incomplete_profile";
+const RENEWAL_BLOCKED_AUTO_RENEW_DISABLED = "auto_renew_disabled";
+const RENEWAL_BLOCKED_UNKNOWN_EXPIRY = "unknown_expiry";
+
+/**
+ * Classifies one row exactly as the sweep would.
+ *
+ * Order matters and encodes intent versus capability. A switched-off profile is
+ * reported as switched off even if it is also incomplete, because that is the
+ * state the operator chose and the one they can undo. Everything else is a
+ * defect they need to fix.
+ */
+function classifyRenewalBlock(row) {
+  if (
+    AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(
+      String(row.profile_status || "").toLowerCase(),
+    )
+  ) {
+    return RENEWAL_BLOCKED_AUTO_RENEW_DISABLED;
+  }
+  if (row.not_after == null) return RENEWAL_BLOCKED_UNKNOWN_EXPIRY;
+  if (!row.profile_id) return RENEWAL_BLOCKED_NO_PROFILE;
+  try {
+    resolveRenewalProfileSnapshot(row);
+    return null;
+  } catch (error) {
+    if (
+      error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE ||
+      error?.code === CERTOPS_RENEWAL_PROFILE_INVALID
+    ) {
+      return RENEWAL_BLOCKED_INCOMPLETE_PROFILE;
+    }
+    throw error;
+  }
+}
+
+/**
  * Certificates the renewal scheduler is expected to act on next.
  *
- * Reports every agent-deployable certificate with a linked profile regardless
- * of whether it is inside the renewal window yet, so an operator can answer
- * "what renews next, and is anything switched off" from one place. The window
- * start is computed exactly as the scheduler scans (not_after minus the
- * effective lead time), so this view cannot disagree with what actually
- * happens.
+ * Reports every renewable certificate regardless of whether it is inside the
+ * renewal window yet, so an operator can answer "what renews next, and is
+ * anything not covered" from one place. The window start is computed exactly as
+ * the scheduler scans (not_after minus the effective lead time).
+ *
+ * Deliberately a LEFT JOIN over the same status filter the sweep uses, and
+ * deliberately not filtered on a resolvable profile. An inner join here was a
+ * real defect: a certificate with no profile, or with a profile the scheduler
+ * would refuse, is precisely the certificate that will silently expire, and
+ * hiding it made this page answer "nothing scheduled to renew" for a workspace
+ * where nothing renews at all. On a page whose only job is to expose
+ * unattended-renewal risk, the reassuring answer has to be the one that is
+ * hardest to produce by accident.
+ *
+ * The profile body is read to classify readiness but never returned: it carries
+ * deployment topology, which is why these routes are manager-gated.
  */
 async function listUpcomingRenewals({
   db = pool,
@@ -475,16 +548,22 @@ async function listUpcomingRenewals({
 } = {}) {
   const safeLimit = normalizeLimit(limit);
   const safeOffset = normalizeOffset(offset);
+  const renewableStatusFilter = NON_RENEWABLE_CERTIFICATE_STATUSES.map(
+    (status) => `'${status}'`,
+  ).join(", ");
 
   const result = await db.query(
     `SELECT mc.id,
             mc.common_name,
+            mc.subject_alt_names,
             mc.not_after,
             mc.status,
             mc.key_mode,
             mc.profile_id,
             cp.name AS profile_name,
             cp.status AS profile_status,
+            cp.key_mode AS profile_key_mode,
+            cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days,
             mc.not_after
               - (COALESCE(cp.renew_before_days, $2) || ' days')::interval
@@ -500,12 +579,11 @@ async function listUpcomingRenewals({
                LIMIT 1
             ) AS last_renew_job_status
        FROM managed_certificates mc
-       JOIN certificate_profiles cp
+       LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.workspace_id = $1
-        AND mc.not_after IS NOT NULL
-        AND mc.status = 'active'
-      ORDER BY mc.not_after ASC
+        AND mc.status NOT IN (${renewableStatusFilter})
+      ORDER BY mc.not_after ASC NULLS LAST, mc.common_name ASC
       LIMIT $3 OFFSET $4`,
     [workspaceId, String(thresholdDays), safeLimit, safeOffset],
   );
@@ -513,31 +591,31 @@ async function listUpcomingRenewals({
   const totalResult = await db.query(
     `SELECT COUNT(*)::int AS total
        FROM managed_certificates mc
-       JOIN certificate_profiles cp
-         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.workspace_id = $1
-        AND mc.not_after IS NOT NULL
-        AND mc.status = 'active'`,
+        AND mc.status NOT IN (${renewableStatusFilter})`,
     [workspaceId],
   );
 
   return {
-    items: result.rows.map((row) => ({
-      certificateId: String(row.id),
-      commonName: row.common_name,
-      notAfter: row.not_after,
-      renewsFrom: row.renews_from,
-      profileId: row.profile_id ? String(row.profile_id) : null,
-      profileName: row.profile_name || null,
-      autoRenewEnabled: !AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(
-        String(row.profile_status || "").toLowerCase(),
-      ),
-      renewBeforeDays:
-        row.profile_renew_before_days == null
-          ? Number(thresholdDays)
-          : Number(row.profile_renew_before_days),
-      lastRenewJobStatus: row.last_renew_job_status || null,
-    })),
+    items: result.rows.map((row) => {
+      const blockedReason = classifyRenewalBlock(row);
+      return {
+        certificateId: String(row.id),
+        commonName: row.common_name,
+        certificateStatus: row.status,
+        notAfter: row.not_after,
+        renewsFrom: row.renews_from,
+        profileId: row.profile_id ? String(row.profile_id) : null,
+        profileName: row.profile_name || null,
+        autoRenewEnabled: blockedReason == null,
+        blockedReason,
+        renewBeforeDays:
+          row.profile_renew_before_days == null
+            ? Number(thresholdDays)
+            : Number(row.profile_renew_before_days),
+        lastRenewJobStatus: row.last_renew_job_status || null,
+      };
+    }),
     total: Number(totalResult.rows[0]?.total || 0),
     limit: safeLimit,
     offset: safeOffset,
@@ -553,9 +631,14 @@ module.exports = {
   EDITABLE_PROFILE_FIELDS,
   IMMUTABLE_PROFILE_FIELDS,
   KEY_ALGORITHMS,
+  RENEWAL_BLOCKED_AUTO_RENEW_DISABLED,
+  RENEWAL_BLOCKED_INCOMPLETE_PROFILE,
+  RENEWAL_BLOCKED_NO_PROFILE,
+  RENEWAL_BLOCKED_UNKNOWN_EXPIRY,
   SAN_POLICY_MODES,
   SETTABLE_PROFILE_STATUSES,
   applyRenewalProfilePatch,
+  classifyRenewalBlock,
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,

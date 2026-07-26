@@ -289,7 +289,7 @@ failure, so the server is the only authority and a refusal is rendered as a
 refusal. Write affordances are still hidden from non-admins, but only to avoid
 offering a button that would 403.
 
-### A1.5 Switched-off certificates stay visible
+### A1.5 The schedule lists what will not renew, not what will
 
 A certificate with renewal switched off is listed in the upcoming schedule rather
 than filtered out of it, with a standing count. A switched-off certificate and an
@@ -297,3 +297,32 @@ empty schedule are indistinguishable otherwise, and only one of them is safe.
 
 Switching off asks for confirmation and states how many certificates the profile
 covers. Switching on does not: the safe direction should not carry friction.
+
+**Generalised (2026-07-26).** The first implementation applied that reasoning only
+to the switch, and built the schedule as an inner join onto
+`certificate_profiles` filtered to `status = 'active'` certificates. That
+reintroduced the same defect one level down. The population it dropped was
+certificates with `profile_id IS NULL`, which is precisely the population that
+this ADR's own derivation step produces when it fails (see the Consequences
+section: a swallowed derivation leaves the certificate active and unlinked). So
+the page whose reason for existing is to expose unattended-renewal risk hid the
+certificates most at risk, and a workspace where nothing renewed at all rendered
+as an empty schedule with no warning.
+
+The rule is therefore stated positively: **this view is a list of certificates
+that could expire, not a list of scheduled work.** It selects every certificate
+the sweep would consider (the same `NOT IN (revoked, decommissioned)` filter, via
+a LEFT JOIN) and decides coverage per row by calling
+`resolveRenewalProfileSnapshot`, the identical function the sweep admits on, so
+the two cannot disagree. Anything not covered carries a `blockedReason`.
+
+The reason is not collapsed into a single "will not renew" flag because the
+remedies differ. `auto_renew_disabled` is a decision the operator made and can
+undo from the same page. `no_profile` and `incomplete_profile` are defects that no
+toggle can fix and that require re-issuance. Presenting both as "Off" would point
+an operator at a control that cannot help them, which is a worse failure than
+saying nothing.
+
+Any future addition to this view inherits the constraint: a filter that can hide
+a certificate is a filter that can manufacture a false all-clear, so the default
+is to include and label rather than exclude.
