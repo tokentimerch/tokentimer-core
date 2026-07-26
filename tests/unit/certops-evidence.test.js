@@ -152,15 +152,15 @@ function createMemoryClient() {
 
       if (
         normalizedSql.includes("FROM certificate_jobs") &&
-        normalizedSql.includes("operation = 'renew'") &&
+        normalizedSql.includes("operation = ANY($3::text[])") &&
         normalizedSql.includes("FOR UPDATE")
       ) {
-        const [workspaceId, terminalStatuses] = params;
+        const [workspaceId, terminalStatuses, capOperations] = params;
         const rows = jobs
           .filter(
             (row) =>
               row.workspace_id === workspaceId &&
-              row.operation === "renew" &&
+              (capOperations || []).includes(row.operation) &&
               !(terminalStatuses || []).includes(row.status),
           )
           .map((row) => ({

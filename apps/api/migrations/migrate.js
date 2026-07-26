@@ -2207,6 +2207,75 @@ const migrations = [
         );
     `,
   },
+  {
+    version: 33,
+    name: "managed_certificates_provisioning_issuance",
+    sql: `
+      -- The "issue" job operation (ADR-0008) creates the managed certificate
+      -- row up front, before any certificate exists, so the operator sees the
+      -- pending identity in the dashboard immediately and the job has a real
+      -- subject to bind to. That needs two new vocabulary values:
+      --
+      --   status 'provisioning' - requested, not yet issued. Non-terminal, so
+      --     it counts as active for quota (active counting is
+      --     status NOT IN ('revoked','decommissioned')) and it is retireable
+      --     like any other live row. On a successful agent result it is
+      --     reconciled to 'active' with real x509 metadata; on failure it
+      --     stays 'provisioning' with the failed job and evidence attached,
+      --     for the operator to retry or retire. There is no auto-cleanup.
+      --   source 'agent_issuance' - this identity originated from a TokenTimer
+      --     issuance request executed by an agent, as opposed to being
+      --     discovered on a host ('agent_filesystem') or observed remotely.
+      --
+      -- Without 'provisioning', a successful agent issuance was invisible in
+      -- the product: a bare manual renew job really did issue and deploy a
+      -- certificate, but nothing was ever written to managed_certificates, so
+      -- the operator had no certificate, no expiry tracking, and no renewal.
+      -- Found during live end-to-end testing against Let's Encrypt staging.
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_status_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_status_check CHECK (
+          status IN (
+            'discovered', 'provisioning', 'active', 'renewing', 'expiring',
+            'expired', 'revoked', 'decommissioned'
+          )
+        );
+
+      ALTER TABLE managed_certificates
+        DROP CONSTRAINT IF EXISTS managed_certificates_source_check;
+      ALTER TABLE managed_certificates
+        ADD CONSTRAINT managed_certificates_source_check CHECK (
+          source IN (
+            'manual', 'api', 'import', 'domain_checker', 'endpoint_monitor',
+            'integration', 'auto_sync', 'cert_manager', 'agent_filesystem',
+            'agent_issuance'
+          )
+        );
+
+      -- Identity uniqueness for the new source. agent_issuance rows are keyed
+      -- by their creating request's idempotency key, not by fingerprint: the
+      -- fingerprint is unknown until the certificate actually exists, and
+      -- NULL fingerprints must not collide. Mirrors the source_ref treatment
+      -- migrations 28/29 gave cert_manager and agent_filesystem.
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_fingerprint_import;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_fingerprint_import
+        ON managed_certificates(workspace_id, fingerprint_sha256)
+        WHERE fingerprint_sha256 IS NOT NULL
+          AND source NOT IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager',
+            'agent_filesystem', 'agent_issuance'
+          );
+      DROP INDEX IF EXISTS uq_managed_certificates_workspace_source_ref;
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_workspace_source_ref
+        ON managed_certificates(workspace_id, source, source_ref)
+        WHERE source_ref IS NOT NULL
+          AND source IN (
+            'endpoint_monitor', 'domain_checker', 'cert_manager',
+            'agent_filesystem', 'agent_issuance'
+          );
+    `,
+  },
 ];
 
 async function runMigrations() {

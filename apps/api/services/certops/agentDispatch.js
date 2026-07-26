@@ -104,6 +104,29 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   orphaned_unknown_effect: "orphaned_unknown_effect",
 });
 
+/**
+ * Control-plane operation -> agent-facing wire action.
+ *
+ * "issue" exists only in the control plane (ADR-0008). Execution is identical
+ * to a renewal: same ACME order, same DNS-01 solver, same deploy/reload/verify
+ * tail, same agent-local command profile. Adding it to the protocol's action
+ * enum would have been a breaking contract change requiring a fleet-wide agent
+ * upgrade to buy exactly nothing, so signed dispatch translates it to "renew"
+ * instead and agents already in the field run issue jobs unmodified.
+ *
+ * The asymmetry is deliberate. Do not "fix" it by widening the wire enum.
+ */
+const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
+
+function wireActionForOperation(operation) {
+  return WIRE_ACTION_BY_OPERATION[operation] || operation;
+}
+
+// Operations whose terminal failure raises cert_renewal_failed. A failed
+// issuance is an operator-visible certificate failure exactly like a failed
+// renewal, and both resolve their contact groups the same way.
+const RENEWAL_ALERTING_OPERATIONS = new Set(["renew", "issue"]);
+
 // Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
 // `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
 const NEEDS_OPERATOR_RECONCILIATION_RE = /needsOperatorReconciliation=true/;
@@ -925,7 +948,7 @@ async function claimJobs({
         ...payload,
         jobId: String(job.id),
         workspaceId: agent.workspaceId,
-        action: job.operation,
+        action: wireActionForOperation(job.operation),
         mode: job.mode || payload.mode || "real",
         claimId: job.claim_id,
         attemptId: job.claim_id,
@@ -1092,6 +1115,96 @@ async function renewJobLease({
 }
 
 // --- Results (7.4/7.7) ---
+
+/**
+ * Promote a freshly issued certificate from 'provisioning' to 'active',
+ * backfilling the real x509 facts from the job's own verify-step evidence.
+ *
+ * The trigger is the SUBJECT's status, not the job's operation. That is
+ * deliberate: after a failed issuance the operator retries with an ordinary
+ * renew job against the now-known subjectId, and that retry has to reconcile
+ * too. Keying on 'provisioning' makes both paths converge with no special
+ * casing, and makes this a no-op for every already-active certificate.
+ *
+ * Metadata comes from the agent's own validation.passed evidence for this job
+ * (the verify step fingerprints the PEM it actually deployed), so the control
+ * plane records what is really on the host rather than what was requested. All
+ * of it is public certificate material; no key ever reaches here.
+ *
+ * Runs inside the result-ingestion transaction. Returns the reconciled
+ * certificate id, or null when there was nothing to reconcile.
+ */
+async function reconcileProvisionedCertificate({ client, workspaceId, job }) {
+  if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
+
+  const locked = await client.query(
+    `SELECT id
+       FROM managed_certificates
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+        AND status = 'provisioning'
+      FOR UPDATE`,
+    [workspaceId, job.subject_id],
+  );
+  if (!locked.rows[0]) return null;
+
+  // Newest verify-step evidence for this job. validation.passed is emitted
+  // once the deployed file has been read back and fingerprinted.
+  const evidence = await client.query(
+    `SELECT metadata
+       FROM certificate_evidence
+      WHERE workspace_id = $1
+        AND job_id = $2
+        AND evidence_type = 'validation.passed'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [workspaceId, job.id],
+  );
+  const metadata = evidence.rows[0]?.metadata || {};
+  const text = (value) =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+  const timestamp = (value) => {
+    const parsed = text(value) ? Date.parse(value) : Number.NaN;
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  };
+  const sans = text(metadata.subjectAltNames);
+
+  await client.query(
+    `UPDATE managed_certificates
+        SET status = 'active',
+            fingerprint_sha256 = COALESCE($3, fingerprint_sha256),
+            serial_number = COALESCE($4, serial_number),
+            subject = COALESCE($5, subject),
+            issuer = COALESCE($6, issuer),
+            not_before = COALESCE($7::timestamptz, not_before),
+            not_after = COALESCE($8::timestamptz, not_after),
+            subject_alt_names = CASE
+              WHEN $9::text IS NULL THEN subject_alt_names
+              ELSE (
+                SELECT ARRAY(
+                  SELECT DISTINCT BTRIM(name)
+                    FROM regexp_split_to_table($9::text, '\\s*,\\s*') AS name
+                   WHERE BTRIM(name) <> ''
+                )
+              )
+            END,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2::uuid`,
+    [
+      workspaceId,
+      job.subject_id,
+      text(metadata.fingerprintSha256),
+      text(metadata.serialNumber),
+      text(metadata.subject),
+      text(metadata.issuer),
+      timestamp(metadata.validFrom),
+      timestamp(metadata.validTo),
+      sans,
+    ],
+  );
+  return String(job.subject_id);
+}
 
 /**
  * Ingests a terminal result message in one transaction: lock the job row,
@@ -1295,10 +1408,22 @@ async function ingestResult({
 
     const row = updated.rows[0];
 
+    // A successful result may be the moment a requested certificate first
+    // really exists. Reconcile before the alert stage and inside this
+    // transaction, so the job's terminal status and the certificate becoming
+    // active are never observable apart.
+    if (jobStatus === "succeeded") {
+      await reconcileProvisionedCertificate({
+        client,
+        workspaceId: agent.workspaceId,
+        job,
+      });
+    }
+
     // Terminal renew failures queue a cert_renewal_failed alert inside
     // the same transaction. Alert failures must never fail result
     // ingestion, so this is best-effort (endpoint-check-worker pattern).
-    if (isFailure && jobStatus === "failed" && job.operation === "renew") {
+    if (isFailure && jobStatus === "failed" && RENEWAL_ALERTING_OPERATIONS.has(job.operation)) {
       // Savepoint so a failed alert insert cannot abort the surrounding
       // ingestion transaction.
       try {
@@ -1413,16 +1538,19 @@ module.exports = {
     FALLBACK_ORPHANED_RECONCILIATION_REASON,
     REGISTRATION_REPLAY_TTL_MS,
     RESULT_STATUS_TO_JOB_STATUS,
+    RENEWAL_ALERTING_OPERATIONS,
     boundReconciliationReason,
     dateToIso,
     envelopeSequence,
     findRegistrationReplay,
     normalizeStringList,
     parseReconciliationFromErrorMessage,
+    reconcileProvisionedCertificate,
     registrationReplayResponse,
     registrationReplayTtlMs,
     safeParseJson,
     serviceError,
+    wireActionForOperation,
     withTransaction,
   },
 };

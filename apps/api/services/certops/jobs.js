@@ -141,7 +141,18 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
   orphaned_unknown_effect: new Set(),
 });
 
-const JOB_OPERATIONS = Object.freeze(["renew", "deploy", "reload", "revoke", "noop"]);
+// "issue" requests a brand-new certificate that TokenTimer does not track
+// yet. It is a control-plane-only operation: the agent never sees it, because
+// signed dispatch translates it to the wire-level action "renew" (identical
+// execution). See docs/adr/0008-certops-upfront-issuance.md.
+const JOB_OPERATIONS = Object.freeze([
+  "issue",
+  "renew",
+  "deploy",
+  "reload",
+  "revoke",
+  "noop",
+]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
 const JOB_SOURCES = Object.freeze([
@@ -587,6 +598,20 @@ const EXECUTION_FIELD_NAMES = Object.freeze(
 // operations that never execute them (noop/revoke) indicate a caller bug and
 // are rejected rather than silently dispatched to the agent.
 const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
+  // An issue job runs the exact same agent pipeline as a renew (ACME order,
+  // deploy, optional reload, verify), so it accepts the same execution fields.
+  issue: new Set([
+    "commandRef",
+    "caEndpoint",
+    "acmeKind",
+    "keyRotation",
+    "certPath",
+    "reloadService",
+    "verifyHost",
+    "verifyPort",
+    "dnsZone",
+    "dnsProvider",
+  ]),
   renew: new Set([
     "commandRef",
     "caEndpoint",
@@ -905,7 +930,12 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
   };
 }
 
-const AGENT_MUTATING_OPERATIONS = new Set(["renew", "deploy", "reload", "revoke"]);
+const AGENT_MUTATING_OPERATIONS = new Set([
+  "renew",
+  "deploy",
+  "reload",
+  "revoke",
+]);
 const AGENT_DEPLOYABLE_KEY_MODES = new Set(["agent-local", "proxy-agent-local"]);
 const SUBJECT_ID_UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -935,6 +965,13 @@ const SUBJECT_ID_UUID_PATTERN =
  * Skipped entirely for subject ids that are not a real managed_certificates
  * UUID: free-text subjects and most job-lifecycle test fixtures are not
  * DB-backed rows here, so there is nothing to look up.
+ *
+ * "issue" is deliberately NOT in AGENT_MUTATING_OPERATIONS. Its subject row
+ * was created moments earlier by this same request (status 'provisioning',
+ * source 'agent_issuance'), so there is no prior discovery agent to inherit
+ * and the key_mode check would only be re-reading the value the issuance
+ * service just wrote. Issue jobs use open-claim routing, matched on the
+ * declared command profile and DNS provider like an unassigned renew.
  */
 async function resolveManagedCertificateJobDefaults({
   db,
@@ -1304,9 +1341,10 @@ async function createCertificateJob(options) {
     }
   }
 
-  // Authoritative per-(workspace, CA) renew capacity. Scheduler pre-filters
-  // are best-effort; bulk/manual paths share this transactional gate.
-  if (operation === "renew") {
+  // Authoritative per-(workspace, CA) capacity. Scheduler pre-filters are
+  // best-effort; bulk/manual paths share this transactional gate. issue and
+  // renew share the bucket: both place a real ACME order.
+  if (operation === "renew" || operation === "issue") {
     await assertRenewalPerCaCapacityAvailable({
       client: db,
       workspaceId,

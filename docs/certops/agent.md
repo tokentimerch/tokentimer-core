@@ -626,6 +626,14 @@ Supported actions: `renew`, `deploy`, `reload`, `noop`. `revoke` is always
 `blocked` (out of scope for this agent build). `deploy` without a `certificatePem` field
 is `blocked` (see section 7).
 
+The control plane additionally has an `issue` job operation, used for
+first-time issuance of a certificate that has no inventory row yet. It is a
+control-plane-only concept: at dispatch the control plane translates it to
+`action: "renew"` in the signed payload, so an agent never receives the value
+`issue`, the wire-level action list above is unchanged, and there is no
+protocol `schemaVersion` bump. Agents already deployed in the field execute
+`issue` jobs with no upgrade, byte-identically to a renew.
+
 For `renew` (`executeRenewJob`):
 
 1. **Keys** (`src/keys`): the private key lives at
@@ -663,7 +671,25 @@ For `renew` (`executeRenewJob`):
    `--manual-cleanup-hook`, acme.sh `--dns` pointing at `dns_certops.sh`).
    No private key and no DNS/EAB credentials ever appear in argv; credentials
    stay in agent-local 0600 files referenced by path in `config.json`.
-   Default exec timeout is 10 minutes.
+   Default exec timeout is 10 minutes. `--cert-path`, `--chain-path`, and
+   `--fullchain-path` (the latter two derived as siblings of the resolved
+   `--cert-path`, e.g. `<name>.chain.pem` / `<name>.fullchain.pem`) are all
+   passed explicitly to certbot for exactly this reason: left unset,
+   certbot's own chain/fullchain path defaults resolve relative to the
+   process's working directory, which under the hardened systemd unit's
+   `ProtectSystem=strict` is typically read-only. Without the explicit
+   flags, a certbot run can complete a real ACME order successfully and
+   then crash while saving the chain (`OSError: [Errno 30] Read-only file
+   system: '/0000_chain.pem'`), losing an already-issued certificate. See
+   the argv/flags table in `src/acme/index.js`'s module docblock for the
+   exact contract, and the worked Cloudflare DNS-01 example in
+   `tokentimer-cloud`'s docs for a real reproduction and fix confirmation.
+   A separate, unrelated operator pitfall: certbot also needs an ACME
+   account to run non-interactively, so `policy.allowedCommands.<profile>
+   .argv` must include `--agree-tos` plus either `--email <address>` or
+   `--register-unsafely-without-email` — without one of these, the job
+   fails at the ACME step with an account-registration error that is easy
+   to misdiagnose as a DNS-01 problem.
 4. **Deploy** (`src/deploy` + multi-target coordinator in `src/index.js`):
    installs public certificate material (and, when configured, the matching
    private key) to explicit destinations. Destination fields on each
@@ -676,7 +702,14 @@ For `renew` (`executeRenewJob`):
    keys, **not** an implicit production destination — a deploy that needs a
    live key without an explicit `keyPath` fails preflight. Private-key
    bytes never traverse protocol envelopes, evidence, results, logs, audit,
-   or control-plane storage (paths and modes only).
+   or control-plane storage (paths and modes only). `certPath` (and the
+   other path fields) must be the exact destination **file**, not the
+   containing directory — `policy.allowedPaths` allows a directory tree,
+   but `certPath` must resolve to one concrete file under it. Pointing
+   `certPath` at a directory gets past every policy check (the directory
+   itself is allowlisted) and only fails at deploy time with `deploy:
+   could not read existing destination: EISDIR: illegal operation on a
+   directory, read`.
 
    When `job.deploymentTargets` has more than one entry, deploy is
    transactional:
@@ -849,6 +882,16 @@ systemd unit's `ProtectSystem=strict`. See `COORDINATION-ACME-ADAPTER.md` at
 the repo root for the full typed adapter-options contract (`preferredChain`,
 `eabKid`/`eabHmacKey`); the adapter no longer accepts a generic `extraArgs`
 passthrough.
+
+**A full, real, tested walkthrough** — install, Cloudflare credentials,
+`config.json`, job payload, and every pitfall actually hit (certbot account
+registration flags, the chain-path save crash above, `certPath` needing to
+be a file rather than a directory) — is documented step by step at
+<https://tokentimer.ch/docs/self-hosted/next/runbooks/certops-cloudflare-worked-example>
+(mirrored for the SaaS variant at
+<https://tokentimer.ch/docs/cloud/runbooks/certops-cloudflare-worked-example>).
+That page exists specifically so this reference material does not have to
+be re-derived by trial and error a second time.
 
 Policy gate: the hook resolves the provider and zone for the domain, then
 requires BOTH `checkDnsProvider` and `checkDnsZone` to pass against the

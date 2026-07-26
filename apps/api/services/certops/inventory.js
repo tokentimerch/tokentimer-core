@@ -538,7 +538,8 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
      ON CONFLICT (workspace_id, fingerprint_sha256)
        WHERE fingerprint_sha256 IS NOT NULL
          AND source NOT IN (
-           'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+           'endpoint_monitor', 'domain_checker', 'cert_manager',
+           'agent_filesystem', 'agent_issuance'
          )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
@@ -662,7 +663,8 @@ async function upsertManagedCertificateByMonitorSource(
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
          AND source IN (
-           'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+           'endpoint_monitor', 'domain_checker', 'cert_manager',
+           'agent_filesystem', 'agent_issuance'
          )
      DO UPDATE SET
        token_id = COALESCE(EXCLUDED.token_id, managed_certificates.token_id),
@@ -793,7 +795,8 @@ async function upsertManagedCertificateForControllerProvisioning(client, options
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
          AND source IN (
-           'endpoint_monitor', 'domain_checker', 'cert_manager', 'agent_filesystem'
+           'endpoint_monitor', 'domain_checker', 'cert_manager',
+           'agent_filesystem', 'agent_issuance'
          )
      DO UPDATE SET
        name = EXCLUDED.name,

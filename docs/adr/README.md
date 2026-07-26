@@ -50,11 +50,16 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0005](0005-certops-threat-model.md) | CertOps threat model | Proposed |
 | [0006](0006-certops-dashboard-ux-split.md) | CertOps dashboard UX split (D6) | Accepted |
 | [0007](0007-certops-certificate-removal-lifecycle.md) | CertOps certificate removal and lifecycle model (D7) | Accepted |
+| [0008](0008-certops-upfront-issuance.md) | CertOps upfront issuance and provisioning lifecycle (D8) | Accepted |
 
 ADR-0001 through ADR-0005 were authored as Phase 0 skeletons to unblock
 parallel inventory and executor work. They remain `Proposed` until ratification moves them to
 `Accepted` and their TODO markers are resolved. ADR-0006 and ADR-0007 record
-design decisions D6 and D7 and are `Accepted` as of 2026-06-28.
+design decisions D6 and D7 and are `Accepted` as of 2026-06-28. ADR-0008 records
+design decision D8 and is `Accepted` as of 2026-07-26; it extends the ADR-0007
+lifecycle model with a `provisioning` pre-active status and establishes the
+control-plane `operation` versus agent-facing `action` distinction relative to
+ADR-0002.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.

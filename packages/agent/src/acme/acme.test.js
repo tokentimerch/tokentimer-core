@@ -170,9 +170,12 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
     "--cert-path",
     OUT_CERT_PATH,
     "--chain-path",
-    "/etc/nginx/tls/web-01.crt.chain.pem",
+    // Derived with path.join, so the separator is platform-dependent. The
+    // agent only ever runs on POSIX hosts; this keeps the test green when it
+    // is developed on Windows.
+    path.join(path.dirname(OUT_CERT_PATH), "web-01.crt.chain.pem"),
     "--fullchain-path",
-    "/etc/nginx/tls/web-01.crt.fullchain.pem",
+    path.join(path.dirname(OUT_CERT_PATH), "web-01.crt.fullchain.pem"),
     "--config-dir",
     STATE_PATHS.certbotConfigDir,
     "--work-dir",

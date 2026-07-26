@@ -105,6 +105,9 @@ const {
   createControllerProvisionIntent,
 } = require("../services/certops/controllerProvisioning");
 const {
+  createCertificateIssuanceJob,
+} = require("../services/certops/issuance");
+const {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
   CERTOPS_APPROVAL_REASON_INVALID,
@@ -511,8 +514,16 @@ function createManualCertificateJobHandler({
 } = {}) {
   return async function createManualCertificateJobHandler(req, res) {
     try {
+      // An issue job has to create the certificate identity before the job
+      // that references it, so it swaps in a different creator. Everything
+      // else (workspace lock, kill switch, audit row) is shared.
+      const jobCreator =
+        req.body?.operation === "issue"
+          ? createCertificateIssuanceJob
+          : undefined;
       const { job } = await manualJobCreator({
         ...jobCreateOptionsFromRequest(req),
+        ...(jobCreator ? { jobCreator } : {}),
         actorUserId: req.user?.id || null,
         subjectUserId: req.user?.id || null,
       });

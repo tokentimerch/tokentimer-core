@@ -56,16 +56,17 @@ function createMemoryClient() {
 
       if (
         normalizedSql.includes("FROM certificate_jobs") &&
-        normalizedSql.includes("operation = 'renew'") &&
+        normalizedSql.includes("operation = ANY($3::text[])") &&
         normalizedSql.includes("FOR UPDATE")
       ) {
         const terminal = new Set(params[1] || []);
+        const capOperations = new Set(params[2] || []);
         return {
           rows: jobs
             .filter(
               (row) =>
                 row.workspace_id === params[0] &&
-                row.operation === "renew" &&
+                capOperations.has(row.operation) &&
                 !terminal.has(row.status),
             )
             .map((row) => ({
@@ -1665,7 +1666,7 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
 
         if (
           normalizedSql.includes("FROM certificate_jobs") &&
-          normalizedSql.includes("operation = 'renew'") &&
+          normalizedSql.includes("operation = ANY($3::text[])") &&
           normalizedSql.includes("FOR UPDATE")
         ) {
           return { rows: [] };

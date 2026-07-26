@@ -78,3 +78,9 @@ endpoint (see PR #47). That is acceptable under D7 when:
 - Backend must implement the retire route, token status sync, and audit event
   before GA; until then UI degrades gracefully on 404.
 - Hard purge of managed-backed certificates remains out of scope for now.
+- Addendum (2026-07-26): [ADR-0008](0008-certops-upfront-issuance.md) adds a
+  `provisioning` pre-active status to this lifecycle model for upfront agent
+  issuance. It is non-terminal and subject to the same retire-first rules as any
+  other non-terminal status: it retires to `revoked` or `decommissioned` through
+  the retire route with token status mirroring, is never row-deleted, and counts
+  as active for quota.

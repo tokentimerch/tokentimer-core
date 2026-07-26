@@ -437,6 +437,49 @@ function computeCertificateFingerprint(certPem) {
 }
 
 /**
+ * Public, non-secret x509 facts about a deployed leaf, for verify evidence.
+ *
+ * The control plane needs these to fill in a certificate it has never seen the
+ * material for: an issue job creates its inventory row before the certificate
+ * exists, so the only authoritative source for serial, validity window,
+ * subject and SANs is the file the agent just deployed. Reporting them from
+ * here (rather than echoing back what the job requested) means the control
+ * plane records what is genuinely on the host.
+ *
+ * Every field is public certificate metadata. Never returns key material.
+ * Returns null when the PEM cannot be parsed: this feeds evidence enrichment,
+ * which must never turn a successful deploy into a failure.
+ *
+ * @param {string} certPem PEM text containing at least one CERTIFICATE block
+ * @returns {{serialNumber: string|null, validFrom: string|null,
+ *   validTo: string|null, subject: string|null, issuer: string|null,
+ *   dnsSans: string[]}|null}
+ */
+function describeDeployedCertificate(certPem) {
+  if (typeof certPem !== "string" || certPem.length === 0) return null;
+  const pemBlocks = splitCertificatePems(certPem);
+  if (pemBlocks.length === 0) return null;
+  let leaf;
+  try {
+    leaf = new crypto.X509Certificate(pemBlocks[0]);
+  } catch {
+    return null;
+  }
+  const text = (value) =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+  return {
+    serialNumber: text(leaf.serialNumber),
+    validFrom: text(leaf.validFrom),
+    validTo: text(leaf.validTo),
+    subject: text(leaf.subject),
+    issuer: text(leaf.issuer),
+    // Bare DNS names, already stripped of the "DNS:" prefixes node emits, so
+    // the control plane can store them as-is.
+    dnsSans: parseDnsSans(leaf.subjectAltName),
+  };
+}
+
+/**
  * Verifies that the certificate served at host:port matches an expected
  * sha256 fingerprint.
  *
@@ -592,6 +635,7 @@ module.exports = {
   validateCertificateForDeploy,
   verifyDeployedCertificate,
   computeCertificateFingerprint,
+  describeDeployedCertificate,
   normalizeFingerprint,
   splitCertificatePems,
   parseDnsSans,

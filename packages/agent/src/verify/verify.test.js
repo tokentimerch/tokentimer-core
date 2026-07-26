@@ -12,6 +12,7 @@ const {
   validateCertificateForDeploy,
   verifyDeployedCertificate,
   computeCertificateFingerprint,
+  describeDeployedCertificate,
   normalizeFingerprint,
 } = require("./index.js");
 
@@ -123,6 +124,54 @@ test("computeCertificateFingerprint throws on empty / non-PEM input", () => {
   assert.throws(
     () => computeCertificateFingerprint("not a pem at all"),
     /no CERTIFICATE block/,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// describeDeployedCertificate
+// ---------------------------------------------------------------------------
+
+test("describeDeployedCertificate reports the leaf's public x509 facts", () => {
+  const described = describeDeployedCertificate(LEAF_FULLCHAIN_PEM);
+  const leaf = new X509Certificate(LEAF_CERT_PEM);
+
+  assert.equal(described.serialNumber, leaf.serialNumber);
+  assert.equal(described.subject, leaf.subject.trim());
+  assert.equal(described.issuer, leaf.issuer.trim());
+  assert.equal(described.validFrom, leaf.validFrom.trim());
+  assert.equal(described.validTo, leaf.validTo.trim());
+});
+
+test("describeDeployedCertificate returns bare DNS names, not node's DNS: prefixes", () => {
+  // The control plane stores these straight into subject_alt_names, so a
+  // leaked "DNS:" prefix would corrupt the inventory row.
+  const described = describeDeployedCertificate(LEAF_FULLCHAIN_PEM);
+  assert.ok(Array.isArray(described.dnsSans));
+  assert.ok(described.dnsSans.length > 0);
+  for (const name of described.dnsSans) {
+    assert.doesNotMatch(name, /^DNS:/i);
+    assert.equal(name, name.toLowerCase());
+  }
+});
+
+test("describeDeployedCertificate describes the FIRST cert of a fullchain", () => {
+  const leafOnly = describeDeployedCertificate(LEAF_CERT_PEM);
+  const fullchain = describeDeployedCertificate(LEAF_FULLCHAIN_PEM);
+  assert.equal(fullchain.serialNumber, leafOnly.serialNumber);
+  assert.equal(fullchain.subject, leafOnly.subject);
+});
+
+test("describeDeployedCertificate returns null instead of throwing on bad input", () => {
+  // This feeds best-effort evidence enrichment: it must never be able to turn
+  // an already-verified deploy into a failure.
+  assert.equal(describeDeployedCertificate(""), null);
+  assert.equal(describeDeployedCertificate(null), null);
+  assert.equal(describeDeployedCertificate("not a pem at all"), null);
+  assert.equal(
+    describeDeployedCertificate(
+      "-----BEGIN CERTIFICATE-----\nbm90IGRlcg==\n-----END CERTIFICATE-----\n",
+    ),
+    null,
   );
 });
 

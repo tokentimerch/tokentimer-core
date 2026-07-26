@@ -3803,7 +3803,7 @@ paths:
           name: operation
           schema:
             type: string
-            enum: [renew, deploy, reload, revoke, noop]
+            enum: [renew, deploy, reload, revoke, noop, issue]
         - in: query
           name: source
           schema:
@@ -5776,6 +5776,7 @@ components:
           type: string
           enum:
             - discovered
+            - provisioning
             - active
             - renewing
             - expiring
@@ -6021,7 +6022,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop]
+          enum: [renew, deploy, reload, revoke, noop, issue]
         status:
           type: string
           enum:
@@ -6094,22 +6095,57 @@ components:
       required: [operation]
       description: >-
         Manual job creation request. source is always forced to "api" by the
-        server and is not accepted from the request body.
+        server and is not accepted from the request body. Operation "issue"
+        requests a brand-new certificate for which no managed certificate row
+        exists yet: subjectType, subjectId, and payload.certificateId must all
+        be omitted, and idempotencyKey is required. For "issue" the server
+        creates the managed certificate upfront in the same transaction with
+        status "provisioning" and source "agent_issuance", then creates the job
+        against that new row and reconciles the certificate to "active" from
+        the job's own validation evidence when the job succeeds.
       properties:
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop]
+          enum: [renew, deploy, reload, revoke, noop, issue]
+          description: >-
+            Job operation. "issue" is control-plane-only first-time issuance;
+            it is dispatched to agents as action "renew", so the agent-facing
+            action values are unchanged.
         subjectType:
           type: string
           enum: [managed_certificate, certificate_instance, certificate_target, token, domain, endpoint, external]
+          description: >-
+            Subject kind of an already existing subject. Must be omitted for
+            operation "issue"; the server sets managed_certificate on the row
+            it creates.
         subjectId:
           type: string
           maxLength: 128
+          description: >-
+            Id of an already existing subject. Must be omitted for operation
+            "issue"; the server assigns the id of the managed certificate it
+            creates.
         payload:
-          $ref: "#/components/schemas/CertOpsPublicObject"
+          allOf:
+            - $ref: "#/components/schemas/CertOpsPublicObject"
+          description: >-
+            Public job payload. For operation "issue", payload.certificateId
+            must be omitted because the server assigns it; the name and common
+            name of the created certificate come from
+            payload.target.reference, and its subject alternative names come
+            from payload.sans. The execution
+            fields accepted on an "issue" job are exactly the renew set
+            (commandRef, caEndpoint, acmeKind, keyRotation, certPath,
+            reloadService, verifyHost, verifyPort, dnsZone, dnsProvider); a
+            renewalProfile snapshot is not valid on an "issue" job.
         idempotencyKey:
           type: string
           maxLength: 128
+          description: >-
+            Required for operation "issue", where it makes a retry safe
+            instead of creating a duplicate certificate row and is stored as
+            the created certificate's source reference. Optional for all other
+            operations.
         requiresApproval:
           type: boolean
           default: false
@@ -6332,7 +6368,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop]
+          enum: [renew, deploy, reload, revoke, noop, issue]
         status:
           type: string
           enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]

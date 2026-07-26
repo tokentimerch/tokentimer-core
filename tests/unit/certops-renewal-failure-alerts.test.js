@@ -303,8 +303,23 @@ function resultBody(overrides = {}) {
   };
 }
 
+// Shared branch for the provisioning reconciliation lookup ingestResult now
+// performs on success. Returns "nothing to reconcile" so these tests stay
+// focused on alert emission; the reconciliation behaviour itself is covered
+// in certops-issuance.test.js.
+function reconciliationNoopBranch(sql) {
+  if (sql.includes("FROM managed_certificates") && sql.includes("FOR UPDATE")) {
+    return { rows: [] };
+  }
+  if (sql.includes("FROM certificate_evidence")) return { rows: [] };
+  if (sql.includes("UPDATE managed_certificates")) return { rows: [] };
+  return null;
+}
+
 function ingestHandler({ jobRow }) {
   return (sql) => {
+    const reconciliation = reconciliationNoopBranch(sql);
+    if (reconciliation) return reconciliation;
     if (sql.includes("FOR UPDATE")) return { rows: [jobRow] };
     if (sql.includes("UPDATE certificate_jobs")) {
       return {
@@ -359,6 +374,8 @@ describe("agentDispatch.ingestResult renewal-failure emission", () => {
   it("does not emit on success", async () => {
     const jobRow = lockedJobRow();
     const dbPool = createMockPool((sql) => {
+      const reconciliation = reconciliationNoopBranch(sql);
+      if (reconciliation) return reconciliation;
       if (sql.includes("FOR UPDATE")) return { rows: [jobRow] };
       if (sql.includes("UPDATE certificate_jobs")) {
         return {

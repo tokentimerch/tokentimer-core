@@ -15,6 +15,11 @@ const RENEWAL_PER_CA_CAP_ENV = "CERTOPS_RENEWAL_PER_CA_CAP";
 const UNKNOWN_CA_BUCKET = "__unknown-ca__";
 const CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED =
   "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED";
+// Operations that place a real ACME order and therefore consume the CA's rate
+// limits. "issue" shares the bucket with "renew": both are the same ACME
+// order from the CA's point of view, so counting only renews would let a
+// burst of issuances blow through a CA rate limit unaccounted for.
+const CA_CONSUMING_OPERATIONS = Object.freeze(["issue", "renew"]);
 
 function resolveRenewalPerCaCap(env = process.env) {
   const raw = env[RENEWAL_PER_CA_CAP_ENV];
@@ -98,10 +103,10 @@ async function assertRenewalPerCaCapacityAvailable({
     `SELECT NULLIF(BTRIM(payload->>'caEndpoint'), '') AS ca_endpoint
        FROM certificate_jobs
       WHERE workspace_id = $1
-        AND operation = 'renew'
+        AND operation = ANY($3::text[])
         AND NOT (status = ANY($2::text[]))
       FOR UPDATE`,
-    [workspaceId, terminalStatuses],
+    [workspaceId, terminalStatuses, [...CA_CONSUMING_OPERATIONS]],
   );
 
   let inFlight = 0;
@@ -128,6 +133,7 @@ async function assertRenewalPerCaCapacityAvailable({
 }
 
 module.exports = {
+  CA_CONSUMING_OPERATIONS,
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   DEFAULT_RENEWAL_PER_CA_CAP,
   RENEWAL_PER_CA_CAP_ENV,

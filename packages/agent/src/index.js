@@ -129,6 +129,7 @@ const { reloadService } = require("./reload");
 const {
   verifyDeployedCertificate,
   computeCertificateFingerprint,
+  describeDeployedCertificate,
   validateCertificateForDeploy,
   splitCertificatePems,
 } = require("./verify");
@@ -3071,13 +3072,38 @@ async function runDeployReloadVerify({
     }
     verifySummary = `Verified deployed certificate fingerprint for job ${jobId} against live endpoint.`;
   }
+  // Public x509 facts about what was actually deployed. The control plane
+  // needs these to populate a certificate whose material it never sees: an
+  // issue job's inventory row is created before the certificate exists, so
+  // this evidence is the only authoritative source for its serial, validity
+  // window, subject and SANs. Enrichment is strictly best-effort; an
+  // unparseable PEM must not turn a verified deploy into a failure.
+  const deployedFacts = describeDeployedCertificate(deployedPem);
+  const verifyMetadata = [{ name: "step", value: "verify" }];
+  if (deployedFacts) {
+    for (const [name, value] of [
+      ["serialNumber", deployedFacts.serialNumber],
+      ["validFrom", deployedFacts.validFrom],
+      ["validTo", deployedFacts.validTo],
+      ["subject", deployedFacts.subject],
+      ["issuer", deployedFacts.issuer],
+      [
+        "subjectAltNames",
+        deployedFacts.dnsSans.length > 0
+          ? deployedFacts.dnsSans.join(",")
+          : null,
+      ],
+    ]) {
+      if (value !== null) verifyMetadata.push({ name, value });
+    }
+  }
   await reportStepEvidence(client, jobId, [
     buildEvidenceItem({
       eventType: "validation.passed",
       observedAt: new Date().toISOString(),
       fingerprintSha256: fingerprint,
       summary: verifySummary,
-      metadata: [{ name: "step", value: "verify" }],
+      metadata: verifyMetadata,
     }),
   ]);
 

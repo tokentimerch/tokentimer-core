@@ -105,6 +105,33 @@ the shared detector scans every outbound envelope.
   bound by hash to what actually runs, rather than being re-resolved from a
   mutable profile row at dispatch. Scheduler-created renewals always carry a
   complete snapshot.
+- **Issue operation and `provisioning` status** - `issue` is the job operation
+  that requests a brand-new certificate when no `managed_certificate` row
+  exists yet, unlike `renew`/`deploy`/`reload`/`revoke`/`noop`, which all
+  assume the certificate identity already exists. The caller sends no
+  `subjectType`/`subjectId` and no `payload.certificateId`, and
+  `idempotencyKey` is required: idempotency is what makes a retry safe and
+  keeps a duplicate certificate row from being created. The API creates the
+  row upfront in the same transaction with `status = 'provisioning'`,
+  `source = 'agent_issuance'`, `source_ref = <idempotencyKey>`, and
+  `key_mode = 'agent-local'`, then injects the new id as the job's
+  `subject_id` and `payload.certificateId`. Execution fields are exactly the
+  `renew` set (`commandRef`, `caEndpoint`, `acmeKind`, `keyRotation`,
+  `certPath`, `reloadService`, `verifyHost`, `verifyPort`, `dnsZone`,
+  `dnsProvider`); a renewal profile snapshot is not valid on an `issue` job.
+  `issue` is control-plane-only: at dispatch it is translated to
+  `action: "renew"` in the signed payload, so the agent-facing action enum is
+  unchanged and already-deployed agents need no upgrade. On a successful
+  terminal result the control plane reconciles a still-`provisioning` subject
+  to `active`, backfilling fingerprint, validity dates, serial, subject, and
+  SANs from that job's `validation.passed` evidence. The trigger is the
+  subject still being `provisioning`, not the operation, so a retry via a
+  plain `renew` against the now-known `subjectId` reconciles identically. A
+  failed issuance raises the same `cert_renewal_failed` alert as a failed
+  renew and leaves the row `provisioning` for an operator to retry or retire;
+  there is no auto-cleanup. `provisioning` is non-terminal: the row can be
+  retired to `revoked`/`decommissioned` like any other and counts as active
+  for quota purposes.
 - **Per-CA cap** - limit on in-flight renewal jobs per `caEndpoint`
   (`CERTOPS_RENEWAL_PER_CA_CAP`, default 5) so one CA cannot be flooded.
   Enforced on **every** renewal creation path, not just the sweep: the
@@ -113,9 +140,10 @@ the shared detector scans every outbound envelope.
   reserve against the same per-workspace/per-CA counter inside the creating
   transaction and fail with `409 CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED`.
 - **Agent-deployable key custody** - only `key_mode` `agent-local` or
-  `proxy-agent-local` can carry an agent-executed `renew`/`deploy`/`reload`/
-  `revoke` job. A certificate that was merely *observed* (endpoint/domain
-  monitor, `key_mode` NULL) has no agent holding its key, so creating such a
+  `proxy-agent-local` can carry an agent-executed
+  `issue`/`renew`/`deploy`/`reload`/`revoke` job. A certificate that was
+  merely *observed* (endpoint/domain monitor, `key_mode` NULL) has no agent
+  holding its key, so creating such a
   job fails at creation time with `409
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE` rather than dispatching to an
   agent that must fail. See `AGENT_DEPLOYABLE_KEY_MODES` in
