@@ -46,6 +46,12 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
 COPY packages ./packages
 COPY apps/api ./apps/api
 
+# Operator commands that must be runnable against a live instance via
+# `kubectl exec` / `docker compose exec` (certops:rotate-signing-key resolves
+# ../apps/api/* from here). Only these files are un-ignored in .dockerignore;
+# the rest of scripts/ is dev tooling and stays out of the image.
+COPY scripts/certops-rotate-signing-key.js scripts/load-root-env.js ./scripts/
+
 # Install production dependencies for the api and its workspace deps
 RUN pnpm install --prod --frozen-lockfile --filter @tokentimer/api... \
     && rm -rf /usr/local/lib/node_modules/npm /root/.cache/node/corepack

@@ -44,7 +44,11 @@ docker-compose*.yml
 *.dev.yml
 
 # Non-essential directories
+# scripts/ is dev tooling and stays out of build contexts, except the operator
+# commands that must be runnable inside a running container (see Dockerfile.api).
 scripts/
+!scripts/certops-rotate-signing-key.js
+!scripts/load-root-env.js
 email-previews/
 logs/
 reports/
