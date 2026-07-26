@@ -477,6 +477,7 @@ async function resultsHandler(req, res, options = {}) {
         agent: req.certopsAgent,
         envelope,
         jobId: body.jobId,
+        claimId: body.claimId ?? body.attemptId ?? null,
         evidenceItems: body.evidenceItems,
         deps: {
           enforceAgentSequence:

@@ -318,9 +318,12 @@ async function createCertificateEvidence(options) {
        created_by_user_id,
        created_by_api_token_id,
        created_by_agent_id,
-       client_evidence_id
+       client_evidence_id,
+       claim_id,
+       attempt_count
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+             $16::uuid, $17)
      ON CONFLICT (workspace_id, created_by_agent_id, client_evidence_id)
        WHERE created_by_agent_id IS NOT NULL AND client_evidence_id IS NOT NULL
      DO NOTHING
@@ -341,6 +344,8 @@ async function createCertificateEvidence(options) {
       options.createdByApiTokenId || null,
       options.createdByAgentId || null,
       clientEvidenceId,
+      options.claimId || null,
+      Number.isSafeInteger(options.attemptCount) ? options.attemptCount : null,
     ],
   );
 

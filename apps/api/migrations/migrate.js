@@ -2373,6 +2373,91 @@ const migrations = [
         WHERE status = 'pending';
     `,
   },
+  {
+    version: 36,
+    name: "certops_evidence_claim_binding",
+    sql: `
+      -- Bind verify evidence to the exact claim that produced it.
+      --
+      -- Reconciliation promotes a 'provisioning' certificate to 'active' using
+      -- the newest validation.passed evidence for the job. Without a claim
+      -- binding that is unsafe in a way that matters: a job can be attempted
+      -- more than once (requeue after a lease expiry, an operator retry), and
+      -- evidence from attempt 1 outlives attempt 1. Attempt 2 could then be
+      -- reconciled against a fingerprint and expiry that describe a
+      -- certificate a previous attempt deployed, so the control plane would
+      -- record facts that are not true of the file currently on the host.
+      --
+      -- claim_id is the agent's proof that it owns the current attempt: it is
+      -- issued at dispatch, already travels in the result envelope, and is
+      -- re-proven on ingestion. attempt_count is the server's own counter and
+      -- is recorded alongside so an operator can see which attempt produced a
+      -- given piece of evidence without joining back through the job history.
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS claim_id UUID NULL;
+      ALTER TABLE certificate_evidence
+        ADD COLUMN IF NOT EXISTS attempt_count INTEGER NULL
+          CHECK (attempt_count IS NULL OR attempt_count >= 0);
+      -- Reconciliation's lookup path: newest bound evidence for one claim.
+      CREATE INDEX IF NOT EXISTS idx_certificate_evidence_job_claim
+        ON certificate_evidence(workspace_id, job_id, claim_id, created_at DESC)
+        WHERE claim_id IS NOT NULL;
+
+      -- Why a provisioning certificate was NOT promoted. Reconciliation is no
+      -- longer allowed to activate a row on incomplete evidence, so the
+      -- operator needs the reason recorded somewhere durable rather than
+      -- inferring it from an absence.
+      ALTER TABLE managed_certificates
+        ADD COLUMN IF NOT EXISTS reconciliation_reason TEXT NULL
+          CHECK (
+            reconciliation_reason IS NULL OR
+            char_length(reconciliation_reason) <= 256
+          );
+
+      -- Discovery correlation. An agent that issues a certificate to a path
+      -- will later scan that same path and report it as an ordinary
+      -- 'agent_filesystem' find. The partial unique indexes from migration 33
+      -- key the two sources differently (issuance by source_ref, filesystem by
+      -- its own source_ref), so nothing stopped the same physical file from
+      -- acquiring two managed_certificate identities: one 'agent_issuance' row
+      -- the operator requested, and one 'agent_filesystem' row that appears
+      -- later as a duplicate.
+      --
+      -- The deployed path plus the agent that owns it is the stable correlation
+      -- key, since it is known at request time and unchanged by renewal, unlike
+      -- the fingerprint. Issuance records it here so a subsequent scan resolves
+      -- to the existing row instead of inserting a parallel one.
+      ALTER TABLE managed_certificates
+        ADD COLUMN IF NOT EXISTS deployed_cert_path TEXT NULL
+          CHECK (
+            deployed_cert_path IS NULL OR
+            char_length(btrim(deployed_cert_path)) BETWEEN 1 AND 1024
+          );
+      ALTER TABLE managed_certificates
+        ADD COLUMN IF NOT EXISTS deployed_agent_id UUID NULL;
+      -- One identity per (agent, path). Scoped to the two agent-owned sources
+      -- so remote observations, imports and cert-manager rows are unaffected.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_managed_certificates_agent_deployed_path
+        ON managed_certificates(workspace_id, deployed_agent_id, deployed_cert_path)
+        WHERE deployed_cert_path IS NOT NULL
+          AND deployed_agent_id IS NOT NULL
+          AND source IN ('agent_issuance', 'agent_filesystem');
+
+      -- Declared agent capabilities, advertised at registration alongside the
+      -- existing declared_* scopes.
+      --
+      -- Issuance reconciliation now REQUIRES claim-bound verify evidence, and an
+      -- agent that does not send claimId cannot produce it. Such an agent would
+      -- run an issuance to completion and leave the certificate stuck in
+      -- 'provisioning' forever, which is worse than never dispatching it. So
+      -- claimability is gated on the capability rather than attempted and
+      -- abandoned: an older agent keeps doing ordinary work on already-active
+      -- certificates and is simply never offered issuance.
+      ALTER TABLE certops_agents
+        ADD COLUMN IF NOT EXISTS declared_capabilities JSONB NOT NULL
+          DEFAULT '[]'::jsonb;
+    `,
+  },
 ];
 
 async function runMigrations() {

@@ -52,6 +52,9 @@ const {
   enqueueOutboxEvent,
 } = require("./outbox");
 const {
+  linkReconciledCertificateToken,
+} = require("./inventory");
+const {
   dispatchNonceTtlSeconds,
   jobLeaseSeconds,
 } = require("./leaseTiming");
@@ -129,6 +132,13 @@ const WIRE_ACTION_BY_OPERATION = Object.freeze({ issue: "renew" });
 function wireActionForOperation(operation) {
   return WIRE_ACTION_BY_OPERATION[operation] || operation;
 }
+
+// Reconciliation of a provisioning certificate only trusts verify evidence that
+// is bound to the current claim, which an agent must explicitly support. Gating
+// claimability on the declared capability keeps an older agent from running an
+// issuance that could never be reconciled, leaving the certificate stuck in
+// 'provisioning' with a succeeded job and no way forward.
+const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
 
 // Agent runtime embeds reconciliation markers in free-form errorMessage, e.g.
 // `...; needsOperatorReconciliation=true; reconciliationReason=<slug>)`.
@@ -394,11 +404,13 @@ async function registerAgent({
          credential_hash,
          declared_target_selectors,
          declared_command_profile_names,
+         declared_capabilities,
          status,
          bootstrap_token_id,
          last_sequence
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, 'active', $13, $14)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
+               $15::jsonb, 'active', $13, $14)
        ON CONFLICT (workspace_id, agent_id) DO NOTHING
        RETURNING id, agent_id, protocol_version`,
       [
@@ -423,6 +435,7 @@ async function registerAgent({
         // restarted low is only ever compared against its new generation,
         // never against a previous registration's high-water mark.
         envelopeSequence(envelope) ?? 0,
+        JSON.stringify(normalizeStringList(body.declaredCapabilities, 64)),
       ],
     );
 
@@ -541,6 +554,7 @@ async function recordHeartbeat({
     body.declaredCommandProfileNames,
     64,
   );
+  const declaredCapabilities = normalizeStringList(body.declaredCapabilities, 64);
 
   return await withTransaction(dbPool, async (client) => {
     // Sequence enforcement runs after auth (route middleware) and before
@@ -572,6 +586,10 @@ async function recordHeartbeat({
                 WHEN $10::jsonb = '[]'::jsonb THEN declared_command_profile_names
                 ELSE $10::jsonb
               END,
+              declared_capabilities = CASE
+                WHEN $12::jsonb = '[]'::jsonb THEN declared_capabilities
+                ELSE $12::jsonb
+              END,
               protocol_version = COALESCE($11, protocol_version),
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
               updated_at = NOW()
@@ -590,6 +608,7 @@ async function recordHeartbeat({
         JSON.stringify(declaredTargetSelectors),
         JSON.stringify(declaredCommandProfileNames),
         envelope.protocolVersion || null,
+        JSON.stringify(declaredCapabilities),
       ],
     );
 
@@ -795,7 +814,8 @@ async function claimJobs({
     const agentCaps = await client.query(
       `SELECT declared_target_selectors,
               declared_command_profile_names,
-              supported_dns_providers
+              supported_dns_providers,
+              declared_capabilities
          FROM certops_agents
         WHERE id = $1
         FOR UPDATE`,
@@ -808,6 +828,9 @@ async function claimJobs({
       supportedDnsProviders.length > 0
         ? supportedDnsProviders
         : jsonbTextArray(caps.supported_dns_providers);
+    const canBindEvidenceToClaim = jsonbTextArray(
+      caps.declared_capabilities,
+    ).includes(EVIDENCE_CLAIM_BINDING_CAPABILITY);
 
     // B2/B5: agent lane only; match assigned agent, target selector, DNS
     // provider, and command profile when the job requires them.
@@ -818,13 +841,21 @@ async function claimJobs({
     // above) and no agent ever declares "issue" as a supported action, so
     // without this translation issue jobs would sit at 'pending' forever.
     // Keep this CASE in sync with WIRE_ACTION_BY_OPERATION if that map grows.
+    //
+    // The capability gate covers BOTH ways a job can need claim-bound evidence.
+    // Gating operation = 'issue' alone is insufficient: a failed issuance is
+    // retried as an ordinary renew against the still-'provisioning' certificate
+    // (ADR-0008), and that retry has to reconcile too. So the gate is
+    // "operation is issue OR the subject is still provisioning". An agent
+    // without the capability keeps claiming ordinary renewals of active
+    // certificates exactly as before.
     const selected = await client.query(
       `SELECT id, workspace_id, operation, subject_type, subject_id, payload,
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
               required_dns_provider, required_command_profile
-         FROM certificate_jobs
+         FROM certificate_jobs cj
         WHERE workspace_id = $1
           AND status = 'pending'
           AND executor_kind = 'agent'
@@ -832,6 +863,21 @@ async function claimJobs({
           AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])
           AND (assigned_agent_id IS NULL OR assigned_agent_id = $3::uuid)
+          AND (
+            $8::boolean
+            OR (
+              operation <> 'issue'
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM managed_certificates mc
+                 WHERE mc.workspace_id = cj.workspace_id
+                   AND cj.subject_type = 'managed_certificate'
+                   AND cj.subject_id IS NOT NULL
+                   AND mc.id = cj.subject_id::uuid
+                   AND mc.status = 'provisioning'
+              )
+            )
+          )
           AND (
             required_target_selector IS NULL
             OR required_target_selector = ANY($4::text[])
@@ -855,6 +901,7 @@ async function claimJobs({
         dnsProviders,
         commandProfiles,
         maxJobs,
+        canBindEvidenceToClaim,
       ],
     );
 
@@ -1136,19 +1183,36 @@ async function renewJobLease({
  * too. Keying on 'provisioning' makes both paths converge with no special
  * casing, and makes this a no-op for every already-active certificate.
  *
- * Metadata comes from the agent's own validation.passed evidence for this job
- * (the verify step fingerprints the PEM it actually deployed), so the control
- * plane records what is really on the host rather than what was requested. All
- * of it is public certificate material; no key ever reaches here.
+ * Three constraints make the promotion trustworthy rather than optimistic:
  *
- * Runs inside the result-ingestion transaction. Returns the reconciled
- * certificate id, or null when there was nothing to reconcile.
+ * 1. Only VERIFY-step evidence counts. The agent emits validation.passed twice
+ *    per run, once when ACME returns and once when the deployed file has been
+ *    read back and fingerprinted. Only the second describes what is actually on
+ *    the host. Accepting the first would let the control plane record the
+ *    certificate it asked for rather than the one that exists.
+ * 2. Only evidence bound to THIS claim counts. A job can be attempted more than
+ *    once, and evidence from a previous attempt outlives it, so an unbound
+ *    lookup could promote attempt 2 using attempt 1's fingerprint.
+ * 3. Fingerprint and expiry are mandatory. A certificate with no expiry cannot
+ *    be renewed on schedule or alerted on, so activating without one produces a
+ *    row that looks healthy and is silently unmanaged.
+ *
+ * When any of those fails the row stays 'provisioning' with a recorded
+ * reconciliation_reason, which is a state an operator can see and act on.
+ *
+ * Runs inside the result-ingestion transaction. Returns
+ * { certificateId, promoted, reason } or null when there was nothing to do.
  */
-async function reconcileProvisionedCertificate({ client, workspaceId, job }) {
+async function reconcileProvisionedCertificate({
+  client,
+  workspaceId,
+  job,
+  linkToken = linkReconciledCertificateToken,
+}) {
   if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
 
   const locked = await client.query(
-    `SELECT id
+    `SELECT id, source, deployed_cert_path, deployed_agent_id, token_id
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2::uuid
@@ -1156,38 +1220,61 @@ async function reconcileProvisionedCertificate({ client, workspaceId, job }) {
       FOR UPDATE`,
     [workspaceId, job.subject_id],
   );
-  if (!locked.rows[0]) return null;
+  const certificate = locked.rows[0];
+  if (!certificate) return null;
 
-  // Newest verify-step evidence for this job. validation.passed is emitted
-  // once the deployed file has been read back and fingerprinted.
   const evidence = await client.query(
     `SELECT metadata
        FROM certificate_evidence
       WHERE workspace_id = $1
         AND job_id = $2
         AND evidence_type = 'validation.passed'
+        AND claim_id = $3::uuid
+        AND metadata->>'step' = 'verify'
       ORDER BY created_at DESC
       LIMIT 1`,
-    [workspaceId, job.id],
+    [workspaceId, job.id, job.claim_id],
   );
-  const metadata = evidence.rows[0]?.metadata || {};
+  const metadata = evidence.rows[0]?.metadata || null;
+
   const text = (value) =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : null;
   const timestamp = (value) => {
     const parsed = text(value) ? Date.parse(value) : Number.NaN;
     return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
   };
+
+  const fingerprint = metadata ? text(metadata.fingerprintSha256) : null;
+  const notAfter = metadata ? timestamp(metadata.validTo) : null;
+
+  if (!metadata || !fingerprint || !notAfter) {
+    const reason = !metadata
+      ? "no_claim_bound_verify_evidence"
+      : !fingerprint
+        ? "verify_evidence_missing_fingerprint"
+        : "verify_evidence_missing_expiry";
+    await client.query(
+      `UPDATE managed_certificates
+          SET reconciliation_reason = $3,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND id = $2::uuid`,
+      [workspaceId, job.subject_id, reason],
+    );
+    return { certificateId: String(job.subject_id), promoted: false, reason };
+  }
+
   const sans = text(metadata.subjectAltNames);
 
   await client.query(
     `UPDATE managed_certificates
         SET status = 'active',
-            fingerprint_sha256 = COALESCE($3, fingerprint_sha256),
+            fingerprint_sha256 = $3,
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
             issuer = COALESCE($6, issuer),
             not_before = COALESCE($7::timestamptz, not_before),
-            not_after = COALESCE($8::timestamptz, not_after),
+            not_after = $8::timestamptz,
             subject_alt_names = CASE
               WHEN $9::text IS NULL THEN subject_alt_names
               ELSE (
@@ -1198,22 +1285,47 @@ async function reconcileProvisionedCertificate({ client, workspaceId, job }) {
                 )
               )
             END,
+            reconciliation_reason = NULL,
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2::uuid`,
     [
       workspaceId,
       job.subject_id,
-      text(metadata.fingerprintSha256),
+      fingerprint,
       text(metadata.serialNumber),
       text(metadata.subject),
       text(metadata.issuer),
       timestamp(metadata.validFrom),
-      timestamp(metadata.validTo),
+      notAfter,
       sans,
     ],
   );
-  return String(job.subject_id);
+
+  // Token linking waits until here on purpose. tokens.expiration is DATE NOT
+  // NULL, so a certificate that does not exist yet cannot have a legitimate
+  // token row: any earlier attempt would have to invent an expiry. Now that a
+  // verified notAfter is known, the certificate can join the token-centric
+  // inventory that expiry tracking, dashboards and alert routing all key off.
+  await linkToken({
+    client,
+    workspaceId,
+    certificateId: String(job.subject_id),
+    certificate: {
+      commonName: text(metadata.commonName),
+      subject: text(metadata.subject),
+      subjectAltNames: sans
+        ? sans.split(",").map((name) => name.trim()).filter(Boolean)
+        : [],
+      issuer: text(metadata.issuer),
+      serialNumber: text(metadata.serialNumber),
+      fingerprintSha256: fingerprint,
+      notAfter,
+    },
+    existingTokenId: certificate.token_id || null,
+  });
+
+  return { certificateId: String(job.subject_id), promoted: true, reason: null };
 }
 
 /**
@@ -1480,16 +1592,27 @@ async function ingestResult({
  * Evidence appends are workspace-scoped writes coming from a machine
  * credential, so they must be bound to a claim: the reporting agent must be
  * the agent that claimed the job (claimed_by_agent_id survives completion,
- * so post-result evidence from the same agent stays valid). Throws
+ * so post-result evidence from the same agent stays valid).
+ *
+ * Agent ownership alone is not enough for evidence that reconciliation will
+ * trust. The same agent can legitimately hold the same job across more than one
+ * attempt, so it must also prove WHICH attempt the evidence describes, or
+ * evidence from a superseded attempt could be used to promote a certificate.
+ * claimId is that proof: issued at dispatch, already carried in the protocol.
+ * The server records the validated claim id together with its own attempt_count
+ * rather than trusting any agent-supplied counter.
+ *
+ * Returns { claimId, attemptCount } for persistence. Throws
  * CERTOPS_AGENT_JOB_NOT_FOUND / CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH.
  */
 async function assertEvidenceClaimOwnership({
   dbPool = pool,
   agent,
   jobId,
+  claimId = null,
 } = {}) {
   const result = await dbPool.query(
-    `SELECT claimed_by_agent_id
+    `SELECT claimed_by_agent_id, claim_id, attempt_count
        FROM certificate_jobs
       WHERE id = $1
         AND workspace_id = $2
@@ -1510,6 +1633,18 @@ async function assertEvidenceClaimOwnership({
       CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
     );
   }
+  if (claimId != null && String(claimId) !== String(row.claim_id || "")) {
+    throw serviceError(
+      "Evidence claim does not match the current claim for this job",
+      CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH,
+    );
+  }
+  return {
+    claimId: row.claim_id || null,
+    attemptCount: Number.isSafeInteger(row.attempt_count)
+      ? row.attempt_count
+      : null,
+  };
 }
 
 module.exports = {
@@ -1553,6 +1688,7 @@ module.exports = {
     safeParseJson,
     serviceError,
     wireActionForOperation,
+    EVIDENCE_CLAIM_BINDING_CAPABILITY,
     withTransaction,
   },
 };

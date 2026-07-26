@@ -1174,6 +1174,82 @@ async function retireManagedCertificate(clientOrPool, options) {
   }
 }
 
+/**
+ * Link a just-verified provisioning certificate into the token-centric
+ * inventory, and mirror its facts onto the token exactly as discovery and
+ * import do.
+ *
+ * Called only from reconciliation, once a real notAfter is known. Doing it any
+ * earlier is impossible rather than merely undesirable: tokens.expiration is
+ * DATE NOT NULL, so a certificate that has not been issued yet has no expiry to
+ * store, and inventing one would corrupt the expiry tracking this link exists
+ * to enable.
+ *
+ * Idempotent: an already-linked certificate has its token facts refreshed
+ * rather than acquiring a second token.
+ */
+async function linkReconciledCertificateToken({
+  client,
+  workspaceId,
+  certificateId,
+  certificate,
+  existingTokenId = null,
+  createdBy = null,
+}) {
+  const tokenId =
+    existingTokenId ||
+    (await ensureManagedCertificateToken(
+      client,
+      certificate,
+      {
+        workspaceId,
+        createdBy,
+        tokenNotesSourceLabel: "agent issuance",
+      },
+      null,
+    ));
+
+  const domains = certificateDomainsFor(certificate);
+  const expiration = formatDateYmd(certificate.notAfter);
+
+  await client.query(
+    `UPDATE tokens
+        SET expiration = COALESCE($3, expiration),
+            issuer = COALESCE($4, issuer),
+            serial_number = COALESCE($5, serial_number),
+            subject = COALESCE($6, subject),
+            domains = CASE
+              WHEN COALESCE(array_length($7::text[], 1), 0) > 0
+                THEN $7::text[]
+              ELSE domains
+            END,
+            updated_at = NOW()
+      WHERE id = $1
+        AND workspace_id = $2`,
+    [
+      tokenId,
+      workspaceId,
+      expiration,
+      certificate.issuer || null,
+      certificate.serialNumber || null,
+      certificate.subject || null,
+      domains,
+    ],
+  );
+
+  await client.query(
+    `UPDATE managed_certificates
+        SET token_id = $3,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+        AND token_id IS DISTINCT FROM $3`,
+    [workspaceId, certificateId, tokenId],
+  );
+
+  return tokenId;
+}
+
 module.exports = {
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
@@ -1194,6 +1270,7 @@ module.exports = {
   getManagedCertificate,
   importPublicCertificates,
   isRetiredCertificateStatus,
+  linkReconciledCertificateToken,
   listCertificateInstances,
   listCertificateTargets,
   listManagedCertificates,

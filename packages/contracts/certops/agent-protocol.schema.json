@@ -144,6 +144,17 @@
             "pattern": "^[A-Za-z0-9_.:-]+$"
           }
         },
+        "declaredCapabilities": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "Named behaviours this agent build supports, advertised at registration. Used to gate work that would otherwise be dispatched and then stall: an agent lacking 'evidence-claim-binding-v1' cannot produce the claim-bound verify evidence that issuance reconciliation requires, so it is never offered issue jobs or jobs against a still-provisioning certificate. Unknown values are ignored rather than rejected, so a newer agent can advertise future capabilities against an older control plane.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
+        },
         "registrationId": {
           "type": "string",
           "minLength": 1,
@@ -309,6 +320,18 @@
           "type": ["string", "null"],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "claimId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "The claim this evidence describes, as issued at dispatch. Required for job-bound evidence that the control plane will trust for reconciliation: a job may be attempted more than once by the same agent, so agent identity alone cannot prove which attempt produced a given observation. The server rejects evidence whose claimId does not match the job's current claim, and records the validated value alongside its own attempt counter."
+        },
+        "attemptId": {
+          "type": ["string", "null"],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "description": "Compatibility alias for claimId, matching the result envelope's existing field naming. When both are present they must be equal. This is not an attempt number."
         },
         "evidenceItems": {
           "type": "array",

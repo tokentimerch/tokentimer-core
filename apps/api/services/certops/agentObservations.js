@@ -524,6 +524,7 @@ async function persistAgentJobEvidenceBatch({
   agent,
   envelope,
   jobId,
+  claimId = null,
   evidenceItems,
   deps = {},
 } = {}) {
@@ -550,10 +551,11 @@ async function persistAgentJobEvidenceBatch({
       agentRowId: agent.id,
       envelope,
     });
-    await assertOwnership({
+    const binding = await assertOwnership({
       dbPool: client,
       agent,
       jobId,
+      claimId,
     });
 
     const created = [];
@@ -595,6 +597,10 @@ async function persistAgentJobEvidenceBatch({
         observedAt: item.observedAt,
         createdByAgentId: agent.id,
         clientEvidenceId: evidenceId,
+        // Server-validated, never agent-supplied: the claim the job is
+        // currently on, plus the server's own attempt counter.
+        claimId: binding?.claimId || null,
+        attemptCount: binding?.attemptCount ?? null,
       });
       if (evidence) created.push(evidence);
     }

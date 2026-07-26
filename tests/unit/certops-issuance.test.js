@@ -331,23 +331,47 @@ describe("certops issue operation plumbing", () => {
 });
 
 describe("certops provisioning reconciliation", () => {
+  const CLAIM_ID = "33333333-3333-4333-8333-333333333333";
   const jobFixture = {
     id: 42,
     operation: "issue",
     subject_type: "managed_certificate",
     subject_id: NEW_CERT_ID,
+    claim_id: CLAIM_ID,
   };
 
-  function reconcileClient({ provisioning = true, metadata = {} } = {}) {
-    const state = { updates: [] };
+  const COMPLETE_VERIFY_METADATA = {
+    step: "verify",
+    fingerprintSha256: "a".repeat(64),
+    serialNumber: "04AABB",
+    subject: "CN=web-01.example.com",
+    issuer: "CN=Staging Fake LE",
+    validFrom: "Jul 26 10:00:00 2026 GMT",
+    validTo: "Oct 24 10:00:00 2026 GMT",
+    subjectAltNames: "web-01.example.com,alt.example.com",
+  };
+
+  function reconcileClient({
+    provisioning = true,
+    metadata = COMPLETE_VERIFY_METADATA,
+    evidenceRows = null,
+    tokenId = null,
+  } = {}) {
+    const state = { updates: [], evidenceQueries: [] };
     const client = {
       query: async (text, params) => {
         const sql = typeof text === "string" ? text : text?.text || "";
         if (sql.includes("FROM managed_certificates")) {
-          return { rows: provisioning ? [{ id: NEW_CERT_ID }] : [] };
+          return {
+            rows: provisioning
+              ? [{ id: NEW_CERT_ID, source: "agent_issuance", token_id: tokenId }]
+              : [],
+          };
         }
         if (sql.includes("FROM certificate_evidence")) {
-          return { rows: [{ metadata }] };
+          state.evidenceQueries.push({ sql, params });
+          if (evidenceRows) return { rows: evidenceRows };
+          return { rows: metadata ? [{ metadata }] : [] };
         }
         if (sql.includes("UPDATE managed_certificates")) {
           state.updates.push(params);
@@ -359,26 +383,28 @@ describe("certops provisioning reconciliation", () => {
     return { state, client };
   }
 
+  // Token linking is exercised on its own in the inventory tests; here it is
+  // stubbed so reconciliation assertions stay about promotion decisions.
+  function stubLinkToken(calls) {
+    return async (options) => {
+      calls.push(options);
+      return 77;
+    };
+  }
+
   it("promotes a provisioning certificate and backfills from evidence", async () => {
-    const { state, client } = reconcileClient({
-      metadata: {
-        fingerprintSha256: "a".repeat(64),
-        serialNumber: "04AABB",
-        subject: "CN=web-01.example.com",
-        issuer: "CN=Staging Fake LE",
-        validFrom: "Jul 26 10:00:00 2026 GMT",
-        validTo: "Oct 24 10:00:00 2026 GMT",
-        subjectAltNames: "web-01.example.com,alt.example.com",
-      },
-    });
+    const { state, client } = reconcileClient();
+    const linkCalls = [];
 
     const result = await dispatch._test.reconcileProvisionedCertificate({
       client,
       workspaceId: WORKSPACE_A,
       job: jobFixture,
+      linkToken: stubLinkToken(linkCalls),
     });
 
-    assert.equal(result, String(NEW_CERT_ID));
+    assert.equal(result.certificateId, String(NEW_CERT_ID));
+    assert.equal(result.promoted, true);
     assert.equal(state.updates.length, 1);
     const params = state.updates[0];
     assert.equal(params[2], "a".repeat(64));
@@ -390,12 +416,51 @@ describe("certops provisioning reconciliation", () => {
     assert.equal(params[8], "web-01.example.com,alt.example.com");
   });
 
+  it("only considers verify-step evidence bound to this claim", async () => {
+    const { state, client } = reconcileClient();
+    await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+      linkToken: stubLinkToken([]),
+    });
+
+    const query = state.evidenceQueries[0];
+    // The ACME step also emits validation.passed; only the verify step has read
+    // the deployed file back, so the discriminator is load-bearing.
+    assert.match(query.sql, /metadata->>'step' = 'verify'/);
+    assert.match(query.sql, /claim_id = \$3::uuid/);
+    assert.equal(query.params[2], CLAIM_ID);
+  });
+
+  it("links the token only once a verified expiry is known", async () => {
+    const { client } = reconcileClient();
+    const linkCalls = [];
+
+    await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+      linkToken: stubLinkToken(linkCalls),
+    });
+
+    assert.equal(linkCalls.length, 1);
+    // tokens.expiration is DATE NOT NULL, so this is the earliest moment a
+    // token can legitimately exist for this certificate.
+    assert.equal(
+      linkCalls[0].certificate.notAfter,
+      new Date("Oct 24 10:00:00 2026 GMT").toISOString(),
+    );
+    assert.equal(linkCalls[0].certificate.fingerprintSha256, "a".repeat(64));
+  });
+
   it("is a no-op when the subject is already active", async () => {
     const { state, client } = reconcileClient({ provisioning: false });
     const result = await dispatch._test.reconcileProvisionedCertificate({
       client,
       workspaceId: WORKSPACE_A,
       job: jobFixture,
+      linkToken: stubLinkToken([]),
     });
     assert.equal(result, null);
     assert.equal(state.updates.length, 0);
@@ -405,30 +470,66 @@ describe("certops provisioning reconciliation", () => {
     // The retry path after a failed issuance is an ordinary renew job. Keying
     // reconciliation on the subject's status rather than the operation is what
     // makes it converge with no special casing.
-    const { state, client } = reconcileClient({
-      metadata: { fingerprintSha256: "b".repeat(64) },
-    });
+    const { state, client } = reconcileClient();
     const result = await dispatch._test.reconcileProvisionedCertificate({
       client,
       workspaceId: WORKSPACE_A,
       job: { ...jobFixture, operation: "renew" },
+      linkToken: stubLinkToken([]),
     });
-    assert.equal(result, String(NEW_CERT_ID));
+    assert.equal(result.promoted, true);
     assert.equal(state.updates.length, 1);
   });
 
-  it("still promotes when the job produced no verify evidence", async () => {
-    // A missing verify step must not leave the row stuck in provisioning
-    // forever: promote, and leave the metadata columns untouched.
-    const { state, client } = reconcileClient({ metadata: {} });
+  it("does not promote on ACME-step evidence alone", async () => {
+    // The ACME step proves the CA issued something, not that the right file is
+    // on the host. Promoting here would record requested facts as observed ones.
+    const { state, client } = reconcileClient({ evidenceRows: [] });
+    const linkCalls = [];
+
     const result = await dispatch._test.reconcileProvisionedCertificate({
       client,
       workspaceId: WORKSPACE_A,
       job: jobFixture,
+      linkToken: stubLinkToken(linkCalls),
     });
-    assert.equal(result, String(NEW_CERT_ID));
-    assert.equal(state.updates[0][2], null);
-    assert.equal(state.updates[0][8], null);
+
+    assert.equal(result.promoted, false);
+    assert.equal(result.reason, "no_claim_bound_verify_evidence");
+    assert.equal(linkCalls.length, 0);
+    // The reason is recorded so the operator sees why, rather than inferring it.
+    assert.equal(state.updates.length, 1);
+    assert.equal(state.updates[0][2], "no_claim_bound_verify_evidence");
+  });
+
+  it("does not promote when verify evidence has no fingerprint", async () => {
+    const { client } = reconcileClient({
+      metadata: { step: "verify", validTo: "Oct 24 10:00:00 2026 GMT" },
+    });
+    const result = await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+      linkToken: stubLinkToken([]),
+    });
+    assert.equal(result.promoted, false);
+    assert.equal(result.reason, "verify_evidence_missing_fingerprint");
+  });
+
+  it("does not promote when verify evidence has no expiry", async () => {
+    // Activating without an expiry produces a row that looks healthy and is
+    // silently unmanaged: nothing can schedule its renewal or alert on it.
+    const { client } = reconcileClient({
+      metadata: { step: "verify", fingerprintSha256: "b".repeat(64) },
+    });
+    const result = await dispatch._test.reconcileProvisionedCertificate({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+      linkToken: stubLinkToken([]),
+    });
+    assert.equal(result.promoted, false);
+    assert.equal(result.reason, "verify_evidence_missing_expiry");
   });
 
   it("skips jobs with no managed_certificate subject", async () => {
