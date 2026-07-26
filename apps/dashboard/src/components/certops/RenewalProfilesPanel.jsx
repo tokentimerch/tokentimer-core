@@ -215,6 +215,33 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
+  // The panel token is deliberately translucent, so it cannot serve as the
+  // backdrop for a pinned cell: scrolled columns show through it. This is an
+  // opaque approximation of the same surface.
+  const pinnedBg = useColorModeValue('white', 'gray.800');
+  const pinnedShadow = useColorModeValue(
+    '-8px 0 8px -8px rgba(0, 0, 0, 0.25)',
+    '-8px 0 8px -8px rgba(0, 0, 0, 0.6)'
+  );
+
+  /**
+   * Keeps the Actions column visible when the table overflows.
+   *
+   * Row width grows with content: a long profile name, an open lead-time editor,
+   * more profiles. So the table exceeds its container at ordinary viewport
+   * widths, and the column that scrolls out of sight is the last one, which here
+   * holds the only controls the feature has. An operator looking for the off
+   * switch would have to find a horizontal scrollbar first. Pinning it means the
+   * controls are always reachable; the shadow signals that content continues
+   * underneath.
+   */
+  const stickyActions = {
+    position: 'sticky',
+    right: 0,
+    bg: pinnedBg,
+    boxShadow: pinnedShadow,
+    zIndex: 1,
+  };
 
   const applyChange = async (profile, changes, successMessage) => {
     clearError();
@@ -282,7 +309,11 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                   <Th>Auto-renew</Th>
                   <Th>Lead time</Th>
                   <Th>Key</Th>
-                  {isAdmin ? <Th textAlign='right'>Actions</Th> : null}
+                  {isAdmin ? (
+                    <Th textAlign='right' {...stickyActions}>
+                      Actions
+                    </Th>
+                  ) : null}
                 </Tr>
               </Thead>
               <Tbody>
@@ -359,7 +390,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                         </Text>
                       </Td>
                       {isAdmin ? (
-                        <Td textAlign='right'>
+                        <Td textAlign='right' {...stickyActions}>
                           {archived ? (
                             <Text fontSize='xs' color={muted}>
                               Archived

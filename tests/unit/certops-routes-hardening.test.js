@@ -152,6 +152,33 @@ describe("CertOps route hardening", () => {
     assert.equal(routesSource.includes("/api/v1/certops/agent"), false);
   });
 
+  it("gates renewal-profile reads on at least workspace_manager", () => {
+    // A profile body carries deployment topology: certPath, keyPath,
+    // reloadService, deployment owner/group, ACME command refs, CA account refs
+    // and the DNS zone. That is host reconnaissance, not expiry metadata, so it
+    // sits with the agent and machine-token routes rather than the certificates
+    // inventory. This was originally shipped ungated, which let a viewer read
+    // every host path in the workspace; the dashboard already gated /certops/*
+    // at manager, so the API was the weaker of the two.
+    for (const routePath of [
+      "/api/v1/workspaces/:id/certops/profiles",
+      "/api/v1/workspaces/:id/certops/profiles/:profileId",
+      "/api/v1/workspaces/:id/certops/renewals/upcoming",
+    ]) {
+      const block = routeBlock("get", routePath);
+      assert.match(
+        block,
+        /requireCertOpsWriteRole/,
+        `${routePath} must not be readable below workspace_manager`,
+      );
+      assert.ok(
+        block.indexOf("requireCertOpsEnabled") <
+          block.indexOf("requireCertOpsWriteRole"),
+        `${routePath} must check the rollout gate before manager authorization`,
+      );
+    }
+  });
+
   it("gates renewal-profile editing on admin role and a human session", () => {
     // A profile edit changes what a host-privileged agent executes at the next
     // renewal, so it needs a strictly stronger gate than ordinary CertOps job

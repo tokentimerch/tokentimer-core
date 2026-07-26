@@ -3527,6 +3527,11 @@ paths:
         Profiles are normally derived automatically from the issuance that
         created a certificate, so `derived` is true for most rows and
         `editableFields` lists the subset a caller may change.
+
+        Manager-only. A profile body describes deployment topology (certificate
+        and key paths, reload unit, file ownership and modes, ACME command
+        reference, CA account reference, DNS zone), so it is gated like the agent
+        and machine-token routes rather than like the certificate inventory.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/limitParam"
@@ -3568,6 +3573,9 @@ paths:
         needs to see that a certificate is expiring AND that renewal was
         deliberately switched off, which is otherwise indistinguishable from
         nothing being due.
+
+        Manager-only, matching the profile routes: each row carries the profile's
+        lead time and identity, and the view exists to be read alongside them.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/limitParam"
@@ -3599,6 +3607,10 @@ paths:
       tags: [CertOps]
       summary: Get a renewal profile
       operationId: getCertOpsRenewalProfile
+      description: |
+        Returns one renewal profile with `editableFields`, the subset a caller may
+        change. Manager-only, for the same reason as the list route: the body
+        describes deployment topology rather than expiry metadata.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - name: profileId

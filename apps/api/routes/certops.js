@@ -2307,8 +2307,17 @@ router.post(
   (req, res) => importCertificatesHandler(req, res, "api", 201),
 );
 
-// Renewal-profile administration (W8). Reads use the same posture as the
-// certificates inventory. The single mutating route is admin-gated via
+// Renewal-profile administration (W8). Reads are manager-gated, matching the
+// agent and machine-token routes rather than the certificates inventory: a
+// profile body carries deployment topology (certPath, keyPath, reloadService,
+// deployment owner/group, ACME command refs, CA account refs, DNS zone), which
+// is host reconnaissance rather than expiry metadata. A viewer who can see the
+// certificate inventory has no reason to learn where its key sits on disk or
+// which privileged unit reloads it. The dashboard route guard for /certops/* is
+// manager-scoped too, so this keeps the API and the UI enforcing the same line
+// instead of relying on the client to hide the surface.
+//
+// The single mutating route is admin-gated via
 // authorize("certops.renewal_profile.manage") because a profile edit changes
 // what a host-privileged agent executes at the next renewal; see
 // services/certops/renewalProfileAdmin.js for the editable-field boundary.
@@ -2316,6 +2325,7 @@ router.get(
   "/api/v1/workspaces/:id/certops/profiles",
   getApiLimiter(),
   requireCertOpsEnabled,
+  requireCertOpsWriteRole,
   async (req, res) => {
     try {
       const result = await listRenewalProfiles({
@@ -2346,6 +2356,7 @@ router.get(
   "/api/v1/workspaces/:id/certops/renewals/upcoming",
   getApiLimiter(),
   requireCertOpsEnabled,
+  requireCertOpsWriteRole,
   async (req, res) => {
     try {
       const result = await listUpcomingRenewals({
@@ -2377,6 +2388,7 @@ router.get(
   "/api/v1/workspaces/:id/certops/profiles/:profileId",
   getApiLimiter(),
   requireCertOpsEnabled,
+  requireCertOpsWriteRole,
   async (req, res) => {
     if (!UUID_PATTERN.test(String(req.params.profileId || ""))) {
       return res.status(404).json({

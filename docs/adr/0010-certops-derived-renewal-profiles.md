@@ -262,6 +262,24 @@ renewal without issuing it through CertOps.
 Reads (`GET /certops/profiles`, `GET /certops/renewals/upcoming`) require manager
 or above; writes require workspace admin (`certops.renewal_profile.manage`).
 
+Manager rather than viewer, because a profile body is deployment topology, not
+expiry metadata: certificate and key paths, the reload unit, file ownership and
+modes, the ACME command reference, the CA account reference, the DNS zone. That
+puts it with the agent and machine-token routes, which are manager-gated for the
+same reason, rather than with `GET /certops/certificates`. A viewer keeps full
+visibility of what expires and when, and of whether it auto-renews, through the
+inventory and the renewal badge; what they lose is a map of where each key sits
+on which host.
+
+The first implementation shipped these reads with no role middleware at all,
+which handed any viewer exactly that map. The routing guard on `/certops/*` is
+manager-scoped, so the dashboard hid the surface and the gap was invisible
+through the UI; it was reachable directly. Two lessons: a client-side route guard
+is never the enforcement point, and "same posture as the inventory" is the wrong
+default for a payload that is categorically different from the inventory. The
+test at `tests/unit/certops-routes-hardening.test.js` now asserts the middleware
+on all three reads.
+
 The dashboard deliberately does **not** pre-filter reads on a locally computed
 permission. A boolean that starts `false` and collapses lookup failures into
 `false` cannot distinguish "resolving" or "denied" from "no data", and rendering
