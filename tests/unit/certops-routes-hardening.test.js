@@ -145,6 +145,7 @@ describe("CertOps route hardening", () => {
     ).map((match) => `${match[1].toUpperCase()} ${match[2]}`);
 
     assert.deepEqual(routeMatches.sort(), [
+      "DELETE /api/v1/workspaces/:id/certops/certificates/:certId/profile",
       "GET /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
       "GET /api/v1/workspaces/:id/certops/agents",
       "GET /api/v1/workspaces/:id/certops/certificates",
@@ -166,6 +167,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
       "POST /api/v1/workspaces/:id/certops/agents/:agentId/retire",
       "POST /api/v1/workspaces/:id/certops/certificates",
+      "POST /api/v1/workspaces/:id/certops/certificates/:certId/renewal-setup",
       "POST /api/v1/workspaces/:id/certops/certificates/:certId/retire",
       "POST /api/v1/workspaces/:id/certops/imports",
       "POST /api/v1/workspaces/:id/certops/jobs",
@@ -173,6 +175,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/jobs/:jobId/reject",
       "POST /api/v1/workspaces/:id/certops/jobs/bulk-renew",
       "POST /api/v1/workspaces/:id/certops/provision-intents",
+      "POST /api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
       "PUT /api/v1/workspaces/:id/certops/settings",

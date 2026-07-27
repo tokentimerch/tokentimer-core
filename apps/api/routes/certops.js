@@ -116,6 +116,23 @@ const {
   setWorkspaceCertOpsPauseState,
 } = require("../services/certops/workspaceKillSwitch");
 const {
+  CERTOPS_CERTIFICATE_NOT_PROFILED,
+  CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED,
+  CERTOPS_RENEWAL_SETUP_MULTI_LOCATION,
+  CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+  detachRenewalProfile,
+  loadRenewalSetupIntents,
+  loadResumablePreflights,
+  projectRenewalPreflight,
+  projectRenewalSetupState,
+  renewalSetupJobCreator,
+  retryRenewalSetupIntent,
+} = require("../services/certops/renewalAdoption");
+const {
+  CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+  CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
+} = require("../services/certops/outbox");
+const {
   CERTOPS_CONTROLLER_PROVISIONING_INVALID,
   CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY,
   createControllerProvisionIntent,
@@ -432,6 +449,44 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: err.message,
       code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    });
+  }
+
+  if (
+    err?.code === CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED ||
+    err?.code === CERTOPS_RENEWAL_SETUP_MULTI_LOCATION
+  ) {
+    return res.status(409).json({
+      error: err.message,
+      code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_NOT_PROFILED) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_CERTIFICATE_NOT_PROFILED,
+    });
+  }
+
+  if (err?.code === CERTOPS_OUTBOX_EVENT_NOT_FOUND) {
+    return res.status(404).json({
+      error: "Outbox event not found",
+      code: CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+    });
+  }
+
+  if (err?.code === CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE) {
+    return res.status(422).json({
+      error: err.message,
+      code: CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
     });
   }
 
@@ -1034,6 +1089,11 @@ function apiTokenMetadata(token) {
     name: token.name,
     tokenPrefix: token.tokenPrefix,
     scopes: Array.isArray(token.scopes) ? [...token.scopes] : [],
+    // A controller token is unusable without this: the executor that claims a
+    // provisioning job authenticates with a token bound to the same
+    // clusterId, so a token list that omitted it could not show which
+    // cluster (if any) a token is bound to.
+    controllerClusterId: token.controllerClusterId ?? null,
     status: token.status,
     expiresAt: token.expiresAt,
     lastUsedAt: token.lastUsedAt,
@@ -2260,6 +2320,10 @@ async function withRenewalState({
   env = process.env,
   workspaceId,
   certificates,
+  // Off for lists: resumability is a per-certificate action offered on the
+  // detail page, and the query behind it is an anti-join over the job table
+  // that a paged list has no use for.
+  includePreflight = false,
 }) {
   const items = Array.isArray(certificates) ? certificates : [];
   const certificateIds = items
@@ -2268,11 +2332,13 @@ async function withRenewalState({
     .map(String);
   if (certificateIds.length === 0) return items;
 
-  const rows = await loadCertificateRenewalRows({
-    db,
-    workspaceId,
-    certificateIds,
-  });
+  const [rows, setupIntentsById, preflightsById] = await Promise.all([
+    loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
+    loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
+    includePreflight
+      ? loadResumablePreflights({ db, workspaceId, certificateIds })
+      : Promise.resolve(new Map()),
+  ]);
   const rowsById = new Map(rows.map((row) => [String(row.id), row]));
 
   return items.map((certificate) => ({
@@ -2282,6 +2348,16 @@ async function withRenewalState({
         renewalRowFromInventoryRecord(certificate),
       { env },
     ),
+    renewalSetup: projectRenewalSetupState(
+      setupIntentsById.get(String(certificate.id)) || null,
+    ),
+    ...(includePreflight
+      ? {
+          renewalPreflight: projectRenewalPreflight(
+            preflightsById.get(String(certificate.id)) || null,
+          ),
+        }
+      : {}),
   }));
 }
 
@@ -2654,6 +2730,7 @@ router.get(
       const [enriched] = await withRenewalState({
         workspaceId: req.workspace.id,
         certificates: [certificate],
+        includePreflight: true,
       });
       return res.json({ certificate: enriched || certificate });
     } catch (err) {
@@ -2666,6 +2743,152 @@ router.get(
       });
       return res.status(500).json({
         error: "Failed to load certificate",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/renewal-setup",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // Same posture as manual job creation: this creates a renew job (and, on a
+  // real run, an adoption intent), so it needs the write role and the
+  // workspace-active gate. A session user specifically, because arming
+  // automatic renewal is an attributable human decision and the audit row
+  // names an actor: worker credentials must not reach it even though
+  // requireCertOpsWriteRole alone would let them through.
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  requireWorkspaceCertOpsActive,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
+    }
+    try {
+      const dryRun = req.body?.dryRun === true;
+      const { job } = await createManualCertificateJob({
+        workspaceId: req.workspace.id,
+        jobCreator: renewalSetupJobCreator({
+          certificateId: req.params.certId,
+        }),
+        // A resumable dry_run job rather than a payload checkbox. The
+        // jobCreator only enqueues the adoption intent for a real run, so a
+        // preflight arms nothing even when the job itself succeeds.
+        ...(dryRun ? { mode: "dry_run" } : {}),
+        payload: req.body?.payload,
+        assignedAgentId: req.body?.assignedAgentId,
+        idempotencyKey: req.body?.idempotencyKey,
+        requiresApproval: req.body?.requiresApproval === true,
+        requestedByUserId: req.user?.id || null,
+        actorUserId: req.user?.id || null,
+        subjectUserId: req.user?.id || null,
+      });
+      return res.status(201).json({ job: jobDetail(job) });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal setup failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        certId: req.params?.certId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to set up automatic renewal",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  // Session-user, like approve/reject: this decides the fate of a parked
+  // outbox row, not agent-claimed work, so the workspace-active gate is
+  // deliberately absent, matching the approval routes' reasoning.
+  requireCertOpsSessionUser,
+  requireCertOpsWriteRole,
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.outboxId || ""))) {
+      return res.status(404).json({
+        error: "Outbox event not found",
+        code: CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+      });
+    }
+    try {
+      const result = await retryRenewalSetupIntent({
+        workspaceId: req.workspace.id,
+        outboxId: req.params.outboxId,
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal setup retry failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        outboxId: req.params?.outboxId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to retry automatic renewal setup",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+// Detach: unlink the certificate from its renewal profile without deleting the
+// profile row, since one profile can cover several certificates. Same gate as
+// the profile PATCH (session user, certops.renewal_profile.manage): both change
+// what an agent will run on a host, and neither is agent-claimed work, so the
+// workspace-active gate that blocks new job creation does not apply here.
+router.delete(
+  "/api/v1/workspaces/:id/certops/certificates/:certId/profile",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"),
+  async (req, res) => {
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return res.status(404).json({
+        error: "Certificate not found",
+        code: "CERTOPS_CERTIFICATE_NOT_FOUND",
+      });
+    }
+    try {
+      const result = await detachRenewalProfile({
+        workspaceId: req.workspace.id,
+        certificateId: req.params.certId,
+        actorUserId: req.user?.id || null,
+      });
+      return res.json(result);
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+
+      logger.error("CertOps renewal profile detach failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        certId: req.params?.certId,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to detach renewal profile",
         code: "INTERNAL_ERROR",
       });
     }
@@ -2692,4 +2915,7 @@ module.exports._test = {
   requireCertOpsSessionUser,
   handleCertOpsError,
   withRenewalState,
+  loadRenewalSetupIntents,
+  projectRenewalSetupState,
+  apiTokenMetadata,
 };

@@ -3418,6 +3418,324 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/renewal-setup:
+    post:
+      tags: [CertOps]
+      summary: Set up automatic renewal for a managed certificate
+      operationId: createCertOpsRenewalSetup
+      description: |
+        Creates a renew job for the certificate and, in the same transaction,
+        records the durable intent that turns the job's verified result into a
+        renewal profile. A real run and its intent therefore commit together:
+        there is no window in which renewal was requested but nothing was
+        recorded.
+
+        `dryRun: true` makes this a preflight instead. It creates a `dry_run`
+        renew job (which terminates as `dry_run_complete`, never `succeeded`)
+        and records no intent, so a preflight can never configure anything.
+        The certificate detail response reports a completed preflight with no
+        intent behind it so the operator can resume.
+
+        Refused when the certificate already has a renewal profile, when its
+        key mode is not agent-deployable, or when it is deployed in more than
+        one location: the schema records a single deployment path, so a second
+        location would silently go unrenewed behind a badge reading "auto".
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Managed certificate identifier.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CertOpsRenewalSetupRequest"
+      responses:
+        "201":
+          description: Renew job created (and, for a real run, the adoption intent recorded)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsJobDetailResponse"
+        "400":
+          description: The certificate's stored renewal inputs cannot produce a usable job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                profileIncomplete:
+                  value:
+                    error: Renewal profile is incomplete
+                    code: CERTOPS_RENEWAL_PROFILE_INCOMPLETE
+                profileInvalid:
+                  value:
+                    error: Renewal profile is invalid
+                    code: CERTOPS_RENEWAL_PROFILE_INVALID
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a session user, or the session user lacks the workspace manager/admin role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                sessionUserRequired:
+                  value:
+                    error: "Forbidden: session user required"
+                    code: INSUFFICIENT_ROLE
+                insufficientRole:
+                  value:
+                    error: "Forbidden: insufficient role"
+                    code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled or the certificate was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                certificateNotFound:
+                  value:
+                    error: Certificate not found
+                    code: CERTOPS_CERTIFICATE_NOT_FOUND
+        "409":
+          description: |
+            CertOps is paused for this workspace, or the certificate cannot be
+            adopted as it stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                workspacePaused:
+                  value:
+                    error: CertOps is paused for this workspace
+                    code: CERTOPS_WORKSPACE_PAUSED
+                alreadyConfigured:
+                  value:
+                    error: This certificate already has a renewal profile
+                    code: CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED
+                multiLocation:
+                  value:
+                    error: This certificate is deployed in more than one location
+                    code: CERTOPS_RENEWAL_SETUP_MULTI_LOCATION
+                notAgentDeployable:
+                  value:
+                    error: This certificate's key mode is not agent-deployable
+                    code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE
+        "422":
+          description: |
+            The request carried private key material, or no deployment path an
+            agent could write to is recorded for this certificate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                keyMaterialRejected:
+                  value:
+                    error: Private key material is not accepted in CertOps requests
+                    code: PRIVATE_KEY_MATERIAL_REJECTED
+                noDeployedPath:
+                  value:
+                    error: No deployed certificate path is recorded for this certificate
+                    code: CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH
+        "429":
+          description: The workspace API rate limiter rejected the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Workspace pause state could not be read; new CertOps work is denied fail-closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CertOps workspace state is unavailable
+                code: CERTOPS_WORKSPACE_STATE_UNAVAILABLE
+  /api/v1/workspaces/{id}/certops/certificates/{certId}/profile:
+    delete:
+      tags: [CertOps]
+      summary: Detach a managed certificate from its renewal profile
+      operationId: detachCertOpsRenewalProfile
+      description: |
+        Nulls the certificate's profile link, writes the audit record, and
+        cancels any outstanding profile-derivation intents, all in one
+        transaction: without the cancellation, an in-flight setup could
+        re-link the certificate moments after the operator detached it.
+
+        The profile row itself is never deleted, because one profile can cover
+        several certificates.
+
+        Gated like the profile PATCH: a session user with
+        `certops.renewal_profile.manage`, since both change what a privileged
+        agent will run on a host.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: certId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Managed certificate identifier.
+      responses:
+        "200":
+          description: Certificate detached from its renewal profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalProfileDetachResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a session user, or the session user lacks certops.renewal_profile.manage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                sessionUserRequired:
+                  value:
+                    error: "Forbidden: session user required"
+                    code: INSUFFICIENT_ROLE
+                insufficientRole:
+                  value:
+                    error: "Forbidden: insufficient permissions"
+                    code: INSUFFICIENT_PERMISSIONS
+        "404":
+          description: CertOps is disabled or the certificate was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                certificateNotFound:
+                  value:
+                    error: Certificate not found
+                    code: CERTOPS_CERTIFICATE_NOT_FOUND
+        "422":
+          description: The certificate is not linked to a renewal profile, so there is nothing to detach
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: This certificate is not linked to a renewal profile
+                code: CERTOPS_CERTIFICATE_NOT_PROFILED
+        "429":
+          description: The workspace API rate limiter rejected the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/renewal-setup-intents/{outboxId}/retry:
+    post:
+      tags: [CertOps]
+      summary: Retry a failed automatic-renewal setup intent
+      operationId: retryCertOpsRenewalSetupIntent
+      description: |
+        Returns a parked profile-derivation intent to the pending queue with a
+        fresh attempt budget.
+
+        Only a `failed` intent can be retried. A `skipped` intent is a
+        recorded decision rather than a failure, and the decision this rule
+        exists for is `detached`: replaying it would re-link a certificate an
+        operator deliberately detached.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: outboxId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The intent identifier reported as renewalSetup.intentId.
+      responses:
+        "200":
+          description: Intent reset to pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertOpsRenewalSetupRetryResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Not a session user, or the session user lacks the workspace manager/admin role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                sessionUserRequired:
+                  value:
+                    error: "Forbidden: session user required"
+                    code: INSUFFICIENT_ROLE
+                insufficientRole:
+                  value:
+                    error: "Forbidden: insufficient role"
+                    code: INSUFFICIENT_ROLE
+        "404":
+          description: CertOps is disabled or the intent was not found in this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                certopsDisabled:
+                  value:
+                    error: Endpoint not found
+                    code: NOT_FOUND
+                intentNotFound:
+                  value:
+                    error: Outbox event not found
+                    code: CERTOPS_OUTBOX_EVENT_NOT_FOUND
+        "422":
+          description: |
+            The request carried private key material, or the intent is not in a
+            retryable state (already succeeded, still pending, or skipped).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                keyMaterialRejected:
+                  value:
+                    error: Private key material is not accepted in CertOps requests
+                    code: PRIVATE_KEY_MATERIAL_REJECTED
+                notRetryable:
+                  value:
+                    error: Only a failed outbox event can be retried; this one is skipped
+                    code: CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE
+        "429":
+          description: The workspace API rate limiter rejected the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/instances:
     get:
       tags: [CertOps]
@@ -4303,9 +4621,36 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Idempotency conflict, terminal identity, or paused workspace
+          description: |
+            Idempotency conflict (the key was reused with a different body),
+            an attempt to reactivate a terminal managed certificate, or a
+            paused workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                idempotencyConflict:
+                  value:
+                    error: Idempotency key was already used with a different CertOps job request
+                    code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                terminalIdentity:
+                  value:
+                    error: Provisioning cannot reactivate a terminal managed certificate
+                    code: CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY
+                workspacePaused:
+                  value:
+                    error: CertOps is paused for this workspace
+                    code: CERTOPS_WORKSPACE_PAUSED
         "422":
           description: Request rejected because it contained private key material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Private key material is not accepted in CertOps requests
+                code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           description: >-
             Provisioning intent could not be created after validation
@@ -6425,6 +6770,246 @@ components:
           type: string
           format: date-time
           nullable: true
+        renewal:
+          $ref: "#/components/schemas/CertOpsCertificateRenewalState"
+        renewalSetup:
+          $ref: "#/components/schemas/CertOpsRenewalSetupState"
+        renewalPreflight:
+          allOf:
+            - $ref: "#/components/schemas/CertOpsRenewalPreflightState"
+          description: |
+            Present on the certificate detail response only. Lists are paged
+            over many certificates and have no use for a per-certificate
+            resume action, so the anti-join behind it is not run for them.
+    CertOpsCertificateRenewalState:
+      type: object
+      additionalProperties: false
+      description: |
+        Derived renewal-automation verdict for one certificate, computed from
+        the same inputs the renewal scheduler scans with. `auto` is the only
+        state in which the scheduler will actually create a renew job; every
+        other state names why it will not.
+      required:
+        - schemaVersion
+        - keyMode
+        - profileId
+        - profileName
+        - renewBeforeDays
+        - renewsFrom
+        - state
+        - detail
+      properties:
+        schemaVersion:
+          type: integer
+          enum: [1]
+        keyMode:
+          type: string
+          nullable: true
+        profileId:
+          type: string
+          format: uuid
+          nullable: true
+        profileName:
+          type: string
+          nullable: true
+        renewBeforeDays:
+          type: integer
+          nullable: true
+        renewsFrom:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the sweep starts attempting this renewal (notAfter minus the effective lead time). Only set when state is 'auto'.
+        state:
+          type: string
+          enum:
+            - auto
+            - disabled
+            - not-configured
+            - not-eligible
+            - not-applicable
+        detail:
+          type: string
+          description: Operator-facing explanation of the state.
+    CertOpsRenewalSetupState:
+      type: object
+      additionalProperties: false
+      description: |
+        Status of the durable profile-derivation intent behind "Set up
+        automatic renewal", if one has ever been recorded for this
+        certificate. `none` is the ordinary case for a certificate nobody has
+        tried to adopt. While `waiting`, the certificate is mid-setup rather
+        than genuinely `not-configured`.
+
+        The stored row's own failure text is never exposed: it is a raw
+        exception message that can carry driver or constraint detail, so
+        `outcomeCode` and `message` are a closed, server-authored vocabulary
+        and the raw text stays server-side.
+      required:
+        - state
+        - jobId
+        - attempts
+        - outcomeCode
+        - message
+        - intentId
+      properties:
+        state:
+          type: string
+          enum:
+            - none
+            - waiting
+            - configured
+            - skipped
+            - failed
+        jobId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The renew job the intent was created from.
+        attempts:
+          type: integer
+          minimum: 0
+        outcomeCode:
+          type: string
+          nullable: true
+          description: |
+            Machine-readable skip or failure reason, never raw error text.
+            Set for `skipped` and `failed`, null otherwise.
+          enum:
+            - already_linked
+            - detached
+            - dry_run
+            - job_never_terminated
+            - job_not_found
+            - certificate_not_found
+            - no_claim_bound_verify_evidence
+            - missing_certificate_id
+            - missing_job_id
+            - profile_operator_owned
+            - certificate_link_conflict
+            - job_failed
+            - job_rejected
+            - job_cancelled
+            - job_blocked
+            - orphaned_unknown_effect
+            - renewal_profile_incomplete
+            - renewal_profile_invalid
+            - derivation_failed
+            - unknown
+        message:
+          type: string
+          nullable: true
+          description: |
+            Operator-facing explanation authored server-side. Set for
+            `skipped` and `failed`, null otherwise.
+        intentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            The outbox event id to pass to the retry route. Non-null only
+            while the intent is retryable, so a `skipped` intent (a decision,
+            not a failure) never offers one.
+    CertOpsRenewalPreflightState:
+      type: object
+      additionalProperties: false
+      description: |
+        A completed preflight for this certificate that nothing has been armed
+        behind yet, which is what lets the UI offer "Continue setup" after a
+        reload. A preflight is an asynchronous dry_run renew job terminating as
+        `dry_run_complete`, never `succeeded`, and it is reported here only
+        while no adoption intent exists for the certificate.
+      required:
+        - available
+        - jobId
+        - completedAt
+      properties:
+        available:
+          type: boolean
+        jobId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The dry_run job to read the preflight's own result from.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CertOpsRenewalSetupRetryResponse:
+      type: object
+      additionalProperties: false
+      required: [id, eventType, status, attemptCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The intent that was reset, matching renewalSetup.intentId.
+        eventType:
+          type: string
+          enum: [profile_derivation_requested]
+        status:
+          type: string
+          enum: [pending]
+          description: A reset intent is always returned to the pending queue.
+        attemptCount:
+          type: integer
+          minimum: 0
+          description: Zero after a reset, so the retry gets a full attempt budget.
+    CertOpsRenewalProfileDetachResponse:
+      type: object
+      additionalProperties: false
+      description: |
+        Result of unlinking a certificate from its renewal profile. The profile
+        row itself is never deleted, because one profile can cover several
+        certificates.
+      required: [certificateId, detachedProfileId, invalidatedIntents]
+      properties:
+        certificateId:
+          type: string
+          format: uuid
+        detachedProfileId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The profile the certificate was linked to, for the audit trail.
+        invalidatedIntents:
+          type: integer
+          minimum: 0
+          description: |
+            Outstanding profile-derivation intents cancelled in the same
+            transaction, so a detach cannot be undone by an in-flight setup.
+    CertOpsRenewalSetupRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Arms automatic renewal by creating a renew job and, for a real run,
+        recording the derivation intent in the same transaction. A dry run is a
+        preflight: it records no intent, so it can never configure anything.
+      properties:
+        dryRun:
+          type: boolean
+          default: false
+          description: Run as a preflight (mode dry_run) instead of arming renewal.
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Job payload overrides. Private-key material is rejected.
+        assignedAgentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Pin the job to one agent. Left unset, the service pins the agent
+            whose discovery recorded the deployment path, since only that host
+            has it.
+        idempotencyKey:
+          type: string
+          nullable: true
+          maxLength: 200
+        requiresApproval:
+          type: boolean
+          default: false
     CertOpsManagedCertificateListResponse:
       type: object
       additionalProperties: false

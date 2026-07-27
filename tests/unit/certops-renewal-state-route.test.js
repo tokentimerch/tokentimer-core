@@ -301,17 +301,25 @@ describe("CertOps certificate renewal-state projection", () => {
       ],
     });
 
-    assert.equal(queries.length, 1);
+    assert.equal(queries.length, 2);
     assert.match(queries[0].sql, /LEFT JOIN certificate_profiles/);
     assert.deepEqual(queries[0].params, [
       "workspace-1",
       ["cert-auto", "cert-observed"],
     ]);
+    assert.match(queries[1].sql, /FROM certops_outbox/);
+    assert.deepEqual(queries[1].params, [
+      "workspace-1",
+      "profile_derivation_requested",
+      ["cert-auto", "cert-observed"],
+    ]);
 
     assert.equal(items[0].commonName, "app.example.com");
     assert.equal(items[0].renewal.state, "auto");
+    assert.ok(items[0].renewalSetup);
     assert.equal(items[1].commonName, "obs.example.com");
     assert.equal(items[1].renewal.state, "not-eligible");
+    assert.ok(items[1].renewalSetup);
   });
 
   it("does not query when there is nothing to enrich", async () => {

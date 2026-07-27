@@ -22,6 +22,10 @@ const {
   countCertificateDeploymentLocations,
   detachRenewalProfile,
   enqueueRenewalAdoptionIntent,
+  loadRenewalSetupIntents,
+  projectRenewalSetupState,
+  renewalSetupJobCreator,
+  retryRenewalSetupIntent,
 } = require(servicePath("renewalAdoption.js"));
 const {
   OPERATOR_OWNED_METADATA_KEY,
@@ -278,6 +282,378 @@ describe("deployment location count", () => {
         certificateId: CERT_ID,
       }),
       1,
+    );
+  });
+});
+
+describe("renewalSetupJobCreator preconditions", () => {
+  function poolReturning(certRow) {
+    return {
+      async query(sql, params) {
+        const normalized = normalize(sql);
+        if (normalized.startsWith("SELECT id, status, key_mode, profile_id, deployed_cert_path")) {
+          return { rows: certRow ? [certRow] : [] };
+        }
+        throw new Error(`unexpected query in precondition test: ${normalized} ${JSON.stringify(params)}`);
+      },
+    };
+  }
+
+  it("refuses a certificate that does not exist", async () => {
+    const jobCreator = renewalSetupJobCreator({ certificateId: CERT_ID });
+    await assert.rejects(
+      () => jobCreator({ client: poolReturning(null), workspaceId: WORKSPACE }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_CERTIFICATE_NOT_FOUND");
+        return true;
+      },
+    );
+  });
+
+  it("refuses a certificate that already has a renewal profile", async () => {
+    const jobCreator = renewalSetupJobCreator({ certificateId: CERT_ID });
+    await assert.rejects(
+      () =>
+        jobCreator({
+          client: poolReturning({
+            id: CERT_ID,
+            key_mode: "agent-local",
+            profile_id: PROFILE_ID,
+            deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+          }),
+          workspaceId: WORKSPACE,
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_RENEWAL_SETUP_ALREADY_CONFIGURED");
+        return true;
+      },
+    );
+  });
+
+  it("refuses a certificate whose key custody is not agent-deployable", async () => {
+    const jobCreator = renewalSetupJobCreator({ certificateId: CERT_ID });
+    await assert.rejects(
+      () =>
+        jobCreator({
+          client: poolReturning({
+            id: CERT_ID,
+            key_mode: "cert-manager-managed",
+            profile_id: null,
+            deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+          }),
+          workspaceId: WORKSPACE,
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE");
+        return true;
+      },
+    );
+  });
+
+  it("refuses a certificate with no discovered deployment path", async () => {
+    const jobCreator = renewalSetupJobCreator({ certificateId: CERT_ID });
+    await assert.rejects(
+      () =>
+        jobCreator({
+          client: poolReturning({
+            id: CERT_ID,
+            key_mode: "agent-local",
+            profile_id: null,
+            deployed_cert_path: null,
+          }),
+          workspaceId: WORKSPACE,
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_RENEWAL_SETUP_NO_DEPLOYED_PATH");
+        return true;
+      },
+    );
+  });
+
+  it("refuses a certificate deployed to more than one location", async () => {
+    const jobCreator = renewalSetupJobCreator({
+      certificateId: CERT_ID,
+      countLocations: async () => 3,
+    });
+    await assert.rejects(
+      () =>
+        jobCreator({
+          client: poolReturning({
+            id: CERT_ID,
+            key_mode: "agent-local",
+            profile_id: null,
+            deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+          }),
+          workspaceId: WORKSPACE,
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_RENEWAL_SETUP_MULTI_LOCATION");
+        assert.match(error.message, /3 locations/);
+        return true;
+      },
+    );
+  });
+
+  it("enqueues the adoption intent for a created, real (non-dry-run) job", async () => {
+    const enqueued = [];
+    const jobCreator = renewalSetupJobCreator({
+      certificateId: CERT_ID,
+      countLocations: async () => 1,
+      createJob: async () => ({ job: { id: JOB_ID, mode: "real" }, created: true }),
+      enqueueIntent: async (args) => {
+        enqueued.push(args);
+        return { enqueued: true, id: OUTBOX_ID };
+      },
+    });
+
+    await jobCreator({
+      client: poolReturning({
+        id: CERT_ID,
+        key_mode: "agent-local",
+        profile_id: null,
+        deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+        deployed_agent_id: "agent-9",
+      }),
+      workspaceId: WORKSPACE,
+      payload: {},
+    });
+
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].jobId, JOB_ID);
+    assert.equal(enqueued[0].certificateId, CERT_ID);
+    assert.equal(enqueued[0].operation, "renew");
+  });
+
+  it("enqueues no intent for a dry_run job even though it was created", async () => {
+    const enqueued = [];
+    const jobCreator = renewalSetupJobCreator({
+      certificateId: CERT_ID,
+      countLocations: async () => 1,
+      createJob: async () => ({
+        job: { id: JOB_ID, mode: "dry_run" },
+        created: true,
+      }),
+      enqueueIntent: async (args) => {
+        enqueued.push(args);
+        return { enqueued: true, id: OUTBOX_ID };
+      },
+    });
+
+    await jobCreator({
+      client: poolReturning({
+        id: CERT_ID,
+        key_mode: "agent-local",
+        profile_id: null,
+        deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+      }),
+      workspaceId: WORKSPACE,
+      payload: {},
+    });
+
+    assert.equal(enqueued.length, 0, "a preflight must arm nothing even on success");
+  });
+
+  it("pins the agent from the certificate's recorded discovery agent", async () => {
+    let capturedOptions = null;
+    const jobCreator = renewalSetupJobCreator({
+      certificateId: CERT_ID,
+      countLocations: async () => 1,
+      createJob: async (options) => {
+        capturedOptions = options;
+        return { job: { id: JOB_ID, mode: "real" }, created: true };
+      },
+      enqueueIntent: async () => ({ enqueued: true, id: OUTBOX_ID }),
+    });
+
+    await jobCreator({
+      client: poolReturning({
+        id: CERT_ID,
+        key_mode: "agent-local",
+        profile_id: null,
+        deployed_cert_path: "/etc/ssl/app/fullchain.pem",
+        deployed_agent_id: "agent-9",
+      }),
+      workspaceId: WORKSPACE,
+      payload: {},
+    });
+
+    assert.equal(capturedOptions.assignedAgentId, "agent-9");
+    assert.equal(capturedOptions.operation, "renew");
+    assert.equal(capturedOptions.subjectId, CERT_ID);
+    assert.equal(capturedOptions.payload.certPath, "/etc/ssl/app/fullchain.pem");
+  });
+});
+
+describe("renewalSetup projection", () => {
+  it("projects 'none' when no intent has ever been recorded", () => {
+    assert.deepEqual(projectRenewalSetupState(null), {
+      state: "none",
+      jobId: null,
+      attempts: 0,
+      outcomeCode: null,
+      message: null,
+      intentId: null,
+    });
+  });
+
+  it("projects a pending row as waiting", () => {
+    const projection = projectRenewalSetupState({
+      status: "pending",
+      job_id: JOB_ID,
+      attempt_count: 2,
+    });
+    assert.equal(projection.state, "waiting");
+    assert.equal(projection.jobId, JOB_ID);
+    assert.equal(projection.attempts, 2);
+  });
+
+  it("projects a succeeded row as configured", () => {
+    const projection = projectRenewalSetupState({
+      status: "succeeded",
+      job_id: JOB_ID,
+      attempt_count: 1,
+    });
+    assert.equal(projection.state, "configured");
+    assert.equal(projection.outcomeCode, null);
+  });
+
+  it("projects a skipped row with its outcome_reason, e.g. detached", () => {
+    const projection = projectRenewalSetupState({
+      status: "skipped",
+      job_id: JOB_ID,
+      attempt_count: 1,
+      outcome_reason: "detached",
+    });
+    assert.equal(projection.state, "skipped");
+    assert.equal(projection.outcomeCode, "detached");
+  });
+
+  it("never leaks last_error: a failed row gets a mapped message, not the raw text", () => {
+    const projection = projectRenewalSetupState({
+      status: "failed",
+      job_id: JOB_ID,
+      attempt_count: 5,
+      outcome_reason: null,
+      last_error: 'duplicate key value violates unique constraint "uq_certificate_profiles_name"',
+    });
+    assert.equal(projection.state, "failed");
+    assert.equal(projection.outcomeCode, "derivation_failed");
+    assert.doesNotMatch(projection.message, /uq_certificate_profiles_name/);
+  });
+
+  it("loads only the most recent intent per certificate", async () => {
+    const db = {
+      async query(sql, params) {
+        assert.match(sql, /DISTINCT ON \(payload->>'certificateId'\)/);
+        assert.match(sql, /FROM certops_outbox/);
+        assert.deepEqual(params, [
+          WORKSPACE,
+          "profile_derivation_requested",
+          [CERT_ID],
+        ]);
+        return {
+          rows: [
+            {
+              certificate_id: CERT_ID,
+              id: OUTBOX_ID,
+              job_id: JOB_ID,
+              status: "succeeded",
+              outcome_reason: null,
+              attempt_count: 1,
+            },
+          ],
+        };
+      },
+    };
+
+    const result = await loadRenewalSetupIntents({
+      db,
+      workspaceId: WORKSPACE,
+      certificateIds: [CERT_ID],
+    });
+    assert.equal(result.size, 1);
+    assert.equal(result.get(CERT_ID).status, "succeeded");
+  });
+
+  it("returns an empty map without querying when there are no certificate ids", async () => {
+    let called = false;
+    const db = { async query() { called = true; return { rows: [] }; } };
+    const result = await loadRenewalSetupIntents({
+      db,
+      workspaceId: WORKSPACE,
+      certificateIds: [],
+    });
+    assert.equal(result.size, 0);
+    assert.equal(called, false);
+  });
+});
+
+describe("renewalSetup retry", () => {
+  it("retries a failed profile-derivation intent", async () => {
+    const client = recordingClient((sql) => {
+      if (sql.startsWith("SELECT event_type FROM certops_outbox")) {
+        return { rows: [{ event_type: "profile_derivation_requested" }] };
+      }
+      if (sql.startsWith("SELECT id, status, event_type")) {
+        return { rows: [{ id: OUTBOX_ID, status: "failed" }] };
+      }
+      return {
+        rows: [
+          {
+            id: OUTBOX_ID,
+            event_type: "profile_derivation_requested",
+            status: "pending",
+            attempt_count: 0,
+          },
+        ],
+      };
+    });
+
+    const result = await retryRenewalSetupIntent({
+      dbPool: client,
+      workspaceId: WORKSPACE,
+      outboxId: OUTBOX_ID,
+    });
+    assert.equal(result.status, "pending");
+  });
+
+  it("refuses to retry an event type outside the adopt-flow contract", async () => {
+    const client = recordingClient((sql) => {
+      if (sql.startsWith("SELECT event_type FROM certops_outbox")) {
+        return { rows: [{ event_type: "renewal_alert_requested" }] };
+      }
+      return { rows: [] };
+    });
+
+    await assert.rejects(
+      () =>
+        retryRenewalSetupIntent({
+          dbPool: client,
+          workspaceId: WORKSPACE,
+          outboxId: OUTBOX_ID,
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE");
+        return true;
+      },
+    );
+  });
+
+  it("404s when the outbox event does not exist", async () => {
+    const client = recordingClient(() => ({ rows: [] }));
+
+    await assert.rejects(
+      () =>
+        retryRenewalSetupIntent({
+          dbPool: client,
+          workspaceId: WORKSPACE,
+          outboxId: OUTBOX_ID,
+        }),
+      (error) => {
+        assert.equal(error.code, "CERTOPS_OUTBOX_EVENT_NOT_FOUND");
+        assert.equal(error.statusCode, 404);
+        return true;
+      },
     );
   });
 });

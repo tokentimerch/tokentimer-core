@@ -33,6 +33,9 @@ const OUTBOX_EVENT_TYPE_VALUES = Object.freeze(
 
 const DEDUPE_KEY_MAX_LENGTH = 256;
 
+const CERTOPS_OUTBOX_EVENT_NOT_FOUND = "CERTOPS_OUTBOX_EVENT_NOT_FOUND";
+const CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE = "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE";
+
 // Per-event payload contracts. Ids and frozen codes only, so an outbox row can
 // never become an exfiltration path for job payload contents. Unknown keys are
 // rejected rather than dropped: a caller passing something unexpected is a bug
@@ -242,13 +245,13 @@ async function resetOutboxEventForRetry({
   if (!row) {
     throw outboxError(
       "Outbox event not found",
-      "CERTOPS_OUTBOX_EVENT_NOT_FOUND",
+      CERTOPS_OUTBOX_EVENT_NOT_FOUND,
     );
   }
   if (row.status !== "failed") {
     throw outboxError(
       `Only a failed outbox event can be retried; this one is ${row.status}`,
-      "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE",
+      CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
     );
   }
 
@@ -273,7 +276,7 @@ async function resetOutboxEventForRetry({
     // Lost a race with a concurrent write that moved the row out of 'failed'.
     throw outboxError(
       "Outbox event is no longer retryable",
-      "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE",
+      CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
     );
   }
   return {
@@ -291,6 +294,8 @@ module.exports = {
   PAYLOAD_FIELDS_BY_EVENT_TYPE,
   DEDUPE_KEY_MAX_LENGTH,
   REVIVABLE_OUTBOX_STATUSES,
+  CERTOPS_OUTBOX_EVENT_NOT_FOUND,
+  CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE,
   enqueueOutboxEvent,
   invalidateProfileDerivationIntents,
   resetOutboxEventForRetry,
