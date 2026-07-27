@@ -153,8 +153,7 @@ export function renewalDescriptor(renewal) {
         state,
         label: 'Auto-renew on (workspace paused)',
         scheme: 'yellow',
-        help:
-          'Automatic renewal is configured for this certificate, but CertOps is paused for this workspace, so no renewal will run until it is resumed.',
+        help: 'Automatic renewal is configured for this certificate, but CertOps is paused for this workspace, so no renewal will run until it is resumed.',
         isWarning: true,
       };
     }
