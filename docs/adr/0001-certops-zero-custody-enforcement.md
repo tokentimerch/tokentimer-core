@@ -39,7 +39,11 @@ Enterprise. Enforce it in multiple layers:
 4. **Schema design**: no inventory field is intended to hold key material;
    inventory stores public material and opaque, non-secret references
    (`certops-inventory.schema.json`). Flexible JSONB fields are protected by the
-   detector, not by the absence of a column.
+   detector, not by the absence of a column. `key_reference` in particular is a
+   **material-locality pointer** (which host or cluster holds the key), not a
+   path to the key: recording a real key path would mean storing an assertion the
+   control plane cannot verify, since it never sees the key. See ADR-0008's
+   custody implication and `docs/certops/CONTEXT.md`.
 5. **Evidence scrubbing**: `redactGenericSecrets` runs before evidence storage.
 
 The single private key the platform holds is the **platform operational signing

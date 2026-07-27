@@ -118,7 +118,7 @@
     },
     "keyReference": {
       "type": ["string", "null"],
-      "description": "Opaque, non-secret reference to where the key lives on the execution plane (e.g. agent id + path handle, pkcs11 URI, k8s secret ref). Never the key itself."
+      "description": "Opaque, non-secret material-locality pointer: which execution plane holds the key, not a path to open to find it. For agent-local sources this is the certificate path (`file://<certPath>`), which is the only coordinate a control plane that never sees the key can honestly record; for cert-manager sources it is the Secret's tls.key coordinate, which Kubernetes publishes itself. Never the key itself."
     },
     "createdAt": {
       "type": ["string", "null"],

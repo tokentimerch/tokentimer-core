@@ -90,11 +90,33 @@ function createMemoryClient() {
       }
 
       if (
+        normalizedSql.includes("SELECT COUNT(*)") &&
+        normalizedSql.includes("FROM certops_agent_bootstrap_tokens")
+      ) {
+        return {
+          rows: [
+            {
+              total: bootstrapRows.filter(
+                (row) => row.workspace_id === params[0],
+              ).length,
+            },
+          ],
+        };
+      }
+
+      if (
         normalizedSql.includes("FROM certops_agent_bootstrap_tokens") &&
         normalizedSql.includes("ORDER BY created_at DESC")
       ) {
+        const matching = bootstrapRows.filter(
+          (row) => row.workspace_id === params[0],
+        );
+        const hasLimit = normalizedSql.includes("LIMIT $2");
+        const start = Number((hasLimit ? params[2] : params[1]) || 0);
         return {
-          rows: bootstrapRows.filter((row) => row.workspace_id === params[0]),
+          rows: hasLimit
+            ? matching.slice(start, start + Number(params[1]))
+            : matching.slice(start),
         };
       }
 
@@ -415,8 +437,9 @@ describe("CertOps agent bootstrap tokens", () => {
     });
 
     const listed = await listBootstrapTokens({ client, workspaceId: WORKSPACE_A });
-    assert.equal(listed.length, 1);
-    assert.equal(listed[0].tokenHash, undefined);
+    assert.equal(listed.items.length, 1);
+    assert.equal(listed.items[0].tokenHash, undefined);
+    assert.equal(listed.pagination.total, 1);
     assert.equal(
       JSON.stringify(listed).includes(created.plaintextToken),
       false,
@@ -438,6 +461,63 @@ describe("CertOps agent bootstrap tokens", () => {
     });
     assert.equal(result.valid, false);
     assert.equal(result.code, CERTOPS_AGENT_BOOTSTRAP_TOKEN_REVOKED);
+  });
+
+  it("returns every bootstrap token when no limit is supplied", async () => {
+    // A bootstrap-token inventory silently cut to one page, with no control on
+    // screen to reveal the rest, is a security-relevant wrong answer.
+    const client = createMemoryClient();
+    for (let index = 0; index < 55; index += 1) {
+      await createBootstrapToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: `Bootstrap ${index}`,
+        expiresAt: date(60_000),
+      });
+    }
+
+    const listed = await listBootstrapTokens({ client, workspaceId: WORKSPACE_A });
+
+    assert.equal(listed.items.length, 55);
+    assert.equal(listed.pagination.limit, null);
+    assert.equal(listed.pagination.total, 55);
+    for (const entry of client.queries) {
+      if (
+        entry.sql.includes("FROM certops_agent_bootstrap_tokens") &&
+        entry.sql.includes("ORDER BY")
+      ) {
+        assert.equal(entry.sql.includes("LIMIT"), false);
+      }
+    }
+  });
+
+  it("counts the whole workspace and survives an offset past the end", async () => {
+    const client = createMemoryClient();
+    for (let index = 0; index < 5; index += 1) {
+      await createBootstrapToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: `Bootstrap ${index}`,
+        expiresAt: date(60_000),
+      });
+    }
+
+    const page = await listBootstrapTokens({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 2,
+    });
+    assert.equal(page.items.length, 2);
+    assert.equal(page.pagination.total, 5);
+
+    const beyond = await listBootstrapTokens({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 2,
+      offset: 500,
+    });
+    assert.deepEqual(beyond.items, []);
+    assert.equal(beyond.pagination.total, 5);
   });
 });
 

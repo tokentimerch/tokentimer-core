@@ -445,15 +445,61 @@ async function createApiToken(options) {
   throw serviceError("Unable to create API token", CERTOPS_API_TOKEN_INVALID);
 }
 
+// Pagination is opt-in: this is a credential inventory with no page control in
+// the UI yet, so an omitted limit must keep returning every row rather than
+// silently truncating an audit at row 50. The default arrives with the control.
+function normalizeOptionalLimit(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(1, Math.min(100, parsed));
+}
+
+function normalizeOffset(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed);
+}
+
 async function listApiTokens(options) {
-  const result = await (options.client || pool).query(
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const limit = normalizeOptionalLimit(options.limit);
+  const offset = normalizeOffset(options.offset);
+  const params = [workspaceId];
+  let pageClause = "";
+  if (limit !== null) {
+    params.push(limit, offset);
+    pageClause = `
+      LIMIT $${params.length - 1} OFFSET $${params.length}`;
+  } else if (offset > 0) {
+    params.push(offset);
+    pageClause = `
+      OFFSET $${params.length}`;
+  }
+
+  const totalResult = await db.query(
+    `SELECT COUNT(*)::int AS total
+       FROM api_tokens
+      WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+  const result = await db.query(
     `SELECT ${SAFE_SELECT_FIELDS}
        FROM api_tokens
       WHERE workspace_id = $1
-      ORDER BY created_at DESC, id ASC`,
-    [normalizeWorkspaceId(options.workspaceId)],
+      ORDER BY created_at DESC, id ASC${pageClause}`,
+    params,
   );
-  return result.rows.map(tokenMetadataFromRow);
+
+  return {
+    items: result.rows.map(tokenMetadataFromRow),
+    pagination: {
+      limit,
+      offset,
+      total: Number(totalResult.rows[0]?.total || 0),
+    },
+  };
 }
 
 async function getApiTokenById(options) {

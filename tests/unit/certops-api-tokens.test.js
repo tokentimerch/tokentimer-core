@@ -92,11 +92,30 @@ function createMemoryClient() {
       }
 
       if (
+        normalizedSql.includes("SELECT COUNT(*)") &&
+        normalizedSql.includes("FROM api_tokens")
+      ) {
+        return {
+          rows: [
+            {
+              total: rows.filter((row) => row.workspace_id === params[0]).length,
+            },
+          ],
+        };
+      }
+
+      if (
         normalizedSql.includes("WHERE workspace_id = $1") &&
         normalizedSql.includes("ORDER BY created_at DESC")
       ) {
+        const matching = rows.filter((row) => row.workspace_id === params[0]);
+        const hasLimit = normalizedSql.includes("LIMIT $2");
+        const offset = hasLimit ? params[2] : params[1];
+        const start = Number(offset || 0);
         return {
-          rows: rows.filter((row) => row.workspace_id === params[0]),
+          rows: hasLimit
+            ? matching.slice(start, start + Number(params[1]))
+            : matching.slice(start),
         };
       }
 
@@ -666,7 +685,7 @@ describe("CertOps API token service", () => {
       workspaceId: WORKSPACE_A,
       tokenId: created.token.id,
     });
-    assert.equal(listed[0].status, "expired");
+    assert.equal(listed.items[0].status, "expired");
     assert.equal(fetched.status, "expired");
   });
 
@@ -714,7 +733,7 @@ describe("CertOps API token service", () => {
     assertNoPlaintextToken(list, created.plaintextToken);
     assertNoPlaintextToken(got, created.plaintextToken);
     assertNoPlaintextToken(revoked, created.plaintextToken);
-    assert.equal(list[0].tokenHash, undefined);
+    assert.equal(list.items[0].tokenHash, undefined);
     assert.equal(got.tokenHash, undefined);
     assert.equal(revoked.tokenHash, undefined);
   });
@@ -739,5 +758,68 @@ describe("CertOps API token service", () => {
     assert.equal(_test.safeCompareSha256Hex(hash, hash), true);
     assert.equal(_test.safeCompareSha256Hex(hash, _test.sha256Hex("other")), false);
     assert.equal(_test.safeCompareSha256Hex(hash, "not-a-sha256"), false);
+  });
+});
+
+describe("CertOps API token list pagination", () => {
+  async function seed(count) {
+    const client = createMemoryClient();
+    for (let index = 0; index < count; index += 1) {
+      await createApiToken({
+        client,
+        workspaceId: WORKSPACE_A,
+        name: `Executor ${index}`,
+        scopes: ["certops:events:write"],
+      });
+    }
+    await createApiToken({
+      client,
+      workspaceId: WORKSPACE_B,
+      name: "Other workspace",
+      scopes: ["certops:events:write"],
+    });
+    return client;
+  }
+
+  it("returns every row when no limit is supplied", async () => {
+    // This list has no pagination control in the product yet. A silent default
+    // page would truncate a credential audit with nothing on screen saying so.
+    const client = await seed(60);
+    const listed = await listApiTokens({ client, workspaceId: WORKSPACE_A });
+
+    assert.equal(listed.items.length, 60);
+    assert.equal(listed.pagination.limit, null);
+    assert.equal(listed.pagination.offset, 0);
+    assert.equal(listed.pagination.total, 60);
+    for (const sql of client.queries) {
+      if (sql.includes("FROM api_tokens") && sql.includes("ORDER BY")) {
+        assert.equal(sql.includes("LIMIT"), false);
+      }
+    }
+  });
+
+  it("counts the whole workspace rather than the page", async () => {
+    const client = await seed(7);
+    const listed = await listApiTokens({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 3,
+    });
+
+    assert.equal(listed.items.length, 3);
+    assert.equal(listed.pagination.total, 7);
+  });
+
+  it("reports a non-zero total for an offset past the end", async () => {
+    const client = await seed(4);
+    const listed = await listApiTokens({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 2,
+      offset: 90,
+    });
+
+    assert.deepEqual(listed.items, []);
+    assert.equal(listed.pagination.total, 4);
   });
 });

@@ -25,6 +25,37 @@ const ALLOWED_KEY_MODES = new Set([
   "os-store-managed",
   "external-unknown",
 ]);
+const CERTOPS_CERTIFICATE_STATUS_INVALID = "CERTOPS_CERTIFICATE_STATUS_INVALID";
+const CERTOPS_CERTIFICATE_SOURCE_INVALID = "CERTOPS_CERTIFICATE_SOURCE_INVALID";
+const CERTOPS_CERTIFICATE_FILTER_INVALID = "CERTOPS_CERTIFICATE_FILTER_INVALID";
+
+// Mirrors managed_certificates_status_check and managed_certificates_source_check.
+// A value outside the constraint can never match a row, so it is rejected rather
+// than answered with an empty page that reads like a real result.
+const MANAGED_CERTIFICATE_STATUSES = new Set([
+  "discovered",
+  "provisioning",
+  "active",
+  "renewing",
+  "expiring",
+  "expired",
+  "revoked",
+  "decommissioned",
+]);
+const MANAGED_CERTIFICATE_SOURCES = new Set([
+  "manual",
+  "api",
+  "import",
+  "domain_checker",
+  "endpoint_monitor",
+  "integration",
+  "auto_sync",
+  "cert_manager",
+  "agent_filesystem",
+  "agent_issuance",
+]);
+const AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST = "'disabled', 'archived'";
+const AGENT_DEPLOYABLE_KEY_MODE_SQL_LIST = "'agent-local', 'proxy-agent-local'";
 const CERTOPS_KEY_REFERENCE_INVALID = "CERTOPS_KEY_REFERENCE_INVALID";
 const KEY_REFERENCE_MAX_LENGTH = 256;
 const RETIRE_REASON_MAX_LENGTH = 512;
@@ -256,6 +287,109 @@ function normalizeOffset(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, parsed);
+}
+
+function normalizeCertificateStatusFilter(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const trimmed = String(value).trim();
+  if (MANAGED_CERTIFICATE_STATUSES.has(trimmed)) return trimmed;
+  throw certOpsValidationError(
+    "Invalid certificate status filter",
+    CERTOPS_CERTIFICATE_STATUS_INVALID,
+  );
+}
+
+function normalizeCertificateSourceFilter(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const trimmed = String(value).trim();
+  if (MANAGED_CERTIFICATE_SOURCES.has(trimmed)) return trimmed;
+  throw certOpsValidationError(
+    "Invalid certificate source filter",
+    CERTOPS_CERTIFICATE_SOURCE_INVALID,
+  );
+}
+
+function normalizeCertificateFlagFilter(value, field) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "boolean") return value;
+  const trimmed = String(value).trim().toLowerCase();
+  if (trimmed === "true" || trimmed === "1") return true;
+  if (trimmed === "false" || trimmed === "0") return false;
+  throw certOpsValidationError(
+    `Invalid certificate filter value for ${field}`,
+    CERTOPS_CERTIFICATE_FILTER_INVALID,
+  );
+}
+
+/**
+ * SQL predicate set shared by the page query and its count, so a filtered page
+ * can never advertise a total taken over a different population.
+ *
+ * The three renewal predicates are deliberately separate facts rather than one
+ * "will not renew" filter: a certificate whose profile fails validation renews
+ * no more than these do, but that case lives in a JavaScript validator over the
+ * profile body and has no SQL expression, so a combined filter would claim a
+ * completeness it cannot deliver.
+ */
+function managedCertificateFilterSql(filters = {}) {
+  const params = [filters.workspaceId];
+  const conditions = ["mc.workspace_id = $1"];
+
+  const status = normalizeCertificateStatusFilter(filters.status);
+  if (status) {
+    params.push(status);
+    conditions.push(`mc.status = $${params.length}`);
+  }
+
+  const source = normalizeCertificateSourceFilter(filters.source);
+  if (source) {
+    params.push(source);
+    conditions.push(`mc.source = $${params.length}`);
+  }
+
+  const noProfile = normalizeCertificateFlagFilter(
+    filters.noRenewalProfile,
+    "noRenewalProfile",
+  );
+  if (noProfile === true) conditions.push("mc.profile_id IS NULL");
+  if (noProfile === false) conditions.push("mc.profile_id IS NOT NULL");
+
+  const renewalDisabled = normalizeCertificateFlagFilter(
+    filters.renewalDisabled,
+    "renewalDisabled",
+  );
+  if (renewalDisabled === true) {
+    conditions.push(
+      `cp.status IN (${AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST})`,
+    );
+  }
+  if (renewalDisabled === false) {
+    // COALESCE keeps the complement two-valued: a certificate with no profile
+    // has not had renewal switched off, so it belongs on this side of the split
+    // rather than being dropped by a NULL comparison.
+    conditions.push(
+      `COALESCE(cp.status, '') NOT IN (${AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST})`,
+    );
+  }
+
+  const keyNotAgentDeployable = normalizeCertificateFlagFilter(
+    filters.keyNotAgentDeployable,
+    "keyNotAgentDeployable",
+  );
+  if (keyNotAgentDeployable === true) {
+    // A NULL key_mode is not agent-deployable either: nothing has claimed the
+    // key, so no agent can renew it.
+    conditions.push(
+      `COALESCE(mc.key_mode, '') NOT IN (${AGENT_DEPLOYABLE_KEY_MODE_SQL_LIST})`,
+    );
+  }
+  if (keyNotAgentDeployable === false) {
+    conditions.push(
+      `mc.key_mode IN (${AGENT_DEPLOYABLE_KEY_MODE_SQL_LIST})`,
+    );
+  }
+
+  return { where: conditions.join("\n        AND "), params };
 }
 
 function certOpsValidationError(message, code) {
@@ -892,16 +1026,30 @@ async function countActiveManagedCertificates({ workspaceId }) {
   return result.rows[0].count;
 }
 
-async function listManagedCertificates({ workspaceId, limit, offset }) {
-  const normalizedLimit = normalizeLimit(limit);
-  const normalizedOffset = normalizeOffset(offset);
-  const result = await pool.query(
-    `SELECT *
-       FROM managed_certificates
-      WHERE workspace_id = $1
-      ORDER BY not_after ASC NULLS LAST, created_at DESC, id ASC
-      LIMIT $2 OFFSET $3`,
-    [workspaceId, normalizedLimit, normalizedOffset],
+const MANAGED_CERTIFICATE_LIST_FROM = `
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id`;
+
+async function listManagedCertificates(options = {}) {
+  const db = options.client || pool;
+  const normalizedLimit = normalizeLimit(options.limit);
+  const normalizedOffset = normalizeOffset(options.offset);
+  const { where, params } = managedCertificateFilterSql(options);
+
+  const totalResult = await db.query(
+    `SELECT COUNT(*)::int AS total${MANAGED_CERTIFICATE_LIST_FROM}
+      WHERE ${where}`,
+    params,
+  );
+
+  const pageParams = [...params, normalizedLimit, normalizedOffset];
+  const result = await db.query(
+    `SELECT mc.*${MANAGED_CERTIFICATE_LIST_FROM}
+      WHERE ${where}
+      ORDER BY mc.not_after ASC NULLS LAST, mc.created_at DESC, mc.id ASC
+      LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
+    pageParams,
   );
 
   return {
@@ -909,6 +1057,7 @@ async function listManagedCertificates({ workspaceId, limit, offset }) {
     pagination: {
       limit: normalizedLimit,
       offset: normalizedOffset,
+      total: Number(totalResult.rows[0]?.total || 0),
     },
   };
 }
@@ -1251,12 +1400,17 @@ async function linkReconciledCertificateToken({
 }
 
 module.exports = {
+  CERTOPS_CERTIFICATE_FILTER_INVALID,
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
   CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+  CERTOPS_CERTIFICATE_SOURCE_INVALID,
+  CERTOPS_CERTIFICATE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
+  MANAGED_CERTIFICATE_SOURCES,
+  MANAGED_CERTIFICATE_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   RETIRE_STATUSES,
   RETIRE_STATUS_SQL_LIST,
@@ -1275,6 +1429,7 @@ module.exports = {
   listCertificateTargets,
   listManagedCertificates,
   listWorkspaceCertificateInstances,
+  managedCertificateFilterSql,
   normalizeKeyMode,
   normalizeKeyReference,
   normalizeLimit,

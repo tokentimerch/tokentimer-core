@@ -241,6 +241,18 @@ the shared detector scans every outbound envelope.
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE` rather than dispatching to an
   agent that must fail. See `AGENT_DEPLOYABLE_KEY_MODES` in
   `apps/api/services/certops/jobs.js`.
+- **`key_reference` is a locality pointer, not a key path** - it answers "which
+  host or cluster holds this key", not "open this file to find the key". Every
+  writer follows the same convention: `agent-local` sources (both
+  `agent_filesystem` discovery and `agent_issuance`) record
+  `file://<certificate path>`, and `cert_manager` records the Secret's `tls.key`
+  coordinate. The certificate path is used for agent sources because it is the
+  only coordinate the control plane can honestly know: it never sees the key, so
+  a stored key path would be an unverifiable assertion that readers would then
+  treat as authoritative. Discovery genuinely cannot learn a key path from
+  scanning a certificate, so a "key path" semantic was never achievable for that
+  source and is deliberately not faked for the others. See ADR-0008 (custody
+  implication) and ADR-0001.
 - **Job assignment** - distinct from claim exclusivity. Claiming is
   transactional (`FOR UPDATE SKIP LOCKED`), so two agents never take the
   same job; but a job with neither `assignedAgentId` nor
@@ -392,6 +404,7 @@ flows use this path when `certops.enabled` is on.
 ## Where things live
 
 - Program docs: `docs/certops/` (this file; purgeable when CertOps graduates).
-- ADRs: `docs/adr/` (CertOps ADRs 0001-0007 today).
+- ADRs: `docs/adr/` (CertOps ADRs 0001-0011 today; see `docs/adr/README.md` for
+  the index and which records carry amendments).
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
 - Contracts: `packages/contracts/` (registered in `contracts.manifest.json`).

@@ -203,6 +203,21 @@ function emitLog(log, message, details) {
   defaultAgentLogger.error(message, details);
 }
 
+/**
+ * Non-error progress logging for job claim/step-start/finish points.
+ * Deliberately independent of the `log` callback threaded through the rest
+ * of this file (which is wired for error/rejection reporting, including in
+ * tests that assert on its calls): this always goes to defaultAgentLogger's
+ * info sink (stdout by default), so enabling progress visibility can never
+ * change error-path behavior or test expectations.
+ *
+ * @param {string} message
+ * @param {object} [details]
+ */
+function emitInfo(message, details) {
+  defaultAgentLogger.info(message, details);
+}
+
 function localAttemptId(jobId) {
   return `local-${jobId}-${Date.now()}`;
 }
@@ -1421,6 +1436,10 @@ async function handleSignedJob({
   // success as "failed" (B8). Periodic lease heartbeat covers long ACME/DNS
   // stages that can approach the 15-minute lease TTL without stage-boundary
   // renews.
+  emitInfo(
+    `job ${jobId}: passed signature/replay/clock/policy verification, starting execution ` +
+      `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
+  );
   const evidenceBuffer = createEvidenceBuffer();
   const leaseOpts = {
     leaseClient: client,
@@ -1461,6 +1480,7 @@ async function handleSignedJob({
   } finally {
     stopPeriodicLeaseRenewal(leaseHeartbeat);
   }
+  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`);
 
   const evidenceBodies = evidenceBuffer.takeEvidence();
   for (const body of evidenceBodies) {
@@ -1984,6 +2004,7 @@ async function executeRenewJob({
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
   if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
+  emitInfo(`job ${jobId}: generating/reusing private key for CN ${csrCommonName}`);
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
   const forceRotation = job.keyRotation === true;
@@ -2030,6 +2051,9 @@ async function executeRenewJob({
       }
     }
     if (typeof onBeforeMutation === "function") onBeforeMutation("acme");
+    emitInfo(
+      `job ${jobId}: starting ACME order (${acmeKind}) against ${job.caEndpoint} for ${domains.join(", ")}`,
+    );
     const adapter = createAcmeAdapter({
       kind: acmeKind,
       commandProfile: { argv: commandVerdict.argv },
@@ -2093,6 +2117,7 @@ async function executeRenewJob({
         metadata: [{ name: "step", value: "acme" }, { name: "exitCode", value: renewal.exitCode }],
       }),
     ]);
+    emitInfo(`job ${jobId}: ACME order succeeded`);
 
     // Steps 4-6 are shared with the deploy action (possibly multi-target).
     const staged = readStagedCertificateChain(stagedCertPaths);
@@ -2906,6 +2931,7 @@ async function runDeployReloadVerify({
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
   if (typeof onBeforeMutation === "function") onBeforeMutation("deploy");
+  emitInfo(`job ${jobId}: deploying certificate to ${certPath}`);
   const checkPath = (candidate) => policyEngine.checkPath(candidate);
   const resolvedChainPath =
     typeof chainPath === "string" && chainPath.length > 0
@@ -2999,6 +3025,11 @@ async function runDeployReloadVerify({
   const targetTypeForMetrics =
     typeof job?.target?.type === "string" ? job.target.type : "unknown";
   const metricsForType = getDeployMetrics()[targetTypeForMetrics] || {};
+  emitInfo(
+    deployResult.skipped === true
+      ? `job ${jobId}: deploy skipped, destination already up to date`
+      : `job ${jobId}: deploy succeeded at ${certPath}`,
+  );
   await reportStepEvidence(client, jobId, [
     buildEvidenceItem({
       eventType: "deployment.updated",
@@ -3048,6 +3079,7 @@ async function runDeployReloadVerify({
 
   // Verify step: always fingerprint the deployed PEM; probe the live
   // endpoint only when the job provides a host (job.verifyHost).
+  emitInfo(`job ${jobId}: verifying deployed certificate at ${certPath}`);
   const deployedPem = fs.readFileSync(certPath, "utf8");
   const fingerprint = computeCertificateFingerprint(deployedPem);
   let verifySummary = `Verified deployed certificate fingerprint for job ${jobId}.`;
@@ -3157,6 +3189,7 @@ async function runDeployReloadVerify({
       metadata: verifyMetadata,
     }),
   ]);
+  emitInfo(`job ${jobId}: verify succeeded (fingerprint ${fingerprint})`);
 
   // Post-verify: only now is it safe to discard the previous key/cert backups
   // (unless the multi-target coordinator retains them until full commit).
@@ -3224,6 +3257,7 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log, leaseO
     const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
+  emitInfo(`job ${jobId}: reloading service ${job.reloadService}`);
   const outcome = await reloadService({
     service: job.reloadService,
     commandProfiles: {
@@ -3249,6 +3283,7 @@ async function maybeReloadForJob({ job, jobId, policyEngine, client, log, leaseO
       errorMessage: boundErrorMessage(`reload step failed at stage ${outcome.stage}`),
     };
   }
+  emitInfo(`job ${jobId}: reload succeeded for service ${job.reloadService}`);
   await reportStepEvidence(client, jobId, [
     buildEvidenceItem({
       eventType: "validation.passed",
@@ -3840,6 +3875,9 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
           });
           for (const job of jobs) {
             if (controller.signal.aborted) break;
+            emitInfo(
+              `claimed job ${job?.jobId || "(unknown)"} (action=${job?.action || "unknown"})`,
+            );
             const outcome = await handleClaimedJob({
               job,
               policyEngine,

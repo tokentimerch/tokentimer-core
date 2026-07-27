@@ -151,11 +151,148 @@ async function enqueueOutboxEvent({
   return { enqueued: Boolean(row), id: row ? String(row.id) : null };
 }
 
+// Statuses a row can still be acted on from. 'pending' is waiting for the
+// drain; 'failed' is parked but revivable through resetOutboxEventForRetry, so
+// an invalidation that ignored it would leave a row an operator could bring
+// back to life after the decision it contradicts.
+const REVIVABLE_OUTBOX_STATUSES = Object.freeze(["pending", "failed"]);
+
+const OUTBOX_OUTCOME_DETACHED = "detached";
+
+/**
+ * Invalidate a certificate's outstanding derivation intents.
+ *
+ * Takes the caller's transaction client so the invalidation and whatever
+ * decided it (nulling profile_id) commit together. The rows are locked FOR
+ * UPDATE before being written: the drain's handler locks the same row at the
+ * start of its own derivation transaction, so whichever transaction commits
+ * second observes the other's decision instead of overwriting it.
+ *
+ * Returns { invalidated: number, ids: string[] }.
+ */
+async function invalidateProfileDerivationIntents({
+  client,
+  workspaceId,
+  certificateId,
+  reason = OUTBOX_OUTCOME_DETACHED,
+} = {}) {
+  if (!client) {
+    throw outboxError(
+      "invalidateProfileDerivationIntents requires the caller's transaction client",
+      "CERTOPS_OUTBOX_NO_CLIENT",
+    );
+  }
+  if (!workspaceId) throw outboxError("workspaceId is required");
+  if (!certificateId) throw outboxError("certificateId is required");
+
+  const locked = await client.query(
+    `SELECT id
+       FROM certops_outbox
+      WHERE workspace_id = $1
+        AND event_type = $2
+        AND payload->>'certificateId' = $3
+        AND status = ANY($4::text[])
+      FOR UPDATE`,
+    [
+      workspaceId,
+      OUTBOX_EVENT_TYPES.PROFILE_DERIVATION_REQUESTED,
+      String(certificateId),
+      REVIVABLE_OUTBOX_STATUSES,
+    ],
+  );
+  if (locked.rows.length === 0) return { invalidated: 0, ids: [] };
+
+  const ids = locked.rows.map((row) => String(row.id));
+  await client.query(
+    `UPDATE certops_outbox
+        SET status = 'skipped',
+            outcome_reason = $2,
+            claim_id = NULL,
+            claimed_until = NULL,
+            updated_at = NOW()
+      WHERE id = ANY($1::uuid[])`,
+    [ids, String(reason).slice(0, 256)],
+  );
+
+  return { invalidated: ids.length, ids };
+}
+
+/**
+ * Put a parked row back in the drain's queue.
+ *
+ * Only a 'failed' row qualifies. A 'skipped' row is a recorded decision, not a
+ * failure: reviving one would undo the very thing it records, which is exactly
+ * what a detached intent must never allow.
+ */
+async function resetOutboxEventForRetry({
+  client = pool,
+  workspaceId,
+  outboxId,
+} = {}) {
+  if (!workspaceId) throw outboxError("workspaceId is required");
+  if (!outboxId) throw outboxError("outboxId is required");
+
+  const existing = await client.query(
+    `SELECT id, status, event_type
+       FROM certops_outbox
+      WHERE workspace_id = $1 AND id = $2::uuid`,
+    [workspaceId, outboxId],
+  );
+  const row = existing.rows[0];
+  if (!row) {
+    throw outboxError(
+      "Outbox event not found",
+      "CERTOPS_OUTBOX_EVENT_NOT_FOUND",
+    );
+  }
+  if (row.status !== "failed") {
+    throw outboxError(
+      `Only a failed outbox event can be retried; this one is ${row.status}`,
+      "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE",
+    );
+  }
+
+  const updated = await client.query(
+    `UPDATE certops_outbox
+        SET status = 'pending',
+            attempt_count = 0,
+            next_retry_at = NOW(),
+            last_error = NULL,
+            outcome_reason = NULL,
+            claim_id = NULL,
+            claimed_until = NULL,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND id = $2::uuid
+        AND status = 'failed'
+      RETURNING id, event_type, status, attempt_count`,
+    [workspaceId, outboxId],
+  );
+  const resetRow = updated.rows[0];
+  if (!resetRow) {
+    // Lost a race with a concurrent write that moved the row out of 'failed'.
+    throw outboxError(
+      "Outbox event is no longer retryable",
+      "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE",
+    );
+  }
+  return {
+    id: String(resetRow.id),
+    eventType: resetRow.event_type,
+    status: resetRow.status,
+    attemptCount: Number(resetRow.attempt_count),
+  };
+}
+
 module.exports = {
   OUTBOX_EVENT_TYPES,
   OUTBOX_EVENT_TYPE_VALUES,
+  OUTBOX_OUTCOME_DETACHED,
   PAYLOAD_FIELDS_BY_EVENT_TYPE,
   DEDUPE_KEY_MAX_LENGTH,
+  REVIVABLE_OUTBOX_STATUSES,
   enqueueOutboxEvent,
+  invalidateProfileDerivationIntents,
+  resetOutboxEventForRetry,
   pool,
 };

@@ -46,7 +46,9 @@ where an operator most needs to see what happened.
    - `source = 'agent_issuance'`, `source_ref = <idempotencyKey>`
    - `name` and `common_name` from `payload.target.reference`
    - `subject_alt_names` from `payload.sans`
-   - `key_mode = 'agent-local'`, `key_reference = 'file://<certPath>'`
+   - `key_mode = 'agent-local'`, `key_reference = 'file://<certPath>'` (a
+     material-locality pointer, not a key path; see
+     [Custody implication](#custody-implication))
 
    The job is then created with `subject_type = 'managed_certificate'`,
    `subject_id = <new cert id>`, and `payload.certificateId` injected as the new
@@ -151,10 +153,23 @@ It is non-terminal and behaves like every other non-terminal status:
 
 Zero private-key custody (ADR-0001) is unaffected. The CSR and the private key
 are generated agent-side, exactly as for a renew; nothing about upfront row
-creation moves key generation into the control plane. `key_reference` is an
-opaque, non-secret pointer to where the agent placed the key on its own host. It
-is never key material and remains subject to the ingest detector like any other
-inventory field.
+creation moves key generation into the control plane.
+
+`key_reference` is an opaque, non-secret **material-locality pointer**: it names
+the execution plane that holds the key material, not the key file itself. For
+`agent-local` sources it is `file://<certPath>`, the certificate path, because
+that is the only path the control plane can ever learn. Filesystem discovery
+sets the same convention from the path it scanned (`agentObservations.js`), and
+issuance matches it deliberately rather than inventing a second meaning for one
+source. A control plane that recorded a real key path would be claiming
+knowledge it must not have: it never sees the key, so any key path it stored
+would be an unverifiable assertion by the agent, and storing it would invite
+readers to treat it as authoritative. `cert_manager` sources point at the
+Secret's `tls.key` because Kubernetes publishes that coordinate itself.
+
+The field is therefore read as "which host or cluster holds this key", not as
+"open this file to find the key". It is never key material and remains subject
+to the ingest detector like any other inventory field.
 
 ## Alternatives considered
 
@@ -266,11 +281,13 @@ It is a requirement on whichever hosts should run issuance. The operator-visible
 symptom of a fleet that is behind is an `issue` job that stays `pending` and is
 never claimed, with no error: the capability is a matching predicate, not a
 rejection. That is a deliberate trade (no work is better than unreconcilable
-work), and it is why the gate is documented on the operator-facing issuance page
-rather than only here.
+work).
 
 The capability name is a contract surface under the README's change-control
-rule. Agents declare it during registration and heartbeat; see ADR-0002.
+rule. Agents declare it **at registration only**; the heartbeat body does not
+admit the field, so upgrading an agent in place does not grant it the
+capability. See ADR-0002's addendum for the constraint and why the obvious
+operator remedy does not currently work.
 
 ### A1.3 Promotion requires claim-bound verify-step evidence (tightens 6)
 
@@ -345,4 +362,23 @@ ADR-0009, which also covers how the intent to alert is made durable.
 problems and alerts for renewal problems. The dashboard must therefore make
 `provisioning` visually distinct (already required by the fourth consequence
 bullet above); with A1.4 that requirement is load-bearing rather than cosmetic.
+
+### A1.5 `key_reference` is a locality pointer (clarifies 4's schema list)
+
+Decision point 4 sets `key_reference = 'file://<certPath>'` while the custody
+section described the field as a pointer to where the agent placed the *key*. A
+review read those two sentences together and concluded issuance was writing the
+wrong value. It was not: filesystem discovery has always written the scanned
+**certificate** path into the same field, so issuance was matching an established
+convention rather than breaking one. The defect was in this record's prose.
+
+The field is a **material-locality pointer**: it answers which execution plane
+holds the key, not which file to open. The custody section above now says so, and
+`docs/certops/CONTEXT.md` states it once for every writer, since the convention is
+shared with discovery and cert-manager rather than being an issuance detail. No
+writer changed. The alternative, recording a real key path, was rejected because
+the control plane never sees the key: any key path it stored would be an
+unverifiable assertion by the agent, and discovery cannot learn a key path from
+scanning a certificate at all, so the semantic is unachievable for that source
+and would have to be faked to look uniform.
 

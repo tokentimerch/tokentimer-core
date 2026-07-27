@@ -151,12 +151,29 @@ function createMemoryClient() {
       }
 
       if (
+        normalizedSql.includes("SELECT COUNT(*)::int AS total") &&
+        normalizedSql.includes("FROM certificate_jobs")
+      ) {
+        let rows = jobs.filter((row) => row.workspace_id === params[0]);
+        if (normalizedSql.includes("status = $2")) {
+          rows = rows.filter((row) => row.status === params[1]);
+        }
+        return { rows: [{ total: rows.length }] };
+      }
+
+      if (
         normalizedSql.includes("FROM certificate_jobs") &&
         normalizedSql.includes("ORDER BY created_at DESC")
       ) {
         let rows = jobs.filter((row) => row.workspace_id === params[0]);
         if (normalizedSql.includes("status = $2")) {
           rows = rows.filter((row) => row.status === params[1]);
+        }
+        const limitMatch = /LIMIT \$(\d+) OFFSET \$(\d+)/.exec(normalizedSql);
+        if (limitMatch) {
+          const limit = Number(params[Number(limitMatch[1]) - 1]);
+          const offset = Number(params[Number(limitMatch[2]) - 1]);
+          rows = rows.slice(offset, offset + limit);
         }
         return { rows };
       }
@@ -345,6 +362,71 @@ describe("CertOps jobs service", () => {
     const listB = await listCertificateJobs({ client, workspaceId: WORKSPACE_B });
     assert.deepEqual(listA.items.map((item) => item.id), [job.id]);
     assert.equal(listB.items.some((item) => item.id === job.id), false);
+    assert.equal(listA.pagination.total, 1);
+  });
+
+  it("counts the filtered set rather than the page", async () => {
+    const client = createMemoryClient();
+    for (let index = 0; index < 12; index += 1) {
+      await createCertificateJob({
+        client,
+        workspaceId: WORKSPACE_A,
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${index}`,
+        payload: { certificateId: `cert-${index}` },
+      });
+    }
+
+    const page = await listCertificateJobs({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 5,
+    });
+    assert.equal(page.items.length, 5);
+    assert.deepEqual(page.pagination, { limit: 5, offset: 0, total: 12 });
+
+    const beyond = await listCertificateJobs({
+      client,
+      workspaceId: WORKSPACE_A,
+      limit: 5,
+      offset: 90,
+    });
+    assert.deepEqual(beyond.items, []);
+    assert.equal(beyond.pagination.total, 12);
+  });
+
+  it("counts through the same predicate as the page when filtering", async () => {
+    const client = createMemoryClient();
+    for (let index = 0; index < 6; index += 1) {
+      const job = await createCertificateJob({
+        client,
+        workspaceId: WORKSPACE_A,
+        operation: "deploy",
+        subjectType: "managed_certificate",
+        subjectId: `cert-${index}`,
+        payload: { certificateId: `cert-${index}` },
+      });
+      if (index < 2) {
+        await updateCertificateJobStatus({
+          client,
+          workspaceId: WORKSPACE_A,
+          jobId: job.id,
+          status: "running",
+        });
+      }
+    }
+
+    const filtered = await listCertificateJobs({
+      client,
+      workspaceId: WORKSPACE_A,
+      status: "running",
+      limit: 1,
+    });
+
+    assert.equal(filtered.items.length, 1);
+    assert.equal(filtered.items[0].status, "running");
+    assert.equal(filtered.pagination.total, 2);
   });
 
   it("updates status only to bounded lifecycle values", async () => {

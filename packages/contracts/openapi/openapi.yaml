@@ -3066,8 +3066,13 @@ paths:
       description: Returns the workspace's managed certificate inventory. Response objects contain public certificate material and public metadata only.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+        - $ref: "#/components/parameters/certOpsCertificateStatusFilterParam"
+        - $ref: "#/components/parameters/certOpsCertificateSourceFilterParam"
+        - $ref: "#/components/parameters/certOpsCertificateNoRenewalProfileParam"
+        - $ref: "#/components/parameters/certOpsCertificateRenewalDisabledParam"
+        - $ref: "#/components/parameters/certOpsCertificateKeyNotAgentDeployableParam"
       responses:
         "200":
           description: Managed certificate inventory
@@ -3075,6 +3080,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CertOpsManagedCertificateListResponse"
+        "400":
+          description: >-
+            A filter value is outside the column constraint or is not a boolean.
+            Rejected rather than answered with an empty page that reads like a
+            real result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Invalid certificate status filter
+                code: CERTOPS_CERTIFICATE_STATUS_INVALID
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -3534,8 +3551,8 @@ paths:
         and machine-token routes rather than like the certificate inventory.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: Renewal profile inventory
@@ -3581,8 +3598,8 @@ paths:
         lead time and identity, and the view exists to be read alongside them.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
-        - $ref: "#/components/parameters/limitParam"
-        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: Upcoming renewal schedule
@@ -4557,6 +4574,8 @@ paths:
       description: Returns workspace-scoped CertOps API-token metadata only. Plaintext tokens, token hashes, Authorization headers, and credential material are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsUnboundedListLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: API token metadata list
@@ -4672,6 +4691,8 @@ paths:
       description: Returns workspace-scoped agent bootstrap-token metadata only. Plaintext ttboot_ tokens, token hashes, Authorization headers, and credential material are never returned. Manager-only, same authorization posture as create/revoke.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsUnboundedListLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: Agent bootstrap-token metadata list
@@ -4807,6 +4828,8 @@ paths:
       description: Returns workspace-scoped agent fleet metadata (hostnames, versions, liveness). Manager-only. Credential hashes and bearer credentials are never returned.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsUnboundedListLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
       responses:
         "200":
           description: Agent metadata list
@@ -5898,6 +5921,81 @@ components:
         type: integer
         minimum: 0
         default: 0
+    certOpsUnboundedListLimitParam:
+      in: query
+      name: limit
+      description: >-
+        Number of items returned, capped at 100. Omitting this parameter returns
+        every row in the workspace; there is no implicit page size. A default
+        here would page a list that has no paging control, hiding rows from an
+        audit with nothing on screen to reveal them.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    certOpsCertificateStatusFilterParam:
+      in: query
+      name: status
+      description: >-
+        Restricts the page and its total to one inventory status. A value outside
+        the set is rejected with 400 rather than answered with an empty page.
+      schema:
+        type: string
+        enum:
+          - discovered
+          - provisioning
+          - active
+          - renewing
+          - expiring
+          - expired
+          - revoked
+          - decommissioned
+    certOpsCertificateSourceFilterParam:
+      in: query
+      name: source
+      description: >-
+        Restricts the page and its total to one discovery or registration source.
+        A value outside the set is rejected with 400.
+      schema:
+        type: string
+        enum:
+          - manual
+          - api
+          - import
+          - domain_checker
+          - endpoint_monitor
+          - integration
+          - auto_sync
+          - cert_manager
+          - agent_filesystem
+          - agent_issuance
+    certOpsCertificateNoRenewalProfileParam:
+      in: query
+      name: noRenewalProfile
+      description: >-
+        true selects certificates with no renewal profile attached; false selects
+        those with one. This is one of three independent renewal facts, kept
+        separate because each has a different remedy and none of them alone means
+        a certificate will renew.
+      schema:
+        type: boolean
+    certOpsCertificateRenewalDisabledParam:
+      in: query
+      name: renewalDisabled
+      description: >-
+        true selects certificates whose attached profile is disabled or archived,
+        an operator decision that is reversible from the profile controls.
+      schema:
+        type: boolean
+    certOpsCertificateKeyNotAgentDeployableParam:
+      in: query
+      name: keyNotAgentDeployable
+      description: >-
+        true selects certificates whose key custody is not agent-deployable,
+        unknown custody included: no agent holds the private key, so renewal is
+        impossible regardless of any profile.
+      schema:
+        type: boolean
     auditSinceParam:
       in: query
       name: since
@@ -6017,7 +6115,7 @@ components:
     CertOpsRenewalProfileList:
       type: object
       additionalProperties: false
-      required: [items, total, limit, offset]
+      required: [items, total, limit, offset, pagination]
       properties:
         items:
           type: array
@@ -6025,14 +6123,22 @@ components:
             $ref: "#/components/schemas/CertOpsRenewalProfile"
         total:
           type: integer
+          deprecated: true
+          description: Read pagination.total instead. Retained for shipped clients.
         limit:
           type: integer
+          deprecated: true
+          description: Read pagination.limit instead. Retained for shipped clients.
         offset:
           type: integer
+          deprecated: true
+          description: Read pagination.offset instead. Retained for shipped clients.
+        pagination:
+          $ref: "#/components/schemas/CertOpsListPagination"
     CertOpsUpcomingRenewalList:
       type: object
       additionalProperties: false
-      required: [items, total, limit, offset]
+      required: [items, total, limit, offset, pagination]
       properties:
         items:
           type: array
@@ -6095,10 +6201,57 @@ components:
                 description: Status of the most recent renewal job for this certificate, if any.
         total:
           type: integer
+          deprecated: true
+          description: Read pagination.total instead. Retained for shipped clients.
         limit:
           type: integer
+          deprecated: true
+          description: Read pagination.limit instead. Retained for shipped clients.
         offset:
           type: integer
+          deprecated: true
+          description: Read pagination.offset instead. Retained for shipped clients.
+        pagination:
+          $ref: "#/components/schemas/CertOpsListPagination"
+    CertOpsListPagination:
+      type: object
+      additionalProperties: false
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        offset:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: >-
+            Rows matching the request's filters, counted over the same predicate
+            as the returned page and ignoring limit and offset. A client knows
+            more pages exist when offset + items.length < total.
+    CertOpsUnboundedListPagination:
+      type: object
+      additionalProperties: false
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: >-
+            Echo of the requested limit, or null when none was supplied and the
+            whole result set was returned.
+        offset:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: >-
+            Rows in the workspace, ignoring limit and offset. A client knows more
+            pages exist when offset + items.length < total.
     Pagination:
       type: object
       properties:
@@ -6282,16 +6435,7 @@ components:
           items:
             $ref: "#/components/schemas/CertOpsManagedCertificate"
         pagination:
-          type: object
-          additionalProperties: false
-          required: [limit, offset]
-          properties:
-            limit:
-              type: integer
-              minimum: 1
-            offset:
-              type: integer
-              minimum: 0
+          $ref: "#/components/schemas/CertOpsListPagination"
     CertOpsManagedCertificateDetailResponse:
       type: object
       additionalProperties: false
@@ -6488,7 +6632,7 @@ components:
           items:
             $ref: "#/components/schemas/CertOpsJob"
         pagination:
-          $ref: "#/components/schemas/Pagination"
+          $ref: "#/components/schemas/CertOpsListPagination"
     CertOpsJobCreateRequest:
       type: object
       additionalProperties: false
@@ -7177,12 +7321,14 @@ components:
     CertOpsApiTokenListResponse:
       type: object
       additionalProperties: false
-      required: [items]
+      required: [items, pagination]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/CertOpsApiToken"
+        pagination:
+          $ref: "#/components/schemas/CertOpsUnboundedListPagination"
     CertOpsApiTokenCreateRequest:
       type: object
       additionalProperties: false
@@ -8067,12 +8213,14 @@ components:
     CertOpsAgentBootstrapTokenListResponse:
       type: object
       additionalProperties: false
-      required: [items]
+      required: [items, pagination]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/CertOpsAgentBootstrapToken"
+        pagination:
+          $ref: "#/components/schemas/CertOpsUnboundedListPagination"
     CertOpsAgentBootstrapTokenCreateRequest:
       type: object
       additionalProperties: false
@@ -8161,12 +8309,14 @@ components:
     CertOpsWorkspaceAgentListResponse:
       type: object
       additionalProperties: false
-      required: [items]
+      required: [items, pagination]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/CertOpsWorkspaceAgent"
+        pagination:
+          $ref: "#/components/schemas/CertOpsUnboundedListPagination"
     CertOpsWorkspaceAgentRetireRequest:
       type: object
       additionalProperties: false

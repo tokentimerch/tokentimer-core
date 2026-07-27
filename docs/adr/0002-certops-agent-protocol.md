@@ -42,12 +42,25 @@ make an agent do arbitrary things.
 - Addendum (2026-07-26, release 0.11.0): declared capabilities became a
   dispatch-time gate, and evidence gained a claim binding. Both are additive to
   the envelope and neither is a `schemaVersion` change.
-  - Agents declare capability strings at `register` and `heartbeat`. The control
+  - Agents declare capability strings at `register`. The control
     plane matches on them when offering work, so a capability an agent does not
     declare simply means it is not offered those jobs. This is a matching
     predicate, not a rejection: the operator-visible symptom of an out-of-date
     agent is an unclaimed `pending` job rather than an error. Capability names are
     contract surfaces under the README's change-control rule.
+  - **Registration is currently the only declaration point, and that is a real
+    constraint rather than an accident of wording.** `heartbeatBody` is
+    `additionalProperties: false` and defines no `declaredCapabilities`, so a
+    heartbeat carrying capabilities is schema-invalid and both ends enforce the
+    schema. The control plane does have a heartbeat-side write for the column,
+    guarded so an empty array preserves the stored value, but it is unreachable
+    until the contract admits the field. The consequence for operators is the
+    part that matters: **upgrading an agent binary in place does not grant it a
+    new capability**, because the capability set was fixed at enrollment.
+    Re-declaration on heartbeat is the natural fix and is a contract change
+    (`supportedDnsProviders` is the precedent for a re-advertisable field). Until
+    then the only remedy is re-enrollment, which loses the agent's identity and
+    key pin, so this must not be documented as "upgrade, then run a renew job".
   - The first such capability is `evidence-claim-binding-v1`, required to claim
     `issue` jobs and `renew` jobs whose subject certificate is still
     `provisioning`. See

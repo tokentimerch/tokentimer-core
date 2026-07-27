@@ -48,6 +48,7 @@ const {
   NON_RENEWABLE_CERTIFICATE_STATUSES,
 } = require("./renewalScheduler");
 const { isAgentDeployableKeyMode } = require("./jobs");
+const { OPERATOR_OWNED_METADATA_KEY } = require("./renewalProfileDerivation");
 
 const CERTOPS_PROFILE_NOT_FOUND = "CERTOPS_PROFILE_NOT_FOUND";
 const CERTOPS_PROFILE_INVALID = "CERTOPS_PROFILE_INVALID";
@@ -78,17 +79,11 @@ const SETTABLE_PROFILE_STATUSES = Object.freeze(["active", "disabled"]);
  *   - ca.endpoint, ca.accountRef, ca.eabRef
  *   - dns.provider, dns.zone
  *
- * KNOWN LIMITATION (2026-07-26, external review blocker 4). Edits made here are
- * not durable against re-derivation. ensureDerivedRenewalProfile upserts on
- * (workspace_id, LOWER(name)) where the name is `Derived: <commonName>`, and its
- * DO UPDATE replaces public_metadata wholesale. So issuing a second certificate
- * with the same common name overwrites every field below with freshly derived
- * values, and reports created:false, which reads as a benign idempotent replay.
- * The fix belongs to the derivation identity (it should key on something
- * certificate-scoped such as source_ref), not here: guarding the write on this
- * side would preserve an operator's edit on top of a profile whose deployment
- * details now describe a different host, which is worse. Until that lands, treat
- * a same-CN re-issuance as resetting these fields.
+ * Edits made here are durable against re-derivation. The first successful edit
+ * marks the profile operator-owned in public_metadata, and
+ * ensureDerivedRenewalProfile refuses to overwrite a profile carrying that
+ * marker. So a second issuance for the same common name no longer silently
+ * reverts the fields below; the derivation reports its refusal instead.
  */
 const EDITABLE_PROFILE_FIELDS = Object.freeze([
   "sanPolicy",
@@ -240,6 +235,14 @@ async function listRenewalProfiles({
     total: Number(totalResult.rows[0]?.total || 0),
     limit: safeLimit,
     offset: safeOffset,
+    // The flat fields above are read by shipped clients and stay until they
+    // migrate; the nested object is the envelope every other CertOps list
+    // returns, and new readers should take it from here.
+    pagination: {
+      limit: safeLimit,
+      offset: safeOffset,
+      total: Number(totalResult.rows[0]?.total || 0),
+    },
   };
 }
 
@@ -421,6 +424,17 @@ async function updateRenewalProfile({
         "No supported changes were requested",
         CERTOPS_PROFILE_NO_CHANGES,
       );
+    }
+
+    // The first successful edit takes ownership, which is what makes the edit
+    // durable: derivation refuses to overwrite an owned profile, so a later
+    // issuance for the same common name can no longer revert these fields.
+    // Claimed only after the patch is known to be a real change, so a no-op
+    // request cannot quietly take ownership, and written into the same metadata
+    // the edit itself lands in, so the two commit together.
+    if (nextMetadata[OPERATOR_OWNED_METADATA_KEY] !== true) {
+      nextMetadata = { ...nextMetadata, [OPERATOR_OWNED_METADATA_KEY]: true };
+      changes.operatorOwned = true;
     }
 
     const updated = await client.query(
@@ -632,6 +646,13 @@ async function listUpcomingRenewals({
     total: Number(totalResult.rows[0]?.total || 0),
     limit: safeLimit,
     offset: safeOffset,
+    // Flat fields retained for shipped clients; the nested object matches the
+    // envelope the other CertOps lists return.
+    pagination: {
+      limit: safeLimit,
+      offset: safeOffset,
+      total: Number(totalResult.rows[0]?.total || 0),
+    },
   };
 }
 
@@ -644,6 +665,7 @@ module.exports = {
   EDITABLE_PROFILE_FIELDS,
   IMMUTABLE_PROFILE_FIELDS,
   KEY_ALGORITHMS,
+  OPERATOR_OWNED_METADATA_KEY,
   RENEWAL_BLOCKED_AUTO_RENEW_DISABLED,
   RENEWAL_BLOCKED_INCOMPLETE_PROFILE,
   RENEWAL_BLOCKED_NO_PROFILE,

@@ -82,6 +82,36 @@ function routeBlock(method, routePath) {
   return routesSource.slice(start, end);
 }
 
+function openApiOperationBlock(documentedPath, method) {
+  const pathStart = openApiSource.indexOf(`\n  ${documentedPath}:\n`);
+  assert.notEqual(pathStart, -1, `${documentedPath} missing from OpenAPI paths`);
+  const nextPath = openApiSource.indexOf("\n  /", pathStart + 1);
+  const pathBlock = openApiSource.slice(
+    pathStart,
+    nextPath === -1 ? undefined : nextPath,
+  );
+
+  const methodStart = pathBlock.indexOf(`\n    ${method}:\n`);
+  assert.notEqual(
+    methodStart,
+    -1,
+    `${method.toUpperCase()} ${documentedPath} missing from OpenAPI`,
+  );
+  const nextMethod = pathBlock.slice(methodStart + 1).search(/\n {4}[a-z]+:\n/);
+  return nextMethod === -1
+    ? pathBlock.slice(methodStart)
+    : pathBlock.slice(methodStart, methodStart + 1 + nextMethod);
+}
+
+function openApiSchemaBlock(schemaName) {
+  const start = openApiSource.indexOf(`\n    ${schemaName}:\n`);
+  assert.notEqual(start, -1, `${schemaName} missing from OpenAPI schemas`);
+  const next = openApiSource.slice(start + 1).search(/\n {4}[A-Za-z]/);
+  return next === -1
+    ? openApiSource.slice(start)
+    : openApiSource.slice(start, start + 1 + next);
+}
+
 function executorRouteBlock(routePath) {
   const start = executorRoutesSource.indexOf(`"${routePath}"`);
   assert.notEqual(start, -1, `POST ${routePath} not found`);
@@ -312,6 +342,195 @@ describe("CertOps route hardening", () => {
         block.indexOf("requireCertOpsWriteRole"),
       "GET /certops/tokens must check the rollout gate before manager authorization",
     );
+  });
+
+  it("reads limit and offset on every paginated CertOps list route", () => {
+    for (const routePath of [
+      "/api/v1/workspaces/:id/certops/certificates",
+      "/api/v1/workspaces/:id/certops/agents",
+      "/api/v1/workspaces/:id/certops/tokens",
+      "/api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
+    ]) {
+      const block = routeBlock("get", routePath);
+      assert.match(
+        block,
+        /limit: req\.query\.limit/,
+        `GET ${routePath} must forward limit`,
+      );
+      assert.match(
+        block,
+        /offset: req\.query\.offset/,
+        `GET ${routePath} must forward offset`,
+      );
+    }
+
+    // The jobs list reads its query through a shared options builder.
+    assert.match(
+      routesSource,
+      /function jobListOptionsFromRequest\(req\)[\s\S]*?limit: req\.query\.limit[\s\S]*?offset: req\.query\.offset/,
+    );
+  });
+
+  it("documents the unbounded lists with a limit that has no default", () => {
+    // The runtime default for these three is still unlimited because none of
+    // them has a paging control yet. A spec promising default: 50 would make a
+    // conforming client page a list that returns everything.
+    for (const documentedPath of [
+      "/api/v1/workspaces/{id}/certops/agents",
+      "/api/v1/workspaces/{id}/certops/tokens",
+      "/api/v1/workspaces/{id}/certops/agent-bootstrap-tokens",
+    ]) {
+      const block = openApiOperationBlock(documentedPath, "get");
+      assert.ok(
+        block.includes(
+          '$ref: "#/components/parameters/certOpsUnboundedListLimitParam"',
+        ),
+        `GET ${documentedPath} must document limit without a default`,
+      );
+      assert.equal(
+        block.includes(
+          '$ref: "#/components/parameters/certOpsReadLimitParam"',
+        ),
+        false,
+        `GET ${documentedPath} must not claim the 50-row default`,
+      );
+    }
+
+    const unboundedParam = openApiSource.slice(
+      openApiSource.indexOf("    certOpsUnboundedListLimitParam:"),
+    );
+    const paramBlock = unboundedParam.slice(
+      0,
+      unboundedParam.indexOf("\n    certOpsCertificate"),
+    );
+    assert.equal(paramBlock.includes("default:"), false);
+    assert.ok(paramBlock.includes("maximum: 100"));
+  });
+
+  it("documents the clamped CertOps read lists with the shared 50/100 parameters", () => {
+    for (const documentedPath of [
+      "/api/v1/workspaces/{id}/certops/certificates",
+      "/api/v1/workspaces/{id}/certops/jobs",
+      "/api/v1/workspaces/{id}/certops/profiles",
+      "/api/v1/workspaces/{id}/certops/renewals/upcoming",
+    ]) {
+      const block = openApiOperationBlock(documentedPath, "get");
+      assert.ok(
+        block.includes(
+          '$ref: "#/components/parameters/certOpsReadLimitParam"',
+        ),
+        `GET ${documentedPath} must document the real limit clamp`,
+      );
+      assert.ok(
+        block.includes(
+          '$ref: "#/components/parameters/certOpsReadOffsetParam"',
+        ),
+        `GET ${documentedPath} must document the real offset default`,
+      );
+    }
+  });
+
+  it("documents the certificate filters the list route applies in SQL", () => {
+    const block = openApiOperationBlock(
+      "/api/v1/workspaces/{id}/certops/certificates",
+      "get",
+    );
+    for (const parameterName of [
+      "certOpsCertificateStatusFilterParam",
+      "certOpsCertificateSourceFilterParam",
+      "certOpsCertificateNoRenewalProfileParam",
+      "certOpsCertificateRenewalDisabledParam",
+      "certOpsCertificateKeyNotAgentDeployableParam",
+    ]) {
+      assert.ok(
+        block.includes(`$ref: "#/components/parameters/${parameterName}"`),
+        `certificates list must document ${parameterName}`,
+      );
+      assert.ok(
+        openApiSource.includes(`    ${parameterName}:`),
+        `${parameterName} must be defined under components.parameters`,
+      );
+    }
+
+    assert.ok(
+      block.includes('"400":'),
+      "an out-of-constraint filter value must be documented as a 400",
+    );
+
+    const routeBlockSource = routeBlock(
+      "get",
+      "/api/v1/workspaces/:id/certops/certificates",
+    );
+    for (const queryField of [
+      "status: req.query.status",
+      "source: req.query.source",
+      "noRenewalProfile: req.query.noRenewalProfile",
+      "renewalDisabled: req.query.renewalDisabled",
+      "keyNotAgentDeployable: req.query.keyNotAgentDeployable",
+    ]) {
+      assert.ok(
+        routeBlockSource.includes(queryField),
+        `certificates list route must forward ${queryField}`,
+      );
+    }
+  });
+
+  it("returns a real total in every paginated CertOps list schema", () => {
+    for (const schemaName of [
+      "CertOpsManagedCertificateListResponse",
+      "CertOpsJobListResponse",
+      "CertOpsWorkspaceAgentListResponse",
+      "CertOpsApiTokenListResponse",
+      "CertOpsAgentBootstrapTokenListResponse",
+    ]) {
+      const block = openApiSchemaBlock(schemaName);
+      assert.match(
+        block,
+        /pagination:\s*\n\s*\$ref: "#\/components\/schemas\/CertOps(Unbounded)?ListPagination"/,
+        `${schemaName} must use a pagination schema carrying total`,
+      );
+    }
+
+    for (const paginationSchema of [
+      "CertOpsListPagination",
+      "CertOpsUnboundedListPagination",
+    ]) {
+      const block = openApiSchemaBlock(paginationSchema);
+      assert.match(block, /required: \[limit, offset, total\]/);
+    }
+
+    // The renewal routes keep their flat fields for shipped clients and gain
+    // the nested object every other CertOps list returns.
+    for (const schemaName of [
+      "CertOpsRenewalProfileList",
+      "CertOpsUpcomingRenewalList",
+    ]) {
+      const block = openApiSchemaBlock(schemaName);
+      assert.match(block, /required: \[items, total, limit, offset, pagination\]/);
+      assert.ok(
+        block.includes('$ref: "#/components/schemas/CertOpsListPagination"'),
+      );
+    }
+
+    // hasMore would be a second source of truth able to disagree with total,
+    // so no CertOps list envelope carries one.
+    for (const schemaName of [
+      "CertOpsManagedCertificateListResponse",
+      "CertOpsJobListResponse",
+      "CertOpsWorkspaceAgentListResponse",
+      "CertOpsApiTokenListResponse",
+      "CertOpsAgentBootstrapTokenListResponse",
+      "CertOpsRenewalProfileList",
+      "CertOpsUpcomingRenewalList",
+      "CertOpsListPagination",
+      "CertOpsUnboundedListPagination",
+    ]) {
+      assert.equal(
+        openApiSchemaBlock(schemaName).includes("hasMore"),
+        false,
+        `${schemaName} must not carry hasMore alongside total`,
+      );
+    }
   });
 
   it("declares specific child routes before generic detail routes", () => {

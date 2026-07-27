@@ -24,6 +24,7 @@ const {
   CERTOPS_PROFILE_NOT_FOUND,
   CERTOPS_PROFILE_NO_CHANGES,
   EDITABLE_PROFILE_FIELDS,
+  OPERATOR_OWNED_METADATA_KEY,
   applyRenewalProfilePatch,
   listUpcomingRenewals,
   normalizeRenewBeforeDays,
@@ -364,6 +365,86 @@ describe("CertOps renewal-profile update transaction", () => {
     assert.ok(pool.captured.released);
   });
 
+  it("takes ownership on the first real edit so the change survives a re-derivation", async () => {
+    const pool = createUpdatePool({ row: profileRow() });
+
+    await updateRenewalProfile({
+      dbPool: pool,
+      workspaceId: "ws-1",
+      profileId: "11111111-0000-4000-8000-000000000001",
+      renewBeforeDays: 45,
+      auditWriter: pool.auditWriter,
+    });
+
+    const update = pool.captured.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_profiles"),
+    );
+    const metadata = JSON.parse(update.params[5]);
+    // The marker lives beside renewalProfile in public_metadata, not in
+    // certificate_profiles.source, whose CHECK has no value for a derived row.
+    assert.equal(metadata[OPERATOR_OWNED_METADATA_KEY], true);
+    assert.ok(metadata.renewalProfile, "the edited body must be preserved");
+    assert.equal(pool.captured.audits[0].metadata.changes.operatorOwned, true);
+  });
+
+  it("does not take ownership through a patch that changes nothing", async () => {
+    const pool = createUpdatePool({ row: profileRow() });
+
+    await assert.rejects(
+      () =>
+        updateRenewalProfile({
+          dbPool: pool,
+          workspaceId: "ws-1",
+          profileId: "11111111-0000-4000-8000-000000000001",
+          renewBeforeDays: 30,
+          auditWriter: pool.auditWriter,
+        }),
+      (error) => {
+        assert.equal(error.code, CERTOPS_PROFILE_NO_CHANGES);
+        return true;
+      },
+    );
+
+    assert.equal(
+      pool.captured.queries.filter((q) =>
+        q.sql.startsWith("UPDATE certificate_profiles"),
+      ).length,
+      0,
+      "a no-op request must not quietly claim the profile",
+    );
+  });
+
+  it("leaves an already-owned profile's marker alone", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: {
+          renewalProfile: storedProfile(),
+          [OPERATOR_OWNED_METADATA_KEY]: true,
+        },
+      }),
+    });
+
+    await updateRenewalProfile({
+      dbPool: pool,
+      workspaceId: "ws-1",
+      profileId: "11111111-0000-4000-8000-000000000001",
+      renewBeforeDays: 45,
+      auditWriter: pool.auditWriter,
+    });
+
+    const metadata = JSON.parse(
+      pool.captured.queries.find((q) =>
+        q.sql.startsWith("UPDATE certificate_profiles"),
+      ).params[5],
+    );
+    assert.equal(metadata[OPERATOR_OWNED_METADATA_KEY], true);
+    assert.equal(
+      pool.captured.audits[0].metadata.changes.operatorOwned,
+      undefined,
+      "ownership is only reported the first time it is claimed",
+    );
+  });
+
   it("rolls the profile change back when its audit cannot be written", async () => {
     const pool = createUpdatePool({ row: profileRow(), auditFails: true });
 
@@ -556,6 +637,47 @@ describe("CertOps upcoming renewals coverage", () => {
     assert.ok(countQuery);
     assert.ok(!countQuery.includes("JOIN certificate_profiles"));
     assert.ok(countQuery.includes("status NOT IN"));
+  });
+
+  it("returns the shared nested envelope alongside the flat fields", async () => {
+    // Flat fields stay while shipped clients read them; the nested object is
+    // the envelope every other CertOps list returns.
+    const pool = listPool([certificateRow()]);
+    const result = await listUpcomingRenewals({
+      db: pool,
+      workspaceId: "ws-1",
+      thresholdDays: 30,
+      limit: 10,
+      offset: 0,
+    });
+
+    assert.deepEqual(result.pagination, { limit: 10, offset: 0, total: 1 });
+    assert.equal(result.total, result.pagination.total);
+    assert.equal(result.limit, result.pagination.limit);
+    assert.equal(result.offset, result.pagination.offset);
+  });
+
+  it("returns the same nested envelope from the profile list", async () => {
+    const profiles = {
+      async query(sql) {
+        if (String(sql).includes("COUNT(*)")) {
+          return { rows: [{ total: 7 }] };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const result = await admin.listRenewalProfiles({
+      db: profiles,
+      workspaceId: "ws-1",
+      limit: 2,
+      offset: 4,
+    });
+
+    assert.deepEqual(result.pagination, { limit: 2, offset: 4, total: 7 });
+    assert.equal(result.total, 7);
+    assert.equal(result.limit, 2);
+    assert.equal(result.offset, 4);
   });
 
   it("reports a profile the scheduler cannot execute as incomplete", async () => {

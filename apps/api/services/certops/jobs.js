@@ -1678,6 +1678,16 @@ async function listCertificateJobs(options) {
     conditions.push(`subject_id = $${params.length}`);
   }
 
+  // Counted over the filter predicate the page itself uses, before LIMIT and
+  // OFFSET are appended. A total taken over a wider predicate would advertise
+  // pages that hold none of the rows the caller asked for.
+  const totalResult = await db.query(
+    `SELECT COUNT(*)::int AS total
+       FROM certificate_jobs
+      WHERE ${conditions.join(" AND ")}`,
+    params,
+  );
+
   params.push(limit, offset);
   const result = await db.query(
     `SELECT ${SAFE_JOB_SELECT_FIELDS}
@@ -1690,7 +1700,11 @@ async function listCertificateJobs(options) {
 
   return {
     items: result.rows.map(jobFromRow),
-    pagination: { limit, offset },
+    pagination: {
+      limit,
+      offset,
+      total: Number(totalResult.rows[0]?.total || 0),
+    },
   };
 }
 

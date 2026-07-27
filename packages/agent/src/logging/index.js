@@ -89,14 +89,29 @@ function formatAgentLogMessage(message, details) {
   return `tokentimer-agent: ${safeMessage} ${JSON.stringify(sanitizeLogValue(details))}`;
 }
 
-function createAgentLogger({ sink = (message) => console.error(message) } = {}) {
+function createAgentLogger({
+  sink = (message) => console.error(message),
+  infoSink = (message) => console.log(message),
+} = {}) {
   if (typeof sink !== "function") {
     throw new TypeError("tokentimer-agent logger sink must be a function");
+  }
+  if (typeof infoSink !== "function") {
+    throw new TypeError("tokentimer-agent logger infoSink must be a function");
   }
 
   return Object.freeze({
     error(message, details) {
       sink(formatAgentLogMessage(message, details));
+    },
+    // Non-error progress logging (claim/step-start/finish). Routed through
+    // the same scrubbing as error() but to its own sink (stdout by default)
+    // so operators can follow a job's progress without every line reading
+    // as a failure. Purely additive: nothing here changes job outcomes,
+    // control flow, or the error-path log() callbacks threaded through the
+    // rest of this file for policy/rejection reporting.
+    info(message, details) {
+      infoSink(formatAgentLogMessage(message, details));
     },
   });
 }

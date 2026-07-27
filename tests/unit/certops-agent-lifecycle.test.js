@@ -86,11 +86,33 @@ function createMemoryDb() {
       }
 
       if (
+        normalized.includes("SELECT COUNT(*)::int AS total") &&
+        normalized.includes("FROM certops_agent_bootstrap_tokens")
+      ) {
+        return {
+          rows: [
+            {
+              total: bootstrapRows.filter(
+                (row) => row.workspace_id === params[0],
+              ).length,
+            },
+          ],
+        };
+      }
+
+      if (
         normalized.includes("FROM certops_agent_bootstrap_tokens") &&
         normalized.includes("ORDER BY created_at DESC")
       ) {
+        const matching = bootstrapRows.filter(
+          (row) => row.workspace_id === params[0],
+        );
+        const hasLimit = normalized.includes("LIMIT $2");
+        const start = Number((hasLimit ? params[2] : params[1]) || 0);
         return {
-          rows: bootstrapRows.filter((row) => row.workspace_id === params[0]),
+          rows: hasLimit
+            ? matching.slice(start, start + Number(params[1]))
+            : matching.slice(start),
         };
       }
 
@@ -122,11 +144,32 @@ function createMemoryDb() {
       }
 
       if (
+        normalized.includes("SELECT COUNT(*)::int AS total") &&
+        normalized.includes("FROM certops_agents")
+      ) {
+        return {
+          rows: [
+            {
+              total: agentRows.filter((row) => row.workspace_id === params[0])
+                .length,
+            },
+          ],
+        };
+      }
+
+      if (
         normalized.includes("FROM certops_agents") &&
         normalized.includes("ORDER BY created_at DESC")
       ) {
+        const matching = agentRows.filter(
+          (row) => row.workspace_id === params[0],
+        );
+        const hasLimit = normalized.includes("LIMIT $2");
+        const start = Number((hasLimit ? params[2] : params[1]) || 0);
         return {
-          rows: agentRows.filter((row) => row.workspace_id === params[0]),
+          rows: hasLimit
+            ? matching.slice(start, start + Number(params[1]))
+            : matching.slice(start),
         };
       }
 
@@ -256,7 +299,11 @@ function findRouteHandler(method, routePath) {
   return stack[stack.length - 1].handle;
 }
 
-async function invokeRoute(method, routePath, { body = {}, params = {} } = {}) {
+async function invokeRoute(
+  method,
+  routePath,
+  { body = {}, params = {}, query = {} } = {},
+) {
   const handler = findRouteHandler(method, routePath);
   const req = {
     workspace: { id: WORKSPACE_A },
@@ -264,6 +311,7 @@ async function invokeRoute(method, routePath, { body = {}, params = {} } = {}) {
     authz: { workspaceRole: "workspace_manager" },
     body,
     params,
+    query,
   };
   const res = responseRecorder();
   await handler(req, res);
@@ -475,6 +523,53 @@ describe("CertOps agents list route", () => {
     assert.equal(res.body.items[0].status, "retired");
     assert.equal(res.body.items[0].retiredAt, "2026-07-02T00:00:00.000Z");
     assert.equal(res.body.items[0].retireReason, "decommissioned host");
+  });
+
+  it("returns the whole fleet when the caller omits limit", async () => {
+    // There is no pagination control on the fleet list yet, so a default page
+    // would hide agents from an audit with nothing on screen admitting it.
+    for (let index = 0; index < 60; index += 1) {
+      db.agentRows.push(
+        agentRow({ id: `agent-${index}`, agent_id: `agent-host-${index}` }),
+      );
+    }
+
+    const res = await invokeRoute(
+      "get",
+      "/api/v1/workspaces/:id/certops/agents",
+    );
+
+    assert.equal(res.body.items.length, 60);
+    assert.deepEqual(res.body.pagination, {
+      limit: null,
+      offset: 0,
+      total: 60,
+    });
+  });
+
+  it("pages on request and keeps total over the whole fleet", async () => {
+    for (let index = 0; index < 9; index += 1) {
+      db.agentRows.push(
+        agentRow({ id: `agent-${index}`, agent_id: `agent-host-${index}` }),
+      );
+    }
+
+    const page = await invokeRoute(
+      "get",
+      "/api/v1/workspaces/:id/certops/agents",
+      { query: { limit: "4", offset: "0" } },
+    );
+    assert.equal(page.body.items.length, 4);
+    assert.equal(page.body.pagination.total, 9);
+    assert.equal(page.body.pagination.limit, 4);
+
+    const beyond = await invokeRoute(
+      "get",
+      "/api/v1/workspaces/:id/certops/agents",
+      { query: { limit: "4", offset: "400" } },
+    );
+    assert.deepEqual(beyond.body.items, []);
+    assert.equal(beyond.body.pagination.total, 9);
   });
 });
 

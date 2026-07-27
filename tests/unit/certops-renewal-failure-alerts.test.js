@@ -823,7 +823,7 @@ describe("certops-worker outbox drain", () => {
     assert.equal(update.params[0], true, "exhausted");
   });
 
-  it("defers an event type whose handler is not implemented yet", async () => {
+  it("defers a row whose work is not possible yet, refunding the attempt", async () => {
     const worker = await import(workerUrl);
     const dbPool = createDrainPool([
       outboxRow({ event_type: "profile_derivation_requested" }),
@@ -833,12 +833,52 @@ describe("certops-worker outbox drain", () => {
       dbPool,
       log: silentLogger,
       alertResolver: async () => ({ queued: true }),
+      derivationResolver: async () => ({
+        deferred: true,
+        reason: "running",
+        retryInMs: 60_000,
+      }),
     });
 
-    // Deferred, not dropped: recording the intent is pointless if the drain
-    // silently discards the event types it cannot handle yet.
-    assert.equal(summary.retried, 1);
+    // A wait is neither a success nor a failed attempt, and the summary has to
+    // say which of the two it was not: counting it as a retry hid the defect
+    // that a waiting row burned its whole retry budget.
+    assert.equal(summary.deferred, 1);
+    assert.equal(summary.retried, 0);
     assert.equal(summary.skipped, 0);
     assert.equal(summary.succeeded, 0);
+    const defer = dbPool.queries.find((q) =>
+      q.sql.includes("attempt_count = GREATEST(0, attempt_count - 1)"),
+    );
+    assert.ok(defer, "the claim-time attempt increment must be refunded");
+    assert.match(defer.sql, /next_retry_at = NOW\(\)/);
+  });
+
+  it("lets a handler complete its own row and writes nothing itself", async () => {
+    const worker = await import(workerUrl);
+    const dbPool = createDrainPool([
+      outboxRow({ event_type: "profile_derivation_requested" }),
+    ]);
+
+    const summary = await worker.drainCertOpsOutbox({
+      dbPool,
+      log: silentLogger,
+      alertResolver: async () => ({ queued: true }),
+      derivationResolver: async () => ({
+        completed: true,
+        terminalStatus: "succeeded",
+        reason: null,
+      }),
+    });
+
+    assert.equal(summary.succeeded, 1);
+    const terminalWrites = dbPool.queries.filter(
+      (q) => q.sql.includes("UPDATE certops_outbox") && q.params[0] === "succeeded",
+    );
+    assert.equal(
+      terminalWrites.length,
+      0,
+      "the loop must not re-write a row the handler already completed",
+    );
   });
 });

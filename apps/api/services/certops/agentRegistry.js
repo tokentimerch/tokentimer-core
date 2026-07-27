@@ -267,15 +267,62 @@ function agentMetadataFromRow(row, env = process.env) {
   };
 }
 
+// Pagination here is opt-in. The agent fleet list is unbounded today and the
+// dashboard has no page control for it, so an omitted limit must keep returning
+// every row: a silent default page would truncate a fleet audit with nothing on
+// screen to say so. The default is switched on with the control that reveals it.
+function normalizeOptionalLimit(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(1, Math.min(100, parsed));
+}
+
+function normalizeOffset(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed);
+}
+
 async function listAgents(options) {
-  const result = await (options.client || pool).query(
+  const db = options.client || pool;
+  const workspaceId = normalizeWorkspaceId(options.workspaceId);
+  const limit = normalizeOptionalLimit(options.limit);
+  const offset = normalizeOffset(options.offset);
+  const params = [workspaceId];
+  let pageClause = "";
+  if (limit !== null) {
+    params.push(limit, offset);
+    pageClause = `
+      LIMIT $${params.length - 1} OFFSET $${params.length}`;
+  } else if (offset > 0) {
+    params.push(offset);
+    pageClause = `
+      OFFSET $${params.length}`;
+  }
+
+  const totalResult = await db.query(
+    `SELECT COUNT(*)::int AS total
+       FROM certops_agents
+      WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+  const result = await db.query(
     `SELECT ${AGENT_SAFE_SELECT_FIELDS}
        FROM certops_agents
       WHERE workspace_id = $1
-      ORDER BY created_at DESC, id ASC`,
-    [normalizeWorkspaceId(options.workspaceId)],
+      ORDER BY created_at DESC, id ASC${pageClause}`,
+    params,
   );
-  return result.rows.map((row) => agentMetadataFromRow(row, options.env));
+
+  return {
+    items: result.rows.map((row) => agentMetadataFromRow(row, options.env)),
+    pagination: {
+      limit,
+      offset,
+      total: Number(totalResult.rows[0]?.total || 0),
+    },
+  };
 }
 
 async function getAgentById(options) {

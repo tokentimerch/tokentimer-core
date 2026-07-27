@@ -18,10 +18,13 @@ const {
 } = require("../middleware/require-workspace-certops-active");
 const { authorize, hasAtLeastRole } = require("../services/rbac");
 const {
+  CERTOPS_CERTIFICATE_FILTER_INVALID,
   CERTOPS_CERTIFICATE_NOT_FOUND,
   CERTOPS_CERTIFICATE_PARSE_FAILED,
   CERTOPS_CERTIFICATE_RETIRE_REASON_INVALID,
   CERTOPS_CERTIFICATE_RETIRE_STATUS_INVALID,
+  CERTOPS_CERTIFICATE_SOURCE_INVALID,
+  CERTOPS_CERTIFICATE_STATUS_INVALID,
   CERTOPS_KEY_MODE_INVALID,
   CERTOPS_KEY_REFERENCE_INVALID,
   getManagedCertificate,
@@ -1207,8 +1210,13 @@ router.get(
     try {
       const tokens = await listApiTokens({
         workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
       });
-      return res.json({ items: tokens.map(apiTokenMetadata) });
+      return res.json({
+        items: tokens.items.map(apiTokenMetadata),
+        pagination: tokens.pagination,
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -1387,8 +1395,13 @@ router.get(
     try {
       const tokens = await listBootstrapTokens({
         workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
       });
-      return res.json({ items: tokens });
+      return res.json({
+        items: tokens.items,
+        pagination: tokens.pagination,
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -1534,8 +1547,15 @@ router.get(
   requireCertOpsWriteRole,
   async (req, res) => {
     try {
-      const agents = await listAgents({ workspaceId: req.workspace.id });
-      return res.json({ items: agents });
+      const agents = await listAgents({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json({
+        items: agents.items,
+        pagination: agents.pagination,
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -2275,6 +2295,16 @@ router.get(
         workspaceId: req.workspace.id,
         limit: req.query.limit,
         offset: req.query.offset,
+        status: req.query.status,
+        source: req.query.source,
+        // Three separate renewal facts rather than one "will not auto-renew"
+        // switch: a certificate whose profile fails validation also never
+        // renews, and that verdict comes from a JavaScript validator over the
+        // profile body with no SQL equivalent. A combined filter would promise
+        // a complete answer and stop an operator looking further.
+        noRenewalProfile: req.query.noRenewalProfile,
+        renewalDisabled: req.query.renewalDisabled,
+        keyNotAgentDeployable: req.query.keyNotAgentDeployable,
       });
       return res.json({
         ...result,
@@ -2284,6 +2314,14 @@ router.get(
         }),
       });
     } catch (err) {
+      if (
+        err?.code === CERTOPS_CERTIFICATE_STATUS_INVALID ||
+        err?.code === CERTOPS_CERTIFICATE_SOURCE_INVALID ||
+        err?.code === CERTOPS_CERTIFICATE_FILTER_INVALID
+      ) {
+        return res.status(400).json({ error: err.message, code: err.code });
+      }
+
       logger.error("CertOps certificate list failed", {
         error: err.message,
         code: err.code || null,

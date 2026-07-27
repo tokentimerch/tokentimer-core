@@ -47,6 +47,23 @@ const { writeAudit } = require("../audit");
 const DERIVED_PROFILE_PREFIX = "Derived";
 const DERIVED_PROFILE_SOURCE = "api";
 
+/**
+ * public_metadata flag marking a profile as operator-owned.
+ *
+ * Not certificate_profiles.source: its CHECK has no 'derived' value, which is
+ * why derivation writes the generic 'api', so source cannot tell a derived row
+ * from an operator-authored one at all. public_metadata needs no migration and
+ * is where the operator's edited fields already live, so ownership travels with
+ * the thing it protects.
+ */
+const OPERATOR_OWNED_METADATA_KEY = "operatorOwned";
+
+// Reasons ensureDerivedRenewalProfile reports instead of throwing.
+const DERIVATION_REASON_ALREADY_LINKED = "already_linked";
+const DERIVATION_REASON_DERIVATION_FAILED = "derivation_failed";
+const DERIVATION_REASON_PROFILE_OPERATOR_OWNED = "profile_operator_owned";
+const DERIVATION_REASON_LINK_CONFLICT = "certificate_link_conflict";
+
 function derivationError(message) {
   const error = new Error(message);
   error.code = CERTOPS_RENEWAL_PROFILE_INCOMPLETE;
@@ -253,7 +270,7 @@ async function ensureDerivedRenewalProfile({
     return {
       profileId: String(existingProfileId),
       created: false,
-      reason: "already_linked",
+      reason: DERIVATION_REASON_ALREADY_LINKED,
     };
   }
 
@@ -275,15 +292,26 @@ async function ensureDerivedRenewalProfile({
     return {
       profileId: null,
       created: false,
-      reason: "derivation_failed",
+      reason: DERIVATION_REASON_DERIVATION_FAILED,
       error: error?.message || null,
     };
   }
 
   const name = profile.profileName;
-  // ON CONFLICT on the per-workspace unique index over LOWER(name): a
-  // re-derivation for the same certificate reuses its profile row instead of
-  // failing the whole reconciliation on a duplicate name.
+  // ON CONFLICT on the per-workspace unique index over LOWER(name). The name is
+  // derived from the common name, not the certificate, so this reuses a row for
+  // any certificate sharing the CN in this workspace rather than failing the
+  // whole reconciliation on a duplicate name. Two same-CN certificates therefore
+  // share one profile: status stays untouched and renew_before_days is
+  // COALESCE-preserved so operator edits to those survive, but public_metadata
+  // is replaced. See ADR-0010's consequences.
+  //
+  // The DO UPDATE refuses an operator-owned profile. Without that guard a second
+  // issuance for the same common name replaced public_metadata wholesale, so
+  // every field an operator had edited reverted silently and nothing recorded
+  // that it had. Losing the derivation is the better of the two failures: the
+  // stored profile still describes a run that worked, and the refusal is
+  // reported rather than swallowed.
   const upserted = await client.query(
     `INSERT INTO certificate_profiles (
        workspace_id, name, description, status, source, source_ref,
@@ -296,6 +324,10 @@ async function ensureDerivedRenewalProfile({
              EXCLUDED.renew_before_days
            ),
            updated_at = NOW()
+       WHERE COALESCE(
+               certificate_profiles.public_metadata->>$8::text,
+               'false'
+             ) <> 'true'
      RETURNING id, (xmax = 0) AS inserted`,
     [
       workspaceId,
@@ -311,11 +343,31 @@ async function ensureDerivedRenewalProfile({
           derivedAt: new Date().toISOString(),
         },
       }),
+      OPERATOR_OWNED_METADATA_KEY,
     ],
   );
+  // RETURNING yields nothing when the DO UPDATE's WHERE filters the row out, so
+  // this is the operator-owned refusal, not an unexpected empty result. Reading
+  // rows[0].id here would throw and break the never-throws contract this
+  // function's callers depend on.
+  if (upserted.rows.length === 0) {
+    if (logger?.warn) {
+      logger.warn("certops-renewal-profile-derivation-refused", {
+        workspaceId,
+        certificateId,
+        profileName: name,
+        reason: DERIVATION_REASON_PROFILE_OPERATOR_OWNED,
+      });
+    }
+    return {
+      profileId: null,
+      created: false,
+      reason: DERIVATION_REASON_PROFILE_OPERATOR_OWNED,
+    };
+  }
   const profileId = String(upserted.rows[0].id);
 
-  await client.query(
+  const linkResult = await client.query(
     `UPDATE managed_certificates
         SET profile_id = $3::uuid,
             updated_at = NOW()
@@ -324,6 +376,25 @@ async function ensureDerivedRenewalProfile({
         AND profile_id IS NULL`,
     [workspaceId, certificateId, profileId],
   );
+  // The guard can legitimately match nothing: a concurrent transaction may have
+  // linked or detached the certificate since the read above. Reporting success
+  // then would audit a grant of renewal authority the certificate does not
+  // actually use, which is the one claim in this trail that must never be
+  // false.
+  if ((linkResult.rowCount ?? 0) === 0) {
+    if (logger?.warn) {
+      logger.warn("certops-renewal-profile-link-conflict", {
+        workspaceId,
+        certificateId,
+        profileId,
+      });
+    }
+    return {
+      profileId: null,
+      created: false,
+      reason: DERIVATION_REASON_LINK_CONFLICT,
+    };
+  }
 
   // A derived profile is standing authority: it lets the scheduler re-run this
   // command, on this host, against this CA, indefinitely and with no operator in
@@ -367,7 +438,12 @@ async function ensureDerivedRenewalProfile({
 }
 
 module.exports = {
+  DERIVATION_REASON_ALREADY_LINKED,
+  DERIVATION_REASON_DERIVATION_FAILED,
+  DERIVATION_REASON_LINK_CONFLICT,
+  DERIVATION_REASON_PROFILE_OPERATOR_OWNED,
   DERIVED_PROFILE_PREFIX,
+  OPERATOR_OWNED_METADATA_KEY,
   deriveRenewalProfileFromIssuedCertificate,
   ensureDerivedRenewalProfile,
 };

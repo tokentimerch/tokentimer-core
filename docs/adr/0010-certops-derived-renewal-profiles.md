@@ -81,11 +81,29 @@ actually ran, and the disagreement is undetectable until the renewal fails.
    calls `validateRenewalProfile`, so a profile that would be rejected at renewal
    time is rejected now, while the operator is still looking at the issuance that
    produced it.
-7. **Derivation never fails the issuance.** A certificate that exists on a host
-   must be recorded. Derivation returns `profileId: null` with a reason and logs
-   `certops-renewal-profile-derivation-failed`; the promotion still commits. An
-   un-auto-renewable certificate the operator can see and fix beats losing the
-   row for a real certificate over missing renewal metadata.
+7. **A derivation that cannot be computed never fails the issuance.** A
+   certificate that exists on a host must be recorded. When the payload cannot be
+   mapped to a valid profile, derivation returns `profileId: null` with a reason;
+   the promotion still commits. An un-auto-renewable certificate the operator can
+   see and fix beats losing the row for a real certificate over missing renewal
+   metadata.
+
+   Scoped deliberately: this covers **mapping and validation** failures, not
+   persistence. The profile upsert and the certificate link run on the
+   reconciliation transaction's client, so a database error there aborts result
+   ingestion along with the promotion. That is the right outcome (a half-written
+   profile is worse than a retried result) but it means "never fails the
+   issuance" is not an unconditional guarantee.
+
+   **Known gap:** the swallow path builds a structured reason and a
+   `logger.warn`, but the production call site passes no logger, so a derivation
+   decline currently produces no log line, no audit event and no
+   `reconciliation_reason`, which the promotion explicitly sets to `NULL`. The
+   only durable trace is `profileId: null` in `CERTOPS_CERTIFICATE_ISSUED`.
+   ADR-0011 made this asymmetric: success is audited
+   (`CERTOPS_RENEWAL_PROFILE_DERIVED`) while failure is silent, so the audit log
+   reads as though derivation always succeeds. Closing it belongs with the
+   outbox's durable-completion machinery rather than a log line.
 8. **An operator's own profile is never overwritten.** If the certificate already
    links to a profile, derivation returns `already_linked` and does nothing. The
    link update is additionally guarded by `profile_id IS NULL`.
@@ -183,12 +201,26 @@ in ADR-0009.
   details are not. See A1.2.)*
 - `skipped_incomplete_profile` becoming non-zero is now an actionable alert
   condition for operators, and it is the series to watch after this change.
-- Derivation failures are visible only in API logs
-  (`certops-renewal-profile-derivation-failed`) and by the absence of a linked
-  profile. A surfaced per-certificate reason, as `reconciliation_reason` does for
-  promotion, would be an improvement and is deliberately out of scope here.
-- `certificate_profiles` gains rows at issuance rate, one per issued
-  certificate, and they count against nothing today. If profile quotas are
+- Derivation failures are visible only by the absence of a linked profile. The
+  intended log line (`certops-renewal-profile-derivation-failed`) is unreachable
+  because the production caller passes no logger, so today there is no log, no
+  audit event and no per-certificate reason at all. See decision 7's known gap.
+- `certificate_profiles` gains rows at issuance rate, **one per distinct common
+  name per workspace, not one per certificate**. The upsert's conflict target is
+  `(workspace_id, LOWER(name))` with `name = 'Derived: <commonName>'`, so two
+  certificates issued for the same CN in one workspace share a single profile
+  row: the second derivation updates it and links to it. That is legal and
+  common (load-balanced pairs, blue/green, edge plus origin), and it has a real
+  consequence: `public_metadata` is replaced wholesale on conflict, so a
+  same-CN re-derivation overwrites the `renewalProfile` block that `PATCH` also
+  writes, while reporting `created: false`, which reads as a benign replay. The
+  two fields operators care about most do survive: `status` is not in the update
+  set, so an explicit auto-renew off switch holds, and `renew_before_days` is
+  `COALESCE`-preserved, so an edited lead time holds. `source_ref`
+  (`certops-issuance:<certificateId>`) is in neither the conflict target nor the
+  update, so a shared row keeps the first certificate's provenance pointer.
+  Treat the uniqueness key as the open question here; guarding the write would
+  paper over it. They count against nothing today. If profile quotas are
   introduced later, derived profiles must be considered.
 - Cloud and Enterprise inherit this through the shared reconciliation path when
   they re-pin core. No migration is required by this ADR: `certificate_profiles`,
