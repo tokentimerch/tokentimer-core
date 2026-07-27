@@ -2,6 +2,11 @@
 
 const { pool } = require("../../db/database");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
+const {
+  TRANSITION_ORIGINS,
+  classifyTerminalTransition,
+} = require("./renewalAlertPolicy");
+const { OUTBOX_EVENT_TYPES, enqueueOutboxEvent } = require("./outbox");
 
 const CERTOPS_AGENT_NOT_FOUND = "CERTOPS_AGENT_NOT_FOUND";
 const CERTOPS_AGENT_INVALID = "CERTOPS_AGENT_INVALID";
@@ -10,6 +15,10 @@ const CERTOPS_AGENT_RETIRE_REASON_INVALID =
 const CERTOPS_AGENT_WORKSPACE_REQUIRED = "CERTOPS_AGENT_WORKSPACE_REQUIRED";
 
 const MAX_RETIRE_REASON_LENGTH = 500;
+
+const FORCE_RETIRED_CODE = "CERTOPS_AGENT_FORCE_RETIRED";
+const FORCE_RETIRED_UNKNOWN_EFFECT_CODE =
+  "CERTOPS_AGENT_FORCE_RETIRED_UNKNOWN_EFFECT";
 
 // H8: config-driven protocol/agent compatibility and clock-drift thresholds.
 const DEFAULT_MIN_PROTOCOL_VERSION = "1.0.0";
@@ -355,6 +364,19 @@ async function countActivelyLeasedJobs(options) {
  * H12: fence in-flight work for a force-retired agent.
  * - claimed (no execution start evidence): cancel cleanly
  * - running: orphaned_unknown_effect + needs_operator_reconciliation
+ *
+ * Forced retirement is a terminal-failure path like any other, so it owes the
+ * same alert. It did not pay it: the two UPDATEs below ended renewals with no
+ * outbox intent, so retiring an agent that held a renewal lease produced a
+ * failed renewal that emailed nobody, which is indistinguishable from no
+ * renewal having failed. `TRANSITION_ORIGINS.FORCED_RETIREMENT` and its policy
+ * test already existed, so only the call was missing.
+ *
+ * The intent is enqueued on the caller's client so it commits with the status
+ * change; `enqueueOutboxEvent` refuses a non-transactional caller outright,
+ * which is why the retire route wraps this in `withCertOpsTransaction`. The
+ * dedupe key is the job id, matching the agent-result and lease-reaper paths, so
+ * a job already alerted for cannot be alerted for twice by a different origin.
  */
 async function fenceAgentInFlightWork(options) {
   const db = options.client || pool;
@@ -374,7 +396,7 @@ async function fenceAgentInFlightWork(options) {
       WHERE claimed_by_agent_id = $1
         AND status = 'claimed'
         AND lease_expires_at > NOW()
-      RETURNING id`,
+      RETURNING id, workspace_id, operation, subject_type, subject_id`,
     [options.agentId, reason],
   );
 
@@ -391,9 +413,45 @@ async function fenceAgentInFlightWork(options) {
       WHERE claimed_by_agent_id = $1
         AND status = 'running'
         AND lease_expires_at > NOW()
-      RETURNING id`,
+      RETURNING id, workspace_id, operation, subject_type, subject_id`,
     [options.agentId, reason],
   );
+
+  const fencedGroups = [
+    { rows: cancelled.rows, status: "cancelled", errorCode: FORCE_RETIRED_CODE },
+    {
+      rows: orphaned.rows,
+      status: "orphaned_unknown_effect",
+      errorCode: FORCE_RETIRED_UNKNOWN_EFFECT_CODE,
+    },
+  ];
+  for (const group of fencedGroups) {
+    for (const row of group.rows) {
+      const classification = classifyTerminalTransition({
+        operation: row.operation,
+        status: group.status,
+        origin: TRANSITION_ORIGINS.FORCED_RETIREMENT,
+      });
+      if (!classification.alertWorthy) continue;
+      await enqueueOutboxEvent({
+        client: db,
+        workspaceId: row.workspace_id,
+        eventType: OUTBOX_EVENT_TYPES.RENEWAL_ALERT_REQUESTED,
+        dedupeKey: String(row.id),
+        payload: {
+          jobId: String(row.id),
+          operation: row.operation,
+          jobStatus: group.status,
+          origin: TRANSITION_ORIGINS.FORCED_RETIREMENT,
+          classificationReason: classification.reason,
+          priority: classification.priority || null,
+          errorCode: group.errorCode,
+          subjectType: row.subject_type || null,
+          subjectId: row.subject_id ? String(row.subject_id) : null,
+        },
+      });
+    }
+  }
 
   return {
     cancelledJobIds: cancelled.rows.map((row) => row.id),

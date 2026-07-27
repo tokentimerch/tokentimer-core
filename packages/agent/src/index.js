@@ -1891,6 +1891,27 @@ async function executeDryRunPlan({
 }
 
 /**
+ * discardStagedKey is best-effort by design (see its docblock: throwing on the
+ * failure paths that call it is what orphaned keys in the first place). That
+ * makes an unremovable staging file silent, which is the opposite problem. This
+ * wrapper is the single place that turns a residual private key into an operator
+ * -visible warning, naming the path so it can be removed by hand. It never
+ * throws, so it is safe in catch blocks and after a failed tail.
+ *
+ * @param {object} input
+ * @returns {void}
+ */
+function discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId }) {
+  const outcome = discardStagedKey({ keyPath, stagedKeyPath });
+  if (outcome && outcome.residualPath && log && typeof log.warn === "function") {
+    log.warn(
+      `job ${jobId}: staged private key could not be removed and remains on disk ` +
+        `at ${outcome.residualPath}; delete it manually (${outcome.error})`,
+    );
+  }
+}
+
+/**
  * Full renew chain: keys -> csr -> acme -> deploy -> reload (optional) ->
  * verify. Honors flattened renewal-profile execution fields when present
  * (sans, keyAlgorithm/keySize, preferredChain, eabRef/accountRef,
@@ -2091,7 +2112,7 @@ async function executeRenewJob({
     {
       const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
       if (leaseGate && leaseGate.ok === false) {
-        discardStagedKey({ keyPath, stagedKeyPath });
+        discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
         return leaseGate.abort;
       }
     }
@@ -2129,7 +2150,7 @@ async function executeRenewJob({
     }
     const renewal = await adapter.runRenewal(renewalOpts);
     if (renewal.allowed === false) {
-      discardStagedKey({ keyPath, stagedKeyPath });
+      discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
       return {
         status: "rejected",
         rejectionReason: renewal.rejectionReason,
@@ -2137,7 +2158,7 @@ async function executeRenewJob({
       };
     }
     if (renewal.renewed !== true) {
-      discardStagedKey({ keyPath, stagedKeyPath });
+      discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
       await reportStepEvidence(client, jobId, [
         buildEvidenceItem({
           eventType: "validation.failed",
@@ -2167,7 +2188,7 @@ async function executeRenewJob({
     // Steps 4-6 are shared with the deploy action (possibly multi-target).
     const staged = readStagedCertificateChain(stagedCertPaths);
     if (staged.error) {
-      discardStagedKey({ keyPath, stagedKeyPath });
+      discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
       return {
         status: "failed",
         keyRotated,
@@ -2177,6 +2198,17 @@ async function executeRenewJob({
       };
     }
     certificatePem = staged.pem;
+  } catch (err) {
+    // Every *returned* failure above discards the staged key explicitly, but a
+    // thrown one skipped it: the finally below cleans the CSR and the staged
+    // chain, never the key. An exception here (adapter crash, unreadable
+    // staging dir, lease transport error) therefore left a 0600 private key in
+    // keysDir forever, since nothing else knows the path. The key is worthless
+    // without the certificate that was never issued, but a private key that
+    // outlives its job is residue on the one boundary this agent exists to
+    // keep clean, so it goes before the error propagates.
+    discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
+    throw err;
   } finally {
     // The CSR is public material, but it is job-scoped scratch: remove it.
     fs.rmSync(csrPath, { force: true });
@@ -2187,23 +2219,33 @@ async function executeRenewJob({
     }
   }
 
-  const tail = await runDeployReloadVerifyForTargets({
-    job,
-    jobId,
-    policyEngine,
-    client,
-    certificatePem,
-    deployTargets,
-    keyPath,
-    stagedKeyPath,
-    keyRotated,
-    requestedSans: domains,
-    log,
-    leaseOpts,
-    onBeforeMutation,
-  });
+  let tail;
+  try {
+    tail = await runDeployReloadVerifyForTargets({
+      job,
+      jobId,
+      policyEngine,
+      client,
+      certificatePem,
+      deployTargets,
+      keyPath,
+      stagedKeyPath,
+      keyRotated,
+      requestedSans: domains,
+      log,
+      leaseOpts,
+      onBeforeMutation,
+    });
+  } catch (err) {
+    // Same reasoning as above, for the deploy tail. A multi-target run retains
+    // the staging file until the last destination, so a throw part-way through
+    // is precisely the case that leaves it behind. Discard is a no-op once the
+    // key has been promoted, because promotion consumes the staging file.
+    discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
+    throw err;
+  }
   if (tail.status !== "succeeded") {
-    discardStagedKey({ keyPath, stagedKeyPath });
+    discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId });
   }
   return { ...tail, keyRotated };
 }

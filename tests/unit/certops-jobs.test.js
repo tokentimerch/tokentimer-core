@@ -1573,6 +1573,97 @@ describe("CertOps jobs service", () => {
     assert.equal(job.operation, "issue");
   });
 
+  // Multi-destination deploy is real, but only via renewalProfile
+  // .deploymentTargets on a renew job. Derivation reads deploymentTargets[0]
+  // and nothing else, so a multi-target issue used to deploy everywhere and then
+  // produce a profile covering one host: the others silently stopped renewing
+  // months later. Refusing the request is the recoverable failure.
+  it("refuses an issue payload carrying more than one deploymentTargets entry", async () => {
+    const client = createMemoryClient();
+    const basePayload = {
+      target: "example.com",
+      commandRef: "certbot-renew",
+      caEndpoint: "https://acme.example.com/directory",
+      certPath: "/etc/ssl/live/example.com/cert.pem",
+      dnsZone: "example.com",
+      dnsProvider: "cloudflare",
+    };
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "issue",
+          source: "api",
+          subjectType: "managed_certificate",
+          subjectId: "cert-multi",
+          payload: {
+            ...basePayload,
+            deploymentTargets: [
+              { type: "endpoint", reference: "web-01", certPath: "/a/cert.pem" },
+              { type: "endpoint", reference: "web-02", certPath: "/b/cert.pem" },
+            ],
+          },
+        }),
+      (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+      "expected a multi-target issue payload to be refused",
+    );
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "issue",
+          source: "api",
+          subjectType: "managed_certificate",
+          subjectId: "cert-multi",
+          payload: { ...basePayload, deploymentTargets: "not-an-array" },
+        }),
+      (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+      "expected a non-array deploymentTargets to be refused",
+    );
+
+    // Exactly one target is the shape derivation can faithfully reproduce, and
+    // omitting the array entirely (fields flat on the payload) stays valid.
+    const single = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "issue",
+      source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-single",
+      payload: {
+        ...basePayload,
+        deploymentTargets: [
+          { type: "endpoint", reference: "web-01", certPath: "/a/cert.pem" },
+        ],
+      },
+    });
+    assert.equal(single.operation, "issue");
+
+    // renew is deliberately NOT constrained: its multi-target support comes
+    // from an explicit renewalProfile the operator or derivation authored, so
+    // nothing is being inferred from position there.
+    const renew = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-renew",
+      payload: {
+        target: "example.com",
+        deploymentTargets: [
+          { type: "endpoint", reference: "web-01", certPath: "/a/cert.pem" },
+          { type: "endpoint", reference: "web-02", certPath: "/b/cert.pem" },
+        ],
+      },
+    });
+    assert.equal(renew.operation, "renew");
+  });
+
   it("rejects execution fields on operations that never execute them", async () => {
     const client = createMemoryClient();
 

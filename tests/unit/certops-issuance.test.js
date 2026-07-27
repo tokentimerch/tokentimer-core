@@ -532,7 +532,11 @@ describe("certops provisioning reconciliation", () => {
 
     assert.equal(result.certificateId, String(NEW_CERT_ID));
     assert.equal(result.promoted, true);
-    assert.equal(state.updates.length, 1);
+    // Two writes: the promotion, then the derivation decline. This fixture's
+    // payload carries no caEndpoint/commandRef, so derivation legitimately
+    // declines and must leave an actionable reconciliation_reason behind rather
+    // than only a null profileId inside the ISSUED audit metadata.
+    assert.equal(state.updates.length, 2);
     const params = state.updates[0];
     assert.equal(params[2], "a".repeat(64));
     assert.equal(params[3], "04AABB");
@@ -541,6 +545,31 @@ describe("certops provisioning reconciliation", () => {
     assert.equal(params[6], new Date("Jul 26 10:00:00 2026 GMT").toISOString());
     assert.equal(params[7], new Date("Oct 24 10:00:00 2026 GMT").toISOString());
     assert.equal(params[8], "web-01.example.com,alt.example.com");
+    assert.equal(state.updates[1][2], "renewal_profile_derivation_failed");
+    const declined = state.audits.find(
+      (row) => row.action === "CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED",
+    );
+    assert.ok(declined, "decline audit event expected");
+    const declinedMetadata =
+      typeof declined.metadata === "string"
+        ? JSON.parse(declined.metadata)
+        : declined.metadata;
+    assert.equal(declinedMetadata.derivationReason, "derivation_failed");
+    // The detail names the missing field so an operator can fix the payload,
+    // and never carries a value that would disclose deployment topology.
+    assert.ok(typeof declinedMetadata.detail === "string");
+    // The promotion still happened: a certificate that genuinely exists is not
+    // withheld because its renewal config could not be inferred.
+    const issued = state.audits.find(
+      (row) => row.action === "CERTOPS_CERTIFICATE_ISSUED",
+    );
+    assert.ok(issued, "issued audit event expected");
+    const issuedMetadata =
+      typeof issued.metadata === "string"
+        ? JSON.parse(issued.metadata)
+        : issued.metadata;
+    assert.equal(issuedMetadata.profileId, null);
+    assert.equal(issuedMetadata.profileDerivationReason, "derivation_failed");
   });
 
   it("only considers verify-step evidence bound to this claim", async () => {
@@ -629,7 +658,8 @@ describe("certops provisioning reconciliation", () => {
       linkToken: stubLinkToken([]),
     });
     assert.equal(result.promoted, true);
-    assert.equal(state.updates.length, 1);
+    // Promotion plus the derivation decline this fixture's payload earns.
+    assert.equal(state.updates.length, 2);
   });
 
   it("does not promote on ACME-step evidence alone", async () => {

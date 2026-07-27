@@ -74,6 +74,14 @@ const {
   ingestExecutorEvent,
 } = require("../services/certops/executorEvents");
 const {
+  TRANSITION_ORIGINS,
+  classifyTerminalTransition,
+} = require("../services/certops/renewalAlertPolicy");
+const {
+  OUTBOX_EVENT_TYPES,
+  enqueueOutboxEvent,
+} = require("../services/certops/outbox");
+const {
   GENERIC_SECRET_REDACTION_PLACEHOLDER,
   assertNoPrivateKeyMaterial,
   fieldNameLooksGenericSecret,
@@ -86,6 +94,8 @@ const CERTOPS_EXECUTOR_EVENT_TYPE_INVALID =
 const CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH =
   "CERTOPS_EXECUTOR_EVENT_STATUS_MISMATCH";
 const CERTOPS_EXECUTOR_JOB_REQUIRED = "CERTOPS_EXECUTOR_JOB_REQUIRED";
+const CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED =
+  "CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED";
 const CERTOPS_EXECUTOR_WORKSPACE_MISMATCH =
   "CERTOPS_EXECUTOR_WORKSPACE_MISMATCH";
 const CERTOPS_SECURITY_AUDIT_UNAVAILABLE =
@@ -250,6 +260,17 @@ const JOB_STATUS_BY_EVENT_TYPE = Object.freeze({
   "job.failed": "failed",
   "job.rejected": "rejected",
 });
+
+// Statuses an executor event can move a job to that end it. Non-terminal
+// executor progress on an agent-claimed job is merely redundant; a terminal
+// transition is the one that races the agent's own result.
+const TERMINAL_EXECUTOR_JOB_STATUSES = Object.freeze(
+  new Set(["succeeded", "failed", "rejected"]),
+);
+
+function isTerminalExecutorStatus(status) {
+  return TERMINAL_EXECUTOR_JOB_STATUSES.has(status);
+}
 
 function executorEventError(message, code) {
   return serviceError(message, code);
@@ -1496,15 +1517,18 @@ function handleExecutorEventError(res, error) {
   if (
     error?.code === CERTOPS_JOB_STATUS_TRANSITION_INVALID ||
     error?.code === CERTOPS_EXECUTOR_EVENT_CONFLICT ||
+    error?.code === CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED ||
     error?.code === CERTOPS_JOB_MODE_TERMINAL_INVALID
   ) {
     return res.status(409).json({
       error:
         error.code === CERTOPS_EXECUTOR_EVENT_CONFLICT
           ? "Executor event conflicts with a previously accepted event"
-          : error.code === CERTOPS_JOB_MODE_TERMINAL_INVALID
-            ? "Executor event's terminal status is invalid for this job's mode"
-            : "Executor event conflicts with the current certificate job status",
+          : error.code === CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED
+            ? "Certificate job is claimed by a CertOps agent; executor events cannot drive its terminal status"
+            : error.code === CERTOPS_JOB_MODE_TERMINAL_INVALID
+              ? "Executor event's terminal status is invalid for this job's mode"
+              : "Executor event conflicts with the current certificate job status",
       code: error.code,
     });
   }
@@ -1623,6 +1647,23 @@ async function executorEventsHandler(req, res, options = {}) {
 
         let updatedJob = job;
         if (event.jobStatus) {
+          // Cross-lane fencing. An executor machine token and an agent are two
+          // different execution lanes over the same certificate_jobs table, and
+          // the executor lane has no lease. Refusing every `executor_kind=agent`
+          // job would be wrong, because a job created without an explicit
+          // executorKind defaults to "agent" and that IS the certctl/executor
+          // lane's own default. What must never happen is an executor token
+          // driving a job an agent currently holds: the agent is still running
+          // the ACME client and will report its own result against a status the
+          // executor already moved, so the two lanes fight over one job and the
+          // agent's side effects land against a terminal row.
+          if (job.claimedByAgentId && isTerminalExecutorStatus(event.jobStatus)) {
+            throw executorEventError(
+              "Certificate job is claimed by a CertOps agent; executor events " +
+                "cannot drive its terminal status",
+              CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED,
+            );
+          }
           updatedJob = await updateCertificateJobStatus({
             client,
             workspaceId,
@@ -1704,6 +1745,47 @@ async function executorEventsHandler(req, res, options = {}) {
               redactedFields: metadataRedaction.redactedFields,
             },
           });
+        }
+
+        // The executor lane owed the same alert the agent lane pays. It did not:
+        // a renew job failed by a certctl/controller executor recorded the
+        // status and stopped, so the operator learned nothing while the
+        // identical failure reported by an agent emailed them. Same policy, same
+        // dedupe key, same transaction, so an executor-reported failure cannot
+        // commit without its intent, and a job already alerted for by another
+        // origin is not alerted for twice.
+        if (
+          event.jobStatus &&
+          updatedJob.statusTransitionApplied !== false
+        ) {
+          const classification = classifyTerminalTransition({
+            operation: updatedJob.operation || job.operation,
+            status: updatedJob.status,
+            origin: TRANSITION_ORIGINS.EXECUTOR_EVENT,
+          });
+          if (classification.alertWorthy) {
+            await enqueueOutboxEvent({
+              client,
+              workspaceId,
+              eventType: OUTBOX_EVENT_TYPES.RENEWAL_ALERT_REQUESTED,
+              dedupeKey: String(event.jobId),
+              payload: {
+                jobId: String(event.jobId),
+                operation: updatedJob.operation || job.operation,
+                jobStatus: updatedJob.status,
+                origin: TRANSITION_ORIGINS.EXECUTOR_EVENT,
+                classificationReason: classification.reason,
+                priority: classification.priority || null,
+                errorCode: updatedJob.errorCode || null,
+                subjectType: updatedJob.subjectType || job.subjectType || null,
+                subjectId: updatedJob.subjectId
+                  ? String(updatedJob.subjectId)
+                  : job.subjectId
+                    ? String(job.subjectId)
+                    : null,
+              },
+            });
+          }
         }
 
         const response = {

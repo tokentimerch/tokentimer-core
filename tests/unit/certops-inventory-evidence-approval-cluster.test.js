@@ -167,6 +167,144 @@ describe("fenceAgentInFlightWork (H12)", () => {
     assert.deepEqual(result.orphanedJobIds, ["job-running"]);
     assert.equal(updates.length, 2);
   });
+
+  // Forced retirement is a terminal-failure path, so it owes the alert every
+  // other terminal path pays. Before this, the two UPDATEs committed and nothing
+  // else happened: retiring an agent mid-renewal produced a dead renewal that
+  // notified no one, which is exactly what an operator cannot detect on their
+  // own. The assertion is on the outbox INSERT, not on an email, because the
+  // intent is the part that must be atomic with the status change.
+  it("enqueues one renewal-alert intent per fenced renew job, in the same transaction", async () => {
+    const inserts = [];
+    const db = {
+      async query(sql, params) {
+        if (sql.includes("INSERT INTO certops_outbox")) {
+          inserts.push({ sql, params });
+          return { rows: [{ id: `outbox-${inserts.length}` }] };
+        }
+        if (sql.includes("status = 'cancelled'")) {
+          return {
+            rows: [
+              {
+                id: "job-claimed",
+                workspace_id: "11111111-1111-4111-8111-111111111111",
+                operation: "renew",
+                subject_type: "managed_certificate",
+                subject_id: "cert-1",
+              },
+            ],
+          };
+        }
+        if (sql.includes("orphaned_unknown_effect")) {
+          return {
+            rows: [
+              {
+                id: "job-running",
+                workspace_id: "11111111-1111-4111-8111-111111111111",
+                operation: "renew",
+                subject_type: "managed_certificate",
+                subject_id: "cert-2",
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    };
+
+    await fenceAgentInFlightWork({ client: db, agentId: "agent-row-1" });
+
+    assert.equal(inserts.length, 2);
+    const payloads = inserts.map((row) =>
+      typeof row.params[3] === "string" ? JSON.parse(row.params[3]) : row.params[3],
+    );
+    assert.deepEqual(
+      payloads.map((p) => p.jobId).sort(),
+      ["job-claimed", "job-running"],
+    );
+    for (const payload of payloads) {
+      assert.equal(payload.origin, "forced_retirement");
+      assert.equal(payload.operation, "renew");
+    }
+    // The orphan is the case where side effects may already have landed, so it
+    // must carry the higher priority the policy assigns it.
+    const orphanPayload = payloads.find((p) => p.jobId === "job-running");
+    assert.equal(orphanPayload.jobStatus, "orphaned_unknown_effect");
+    assert.equal(orphanPayload.priority, "high");
+    // Dedupe key is the job id, matching every other origin, so a job already
+    // alerted for by the reaper is not alerted for twice by retirement.
+    assert.deepEqual(
+      inserts.map((row) => row.params[2]).sort(),
+      ["job-claimed", "job-running"],
+    );
+  });
+
+  it("does not enqueue for fenced jobs whose operation never alerts", async () => {
+    const inserts = [];
+    const db = {
+      async query(sql, params) {
+        if (sql.includes("INSERT INTO certops_outbox")) {
+          inserts.push(params);
+          return { rows: [{ id: "outbox-1" }] };
+        }
+        if (sql.includes("status = 'cancelled'")) {
+          return {
+            rows: [
+              {
+                id: "job-deploy",
+                workspace_id: "11111111-1111-4111-8111-111111111111",
+                operation: "deploy",
+                subject_type: "managed_certificate",
+                subject_id: "cert-1",
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const result = await fenceAgentInFlightWork({
+      client: db,
+      agentId: "agent-row-1",
+    });
+
+    assert.deepEqual(result.cancelledJobIds, ["job-deploy"]);
+    assert.equal(inserts.length, 0);
+  });
+
+  // enqueueOutboxEvent refuses a non-transactional caller by design, which is
+  // the only thing guaranteeing the intent commits with the status change. If a
+  // future refactor calls the fencing on the bare pool, this fails loudly here
+  // instead of silently dropping alerts in production.
+  it("propagates an enqueue failure rather than committing a silent status change", async () => {
+    const db = {
+      async query(sql) {
+        if (sql.includes("INSERT INTO certops_outbox")) {
+          throw new Error("outbox unavailable");
+        }
+        if (sql.includes("status = 'cancelled'")) {
+          return {
+            rows: [
+              {
+                id: "job-claimed",
+                workspace_id: "11111111-1111-4111-8111-111111111111",
+                operation: "renew",
+                subject_type: "managed_certificate",
+                subject_id: "cert-1",
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    };
+
+    await assert.rejects(
+      fenceAgentInFlightWork({ client: db, agentId: "agent-row-1" }),
+      /outbox unavailable/,
+    );
+  });
 });
 
 describe("jobApprovals H2 helpers", () => {

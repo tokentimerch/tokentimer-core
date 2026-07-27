@@ -229,21 +229,39 @@ function generateKeyPairToFile({ keyPath, algorithm = "ec-p256", overwrite = fal
  * stagedKeyPath is absent or identical to the live keyPath (fresh install).
  * Never deletes the live keyPath.
  *
+ * Deliberately best-effort. This used to throw on any non-ENOENT unlink error,
+ * which inverted its own purpose: every unwrapped call site sits on a failure
+ * path, so a discard that threw converted a clean `failed` result into an
+ * exception that escaped before the remaining cleanup ran, and the key it was
+ * asked to remove stayed on disk. A private key left behind is exactly the
+ * outcome the function exists to prevent, so it now reports rather than throws
+ * and the caller decides whether the residue is worth surfacing. Returns
+ * { discarded, residualPath, error } so a caller that cares can log it.
+ *
  * @param {object} input
  * @param {string} input.keyPath live key destination
  * @param {string} input.stagedKeyPath staging path returned by generateKeyPairToFile
- * @returns {void}
+ * @returns {{ discarded: boolean, residualPath: string|null, error: string|null }}
  */
 function discardStagedKey({ keyPath, stagedKeyPath } = {}) {
-  if (typeof stagedKeyPath !== "string" || stagedKeyPath.length === 0) return;
-  if (typeof keyPath === "string" && stagedKeyPath === keyPath) return;
+  if (typeof stagedKeyPath !== "string" || stagedKeyPath.length === 0) {
+    return { discarded: false, residualPath: null, error: null };
+  }
+  if (typeof keyPath === "string" && stagedKeyPath === keyPath) {
+    return { discarded: false, residualPath: null, error: null };
+  }
   try {
     fs.unlinkSync(stagedKeyPath);
+    return { discarded: true, residualPath: null, error: null };
   } catch (err) {
-    if (err && err.code === "ENOENT") return;
-    throw buildError(
-      `tokentimer-agent keys: could not discard staged key at ${stagedKeyPath}: ${err.message}`,
-    );
+    if (err && err.code === "ENOENT") {
+      return { discarded: false, residualPath: null, error: null };
+    }
+    return {
+      discarded: false,
+      residualPath: stagedKeyPath,
+      error: `could not discard staged key at ${stagedKeyPath}: ${err.message}`,
+    };
   }
 }
 

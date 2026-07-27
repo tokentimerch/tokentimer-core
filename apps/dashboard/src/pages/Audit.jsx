@@ -133,6 +133,7 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_AGENT_REGISTERED',
   'CERTOPS_AGENT_RETIRED',
   'CERTOPS_RENEWAL_PROFILE_DERIVED',
+  'CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED',
   'CERTOPS_RENEWAL_PROFILE_UPDATED',
   'CERTOPS_WORKSPACE_PAUSED',
   'CERTOPS_WORKSPACE_RESUMED',
@@ -1462,6 +1463,15 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       // commonName, reconciliationReason, operation, agentId, jobId): both
       // fire from the identical incomplete-verify-evidence gate, one for a
       // certificate's first promotion and one for a later renewal refresh.
+      const formatted = formatCertOpsUnreconciledMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED') {
+      // Also the unreconciled shape. The certificate IS active here, unlike the
+      // two events above, but the operator consequence is the same class of
+      // problem: it will not auto-renew until someone acts, and the reason is
+      // the only thing that says what to fix.
       const formatted = formatCertOpsUnreconciledMetadata(ev);
       if (formatted) return formatted;
     }

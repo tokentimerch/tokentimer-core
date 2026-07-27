@@ -2157,8 +2157,18 @@ function renewalWindowStart(notAfter, renewBeforeDays) {
  * "auto" for a certificate the sweep would refuse. `renewsFrom` is when the
  * sweep starts picking the certificate up (not_after minus the effective lead
  * time), not a promise of the exact renewal moment.
+ *
+ * `workspacePaused` answers a different question than `state`: `state` is
+ * "is this profile switched on", `workspacePaused` is "will this workspace's
+ * scheduler actually act right now". A paused workspace still derives `auto`
+ * here (the profile itself is not disabled), but with `workspacePaused: true`
+ * so the badge can say so instead of promising a renewal that will not run
+ * until the workspace is resumed (13.12 finding, 2026-07-27).
  */
-function deriveCertificateRenewalState(row, { env = process.env } = {}) {
+function deriveCertificateRenewalState(
+  row,
+  { env = process.env, workspacePaused = false } = {},
+) {
   const keyMode = row?.key_mode || null;
   const base = {
     schemaVersion: 1,
@@ -2168,6 +2178,7 @@ function deriveCertificateRenewalState(row, { env = process.env } = {}) {
       typeof row?.profile_name === "string" ? row.profile_name : null,
     renewBeforeDays: null,
     renewsFrom: null,
+    workspacePaused: workspacePaused === true,
   };
 
   const status = String(row?.status || "").toLowerCase();
@@ -2324,21 +2335,37 @@ async function withRenewalState({
     .map(String);
   if (certificateIds.length === 0) return items;
 
-  const [rows, setupIntentsById, preflightsById] = await Promise.all([
-    loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
-    loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
-    includePreflight
-      ? loadResumablePreflights({ db, workspaceId, certificateIds })
-      : Promise.resolve(new Map()),
-  ]);
+  const [rows, setupIntentsById, preflightsById, workspaceRow] =
+    await Promise.all([
+      loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
+      loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
+      includePreflight
+        ? loadResumablePreflights({ db, workspaceId, certificateIds })
+        : Promise.resolve(new Map()),
+      // Answers "will this workspace's scheduler act right now", a different
+      // question from the per-profile state above (13.12 finding,
+      // 2026-07-27: a paused workspace still reported `auto` because the
+      // profile itself is genuinely switched on). Read directly rather than
+      // through getWorkspaceCertOpsPauseState/isCertOpsEnabled to avoid a
+      // second, redundant check of the global rollout flag this route is
+      // already gated on by requireCertOpsEnabled - advisory display only,
+      // never a gate, so a stale or failed read just falls back to "not
+      // paused" rather than failing the request.
+      db
+        .query(`SELECT certops_paused FROM workspaces WHERE id = $1`, [
+          workspaceId,
+        ])
+        .catch(() => null),
+    ]);
   const rowsById = new Map(rows.map((row) => [String(row.id), row]));
+  const workspacePaused = workspaceRow?.rows?.[0]?.certops_paused === true;
 
   return items.map((certificate) => ({
     ...certificate,
     renewal: deriveCertificateRenewalState(
       rowsById.get(String(certificate.id)) ||
         renewalRowFromInventoryRecord(certificate),
-      { env },
+      { env, workspacePaused },
     ),
     renewalSetup: projectRenewalSetupState(
       setupIntentsById.get(String(certificate.id)) || null,

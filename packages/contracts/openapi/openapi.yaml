@@ -5341,7 +5341,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Executor event idempotency key conflicts with a different sanitized payload
+          description: >-
+            Executor event idempotency key conflicts with a different sanitized
+            payload (`CERTOPS_EXECUTOR_EVENT_CONFLICT`), or the job is currently
+            claimed by a CertOps agent and the event carries a terminal status
+            (`CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED`). The executor and agent lanes
+            share one certificate_jobs table but the executor lane holds no
+            lease, so allowing an executor token to end a job an agent is still
+            executing would land the agent's side effects against a terminal row.
           content:
             application/json:
               schema:
@@ -5438,7 +5445,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Executor event idempotency key conflicts with a different sanitized payload
+          description: >-
+            Executor event idempotency key conflicts with a different sanitized
+            payload (`CERTOPS_EXECUTOR_EVENT_CONFLICT`), or the job is currently
+            claimed by a CertOps agent and the event carries a terminal status
+            (`CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED`). The executor and agent lanes
+            share one certificate_jobs table but the executor lane holds no
+            lease, so allowing an executor token to end a job an agent is still
+            executing would land the agent's side effects against a terminal row.
           content:
             application/json:
               schema:
@@ -5703,7 +5717,13 @@ paths:
             conflicts with the job's current status
             (CERTOPS_JOB_STATUS_TRANSITION_INVALID); or a terminal status
             does not match the job's mode, e.g. a dry_run job completing as
-            succeeded instead of dry_run_complete (CERTOPS_JOB_MODE_TERMINAL_INVALID)
+            succeeded instead of dry_run_complete (CERTOPS_JOB_MODE_TERMINAL_INVALID);
+            or the job is currently claimed by a CertOps agent and the event
+            carries a terminal status (CERTOPS_EXECUTOR_JOB_AGENT_CLAIMED). The
+            executor and agent lanes share one certificate_jobs table but the
+            executor lane holds no lease, so allowing an executor token to end a
+            job an agent is still executing would land the agent's side effects
+            against a terminal row.
           content:
             application/json:
               schema:
@@ -6823,6 +6843,7 @@ components:
         - renewsFrom
         - state
         - detail
+        - workspacePaused
       properties:
         schemaVersion:
           type: integer
@@ -6856,6 +6877,15 @@ components:
         detail:
           type: string
           description: Operator-facing explanation of the state.
+        workspacePaused:
+          type: boolean
+          description: |
+            True when the workspace's CertOps kill switch is paused, independent
+            of `state`. Answers "will this workspace's scheduler act right now",
+            a different question from `state`'s "is this profile switched on" -
+            a paused workspace can still report `state: auto` because the
+            profile itself is genuinely enabled, so callers must check both
+            before assuming a certificate will renew unattended.
     CertOpsRenewalSetupState:
       type: object
       additionalProperties: false

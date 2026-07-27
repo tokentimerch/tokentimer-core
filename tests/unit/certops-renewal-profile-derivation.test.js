@@ -181,6 +181,49 @@ describe("renewal profile derivation from an issued certificate", () => {
       /no common name/,
     );
   });
+
+  // A derived profile describes ONE destination. Deriving from [0] and dropping
+  // the rest produces a profile that looks healthy while silently abandoning the
+  // other hosts at the first renewal. createCertificateJob refuses this shape at
+  // request time; this is the second line of defense, because the derivation is
+  // also reachable from a job row created before that validation existed.
+  it("declines rather than truncating when the issuance had several deployment targets", () => {
+    assert.throws(
+      () =>
+        deriveRenewalProfileFromIssuedCertificate({
+          payload: issuePayload({
+            deploymentTargets: [
+              { type: "endpoint", reference: "web-01", certPath: "/a/cert.pem" },
+              { type: "endpoint", reference: "web-02", certPath: "/b/cert.pem" },
+            ],
+          }),
+          certificate: issuedCertificate(),
+        }),
+      (error) => {
+        assert.equal(error.code, CERTOPS_RENEWAL_PROFILE_INCOMPLETE);
+        assert.match(error.message, /more than one deploymentTargets/);
+        return true;
+      },
+    );
+  });
+
+  it("still derives from a single-entry deploymentTargets array", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload({
+        deploymentTargets: [
+          {
+            type: "endpoint",
+            reference: "web-01.example.com",
+            certPath: "/etc/ssl/live/web-01/cert.pem",
+            reloadService: "nginx",
+          },
+        ],
+      }),
+      certificate: issuedCertificate(),
+    });
+    assert.equal(profile.deploymentTargets.length, 1);
+    assert.equal(profile.deploymentTargets[0].reloadService, "nginx");
+  });
 });
 
 function createClient({ existingProfileId = null, inserted = true } = {}) {

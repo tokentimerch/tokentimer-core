@@ -59,4 +59,16 @@ describe('RenewalBadge', () => {
 
     expect(screen.getByText('Renewal unknown')).toBeInTheDocument();
   });
+
+  it('warns when an auto-renewing certificate belongs to a paused workspace', () => {
+    renderBadge({
+      state: RENEWAL_STATES.auto,
+      renewsFrom: '2026-08-12T00:00:00.000Z',
+      renewBeforeDays: 30,
+      workspacePaused: true,
+    });
+
+    expect(screen.getByText('Auto-renew on (workspace paused)')).toBeInTheDocument();
+    expect(screen.getByLabelText(/paused/i)).toBeInTheDocument();
+  });
 });

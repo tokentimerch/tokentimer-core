@@ -55,6 +55,7 @@ const {
   linkReconciledCertificateToken,
 } = require("./inventory");
 const {
+  DERIVATION_REASON_ALREADY_LINKED,
   ensureDerivedRenewalProfile,
 } = require("./renewalProfileDerivation");
 const {
@@ -1249,6 +1250,7 @@ async function reconcileProvisionedCertificate({
   workspaceId,
   job,
   agent = null,
+  log = null,
   linkToken = linkReconciledCertificateToken,
   ensureRenewalProfile = ensureDerivedRenewalProfile,
   auditWriter = writeAudit,
@@ -1414,7 +1416,54 @@ async function reconcileProvisionedCertificate({
         ? sans.split(",").map((name) => name.trim()).filter(Boolean)
         : [],
     },
+    logger: log || null,
   });
+
+  // A declined derivation used to be visible only as profileId: null buried in
+  // the CERTOPS_CERTIFICATE_ISSUED metadata, and the logger was not even passed,
+  // so the log line the derivation writes for exactly this case was unreachable.
+  // The operator-visible consequence is the worst kind: the certificate is
+  // active, its expiry is real, the job says succeeded, and it will never renew,
+  // with nothing anywhere saying why. Record it the same way an unreconciled
+  // issuance is recorded, on the row and as an event, so the certificate carries
+  // an actionable reason. `already_linked` is the normal path (the certificate
+  // has a profile) and is not a decline.
+  const derivationDeclined =
+    !derivation?.profileId &&
+    derivation?.reason !== DERIVATION_REASON_ALREADY_LINKED;
+  if (derivationDeclined) {
+    const derivationReason = `renewal_profile_${derivation?.reason || "derivation_failed"}`;
+    await client.query(
+      `UPDATE managed_certificates
+          SET reconciliation_reason = $3,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND id = $2::uuid`,
+      [workspaceId, job.subject_id, derivationReason],
+    );
+    await auditWriter({
+      client,
+      actorUserId: null,
+      subjectUserId: null,
+      action: "CERTOPS_RENEWAL_PROFILE_DERIVATION_DECLINED",
+      targetType: "managed_certificate",
+      targetId: null,
+      workspaceId,
+      metadata: {
+        managedCertificateId: String(job.subject_id),
+        commonName: text(certificate.common_name),
+        jobId: String(job.id),
+        operation: job.operation || null,
+        agentId: agent?.agentId || null,
+        derivationReason: derivation?.reason || null,
+        reconciliationReason: derivationReason,
+        // The decline detail explains which payload field was missing or
+        // malformed. It names fields, never their values, so it cannot become a
+        // topology disclosure the way the DERIVED event's metadata can.
+        detail: derivation?.error || null,
+      },
+    });
+  }
 
   // The moment the certificate exists. Everything above this line is the only
   // point in the product where a certificate comes into being without a human
@@ -1448,6 +1497,13 @@ async function reconcileProvisionedCertificate({
       subjectAltNames: sans,
       deployedCertPath: text(certificate.deployed_cert_path),
       profileId: derivation?.profileId || null,
+      // Why there is no profile, when there is none. Without this the ISSUED
+      // event recorded the absence but never the cause, so an operator seeing
+      // profileId: null had no way to tell an operator-owned name collision
+      // from a payload that could not be derived from.
+      profileDerivationReason: derivation?.profileId
+        ? null
+        : derivation?.reason || null,
     },
   });
 
@@ -1867,6 +1923,7 @@ async function ingestResult({
         workspaceId: agent.workspaceId,
         job,
         agent,
+        log,
         auditWriter,
       });
       // null means "not a still-provisioning certificate" (already active, or

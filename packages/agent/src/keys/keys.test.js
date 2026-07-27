@@ -258,6 +258,62 @@ describe("generateKeyPairToFile", () => {
     discardStagedKey({ keyPath, stagedKeyPath: generated.stagedKeyPath });
     assert.ok(fs.existsSync(keyPath));
   });
+
+  // This used to throw on any non-ENOENT unlink failure, which defeated its own
+  // purpose: every call site is on a failure path, so a throwing discard escaped
+  // before the remaining cleanup ran and left the key it was asked to remove on
+  // disk. It now reports the residue so the caller can warn and continue.
+  it("reports rather than throws when the staged key cannot be removed", () => {
+    const dir = makeTempKeyDir();
+    const keyPath = path.join(dir, "locked.key.pem");
+    generateKeyPairToFile({ keyPath });
+    const staged = generateKeyPairToFile({ keyPath, overwrite: true });
+
+    const originalUnlink = fs.unlinkSync;
+    fs.unlinkSync = () => {
+      const err = new Error("EBUSY: resource busy or locked");
+      err.code = "EBUSY";
+      throw err;
+    };
+    let outcome;
+    try {
+      outcome = discardStagedKey({ keyPath, stagedKeyPath: staged.stagedKeyPath });
+    } finally {
+      fs.unlinkSync = originalUnlink;
+    }
+
+    assert.equal(outcome.discarded, false);
+    assert.equal(outcome.residualPath, staged.stagedKeyPath);
+    assert.match(outcome.error, /could not discard staged key/);
+    // The message names the path an operator must clean up, and never the key.
+    assert.ok(!outcome.error.includes("PRIVATE KEY"));
+
+    fs.rmSync(staged.stagedKeyPath, { force: true });
+  });
+
+  it("reports success and absence distinguishably", () => {
+    const dir = makeTempKeyDir();
+    const keyPath = path.join(dir, "gone.key.pem");
+    generateKeyPairToFile({ keyPath });
+    const staged = generateKeyPairToFile({ keyPath, overwrite: true });
+
+    const removed = discardStagedKey({
+      keyPath,
+      stagedKeyPath: staged.stagedKeyPath,
+    });
+    assert.equal(removed.discarded, true);
+    assert.equal(removed.residualPath, null);
+
+    // A second discard of the same path is not an error: idempotent-skip and
+    // retry paths both call it, and ENOENT means the goal is already met.
+    const again = discardStagedKey({
+      keyPath,
+      stagedKeyPath: staged.stagedKeyPath,
+    });
+    assert.equal(again.discarded, false);
+    assert.equal(again.residualPath, null);
+    assert.equal(again.error, null);
+  });
   it("never includes 'PRIVATE KEY' in a thrown error message", () => {
     const keyPath = path.join(makeTempKeyDir(), "err.key.pem");
     generateKeyPairToFile({ keyPath });

@@ -182,6 +182,22 @@ function deriveRenewalProfileFromIssuedCertificate({
   const sourceTarget = isPlainObject(payload.deploymentTargets?.[0])
     ? payload.deploymentTargets[0]
     : payload;
+  // Defense in depth behind validateIssueDeploymentTargets, which refuses a
+  // multi-target issue payload at request time. Declining derivation is the
+  // right failure here rather than deriving from [0]: a profile that maintains
+  // one destination out of several looks healthy in the UI and silently stops
+  // renewing the others, whereas a missing profile is visible as
+  // "Renewal not configured" on the certificate the moment it is issued.
+  if (
+    Array.isArray(payload.deploymentTargets) &&
+    payload.deploymentTargets.length > 1
+  ) {
+    throw derivationError(
+      "Issue job payload carries more than one deploymentTargets entry; a " +
+        "derived renewal profile describes a single destination, so deriving " +
+        "from the first would silently drop the rest",
+    );
+  }
   for (const field of optionalTargetFields) {
     const value = sourceTarget[field] ?? payload[field];
     if (value !== undefined && value !== null && value !== "") {

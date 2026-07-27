@@ -202,6 +202,34 @@ describe("CertOps certificate renewal-state derivation", () => {
     assert.equal(renewal.state, "auto");
   });
 
+  it("defaults workspacePaused to false and includes it on every state", () => {
+    for (const overrides of [
+      {},
+      { profile_status: "disabled" },
+      { profile_id: null, profile_name: null, profile_public_metadata: null },
+      { key_mode: "os-store-managed" },
+      { status: "revoked" },
+    ]) {
+      const renewal = deriveCertificateRenewalState(certificateRow(overrides), {
+        env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+      });
+      assert.equal(renewal.workspacePaused, false);
+    }
+  });
+
+  it("flags workspacePaused without changing the auto state itself", () => {
+    // The profile is genuinely switched on; a paused workspace is a
+    // separate, orthogonal fact the badge must be able to show alongside
+    // it, not instead of it (13.12 finding, 2026-07-27).
+    const renewal = deriveCertificateRenewalState(certificateRow(), {
+      env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+      workspacePaused: true,
+    });
+
+    assert.equal(renewal.state, "auto");
+    assert.equal(renewal.workspacePaused, true);
+  });
+
   it("prefers disabled over not-configured so a switched-off certificate is not called broken", () => {
     // Deliberate intent must win over profile completeness: telling the
     // operator to fix a profile they themselves switched off would send them
@@ -307,6 +335,9 @@ describe("CertOps certificate renewal-state projection", () => {
     const db = {
       async query(sql, params) {
         queries.push({ sql, params });
+        if (/FROM workspaces/.test(sql)) {
+          return { rows: [{ certops_paused: false }] };
+        }
         return {
           rows: [
             certificateRow({ id: "cert-auto" }),
@@ -333,7 +364,7 @@ describe("CertOps certificate renewal-state projection", () => {
       ],
     });
 
-    assert.equal(queries.length, 2);
+    assert.equal(queries.length, 3);
     assert.match(queries[0].sql, /LEFT JOIN certificate_profiles/);
     assert.deepEqual(queries[0].params, [
       "workspace-1",
@@ -345,13 +376,61 @@ describe("CertOps certificate renewal-state projection", () => {
       "profile_derivation_requested",
       ["cert-auto", "cert-observed"],
     ]);
+    assert.match(queries[2].sql, /SELECT certops_paused FROM workspaces/);
+    assert.deepEqual(queries[2].params, ["workspace-1"]);
 
     assert.equal(items[0].commonName, "app.example.com");
     assert.equal(items[0].renewal.state, "auto");
+    assert.equal(items[0].renewal.workspacePaused, false);
     assert.ok(items[0].renewalSetup);
     assert.equal(items[1].commonName, "obs.example.com");
     assert.equal(items[1].renewal.state, "not-eligible");
     assert.ok(items[1].renewalSetup);
+  });
+
+  it("flags workspacePaused on an otherwise-auto certificate when the workspace kill switch is paused", async () => {
+    const db = {
+      async query(sql) {
+        if (/FROM workspaces/.test(sql)) {
+          return { rows: [{ certops_paused: true }] };
+        }
+        return { rows: [certificateRow({ id: "cert-auto" })] };
+      },
+    };
+
+    const [item] = await withRenewalState({
+      db,
+      env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+      workspaceId: "workspace-1",
+      certificates: [{ id: "cert-auto", status: "active" }],
+    });
+
+    // State itself must not change: the profile genuinely is switched on,
+    // and "will this workspace act" is a separate fact from "is this
+    // profile switched on" (13.12).
+    assert.equal(item.renewal.state, "auto");
+    assert.equal(item.renewal.workspacePaused, true);
+  });
+
+  it("does not fail the request when the workspace-pause read errors", async () => {
+    const db = {
+      async query(sql) {
+        if (/FROM workspaces/.test(sql)) {
+          throw new Error("boom");
+        }
+        return { rows: [certificateRow({ id: "cert-auto" })] };
+      },
+    };
+
+    const [item] = await withRenewalState({
+      db,
+      env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+      workspaceId: "workspace-1",
+      certificates: [{ id: "cert-auto", status: "active" }],
+    });
+
+    assert.equal(item.renewal.state, "auto");
+    assert.equal(item.renewal.workspacePaused, false);
   });
 
   it("does not query when there is nothing to enrich", async () => {

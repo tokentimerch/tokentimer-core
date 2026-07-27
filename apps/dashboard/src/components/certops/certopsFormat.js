@@ -135,12 +135,29 @@ const RENEWAL_STATE_FALLBACK_HELP =
  */
 export function renewalDescriptor(renewal) {
   const state = renewal?.state ? String(renewal.state) : null;
+  const workspacePaused = renewal?.workspacePaused === true;
 
   if (state === RENEWAL_STATES.auto) {
     const from = renewal?.renewsFrom ? formatDate(renewal.renewsFrom) : null;
     const days = Number.isFinite(Number(renewal?.renewBeforeDays))
       ? Number(renewal.renewBeforeDays)
       : null;
+    // The profile itself is genuinely enabled here - that's what earned
+    // 'auto' - but a paused workspace kill switch means the scheduler will
+    // not act on it until resumed. Surfacing that on the badge itself
+    // (rather than only via the separate kill-switch banner) means an
+    // operator reading one row does not have to cross-reference workspace
+    // state elsewhere to know a renewal will not actually run (13.12).
+    if (workspacePaused) {
+      return {
+        state,
+        label: 'Auto-renew on (workspace paused)',
+        scheme: 'yellow',
+        help:
+          'Automatic renewal is configured for this certificate, but CertOps is paused for this workspace, so no renewal will run until it is resumed.',
+        isWarning: true,
+      };
+    }
     return {
       state,
       label: from ? `Auto-renews from ${from}` : 'Auto-renews',

@@ -652,6 +652,38 @@ const REQUIRED_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   issue: new Set(["commandRef", "caEndpoint", "certPath", "dnsZone", "dnsProvider"]),
 });
 
+// Multi-destination deployment is a real agent capability, but only through a
+// renewalProfile.deploymentTargets array on a renew job. An `issue` payload has
+// no profile: its renewal configuration is DERIVED from the payload after the
+// certificate exists, and the derivation reads deploymentTargets[0] and nothing
+// else. So an issue request carrying several targets was accepted, deployed to
+// all of them, and then produced a renewal profile describing only the first,
+// meaning every later renewal quietly stopped maintaining the rest. Refuse the
+// shape instead: failing the request is recoverable, a certificate that renews
+// on one host out of three is not, and it fails silently months later.
+const MAX_ISSUE_DEPLOYMENT_TARGETS = 1;
+
+function validateIssueDeploymentTargets(payload, operation) {
+  if (operation !== "issue") return;
+  const targets = payload?.deploymentTargets;
+  if (targets === null || targets === undefined) return;
+  if (!Array.isArray(targets)) {
+    throw serviceError(
+      "CertOps job payload field deploymentTargets must be an array",
+      CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+  }
+  if (targets.length > MAX_ISSUE_DEPLOYMENT_TARGETS) {
+    throw serviceError(
+      "CertOps issue jobs accept at most one deploymentTargets entry, because " +
+        "the renewal profile derived from the issuance describes a single " +
+        "target; issue once per destination, or renew with an explicit " +
+        "multi-target renewalProfile",
+      CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+    );
+  }
+}
+
 function validateExecutionFields(payload, operation) {
   const allowedForOperation =
     EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
@@ -668,6 +700,8 @@ function validateExecutionFields(payload, operation) {
     }
     EXECUTION_FIELD_VALIDATORS[fieldName](value);
   }
+
+  validateIssueDeploymentTargets(payload, operation);
 
   const requiredForOperation =
     REQUIRED_EXECUTION_FIELDS_BY_OPERATION[operation];

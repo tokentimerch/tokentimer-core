@@ -58,9 +58,16 @@ terminated by either.
 3. **Classification is by origin, not status alone.** A terminal transition is
    classified by `(operation, status, origin)` through
    `classifyTerminalTransition`, where origin describes what caused the
-   transition (`agent_result`, `approval_rejection`, `operator_cancel`,
-   `lease_reaper`, `stale_agent`, `forced_retirement`) and is distinct from
-   `certificate_jobs.source`, which describes how the job was created. Human
+   transition (`agent_result`, `executor_event`, `approval_rejection`,
+   `operator_cancel`, `lease_reaper`, `stale_agent`, `forced_retirement`) and is
+   distinct from `certificate_jobs.source`, which describes how the job was
+   created. `executor_event` covers the machine-token lane (certctl, the
+   Kubernetes controller): it shares `certificate_jobs` with the agent lane but
+   holds no lease, and its terminal reports were the last path that recorded a
+   renewal failure with no alert at all — added alongside `forced_retirement`
+   actually enqueuing its own intent for the same reason: a transition origin
+   existing in this enum is necessary but not sufficient, every call site that
+   produces a terminal transition has to invoke the classifier itself. Human
    decision origins never alert. Dry runs never alert, because a dry run changes
    nothing on the host by construction. `orphaned_unknown_effect` always alerts
    at high priority, because it is the one case where side effects may have

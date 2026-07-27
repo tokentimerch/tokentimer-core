@@ -35,6 +35,11 @@ const RENEWAL_ALERTING_OPERATIONS = Object.freeze(new Set(["renew"]));
  */
 const TRANSITION_ORIGINS = Object.freeze({
   AGENT_RESULT: "agent_result",
+  // Terminal status reported by a machine credential on the executor lane
+  // (certctl, the Kubernetes controller). Distinct from AGENT_RESULT because the
+  // executor lane holds no lease and no claim, so an operator reading the alert
+  // needs to know which lane ended the job.
+  EXECUTOR_EVENT: "executor_event",
   APPROVAL_REJECTION: "approval_rejection",
   OPERATOR_CANCEL: "operator_cancel",
   LEASE_REAPER: "lease_reaper",
