@@ -23,7 +23,12 @@ function workspaceBase(workspaceId) {
 
 /**
  * List CertOps API tokens for a workspace (metadata only; plaintext never returned).
- * @returns {Promise<{ items: object[] }>}
+ *
+ * `pagination.total` is the full token count for the workspace regardless of
+ * limit/offset. No limit is sent here, and the server answers an omitted limit
+ * with `pagination.limit: null`, which is its signal that the response holds
+ * the whole credential inventory rather than a first page.
+ * @returns {Promise<{ items: object[], pagination: { limit: number|null, offset: number, total: number } }>}
  */
 export async function listApiTokens(workspaceId, { signal } = {}) {
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/tokens`, {

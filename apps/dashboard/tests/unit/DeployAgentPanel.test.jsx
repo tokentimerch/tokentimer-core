@@ -57,24 +57,48 @@ function renderWithProviders(ui) {
 }
 
 function tokensState(overrides = {}) {
-  return {
+  const { pagination, ...rest } = overrides;
+  const state = {
     enabled: true,
     tokens: [],
     loading: false,
     error: '',
     refresh: vi.fn(),
-    ...overrides,
+    ...rest,
+  };
+  return {
+    ...state,
+    pagination:
+      pagination === undefined
+        ? { limit: null, offset: 0, total: state.tokens.length }
+        : pagination,
   };
 }
 
 function agentsState(overrides = {}) {
-  return {
+  const { pagination, ...rest } = overrides;
+  const state = {
     enabled: true,
     agents: [],
     loading: false,
     error: '',
     refresh: vi.fn(),
-    ...overrides,
+    ...rest,
+  };
+  return {
+    ...state,
+    pagination:
+      pagination === undefined
+        ? { limit: null, offset: 0, total: state.agents.length }
+        : pagination,
+  };
+}
+
+/** Agent-list envelope as the server sends it when no page was requested. */
+function agentListResponse(items = []) {
+  return {
+    items,
+    pagination: { limit: null, offset: 0, total: items.length },
   };
 }
 
@@ -101,7 +125,7 @@ describe('DeployAgentPanel', () => {
     listAgentsMock.mockReset();
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
     useCertOpsAgentsMock.mockReturnValue(agentsState());
-    listAgentsMock.mockResolvedValue({ items: [] });
+    listAgentsMock.mockResolvedValue(agentListResponse([]));
   });
 
   it('renders nothing while CertOps availability is unresolved or disabled', () => {
@@ -210,8 +234,8 @@ describe('DeployAgentPanel', () => {
     });
     // The new agent registered between token creation and the first poll:
     // it must be reported on the very first tick, not treated as baseline.
-    listAgentsMock.mockResolvedValue({
-      items: [
+    listAgentsMock.mockResolvedValue(
+      agentListResponse([
         {
           id: 'row-existing',
           agentId: 'agent-existing',
@@ -226,8 +250,8 @@ describe('DeployAgentPanel', () => {
           status: 'active',
           createdAt: new Date().toISOString(),
         },
-      ],
-    });
+      ])
+    );
 
     renderWithProviders(<DeployAgentPanel />);
 
@@ -249,8 +273,8 @@ describe('DeployAgentPanel', () => {
       token: { id: 'bt-1', name: 'dc1-edge' },
       plaintextToken: 'ttboot_secret_value',
     });
-    listAgentsMock.mockResolvedValue({
-      items: [
+    listAgentsMock.mockResolvedValue(
+      agentListResponse([
         {
           id: 'row-1',
           agentId: 'agent-1',
@@ -258,8 +282,8 @@ describe('DeployAgentPanel', () => {
           status: 'active',
           createdAt: new Date(Date.now() + 60000).toISOString(),
         },
-      ],
-    });
+      ])
+    );
     const onAgentRegistered = vi.fn();
 
     renderWithProviders(
@@ -287,8 +311,8 @@ describe('DeployAgentPanel', () => {
       token: { id: 'bt-1', name: 'dc1-edge' },
       plaintextToken: 'ttboot_secret_value',
     });
-    listAgentsMock.mockResolvedValue({
-      items: [
+    listAgentsMock.mockResolvedValue(
+      agentListResponse([
         {
           id: 'row-1',
           agentId: 'agent-1',
@@ -297,8 +321,8 @@ describe('DeployAgentPanel', () => {
           // Registered after token creation (clock-safe margin).
           createdAt: new Date(Date.now() + 60000).toISOString(),
         },
-      ],
-    });
+      ])
+    );
 
     renderWithProviders(<DeployAgentPanel />);
 
@@ -315,16 +339,16 @@ describe('DeployAgentPanel', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
     // First poll snapshots the fleet; second poll returns the new agent.
-    listAgentsMock.mockResolvedValueOnce({ items: [] }).mockResolvedValue({
-      items: [
+    listAgentsMock.mockResolvedValueOnce(agentListResponse([])).mockResolvedValue(
+      agentListResponse([
         {
           id: 'row-1',
           agentId: 'agent-1',
           name: 'dc1-edge',
           status: 'active',
         },
-      ],
-    });
+      ])
+    );
     vi.useFakeTimers();
 
     try {

@@ -51,13 +51,23 @@ function renderWithProviders(ui) {
 }
 
 function tokensState(overrides = {}) {
-  return {
+  const { pagination, ...rest } = overrides;
+  const state = {
     enabled: true,
     tokens: [],
     loading: false,
     error: '',
     refresh: vi.fn(),
-    ...overrides,
+    ...rest,
+  };
+  return {
+    ...state,
+    // Mirrors the list envelope: a null limit is the server's signal that the
+    // whole inventory is present, so total matches the rows handed to the panel.
+    pagination:
+      pagination === undefined
+        ? { limit: null, offset: 0, total: state.tokens.length }
+        : pagination,
   };
 }
 

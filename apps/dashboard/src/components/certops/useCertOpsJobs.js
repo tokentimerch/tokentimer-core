@@ -214,13 +214,14 @@ export function useCertOpsJobTimeline(jobId) {
  * The list endpoint is manager-only server-side; the fetch is skipped for
  * non-managers so viewers see an empty state instead of a 403 error banner.
  *
- * @returns {{ enabled: boolean|null, tokens: object[], loading: boolean, error: string, refresh: function }}
+ * @returns {{ enabled: boolean|null, tokens: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsApiTokens() {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
   const [tokens, setTokens] = useState([]);
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -232,6 +233,7 @@ export function useCertOpsApiTokens() {
   useEffect(() => {
     if (!workspaceId || enabled !== true || !canManage) {
       setTokens([]);
+      setPagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -246,11 +248,13 @@ export function useCertOpsApiTokens() {
       .then(data => {
         if (!cancelled) {
           setTokens(Array.isArray(data?.items) ? data.items : []);
+          setPagination(data?.pagination || null);
         }
       })
       .catch(err => {
         if (cancelled) return;
         setTokens([]);
+        setPagination(null);
         setError(
           err?.response?.data?.error ||
             err?.message ||
@@ -267,5 +271,5 @@ export function useCertOpsApiTokens() {
     };
   }, [workspaceId, enabled, canManage, reloadTick]);
 
-  return { enabled, tokens, loading, error, refresh };
+  return { enabled, tokens, pagination, loading, error, refresh };
 }

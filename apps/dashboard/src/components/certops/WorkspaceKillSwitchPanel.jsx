@@ -152,7 +152,7 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
  *
  * Backed by GET/PUT /api/v1/workspaces/:id/certops/settings. The underlying
  * routes stay reachable even while the deployment-wide certops.enabled
- * rollout flag is off, but the CertOps page only mounts this panel once
+ * rollout flag is off, but the CertOps layout only mounts this banner once
  * useCertOpsAvailability resolves `enabled: true`: pausing/resuming a
  * feature that is not rolled out for the deployment at all is not a
  * meaningful control to surface to workspace admins. Pausing blocks new
@@ -160,15 +160,26 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
  * already-leased jobs or passive observation/evidence reporting. Only
  * workspace admins can change it (certops.kill_switch.manage); other roles
  * see the current state read-only.
+ *
+ * Rendered as a compact banner above every CertOps tab. While operations are
+ * active it stays a single quiet line: a banner that shouts on the happy path
+ * stops being read, and the one state that matters is the paused one.
+ * `onPausedChange` lets the layout share the resolved state with the tabs
+ * instead of every tab refetching the same setting.
  */
-export default function WorkspaceKillSwitchPanel() {
+export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { certOpsPaused, loading, error, saving, setPaused } =
     useCertOpsWorkspaceKillSwitch();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
+  const quietBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const quietBorder = useColorModeValue('gray.200', 'whiteAlpha.300');
+
+  useEffect(() => {
+    onPausedChange?.({ certOpsPaused, loading, error });
+  }, [onPausedChange, certOpsPaused, loading, error]);
 
   const handleConfirm = async reason => {
     const next = !certOpsPaused;
@@ -181,60 +192,111 @@ export default function WorkspaceKillSwitchPanel() {
     setConfirmOpen(false);
   };
 
+  const resolved = !loading && !error && certOpsPaused !== undefined;
+
+  const actionOrNote = resolved ? (
+    isAdmin ? (
+      <Button
+        size='xs'
+        colorScheme={certOpsPaused ? 'green' : 'gray'}
+        variant={certOpsPaused ? 'solid' : 'outline'}
+        onClick={() => setConfirmOpen(true)}
+        isLoading={saving}
+        flexShrink={0}
+      >
+        {certOpsPaused
+          ? 'Resume certificate operations'
+          : 'Pause certificate operations'}
+      </Button>
+    ) : (
+      <Text fontSize='xs' color={muted} flexShrink={0}>
+        Only workspace admins can pause or resume certificate operations.
+      </Text>
+    )
+  ) : null;
+
+  const confirmModal = (
+    <KillSwitchConfirmModal
+      isOpen={confirmOpen}
+      onClose={() => setConfirmOpen(false)}
+      pausing={!certOpsPaused}
+      onConfirm={handleConfirm}
+    />
+  );
+
+  if (error) {
+    return (
+      <Box mb={3}>
+        <DashboardErrorAlert>{error}</DashboardErrorAlert>
+        {confirmModal}
+      </Box>
+    );
+  }
+
+  if (certOpsPaused) {
+    return (
+      <Box mb={3}>
+        <Alert status='warning' borderRadius='md' variant='left-accent'>
+          <AlertIcon />
+          <Box flex='1'>
+            <HStack spacing={2} align='center' flexWrap='wrap'>
+              <Text fontSize='sm' fontWeight='bold'>
+                Certificate operations are paused for this workspace
+              </Text>
+              <Badge
+                colorScheme='red'
+                variant='subtle'
+                textTransform='none'
+                fontWeight='medium'
+                fontSize='xs'
+              >
+                Paused
+              </Badge>
+            </HStack>
+            <AlertDescription fontSize='sm' display='block'>
+              New provisioning intent and command delivery to agents are
+              refused. Already-leased jobs keep running, and agents can still
+              report observations and evidence.
+            </AlertDescription>
+          </Box>
+          {actionOrNote}
+        </Alert>
+        {confirmModal}
+      </Box>
+    );
+  }
+
   return (
-    <Box>
-      <HStack justify='space-between' align='flex-start' mb={1} spacing={3}>
-        <Text fontSize='md' fontWeight='bold' color={titleColor}>
-          Certificate operations kill switch
-        </Text>
-        {loading ? (
-          <Spinner size='sm' />
-        ) : certOpsPaused !== undefined ? (
+    <Box
+      mb={3}
+      px={3}
+      py={1.5}
+      bg={quietBg}
+      borderWidth='1px'
+      borderColor={quietBorder}
+      borderRadius='md'
+    >
+      <HStack spacing={3} align='center'>
+        {loading ? <Spinner size='xs' /> : null}
+        {resolved ? (
           <Badge
-            colorScheme={certOpsPaused ? 'red' : 'green'}
+            colorScheme='green'
             variant='subtle'
             textTransform='none'
             fontWeight='medium'
             fontSize='xs'
           >
-            {certOpsPaused ? 'Paused' : 'Active'}
+            Active
           </Badge>
         ) : null}
+        <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
+          {resolved
+            ? 'Certificate operations are running for this workspace.'
+            : 'Checking the certificate operations kill switch...'}
+        </Text>
+        {actionOrNote}
       </HStack>
-      <Text fontSize='sm' color={muted} mb={3}>
-        Pausing stops new provisioning intent and command delivery to agents for
-        this workspace only. Already-leased jobs keep running, and agents can
-        still report observations and evidence while paused.
-      </Text>
-
-      {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-
-      {!loading && !error && certOpsPaused !== undefined ? (
-        isAdmin ? (
-          <Button
-            size='sm'
-            colorScheme={certOpsPaused ? 'green' : 'red'}
-            variant={certOpsPaused ? 'solid' : 'outline'}
-            onClick={() => setConfirmOpen(true)}
-            isLoading={saving}
-          >
-            {certOpsPaused
-              ? 'Resume certificate operations'
-              : 'Pause certificate operations'}
-          </Button>
-        ) : (
-          <Text fontSize='xs' color={muted}>
-            Only workspace admins can pause or resume certificate operations.
-          </Text>
-        )
-      ) : null}
-
-      <KillSwitchConfirmModal
-        isOpen={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        pausing={!certOpsPaused}
-        onConfirm={handleConfirm}
-      />
+      {confirmModal}
     </Box>
   );
 }

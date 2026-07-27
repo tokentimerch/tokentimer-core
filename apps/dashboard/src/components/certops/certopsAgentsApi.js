@@ -26,10 +26,25 @@ function workspaceBase(workspaceId) {
  * Items carry: id (row UUID used by retire), agentId, name, hostname,
  * platform, agentVersion, protocolVersion, status (active/offline/retired),
  * lastSeenAt, clockOffsetMs, createdAt, retiredAt, retireReason.
- * @returns {Promise<{ items: object[] }>}
+ *
+ * `pagination.total` is the full agent count for the workspace regardless of
+ * limit/offset. Omitting `limit` asks for the whole fleet, and the server
+ * answers that with `pagination.limit: null`, which is its signal that the
+ * response holds every agent rather than a first page. Callers that render a
+ * page control pass a limit; callers that need the fleet as a lookup source
+ * (an agent picker, a "has any agent" check) deliberately do not.
+ * @returns {Promise<{ items: object[], pagination: { limit: number|null, offset: number, total: number } }>}
  */
-export async function listAgents(workspaceId, { signal } = {}) {
+export async function listAgents(workspaceId, { limit, offset, signal } = {}) {
+  const params = {};
+  if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
+    params.limit = Number(limit);
+  }
+  if (Number.isFinite(Number(offset)) && Number(offset) > 0) {
+    params.offset = Number(offset);
+  }
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/agents`, {
+    params,
     signal,
   });
   return res.data;
@@ -61,7 +76,10 @@ export async function retireAgent(
  * returned). Items carry: id, name, tokenPrefix, status
  * (active/used/revoked/expired), expiresAt, usedAt, usedByAgentId,
  * revokedAt, createdAt.
- * @returns {Promise<{ items: object[] }>}
+ *
+ * Same envelope as the agent list: `pagination.total` is the unpaginated
+ * count, and `pagination.limit: null` means every token is present.
+ * @returns {Promise<{ items: object[], pagination: { limit: number|null, offset: number, total: number } }>}
  */
 export async function listBootstrapTokens(workspaceId, { signal } = {}) {
   const res = await apiClient.get(

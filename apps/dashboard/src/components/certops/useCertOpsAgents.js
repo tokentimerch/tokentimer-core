@@ -14,13 +14,21 @@ import { useCertOpsCanManage, useCertOpsEnabled } from './useCertOps.js';
  * @param {number} [externalRefreshSignal] - Optional value from a sibling
  *   panel (e.g. DeployAgentPanel's onAgentRegistered callback); changing it
  *   triggers an immediate refetch, without waiting for the internal poll.
- * @returns {{ enabled: boolean|null, agents: object[], loading: boolean, error: string, refresh: function }}
+ * @param {{ limit?: number, offset?: number }} [page] - Page position. Omitting
+ *   `limit` asks for the whole fleet, which is what a caller using the list as
+ *   a lookup source wants; a caller rendering a page control passes one.
+ * @returns {{ enabled: boolean|null, agents: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsAgents(externalRefreshSignal) {
+export function useCertOpsAgents(externalRefreshSignal, page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
+  const { limit, offset = 0 } = page;
   const [agents, setAgents] = useState([]);
+  // Null, not a zeroed envelope: an absent pagination block means "no answer
+  // from the server yet", which must stay distinguishable from a real
+  // total of 0.
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -32,6 +40,7 @@ export function useCertOpsAgents(externalRefreshSignal) {
   useEffect(() => {
     if (!workspaceId || enabled !== true || !canManage) {
       setAgents([]);
+      setPagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -42,15 +51,17 @@ export function useCertOpsAgents(externalRefreshSignal) {
     setLoading(true);
     setError('');
 
-    listAgents(workspaceId, { signal: controller.signal })
+    listAgents(workspaceId, { limit, offset, signal: controller.signal })
       .then(data => {
         if (!cancelled) {
           setAgents(Array.isArray(data?.items) ? data.items : []);
+          setPagination(data?.pagination || null);
         }
       })
       .catch(err => {
         if (cancelled) return;
         setAgents([]);
+        setPagination(null);
         setError(
           err?.response?.data?.error ||
             err?.message ||
@@ -65,9 +76,17 @@ export function useCertOpsAgents(externalRefreshSignal) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, canManage, reloadTick, externalRefreshSignal]);
+  }, [
+    workspaceId,
+    enabled,
+    canManage,
+    reloadTick,
+    externalRefreshSignal,
+    limit,
+    offset,
+  ]);
 
-  return { enabled, agents, loading, error, refresh };
+  return { enabled, agents, pagination, loading, error, refresh };
 }
 
 /**
@@ -77,13 +96,14 @@ export function useCertOpsAgents(externalRefreshSignal) {
  *
  * Manager-gated exactly like useCertOpsAgents.
  *
- * @returns {{ enabled: boolean|null, tokens: object[], loading: boolean, error: string, refresh: function }}
+ * @returns {{ enabled: boolean|null, tokens: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsBootstrapTokens() {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
   const [tokens, setTokens] = useState([]);
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -95,6 +115,7 @@ export function useCertOpsBootstrapTokens() {
   useEffect(() => {
     if (!workspaceId || enabled !== true || !canManage) {
       setTokens([]);
+      setPagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -109,11 +130,13 @@ export function useCertOpsBootstrapTokens() {
       .then(data => {
         if (!cancelled) {
           setTokens(Array.isArray(data?.items) ? data.items : []);
+          setPagination(data?.pagination || null);
         }
       })
       .catch(err => {
         if (cancelled) return;
         setTokens([]);
+        setPagination(null);
         setError(
           err?.response?.data?.error ||
             err?.message ||
@@ -130,5 +153,5 @@ export function useCertOpsBootstrapTokens() {
     };
   }, [workspaceId, enabled, canManage, reloadTick]);
 
-  return { enabled, tokens, loading, error, refresh };
+  return { enabled, tokens, pagination, loading, error, refresh };
 }

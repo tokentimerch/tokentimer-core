@@ -1,9 +1,15 @@
 /**
- * Truncation display helpers for paginated CertOps read APIs.
+ * Truncation caption helper for CertOps lists that are deliberately capped.
  *
- * The job/log/evidence endpoints return `pagination: { limit, offset }` and
- * may later grow `total` / `hasMore`. Load-more is explicitly deferred; these
- * helpers only decide whether to render a "Showing X of Y" style indicator.
+ * These endpoints return `pagination: { limit, offset, total }`, where a null
+ * limit means the caller requested no page and the whole result set is present.
+ *
+ * Use this only where the cap is the intended design and the extra rows are not
+ * meant to be reachable in place: the recent-activity feeds inside a
+ * certificate's timeline and an evidence bundle, which are context for the
+ * record in view, not browsable lists. A list an operator is expected to work
+ * through gets a real page control (DashboardPagination) instead, because a
+ * caption tells them rows exist without offering any way to see them.
  */
 
 /**

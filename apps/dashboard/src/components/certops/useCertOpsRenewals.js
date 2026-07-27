@@ -37,14 +37,43 @@ function readErrorMessage(err, fallback) {
 }
 
 /**
- * Loads renewal profiles for the active workspace.
- * @returns {{ enabled: boolean|null, profiles: object[], total: number, loading: boolean, error: string, refresh: function }}
+ * Normalizes both shapes the renewal routes answer with into one envelope.
+ *
+ * These two endpoints predate the nested `pagination` object and still send
+ * flat `total`/`limit`/`offset` alongside it, so read whichever is present.
+ * Returns null when the response carries no page information at all, because a
+ * page position that has to be guessed would render a control the server never
+ * agreed to.
  */
-export function useCertOpsRenewalProfiles(externalRefreshSignal) {
+function readPagination(data, requested) {
+  const source = data?.pagination || data;
+  const total = Number(source?.total);
+  if (!Number.isFinite(total)) return null;
+  const limit = Number(source?.limit);
+  const offset = Number(source?.offset);
+  return {
+    limit: Number.isFinite(limit) && limit > 0 ? limit : requested.limit,
+    offset: Number.isFinite(offset) && offset >= 0 ? offset : requested.offset,
+    total,
+  };
+}
+
+/**
+ * Loads renewal profiles for the active workspace.
+ *
+ * @param {number} [externalRefreshSignal] - Changing this refetches.
+ * @param {{ limit?: number, offset?: number }} [page] - Page position; the
+ *   caller owns it (it lives in the URL), so this hook never adjusts it.
+ * @returns {{ enabled: boolean|null, profiles: object[], total: number, pagination: { limit: number, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
+ */
+export function useCertOpsRenewalProfiles(externalRefreshSignal, page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
+  const { limit = 20, offset = 0 } = page;
   const [profiles, setProfiles] = useState([]);
-  const [total, setTotal] = useState(0);
+  // Null until the server answers: an absent page block must stay
+  // distinguishable from a real total of 0.
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -59,7 +88,7 @@ export function useCertOpsRenewalProfiles(externalRefreshSignal) {
     // yet, so stay in the loading state rather than rendering an empty table.
     if (enabled === false) {
       setProfiles([]);
-      setTotal(0);
+      setPagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -74,16 +103,20 @@ export function useCertOpsRenewalProfiles(externalRefreshSignal) {
     setLoading(true);
     setError('');
 
-    listRenewalProfiles(workspaceId, { signal: controller.signal })
+    listRenewalProfiles(workspaceId, {
+      limit,
+      offset,
+      signal: controller.signal,
+    })
       .then(data => {
         if (cancelled) return;
         setProfiles(Array.isArray(data?.items) ? data.items : []);
-        setTotal(Number.isFinite(Number(data?.total)) ? Number(data.total) : 0);
+        setPagination(readPagination(data, { limit, offset }));
       })
       .catch(err => {
         if (cancelled) return;
         setProfiles([]);
-        setTotal(0);
+        setPagination(null);
         setError(readErrorMessage(err, 'Could not load renewal profiles.'));
       })
       .finally(() => {
@@ -94,20 +127,32 @@ export function useCertOpsRenewalProfiles(externalRefreshSignal) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, reloadTick, externalRefreshSignal]);
+  }, [workspaceId, enabled, reloadTick, externalRefreshSignal, limit, offset]);
 
-  return { enabled, profiles, total, loading, error, refresh };
+  return {
+    enabled,
+    profiles,
+    total: pagination ? pagination.total : 0,
+    pagination,
+    loading,
+    error,
+    refresh,
+  };
 }
 
 /**
  * Loads the upcoming automatic renewal schedule for the active workspace.
- * @returns {{ enabled: boolean|null, renewals: object[], total: number, loading: boolean, error: string, refresh: function }}
+ *
+ * @param {number} [externalRefreshSignal] - Changing this refetches.
+ * @param {{ limit?: number, offset?: number }} [page]
+ * @returns {{ enabled: boolean|null, renewals: object[], total: number, pagination: { limit: number, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsUpcomingRenewals(externalRefreshSignal) {
+export function useCertOpsUpcomingRenewals(externalRefreshSignal, page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
+  const { limit = 20, offset = 0 } = page;
   const [renewals, setRenewals] = useState([]);
-  const [total, setTotal] = useState(0);
+  const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
@@ -119,7 +164,7 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal) {
   useEffect(() => {
     if (enabled === false) {
       setRenewals([]);
-      setTotal(0);
+      setPagination(null);
       setLoading(false);
       setError('');
       return undefined;
@@ -134,16 +179,20 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal) {
     setLoading(true);
     setError('');
 
-    listUpcomingRenewals(workspaceId, { signal: controller.signal })
+    listUpcomingRenewals(workspaceId, {
+      limit,
+      offset,
+      signal: controller.signal,
+    })
       .then(data => {
         if (cancelled) return;
         setRenewals(Array.isArray(data?.items) ? data.items : []);
-        setTotal(Number.isFinite(Number(data?.total)) ? Number(data.total) : 0);
+        setPagination(readPagination(data, { limit, offset }));
       })
       .catch(err => {
         if (cancelled) return;
         setRenewals([]);
-        setTotal(0);
+        setPagination(null);
         setError(
           readErrorMessage(err, 'Could not load the upcoming renewal schedule.')
         );
@@ -156,9 +205,17 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, reloadTick, externalRefreshSignal]);
+  }, [workspaceId, enabled, reloadTick, externalRefreshSignal, limit, offset]);
 
-  return { enabled, renewals, total, loading, error, refresh };
+  return {
+    enabled,
+    renewals,
+    total: pagination ? pagination.total : 0,
+    pagination,
+    loading,
+    error,
+    refresh,
+  };
 }
 
 /**

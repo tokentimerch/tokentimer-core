@@ -138,8 +138,12 @@ function revokeErrorMessage(err) {
 /**
  * Machine API-token management for CertOps executors: create (show once), list,
  * revoke, scopes, last used, and handling warnings.
+ *
+ * `certOpsPaused` gates creation only: revoking a token is how an operator
+ * withdraws a credential during the incident that caused the pause, so it
+ * stays available.
  */
-export default function ApiTokenPanel() {
+export default function ApiTokenPanel({ certOpsPaused = false }) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { enabled, tokens, loading, error, refresh } = useCertOpsApiTokens();
@@ -187,6 +191,7 @@ export default function ApiTokenPanel() {
     scopes.length > 0 &&
     !expiryInPast &&
     !creating &&
+    !certOpsPaused &&
     Boolean(workspaceId);
 
   const handleCreate = async () => {
@@ -395,6 +400,13 @@ export default function ApiTokenPanel() {
             >
               Create token
             </Button>
+            {certOpsPaused ? (
+              <Text fontSize='xs' color={muted}>
+                Certificate operations are paused for this workspace, so new
+                machine tokens are refused. Revoking an existing token stays
+                available.
+              </Text>
+            ) : null}
           </VStack>
         </Box>
       ) : null}

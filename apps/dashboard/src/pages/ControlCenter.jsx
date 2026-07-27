@@ -1680,8 +1680,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                   })
                                 : null}
                             </InsightListShell>
-                            <InsightPanelFooterLink to='/certops/operations'>
-                              View executor jobs and machine tokens
+                            <InsightPanelFooterLink to='/certops/jobs'>
+                              View executor jobs
                             </InsightPanelFooterLink>
                           </InsightPanelBody>
                         ) : (

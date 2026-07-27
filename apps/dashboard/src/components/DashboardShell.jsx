@@ -38,7 +38,6 @@ import {
   Layers,
   LogOut,
   Moon,
-  RefreshCw,
   Settings,
   ShieldCheck,
   Sun,
@@ -417,17 +416,8 @@ export default function DashboardShell({
             key: 'certops',
             label: 'CertOps',
             icon: ShieldCheck,
-            active:
-              currentPath.startsWith('/certops') &&
-              !currentPath.startsWith('/certops/renewals'),
-            to: '/certops/operations',
-          },
-          {
-            key: 'certops-renewals',
-            label: 'Renewals',
-            icon: RefreshCw,
-            active: currentPath.startsWith('/certops/renewals'),
-            to: '/certops/renewals',
+            active: currentPath.startsWith('/certops'),
+            to: '/certops/jobs',
           },
           {
             key: 'docs',
@@ -484,7 +474,6 @@ export default function DashboardShell({
       ? [
           menuItems.find(item => item.key === 'control-center'),
           menuItems.find(item => item.key === 'certops'),
-          menuItems.find(item => item.key === 'certops-renewals'),
         ]
       : []),
     menuItems.find(item => item.key === 'docs'),

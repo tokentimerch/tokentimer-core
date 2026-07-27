@@ -1,6 +1,7 @@
 import {
   Badge,
   Box,
+  Button,
   HStack,
   Spinner,
   Table,
@@ -15,10 +16,14 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import DashboardPagination from '../DashboardPagination.jsx';
+import {
+  CERTOPS_PAGE_SIZE_OPTIONS,
+  useCertOpsListUrlState,
+} from '../../hooks/useCertOpsUrlState.js';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsUpcomingRenewals } from './useCertOpsRenewals.js';
 import { expiryDescriptor, formatDate } from './certopsFormat';
-import { truncationSummary } from './certopsPagination';
 
 /**
  * Upcoming automatic renewals.
@@ -55,7 +60,7 @@ const BLOCKED_REASONS = {
   not_agent_deployable: {
     label: 'No key access',
     tooltip:
-      'No agent holds this certificate\'s private key, so no agent can renew it. This is typical of a certificate that was only observed from the outside, such as by an endpoint or domain monitor. Renewing it automatically requires issuing it through CertOps.',
+      "No agent holds this certificate's private key, so no agent can renew it. This is typical of a certificate that was only observed from the outside, such as by an endpoint or domain monitor. Renewing it automatically requires issuing it through CertOps.",
   },
   unknown_expiry: {
     label: 'No expiry',
@@ -91,21 +96,26 @@ function renewalWindowLabel(renewsFrom) {
  * different responses, and the wording avoids naming a single cause: the
  * uncovered group can be a missing profile, an unusable one, absent key
  * custody, or an unknown expiry, and each badge names its own reason.
+ *
+ * The counts are of the rows on screen. When the schedule spans more than one
+ * page the sentence says so, because a count that silently covers only part of
+ * the list would understate the problem.
  */
-function warningSentence(switchedOff, uncovered) {
+function warningSentence(switchedOff, uncovered, paged = false) {
   const parts = [];
+  const scope = paged ? ' on this page' : '';
   if (uncovered.length > 0) {
     parts.push(
       uncovered.length === 1
-        ? '1 certificate will not be renewed automatically, for the reason shown against it'
-        : `${uncovered.length} certificates will not be renewed automatically, for the reasons shown against them`
+        ? `1 certificate${scope} will not be renewed automatically, for the reason shown against it`
+        : `${uncovered.length} certificates${scope} will not be renewed automatically, for the reasons shown against them`
     );
   }
   if (switchedOff.length > 0) {
     parts.push(
       switchedOff.length === 1
-        ? '1 certificate has automatic renewal switched off'
-        : `${switchedOff.length} certificates have automatic renewal switched off`
+        ? `1 certificate${scope} has automatic renewal switched off`
+        : `${switchedOff.length} certificates${scope} have automatic renewal switched off`
     );
   }
   if (parts.length === 0) return '';
@@ -113,8 +123,13 @@ function warningSentence(switchedOff, uncovered) {
 }
 
 export default function UpcomingRenewalsPanel({ refreshSignal }) {
-  const { renewals, total, loading, error } =
-    useCertOpsUpcomingRenewals(refreshSignal);
+  const { limit, offset, setPage } = useCertOpsListUrlState({
+    scope: 'schedule',
+  });
+  const { renewals, pagination, loading, error } = useCertOpsUpcomingRenewals(
+    refreshSignal,
+    { limit, offset }
+  );
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
@@ -123,14 +138,15 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
     item => item.blockedReason === 'auto_renew_disabled'
   );
   const uncovered = renewals.filter(
-    item => !item.autoRenewEnabled && item.blockedReason !== 'auto_renew_disabled'
+    item =>
+      !item.autoRenewEnabled && item.blockedReason !== 'auto_renew_disabled'
   );
-  const warning = warningSentence(switchedOff, uncovered);
-  const summary = truncationSummary({
-    shown: renewals.length,
-    pagination: { total },
-    noun: 'certificates',
-  });
+  const paged = Boolean(pagination && pagination.total > renewals.length);
+  const warning = warningSentence(switchedOff, uncovered, paged);
+  const firstPage = () => setPage({ offset: 0 });
+  const pageIsPastEnd = Boolean(
+    pagination && pagination.total > 0 && offset >= pagination.total
+  );
 
   return (
     <Box>
@@ -169,12 +185,25 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
           workspace has no renewable certificates at all. */}
       {!loading && !error && renewals.length === 0 ? (
         <Box py={6} textAlign='center'>
-          <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-            No renewable certificates.
-          </Text>
-          <Text fontSize='sm' color={muted} mt={1}>
-            Certificates appear here once an agent issues or discovers one.
-          </Text>
+          {pageIsPastEnd ? (
+            <>
+              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+                This page is past the end of the schedule.
+              </Text>
+              <Button size='xs' variant='ghost' mt={2} onClick={firstPage}>
+                Back to the first page
+              </Button>
+            </>
+          ) : (
+            <>
+              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+                No renewable certificates.
+              </Text>
+              <Text fontSize='sm' color={muted} mt={1}>
+                Certificates appear here once an agent issues or discovers one.
+              </Text>
+            </>
+          )}
         </Box>
       ) : null}
 
@@ -241,7 +270,9 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
                           </Badge>
                         ) : (
                           <Tooltip
-                            label={blockedDescriptor(item.blockedReason).tooltip}
+                            label={
+                              blockedDescriptor(item.blockedReason).tooltip
+                            }
                             hasArrow
                             placement='top'
                             openDelay={250}
@@ -273,10 +304,17 @@ export default function UpcomingRenewalsPanel({ refreshSignal }) {
               </Tbody>
             </Table>
           </TableContainer>
-          {summary ? (
-            <Text fontSize='xs' color={muted} mt={2}>
-              {summary}
-            </Text>
+          {pagination ? (
+            <Box mt={2}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='certificates'
+                onChange={setPage}
+              />
+            </Box>
           ) : null}
         </>
       ) : null}

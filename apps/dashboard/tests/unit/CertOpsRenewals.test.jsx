@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
+import CertOpsLayout from '../../src/pages/certops/CertOpsLayout.jsx';
 import CertOpsRenewals from '../../src/pages/certops/CertOpsRenewals.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -58,6 +59,15 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
   useCertOpsEnabled: () => true,
   useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
+  useCertOpsWorkspaceKillSwitch: () => ({
+    certOpsPaused: false,
+    certOpsEnabled: true,
+    certOpsActive: true,
+    loading: false,
+    error: '',
+    saving: false,
+    setPaused: vi.fn(),
+  }),
 }));
 
 vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
@@ -72,12 +82,24 @@ vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   };
 });
 
-function renderPage() {
+function renderPage(initialEntries = ['/certops/renewals']) {
+  // The renewals tab renders inside the CertOps layout, which owns the
+  // availability gate and the kill-switch banner, so the tests exercise it
+  // through that layout rather than in isolation.
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <ChakraProvider>
         <DashboardThemeProvider>
-          <CertOpsRenewals session={{ user: { name: 'Test User' } }} />
+          <Routes>
+            <Route
+              path='/certops'
+              element={
+                <CertOpsLayout session={{ user: { name: 'Test User' } }} />
+              }
+            >
+              <Route path='renewals' element={<CertOpsRenewals />} />
+            </Route>
+          </Routes>
         </DashboardThemeProvider>
       </ChakraProvider>
     </MemoryRouter>
@@ -164,9 +186,9 @@ describe('CertOpsRenewals page', () => {
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
     // The profile name appears in both panels by design (schedule row subtitle
     // and profile row title), so assert on the count rather than uniqueness.
-    expect(
-      await screen.findAllByText('Derived: app.example.com')
-    ).toHaveLength(2);
+    expect(await screen.findAllByText('Derived: app.example.com')).toHaveLength(
+      2
+    );
     expect(await screen.findByText('app.example.com')).toBeInTheDocument();
   });
 
@@ -317,9 +339,13 @@ describe('CertOpsRenewals page', () => {
     );
 
     await waitFor(() => {
-      expect(updateRenewalProfileMock).toHaveBeenCalledWith('ws-1', 'profile-1', {
-        autoRenewEnabled: false,
-      });
+      expect(updateRenewalProfileMock).toHaveBeenCalledWith(
+        'ws-1',
+        'profile-1',
+        {
+          autoRenewEnabled: false,
+        }
+      );
     });
     expect(showSuccessMock).toHaveBeenCalledWith(
       'Automatic renewal switched off'
@@ -341,9 +367,13 @@ describe('CertOpsRenewals page', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Switch on' }));
 
     await waitFor(() => {
-      expect(updateRenewalProfileMock).toHaveBeenCalledWith('ws-1', 'profile-1', {
-        autoRenewEnabled: true,
-      });
+      expect(updateRenewalProfileMock).toHaveBeenCalledWith(
+        'ws-1',
+        'profile-1',
+        {
+          autoRenewEnabled: true,
+        }
+      );
     });
   });
 
@@ -358,39 +388,45 @@ describe('CertOpsRenewals page', () => {
     expect(
       screen.queryByRole('button', { name: 'Switch off' })
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Change' })
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText('Only workspace admins can change renewal settings.')
     ).toBeInTheDocument();
   });
 
   it('saves a new renewal lead time', async () => {
-    updateRenewalProfileMock.mockResolvedValue(profile({ renewBeforeDays: 45 }));
+    updateRenewalProfileMock.mockResolvedValue(
+      profile({ renewBeforeDays: 45 })
+    );
 
     renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
-    fireEvent.change(
-      screen.getByLabelText('Renewal lead time in days'),
-      { target: { value: '45' } }
-    );
+    fireEvent.change(screen.getByLabelText('Renewal lead time in days'), {
+      target: { value: '45' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      expect(updateRenewalProfileMock).toHaveBeenCalledWith('ws-1', 'profile-1', {
-        renewBeforeDays: 45,
-      });
+      expect(updateRenewalProfileMock).toHaveBeenCalledWith(
+        'ws-1',
+        'profile-1',
+        {
+          renewBeforeDays: 45,
+        }
+      );
     });
   });
 
-  it("refuses to save a lead time the server would reject", async () => {
+  it('refuses to save a lead time the server would reject', async () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
-    fireEvent.change(
-      screen.getByLabelText('Renewal lead time in days'),
-      { target: { value: '0' } }
-    );
+    fireEvent.change(screen.getByLabelText('Renewal lead time in days'), {
+      target: { value: '0' },
+    });
 
     expect(
       screen.getByText('Enter a whole number of days between 1 and 365.')
@@ -405,7 +441,8 @@ describe('CertOpsRenewals page', () => {
     updateRenewalProfileMock.mockRejectedValue({
       response: {
         data: {
-          error: 'These renewal-profile fields cannot be changed after issuance.',
+          error:
+            'These renewal-profile fields cannot be changed after issuance.',
           code: 'CERTOPS_PROFILE_FIELD_IMMUTABLE',
           fields: ['target'],
         },
@@ -429,9 +466,7 @@ describe('CertOpsRenewals page', () => {
 
   it('does not offer renewal controls for an archived profile', async () => {
     listRenewalProfilesMock.mockResolvedValue({
-      items: [
-        profile({ status: 'archived', autoRenewEnabled: false }),
-      ],
+      items: [profile({ status: 'archived', autoRenewEnabled: false })],
       total: 1,
       limit: 50,
       offset: 0,
@@ -445,7 +480,9 @@ describe('CertOpsRenewals page', () => {
     expect(
       screen.queryByRole('button', { name: 'Switch on' })
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Change' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Change' })
+    ).not.toBeInTheDocument();
   });
 
   it('explains an empty schedule instead of rendering a bare table', async () => {
@@ -504,7 +541,9 @@ describe('CertOpsRenewals page', () => {
     expect(
       screen.queryByText('No renewable certificates.')
     ).not.toBeInTheDocument();
-    expect(screen.queryByText('No renewal profiles yet.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No renewal profiles yet.')
+    ).not.toBeInTheDocument();
   });
 
   it('shows loading rather than an all-clear while a read is still in flight', async () => {
@@ -521,7 +560,9 @@ describe('CertOpsRenewals page', () => {
     expect(
       screen.queryByText('No renewable certificates.')
     ).not.toBeInTheDocument();
-    expect(screen.queryByText('No renewal profiles yet.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No renewal profiles yet.')
+    ).not.toBeInTheDocument();
   });
 
   it('reads the schedule for a manager, leaving the write refusal to the server', async () => {
@@ -550,5 +591,159 @@ describe('CertOpsRenewals page', () => {
       await screen.findByText('Certificate operations is not enabled')
     ).toBeInTheDocument();
     expect(screen.queryByText('Renewal profiles')).not.toBeInTheDocument();
+  });
+
+  it('gives each list a page control instead of a caption when more rows exist', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [upcoming()],
+      total: 57,
+      limit: 20,
+      offset: 0,
+    });
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [profile()],
+      total: 42,
+      limit: 20,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByRole('navigation', { name: 'certificates pagination' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'renewal profiles pagination' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Showing 1 to 20 of 57 certificates')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Showing 1 to 20 of 42 renewal profiles')
+    ).toBeInTheDocument();
+  });
+
+  it('pages the two lists independently through separately scoped parameters', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [upcoming()],
+      total: 57,
+      limit: 20,
+      offset: 0,
+    });
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [profile()],
+      total: 42,
+      limit: 20,
+      offset: 0,
+    });
+
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Next page of certificates',
+      })
+    );
+
+    await waitFor(() => {
+      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
+        'ws-1',
+        expect.objectContaining({ limit: 20, offset: 20 })
+      );
+    });
+    // Paging the schedule must not move the profiles table underneath it.
+    expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
+      'ws-1',
+      expect.objectContaining({ offset: 0 })
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Previous page of certificates' })
+    );
+    await waitFor(() => {
+      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
+        'ws-1',
+        expect.objectContaining({ offset: 0 })
+      );
+    });
+  });
+
+  it('restores each list page position from the URL on load', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [upcoming()],
+      total: 300,
+      limit: 50,
+      offset: 50,
+    });
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [profile()],
+      total: 42,
+      limit: 20,
+      offset: 20,
+    });
+
+    renderPage([
+      '/certops/renewals?scheduleLimit=50&scheduleOffset=50&profileOffset=20',
+    ]);
+
+    await waitFor(() => {
+      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
+        'ws-1',
+        expect.objectContaining({ limit: 50, offset: 50 })
+      );
+    });
+    expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
+      'ws-1',
+      expect.objectContaining({ limit: 20, offset: 20 })
+    );
+  });
+
+  it('offers a way back rather than an empty state when a shared link points past the end', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [],
+      total: 3,
+      limit: 20,
+      offset: 200,
+    });
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [],
+      total: 3,
+      limit: 20,
+      offset: 200,
+    });
+
+    renderPage(['/certops/renewals?scheduleOffset=200&profileOffset=200']);
+
+    expect(
+      await screen.findByText('This page is past the end of the schedule.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('This page is past the end of the list.')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('No renewable certificates.')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No renewal profiles yet.')
+    ).not.toBeInTheDocument();
+  });
+
+  it('scopes the not-renewing count to the page when the schedule spans several', async () => {
+    listUpcomingRenewalsMock.mockResolvedValue({
+      items: [
+        upcoming({ autoRenewEnabled: false, blockedReason: 'no_profile' }),
+      ],
+      total: 57,
+      limit: 20,
+      offset: 0,
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText(
+        '1 certificate on this page will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
+      )
+    ).toBeInTheDocument();
   });
 });

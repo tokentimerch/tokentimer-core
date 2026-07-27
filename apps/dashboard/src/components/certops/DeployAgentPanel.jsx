@@ -151,8 +151,15 @@ function revokeErrorMessage(err) {
  *     an agent whose id was not known when the token was created, or whose
  *     registration timestamp is at or after token creation).
  * Manager-gated: viewers see a read-only explainer, no token list or actions.
+ *
+ * `certOpsPaused` blocks bootstrap token creation only, matching the server:
+ * revoking an outstanding token stays available while a workspace is paused,
+ * because withdrawing a credential is an incident action, not new work.
  */
-export default function DeployAgentPanel({ onAgentRegistered }) {
+export default function DeployAgentPanel({
+  onAgentRegistered,
+  certOpsPaused = false,
+}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { enabled, tokens, loading, error, refresh } =
@@ -270,6 +277,7 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
     Boolean(expiresAtIso) &&
     !expiryInPast &&
     !creating &&
+    !certOpsPaused &&
     Boolean(workspaceId);
 
   const apiUrl =
@@ -479,6 +487,13 @@ export default function DeployAgentPanel({ onAgentRegistered }) {
               >
                 Create bootstrap token
               </Button>
+              {certOpsPaused ? (
+                <Text fontSize='xs' color={muted}>
+                  Certificate operations are paused for this workspace, so new
+                  bootstrap tokens are refused. Revoking an existing token stays
+                  available.
+                </Text>
+              ) : null}
 
               <Text fontSize='xs' color={muted}>
                 Once you have pasted the token at the installer's prompt in step

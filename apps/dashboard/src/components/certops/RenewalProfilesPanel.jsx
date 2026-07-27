@@ -35,13 +35,17 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import DashboardPagination from '../DashboardPagination.jsx';
+import {
+  CERTOPS_PAGE_SIZE_OPTIONS,
+  useCertOpsListUrlState,
+} from '../../hooks/useCertOpsUrlState.js';
 import { showSuccess } from '../../utils/toast.js';
 import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
 import {
   useCertOpsRenewalProfiles,
   useUpdateRenewalProfile,
 } from './useCertOpsRenewals.js';
-import { truncationSummary } from './certopsPagination';
 
 /**
  * Renewal profiles.
@@ -94,7 +98,9 @@ function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame>
         <ModalHeader {...headerProps}>
-          <DashboardModalTitle>Switch automatic renewal off?</DashboardModalTitle>
+          <DashboardModalTitle>
+            Switch automatic renewal off?
+          </DashboardModalTitle>
           <DashboardModalDescription>
             {certificateCount === 1
               ? 'The certificate using this profile will stop renewing automatically.'
@@ -207,10 +213,19 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
-  const { profiles, total, loading, error, refresh } =
-    useCertOpsRenewalProfiles(refreshSignal);
-  const { saving, error: saveError, clearError, save } =
-    useUpdateRenewalProfile();
+  // Both lists on this tab page independently, so each scopes its own search
+  // params; sharing `offset` would move them together.
+  const { limit, offset, setPage } = useCertOpsListUrlState({
+    scope: 'profile',
+  });
+  const { profiles, pagination, loading, error, refresh } =
+    useCertOpsRenewalProfiles(refreshSignal, { limit, offset });
+  const {
+    saving,
+    error: saveError,
+    clearError,
+    save,
+  } = useUpdateRenewalProfile();
   const [disableTarget, setDisableTarget] = useState(null);
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
@@ -254,11 +269,13 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     return updated;
   };
 
-  const summary = truncationSummary({
-    shown: profiles.length,
-    pagination: { total },
-    noun: 'profiles',
-  });
+  const firstPage = () => setPage({ offset: 0 });
+  // Rows can disappear under a page position that is still in the URL, e.g. a
+  // shared link outliving the profiles it pointed at. That is not an empty
+  // workspace, and offering the way back is the difference.
+  const pageIsPastEnd = Boolean(
+    pagination && pagination.total > 0 && offset >= pagination.total
+  );
 
   return (
     <Box>
@@ -269,15 +286,17 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         {loading ? <Spinner size='sm' /> : null}
       </HStack>
       <Text fontSize='sm' color={muted} mb={3}>
-        A profile is the renewal contract for the certificates that use it: which
-        names to request, which key to generate, and which command and host
-        deploy the result. Profiles are created automatically from a successful
-        issuance, so the deployment details are fixed to what already worked and
-        changing them means issuing again.
+        A profile is the renewal contract for the certificates that use it:
+        which names to request, which key to generate, and which command and
+        host deploy the result. Profiles are created automatically from a
+        successful issuance, so the deployment details are fixed to what already
+        worked and changing them means issuing again.
       </Text>
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-      {saveError ? <DashboardErrorAlert>{saveError}</DashboardErrorAlert> : null}
+      {saveError ? (
+        <DashboardErrorAlert>{saveError}</DashboardErrorAlert>
+      ) : null}
 
       {loading ? (
         <HStack spacing={2} color={muted} py={4} justify='center'>
@@ -288,13 +307,26 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
 
       {!loading && !error && profiles.length === 0 ? (
         <Box py={6} textAlign='center'>
-          <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-            No renewal profiles yet.
-          </Text>
-          <Text fontSize='sm' color={muted} mt={1}>
-            A profile is created automatically the first time an agent issues a
-            certificate for this workspace.
-          </Text>
+          {pageIsPastEnd ? (
+            <>
+              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+                This page is past the end of the list.
+              </Text>
+              <Button size='xs' variant='ghost' mt={2} onClick={firstPage}>
+                Back to the first page
+              </Button>
+            </>
+          ) : (
+            <>
+              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+                No renewal profiles yet.
+              </Text>
+              <Text fontSize='sm' color={muted} mt={1}>
+                A profile is created automatically the first time an agent
+                issues a certificate for this workspace.
+              </Text>
+            </>
+          )}
         </Box>
       ) : null}
 
@@ -429,10 +461,17 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               </Tbody>
             </Table>
           </TableContainer>
-          {summary ? (
-            <Text fontSize='xs' color={muted} mt={2}>
-              {summary}
-            </Text>
+          {pagination ? (
+            <Box mt={2}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='renewal profiles'
+                onChange={setPage}
+              />
+            </Box>
           ) : null}
           {!isAdmin ? (
             <Text fontSize='xs' color={muted} mt={2}>

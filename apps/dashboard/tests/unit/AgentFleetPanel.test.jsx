@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -39,22 +45,32 @@ vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
   };
 });
 
-function renderWithProviders(ui) {
+function renderWithProviders(ui, initialEntries = ['/']) {
   return render(
     <ChakraProvider>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
     </ChakraProvider>
   );
 }
 
 function agentsState(overrides = {}) {
-  return {
+  const { pagination, ...rest } = overrides;
+  const state = {
     enabled: true,
     agents: [],
     loading: false,
     error: '',
     refresh: vi.fn(),
-    ...overrides,
+    ...rest,
+  };
+  return {
+    ...state,
+    // Mirrors the list envelope: a null limit is the server's signal that the
+    // whole fleet is present, so total matches the rows handed to the panel.
+    pagination:
+      pagination === undefined
+        ? { limit: null, offset: 0, total: state.agents.length }
+        : pagination,
   };
 }
 
@@ -182,9 +198,11 @@ describe('AgentFleetPanel', () => {
       screen.getByRole('columnheader', { name: 'Clock drift' })
     ).toBeInTheDocument();
 
-    // Protocol versions per row; the retired agent has none.
-    expect(screen.getByText('2')).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
+    // Protocol versions per row; the retired agent has none. Scoped to the
+    // table because the page control also renders a bare number.
+    const rows = screen.getByRole('table');
+    expect(within(rows).getByText('2')).toBeInTheDocument();
+    expect(within(rows).getByText('1')).toBeInTheDocument();
 
     // Signed offsets; only the |offset| > 5000ms row is flagged.
     expect(screen.getByText('+120 ms')).toBeInTheDocument();
@@ -301,6 +319,69 @@ describe('AgentFleetPanel', () => {
     });
   });
 
+  it('pages the fleet through the URL and sends the page position to the hook', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({
+        agents: sampleAgents(),
+        pagination: { limit: 20, offset: 0, total: 57 },
+      })
+    );
+
+    renderWithProviders(<AgentFleetPanel />);
+
+    expect(
+      screen.getByRole('navigation', { name: 'agents pagination' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Showing 1 to 20 of 57 agents')
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Next page of agents' })
+    );
+    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(undefined, {
+      limit: 20,
+      offset: 20,
+    });
+  });
+
+  it('reads a non-default page size from the URL', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({
+        agents: sampleAgents(),
+        pagination: { limit: 50, offset: 50, total: 300 },
+      })
+    );
+
+    renderWithProviders(<AgentFleetPanel />, [
+      '/?agentLimit=50&agentOffset=50',
+    ]);
+
+    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(undefined, {
+      limit: 50,
+      offset: 50,
+    });
+  });
+
+  it('offers a way back rather than an empty fleet when the URL page is past the end', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(
+      agentsState({
+        agents: [],
+        pagination: { limit: 20, offset: 200, total: 3 },
+      })
+    );
+
+    renderWithProviders(<AgentFleetPanel />, ['/?agentOffset=200']);
+
+    expect(
+      screen.getByText('This page is past the end of the fleet.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No agents yet.')).not.toBeInTheDocument();
+  });
+
   it('forwards refreshSignal to useCertOpsAgents so a freshly registered agent refetches immediately', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(agentsState());
@@ -308,7 +389,10 @@ describe('AgentFleetPanel', () => {
     const { rerender } = renderWithProviders(
       <AgentFleetPanel refreshSignal={0} />
     );
-    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(0);
+    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(0, {
+      limit: 20,
+      offset: 0,
+    });
 
     rerender(
       <ChakraProvider>
@@ -317,6 +401,9 @@ describe('AgentFleetPanel', () => {
         </MemoryRouter>
       </ChakraProvider>
     );
-    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(1);
+    expect(useCertOpsAgentsMock).toHaveBeenLastCalledWith(1, {
+      limit: 20,
+      offset: 0,
+    });
   });
 });

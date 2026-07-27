@@ -59,7 +59,7 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
-import { FiTrash2, FiPlus, FiX, FiChevronRight } from 'react-icons/fi';
+import { FiTrash2, FiPlus, FiX } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
   BadgeCheck,
@@ -95,6 +95,7 @@ import {
 } from './components/DashboardModalFrame.jsx';
 import DashboardShell from './components/DashboardShell.jsx';
 import AssetFilters from './components/AssetFilters.jsx';
+import DashboardPagination from './components/DashboardPagination.jsx';
 import AssetInventoryTable, {
   resolveContactGroupLabel,
 } from './components/AssetInventoryTable.jsx';
@@ -3768,23 +3769,6 @@ function DashboardView({
     'gray.200',
     'rgba(148, 163, 184, 0.16)'
   );
-  const paginationControlColor = useColorModeValue(
-    'gray.600',
-    'rgba(203, 213, 225, 0.9)'
-  );
-  const paginationControlHoverBg = useColorModeValue(
-    'gray.100',
-    'rgba(30, 41, 59, 0.72)'
-  );
-  const paginationPageBg = useColorModeValue(
-    'blue.50',
-    'rgba(37, 99, 235, 0.18)'
-  );
-  const paginationPageColor = useColorModeValue('blue.700', 'white');
-  const paginationPageBorder = useColorModeValue(
-    'blue.200',
-    'rgba(59, 130, 246, 0.38)'
-  );
   const pageTextColor = text;
   const mutedTextColor = muted;
   const sessionName =
@@ -5174,13 +5158,6 @@ function DashboardView({
     return sortedVisibleTokens.slice(start, start + assetPageSize);
   }, [assetPage, assetPageSize, sortedVisibleTokens]);
 
-  const assetRangeStart =
-    sortedVisibleTokens.length === 0 ? 0 : (assetPage - 1) * assetPageSize + 1;
-  const assetRangeEnd = Math.min(
-    assetPage * assetPageSize,
-    sortedVisibleTokens.length
-  );
-
   const selectedVisibleTokenIds = useMemo(() => {
     const visibleIds = new Set(paginatedVisibleTokens.map(token => token.id));
     return selectedTokenIds.filter(id => visibleIds.has(id));
@@ -5276,84 +5253,17 @@ function DashboardView({
   );
 
   const renderAssetPaginationControls = () => (
-    <Flex
-      align={{ base: 'stretch', md: 'center' }}
-      justify={{ base: 'space-between', md: 'end' }}
-      direction={{ base: 'column', sm: 'row' }}
-      gap={3}
-      flex='1'
-      minW={0}
-    >
-      <HStack spacing={2}>
-        <Text color={mutedTextColor} fontSize='sm'>
-          Show
-        </Text>
-        <Select
-          size='sm'
-          w='84px'
-          value={assetPageSize}
-          bg={inputBg}
-          borderColor={inputBorder}
-          onChange={event => {
-            setAssetPageSize(Number(event.target.value));
-            setAssetPage(1);
-          }}
-        >
-          {ASSET_PAGE_SIZE_OPTIONS.map(size => (
-            <option key={size} value={size}>
-              {size}
-            </option>
-          ))}
-        </Select>
-      </HStack>
-
-      <HStack spacing={3} justify={{ base: 'space-between', sm: 'end' }}>
-        <Text color={mutedTextColor} fontSize='sm' whiteSpace='nowrap'>
-          {assetRangeStart}-{assetRangeEnd} of {sortedVisibleTokens.length}
-        </Text>
-        <HStack spacing={1}>
-          <IconButton
-            aria-label='Previous assets page'
-            icon={<FiChevronRight />}
-            size='sm'
-            variant='ghost'
-            color={paginationControlColor}
-            isDisabled={assetPage <= 1}
-            onClick={() => setAssetPage(page => Math.max(1, page - 1))}
-            sx={{ svg: { transform: 'rotate(180deg)' } }}
-            _hover={{
-              bg: paginationControlHoverBg,
-              color: outlineButtonHoverColor,
-            }}
-          />
-          <Button
-            size='sm'
-            variant='outline'
-            borderColor={paginationPageBorder}
-            color={paginationPageColor}
-            bg={paginationPageBg}
-            minW='38px'
-          >
-            {assetPage}
-          </Button>
-          <IconButton
-            aria-label='Next assets page'
-            icon={<FiChevronRight />}
-            size='sm'
-            variant='ghost'
-            color={paginationControlColor}
-            isDisabled={assetPage >= assetPageCount}
-            onClick={() =>
-              setAssetPage(page => Math.min(assetPageCount, page + 1))
-            }
-            _hover={{
-              bg: paginationControlHoverBg,
-              color: outlineButtonHoverColor,
-            }}
-          />
-        </HStack>
-      </HStack>
-    </Flex>
+    <DashboardPagination
+      limit={assetPageSize}
+      offset={(assetPage - 1) * assetPageSize}
+      total={sortedVisibleTokens.length}
+      pageSizeOptions={ASSET_PAGE_SIZE_OPTIONS}
+      noun='assets'
+      onChange={({ limit, offset }) => {
+        setAssetPageSize(limit);
+        setAssetPage(Math.floor(offset / limit) + 1);
+      }}
+    />
   );
 
   const renderDashboardWorkspace = () => (

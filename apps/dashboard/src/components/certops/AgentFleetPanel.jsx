@@ -35,6 +35,11 @@ import {
 } from '../DashboardModalFrame.jsx';
 import CopyableId from '../CopyableId.jsx';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import DashboardPagination from '../DashboardPagination.jsx';
+import {
+  CERTOPS_PAGE_SIZE_OPTIONS,
+  useCertOpsListUrlState,
+} from '../../hooks/useCertOpsUrlState.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showSuccess } from '../../utils/toast.js';
 import { retireAgent } from './certopsAgentsApi.js';
@@ -292,8 +297,14 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
 export default function AgentFleetPanel({ refreshSignal } = {}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
-  const { enabled, agents, loading, error, refresh } =
-    useCertOpsAgents(refreshSignal);
+  const { limit, offset, setPage } = useCertOpsListUrlState({
+    scope: 'agent',
+  });
+  // The fleet list is unbounded server-side unless a limit is sent. Now that
+  // this table has a page control, sending one is safe: every row past the
+  // first page is reachable.
+  const { enabled, agents, pagination, loading, error, refresh } =
+    useCertOpsAgents(refreshSignal, { limit, offset });
 
   const [retireTarget, setRetireTarget] = useState(null);
 
@@ -312,6 +323,11 @@ export default function AgentFleetPanel({ refreshSignal } = {}) {
     setRetireTarget(null);
     refresh();
   };
+
+  const firstPage = () => setPage({ offset: 0 });
+  const pageIsPastEnd = Boolean(
+    pagination && pagination.total > 0 && offset >= pagination.total
+  );
 
   return (
     <Stack spacing={4} align='stretch'>
@@ -349,126 +365,153 @@ export default function AgentFleetPanel({ refreshSignal } = {}) {
 
       {!loading && !error && agents.length === 0 ? (
         <Box py={6} textAlign='center'>
-          <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-            No agents yet.
-          </Text>
-          <Text fontSize='sm' color={muted} mt={1}>
-            {canManage
-              ? 'Use the Deploy an agent panel on this page to install your first agent.'
-              : 'A workspace manager can deploy agents from this page.'}
-          </Text>
+          {pageIsPastEnd ? (
+            <>
+              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+                This page is past the end of the fleet.
+              </Text>
+              <Button size='xs' variant='ghost' mt={2} onClick={firstPage}>
+                Back to the first page
+              </Button>
+            </>
+          ) : (
+            <>
+              <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+                No agents yet.
+              </Text>
+              <Text fontSize='sm' color={muted} mt={1}>
+                {canManage
+                  ? 'Use the Deploy an agent panel on this page to install your first agent.'
+                  : 'A workspace manager can deploy agents from this page.'}
+              </Text>
+            </>
+          )}
         </Box>
       ) : null}
 
       {!loading && agents.length > 0 ? (
-        <TableContainer>
-          <Table size='sm' variant='simple'>
-            <Thead>
-              <Tr>
-                <Th>Agent</Th>
-                <Th>Status</Th>
-                <Th>Version</Th>
-                <Th>Protocol</Th>
-                <Th>Clock drift</Th>
-                <Th>NTP</Th>
-                <Th>Signing key</Th>
-                <Th>Last heartbeat</Th>
-                {canManage ? <Th textAlign='right'>Actions</Th> : null}
-              </Tr>
-            </Thead>
-            <Tbody>
-              {agents.map(agent => {
-                const status = String(agent.status || '').toLowerCase();
-                return (
-                  <Tr key={agent.id}>
-                    <Td>
-                      <Box>
-                        <Text fontSize='sm' fontWeight='semibold'>
-                          {agent.name || agent.hostname || 'Unnamed agent'}
-                        </Text>
-                        <CopyableId
-                          id={agent.agentId}
-                          display={shortId(agent.agentId)}
-                        />
-                      </Box>
-                    </Td>
-                    <Td>
-                      <AgentStatusBadge status={displayAgentStatus(agent)} />
-                    </Td>
-                    <Td>
-                      <Text fontSize='sm' fontFamily='mono'>
-                        {agent.agentVersion || '--'}
-                      </Text>
-                    </Td>
-                    <Td>
-                      <Text fontSize='sm' fontFamily='mono'>
-                        {agent.protocolVersion === null ||
-                        agent.protocolVersion === undefined
-                          ? '--'
-                          : String(agent.protocolVersion)}
-                      </Text>
-                    </Td>
-                    <Td>
-                      <HStack spacing={2}>
-                        <Text fontSize='sm' fontFamily='mono'>
-                          {formatClockOffset(agent.clockOffsetMs)}
-                        </Text>
-                        {isClockDrifted(agent.clockOffsetMs) ? (
-                          <Badge
-                            colorScheme='orange'
-                            variant='subtle'
-                            textTransform='none'
-                            fontWeight='medium'
-                            fontSize='xs'
-                            title={`Clock offset exceeds ${CLOCK_DRIFT_WARN_MS / 1000}s`}
-                          >
-                            Drift
-                          </Badge>
-                        ) : null}
-                      </HStack>
-                    </Td>
-                    <Td>
-                      <NtpBadge ntpSynced={agent.ntpSynced} />
-                    </Td>
-                    <Td>
-                      {agent.pinnedSigningKeyId ? (
-                        <CopyableId
-                          id={agent.pinnedSigningKeyId}
-                          display={shortId(agent.pinnedSigningKeyId)}
-                        />
-                      ) : (
-                        <Text fontSize='sm'>--</Text>
-                      )}
-                    </Td>
-                    <Td>
-                      <Text
-                        fontSize='sm'
-                        color={muted}
-                        title={formatDateTime(agent.lastSeenAt)}
-                      >
-                        {formatRelativeDateTime(agent.lastSeenAt)}
-                      </Text>
-                    </Td>
-                    {canManage ? (
-                      <Td textAlign='right'>
-                        {status !== 'retired' ? (
-                          <Button
-                            size='xs'
-                            colorScheme='red'
-                            variant='outline'
-                            onClick={() => setRetireTarget(agent)}
-                          >
-                            Retire
-                          </Button>
-                        ) : null}
+        <Box>
+          <TableContainer>
+            <Table size='sm' variant='simple'>
+              <Thead>
+                <Tr>
+                  <Th>Agent</Th>
+                  <Th>Status</Th>
+                  <Th>Version</Th>
+                  <Th>Protocol</Th>
+                  <Th>Clock drift</Th>
+                  <Th>NTP</Th>
+                  <Th>Signing key</Th>
+                  <Th>Last heartbeat</Th>
+                  {canManage ? <Th textAlign='right'>Actions</Th> : null}
+                </Tr>
+              </Thead>
+              <Tbody>
+                {agents.map(agent => {
+                  const status = String(agent.status || '').toLowerCase();
+                  return (
+                    <Tr key={agent.id}>
+                      <Td>
+                        <Box>
+                          <Text fontSize='sm' fontWeight='semibold'>
+                            {agent.name || agent.hostname || 'Unnamed agent'}
+                          </Text>
+                          <CopyableId
+                            id={agent.agentId}
+                            display={shortId(agent.agentId)}
+                          />
+                        </Box>
                       </Td>
-                    ) : null}
-                  </Tr>
-                );
-              })}
-            </Tbody>
-          </Table>
-        </TableContainer>
+                      <Td>
+                        <AgentStatusBadge status={displayAgentStatus(agent)} />
+                      </Td>
+                      <Td>
+                        <Text fontSize='sm' fontFamily='mono'>
+                          {agent.agentVersion || '--'}
+                        </Text>
+                      </Td>
+                      <Td>
+                        <Text fontSize='sm' fontFamily='mono'>
+                          {agent.protocolVersion === null ||
+                          agent.protocolVersion === undefined
+                            ? '--'
+                            : String(agent.protocolVersion)}
+                        </Text>
+                      </Td>
+                      <Td>
+                        <HStack spacing={2}>
+                          <Text fontSize='sm' fontFamily='mono'>
+                            {formatClockOffset(agent.clockOffsetMs)}
+                          </Text>
+                          {isClockDrifted(agent.clockOffsetMs) ? (
+                            <Badge
+                              colorScheme='orange'
+                              variant='subtle'
+                              textTransform='none'
+                              fontWeight='medium'
+                              fontSize='xs'
+                              title={`Clock offset exceeds ${CLOCK_DRIFT_WARN_MS / 1000}s`}
+                            >
+                              Drift
+                            </Badge>
+                          ) : null}
+                        </HStack>
+                      </Td>
+                      <Td>
+                        <NtpBadge ntpSynced={agent.ntpSynced} />
+                      </Td>
+                      <Td>
+                        {agent.pinnedSigningKeyId ? (
+                          <CopyableId
+                            id={agent.pinnedSigningKeyId}
+                            display={shortId(agent.pinnedSigningKeyId)}
+                          />
+                        ) : (
+                          <Text fontSize='sm'>--</Text>
+                        )}
+                      </Td>
+                      <Td>
+                        <Text
+                          fontSize='sm'
+                          color={muted}
+                          title={formatDateTime(agent.lastSeenAt)}
+                        >
+                          {formatRelativeDateTime(agent.lastSeenAt)}
+                        </Text>
+                      </Td>
+                      {canManage ? (
+                        <Td textAlign='right'>
+                          {status !== 'retired' ? (
+                            <Button
+                              size='xs'
+                              colorScheme='red'
+                              variant='outline'
+                              onClick={() => setRetireTarget(agent)}
+                            >
+                              Retire
+                            </Button>
+                          ) : null}
+                        </Td>
+                      ) : null}
+                    </Tr>
+                  );
+                })}
+              </Tbody>
+            </Table>
+          </TableContainer>
+          {pagination ? (
+            <Box mt={2}>
+              <DashboardPagination
+                limit={pagination.limit || limit}
+                offset={offset}
+                total={pagination.total}
+                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+                noun='agents'
+                onChange={setPage}
+              />
+            </Box>
+          ) : null}
+        </Box>
       ) : null}
 
       <RetireAgentModal

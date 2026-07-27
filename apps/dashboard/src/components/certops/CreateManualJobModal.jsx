@@ -3,21 +3,17 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Box,
   Button,
   ButtonGroup,
   Checkbox,
-  Collapse,
   FormControl,
   FormHelperText,
   FormLabel,
   HStack,
-  Icon,
   Input,
   Modal,
   ModalBody,
   ModalCloseButton,
-  ModalContent,
   ModalFooter,
   ModalHeader,
   ModalOverlay,
@@ -26,56 +22,32 @@ import {
   Text,
   Textarea,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import CopyableId from '../../components/CopyableId.jsx';
-import DashboardShell from '../../components/DashboardShell';
-import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
-import SEO from '../../components/SEO.jsx';
-import ApiTokenPanel from '../../components/certops/ApiTokenPanel.jsx';
-import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
-import DeployAgentPanel from '../../components/certops/DeployAgentPanel.jsx';
-import WorkspaceKillSwitchPanel from '../../components/certops/WorkspaceKillSwitchPanel.jsx';
-import EvidenceTimeline from '../../components/certops/EvidenceTimeline.jsx';
-import JobStatusBadge from '../../components/certops/JobStatusBadge.jsx';
+import {
+  DashboardModalDescription,
+  DashboardModalFrame,
+  DashboardModalTitle,
+  useDashboardModalProps,
+} from '../DashboardModalFrame.jsx';
 import {
   CERTOPS_JOB_OPERATIONS,
   CERTOPS_SUBJECT_TYPES,
-  approveJob,
   createJob,
-  rejectJob,
-} from '../../components/certops/certopsJobsApi.js';
+} from './certopsJobsApi.js';
 import {
   listCertificates,
   listCertificateTargets,
   listWorkspaceCertificateInstances,
-} from '../../components/certops/certopsApi.js';
+} from './certopsApi.js';
 import {
-  formatDateTime,
-  formatRelativeDateTime,
   jobOperationLabel,
   subjectTypeLabel,
   truncateId,
-} from '../../components/certops/certopsJobsFormat';
-import {
-  useCertOpsAvailability,
-  useCertOpsCanManage,
-} from '../../components/certops/useCertOps.js';
-import { useCertOpsJobs } from '../../components/certops/useCertOpsJobs.js';
-import { useCertOpsAgents } from '../../components/certops/useCertOpsAgents.js';
-import { truncationSummary } from '../../components/certops/certopsPagination.js';
-import {
-  DashboardActionButton,
-  DashboardPanel,
-  DashboardPanelHeader,
-  DashboardState,
-} from '../../components/DashboardPrimitives';
-import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+} from './certopsJobsFormat';
+import { useCertOpsAgents } from './useCertOpsAgents.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 
-const JOB_LIST_LIMIT = 20;
 const SUBJECT_ID_MAX_LENGTH = 128;
 const MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID =
   'certops-manual-job-subject-suggestions';
@@ -213,36 +185,20 @@ function createJobErrorMessage(err) {
 }
 
 /**
- * Maps approve/reject failures to a message that explains the specific
- * gate that fired (see docs/certops's approvals guide: the non-requester
- * rule only applies to approve, and a job can legitimately race out of
- * pending_approval before the decision lands).
- */
-function approvalDecisionErrorMessage(err, decision) {
-  const code = err?.response?.data?.code;
-  const status = err?.response?.status;
-  if (code === 'CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN') {
-    return 'You requested this job, so you cannot approve it yourself. Ask another workspace manager or admin to review it.';
-  }
-  if (code === 'CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL') {
-    return 'This job already left "Pending approval" (someone else may have just decided it). Refreshing the list.';
-  }
-  if (status === 403 || code === 'INSUFFICIENT_ROLE') {
-    return `You need workspace manager permission to ${decision} a job.`;
-  }
-  return (
-    err?.response?.data?.error ||
-    err?.message ||
-    `Could not ${decision} this job.`
-  );
-}
-
-/**
  * Manual job creation modal: the exception path for creating
  * a CertOps job before the certops-scheduler exists. Always posts with
  * source "api"; the server never accepts a client-supplied source.
  */
-function CreateManualJobModal({ isOpen, onClose, onCreated }) {
+export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+    primaryButtonProps,
+  } = useDashboardModalProps();
   const { workspaceId } = useWorkspace();
   const { agents } = useCertOpsAgents();
   const [operation, setOperation] = useState('');
@@ -433,7 +389,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
       if (idempotencyKey.trim()) body.idempotencyKey = idempotencyKey.trim();
       if (assignedAgentId) body.assignedAgentId = assignedAgentId;
       const payload =
-        payloadMode === 'fields' ? buildFieldsPayload() : JSON.parse(payloadText || '{}');
+        payloadMode === 'fields'
+          ? buildFieldsPayload()
+          : JSON.parse(payloadText || '{}');
       if (Object.keys(payload).length) body.payload = payload;
       if (requiresApproval) body.requiresApproval = true;
       const { job } = await createJob(workspaceId, body);
@@ -456,20 +414,29 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} isCentered size='lg'>
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>Create manual job</ModalHeader>
-        <ModalCloseButton isDisabled={submitting} />
-        <ModalBody>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      isCentered
+      scrollBehavior='inside'
+    >
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '640px' }}>
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Create manual job</DashboardModalTitle>
+          <DashboardModalDescription>
+            Manual job creation is an exception path for driving certificate
+            operations before automated scheduling ships.
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
+        <ModalBody {...bodyProps}>
           <VStack align='stretch' spacing={4}>
             <Alert status='info' variant='subtle' borderRadius='md'>
               <AlertIcon boxSize={4} />
               <AlertDescription fontSize='sm'>
-                Manual job creation is an exception path for driving certificate
-                operations before automated scheduling ships. The job is
-                recorded with source &quot;api&quot; and appears at the start of
-                the job&apos;s history.
+                The job is recorded with source &quot;api&quot; and appears at
+                the start of the job&apos;s history.
               </AlertDescription>
             </Alert>
             <FormControl isRequired>
@@ -489,15 +456,17 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
               {isIssue ? (
                 <FormHelperText>
                   Issue creates a new managed certificate; TokenTimer assigns
-                  its ID once the request is accepted, so subject fields
-                  below are hidden.
+                  its ID once the request is accepted, so subject fields below
+                  are hidden.
                 </FormHelperText>
               ) : null}
             </FormControl>
             {isIssue ? null : (
               <>
                 <FormControl
-                  isRequired={subjectRequiredForOperation || Boolean(subjectId.trim())}
+                  isRequired={
+                    subjectRequiredForOperation || Boolean(subjectId.trim())
+                  }
                 >
                   <FormLabel fontSize='sm'>Subject type</FormLabel>
                   <Select
@@ -522,7 +491,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   </FormHelperText>
                 </FormControl>
                 <FormControl
-                  isRequired={subjectRequiredForOperation || Boolean(subjectType)}
+                  isRequired={
+                    subjectRequiredForOperation || Boolean(subjectType)
+                  }
                 >
                   <FormLabel fontSize='sm'>Subject ID</FormLabel>
                   <Input
@@ -597,7 +568,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
               </FormHelperText>
             </FormControl>
-            <FormControl isInvalid={payloadMode === 'json' && Boolean(payloadError)}>
+            <FormControl
+              isInvalid={payloadMode === 'json' && Boolean(payloadError)}
+            >
               <HStack justify='space-between' align='center' mb={1}>
                 <FormLabel fontSize='sm' mb={0}>
                   Payload
@@ -664,7 +637,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                       <Input
                         size='sm'
                         value={fieldCommandRef}
-                        onChange={event => setFieldCommandRef(event.target.value)}
+                        onChange={event =>
+                          setFieldCommandRef(event.target.value)
+                        }
                         placeholder='e.g. certbot-csr'
                         autoComplete='off'
                       />
@@ -676,7 +651,9 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                       <Input
                         size='sm'
                         value={fieldDnsProvider}
-                        onChange={event => setFieldDnsProvider(event.target.value)}
+                        onChange={event =>
+                          setFieldDnsProvider(event.target.value)
+                        }
                         placeholder='e.g. cloudflare'
                         autoComplete='off'
                       />
@@ -764,12 +741,17 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
             </FormControl>
           </VStack>
         </ModalBody>
-        <ModalFooter>
-          <Button onClick={handleClose} isDisabled={submitting} mr={3}>
+        <ModalFooter {...footerProps}>
+          <Button
+            {...outlineButtonProps}
+            onClick={handleClose}
+            isDisabled={submitting}
+          >
             Cancel
           </Button>
           <Button
-            colorScheme='blue'
+            {...primaryButtonProps}
+            ml={3}
             onClick={handleSubmit}
             isDisabled={!canSubmit}
             isLoading={submitting}
@@ -778,417 +760,7 @@ function CreateManualJobModal({ isOpen, onClose, onCreated }) {
             Create job
           </Button>
         </ModalFooter>
-      </ModalContent>
+      </DashboardModalFrame>
     </Modal>
-  );
-}
-
-/**
- * Confirm dialog for approving or rejecting a job at `pending_approval`.
- * `reason` is optional free text recorded on the approval/rejection job-log
- * entry and audit row (see docs/certops's approvals guide).
- */
-function ApprovalDecisionModal({ isOpen, onClose, job, decision, onDecide }) {
-  const [reason, setReason] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setReason('');
-      setSubmitting(false);
-    }
-  }, [isOpen]);
-
-  const approving = decision === 'approve';
-
-  const handleClose = () => {
-    if (submitting) return;
-    onClose();
-  };
-
-  const handleConfirm = async () => {
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      await onDecide(reason.trim() || undefined);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal isOpen={isOpen} onClose={handleClose} isCentered size='md'>
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>{approving ? 'Approve job' : 'Reject job'}</ModalHeader>
-        <ModalCloseButton isDisabled={submitting} />
-        <ModalBody>
-          <VStack align='stretch' spacing={3}>
-            {job ? (
-              <Text fontSize='sm'>
-                {jobOperationLabel(job.operation)} job{' '}
-                <Text as='span' fontFamily='mono' fontSize='xs'>
-                  {truncateId(job.id)}
-                </Text>
-                {job.subjectId
-                  ? ` (${subjectTypeLabel(job.subjectType) || 'Subject'}: ${job.subjectId})`
-                  : ''}
-              </Text>
-            ) : null}
-            <Text fontSize='sm' color='gray.500'>
-              {approving
-                ? 'The job moves to "Pending" and becomes claimable by an agent.'
-                : 'The job moves directly to the terminal "Rejected" status. This cannot be undone.'}
-            </Text>
-            <Box>
-              <Text fontSize='sm' mb={1}>
-                Reason (optional)
-              </Text>
-              <Textarea
-                size='sm'
-                rows={2}
-                value={reason}
-                onChange={event => setReason(event.target.value)}
-                placeholder={
-                  approving
-                    ? 'e.g. confirmed with the domain owner'
-                    : 'e.g. wrong certificate target'
-                }
-              />
-            </Box>
-          </VStack>
-        </ModalBody>
-        <ModalFooter>
-          <Button onClick={handleClose} isDisabled={submitting} mr={3}>
-            Cancel
-          </Button>
-          <Button
-            colorScheme={approving ? 'green' : 'red'}
-            onClick={handleConfirm}
-            isLoading={submitting}
-            loadingText={approving ? 'Approving' : 'Rejecting'}
-          >
-            {approving ? 'Approve' : 'Reject'}
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
-  );
-}
-
-/**
- * Executor-reported job list with expandable evidence timelines.
- * Read-only surface backed by the workspace job/log/evidence APIs, plus a
- * manager-only manual job creation entry point (exception path) and
- * manager-only approve/reject actions on jobs at `pending_approval`.
- */
-function ExecutorJobsPanel() {
-  const { muted, border } = useDashboardTheme();
-  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const expandedBg = useColorModeValue('gray.50', 'whiteAlpha.50');
-  const canManage = useCertOpsCanManage();
-  const { workspaceId } = useWorkspace();
-  const { jobs, pagination, loading, error, refresh } = useCertOpsJobs({
-    limit: JOB_LIST_LIMIT,
-  });
-  const [expandedId, setExpandedId] = useState(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [decisionTarget, setDecisionTarget] = useState(null);
-  const jobsTruncation = truncationSummary({
-    shown: jobs?.length || 0,
-    pagination,
-    noun: 'jobs',
-  });
-
-  const handleDecision = async reason => {
-    if (!decisionTarget || !workspaceId) return;
-    const { job, decision } = decisionTarget;
-    const decide = decision === 'approve' ? approveJob : rejectJob;
-    try {
-      await decide(workspaceId, job.id, { reason });
-      showSuccess(decision === 'approve' ? 'Job approved' : 'Job rejected');
-      setDecisionTarget(null);
-      refresh();
-    } catch (err) {
-      showError(
-        decision === 'approve' ? 'Approve failed' : 'Reject failed',
-        approvalDecisionErrorMessage(err, decision)
-      );
-      if (
-        err?.response?.data?.code ===
-        'CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL'
-      ) {
-        setDecisionTarget(null);
-        refresh();
-      }
-    }
-  };
-
-  return (
-    <DashboardPanel>
-      <DashboardPanelHeader
-        title='Machine executor jobs'
-        description='Certificate jobs reported by machine tokens and the API'
-        action={
-          <HStack spacing={2}>
-            {canManage ? (
-              <DashboardActionButton
-                colorScheme='blue'
-                onClick={() => setCreateOpen(true)}
-              >
-                Create manual job
-              </DashboardActionButton>
-            ) : null}
-            <DashboardActionButton
-              variant='outline'
-              onClick={refresh}
-              isLoading={loading}
-            >
-              Refresh
-            </DashboardActionButton>
-          </HStack>
-        }
-      />
-      {loading && jobs.length === 0 ? (
-        <DashboardState type='loading' title='Loading executor jobs...' />
-      ) : error ? (
-        <Text fontSize='sm' color='red.400'>
-          {error}
-        </Text>
-      ) : jobs.length === 0 ? (
-        <DashboardState
-          title='No executor-reported certificate jobs yet'
-          description='Jobs appear here once an external executor reports lifecycle events through the CertOps executor API.'
-          py={6}
-        />
-      ) : (
-        <VStack align='stretch' spacing={1}>
-          {jobs.map(job => {
-            const isOpen = expandedId === job.id;
-            const awaitingApproval = job.status === 'pending_approval';
-            return (
-              <Box key={job.id} borderColor={border}>
-                <HStack
-                  w='full'
-                  spacing={2}
-                  px={2}
-                  py={2}
-                  borderRadius='md'
-                  cursor='pointer'
-                  _hover={{ bg: rowHoverBg }}
-                  role='button'
-                  tabIndex={0}
-                  aria-expanded={isOpen}
-                  onClick={() =>
-                    setExpandedId(current =>
-                      current === job.id ? null : job.id
-                    )
-                  }
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setExpandedId(current =>
-                        current === job.id ? null : job.id
-                      );
-                    }
-                  }}
-                >
-                  <Icon
-                    as={isOpen ? ChevronDown : ChevronRight}
-                    boxSize={3.5}
-                    color={muted}
-                    flexShrink={0}
-                  />
-                  <Text
-                    fontSize='sm'
-                    fontWeight='medium'
-                    flexShrink={0}
-                    noOfLines={1}
-                  >
-                    {jobOperationLabel(job.operation)}
-                  </Text>
-                  <Box
-                    flexShrink={0}
-                    onClick={event => event.stopPropagation()}
-                  >
-                    <CopyableId id={job.id} display={truncateId(job.id)} />
-                  </Box>
-                  <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
-                    {job.subjectId
-                      ? `${subjectTypeLabel(job.subjectType) || 'Subject'}: ${job.subjectId}`
-                      : job.source
-                        ? `Source: ${job.source}`
-                        : ''}
-                  </Text>
-                  <JobStatusBadge status={job.status} />
-                  <Text
-                    fontSize='xs'
-                    color={muted}
-                    flexShrink={0}
-                    title={formatDateTime(job.createdAt)}
-                  >
-                    {formatRelativeDateTime(job.createdAt)}
-                  </Text>
-                  {canManage && awaitingApproval ? (
-                    <HStack
-                      spacing={1}
-                      flexShrink={0}
-                      onClick={event => event.stopPropagation()}
-                    >
-                      <Button
-                        size='xs'
-                        colorScheme='green'
-                        onClick={() =>
-                          setDecisionTarget({ job, decision: 'approve' })
-                        }
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size='xs'
-                        colorScheme='red'
-                        variant='outline'
-                        onClick={() =>
-                          setDecisionTarget({ job, decision: 'reject' })
-                        }
-                      >
-                        Reject
-                      </Button>
-                    </HStack>
-                  ) : null}
-                </HStack>
-                <Collapse in={isOpen} animateOpacity>
-                  <Box
-                    mt={1}
-                    mb={2}
-                    ml={5}
-                    pl={3}
-                    py={2}
-                    borderLeftWidth='2px'
-                    borderColor={border}
-                    bg={expandedBg}
-                    borderRadius='md'
-                  >
-                    {isOpen ? <EvidenceTimeline jobId={job.id} /> : null}
-                  </Box>
-                </Collapse>
-              </Box>
-            );
-          })}
-          {jobsTruncation ? (
-            <Text fontSize='xs' color={muted} px={2} pt={1}>
-              {jobsTruncation}
-            </Text>
-          ) : null}
-        </VStack>
-      )}
-      <CreateManualJobModal
-        isOpen={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={refresh}
-      />
-      <ApprovalDecisionModal
-        isOpen={Boolean(decisionTarget)}
-        onClose={() => setDecisionTarget(null)}
-        job={decisionTarget?.job}
-        decision={decisionTarget?.decision}
-        onDecide={handleDecision}
-      />
-    </DashboardPanel>
-  );
-}
-
-/**
- * CertOps orchestration page: machine executor jobs, evidence timelines,
- * and scoped machine API-token management. Mounted via the /certops/* splat
- * route so orchestration surfaces stay out of the read-only Control Center.
- */
-export default function CertOpsOperations({
-  session,
-  onLogout,
-  onAccountClick,
-}) {
-  const { pageBg, text } = useDashboardTheme();
-  const {
-    ready,
-    enabled,
-    error: availabilityError,
-    retry: retryAvailability,
-  } = useCertOpsAvailability();
-  // Bumped when DeployAgentPanel detects a freshly registered agent, so the
-  // fleet panel refetches immediately instead of waiting on its own poll.
-  const [fleetRefreshSignal, setFleetRefreshSignal] = useState(0);
-
-  const shellProps = useDashboardShellProps({
-    session,
-    onLogout,
-    onAccountClick,
-    pageTitle: 'Certificate operations',
-  });
-
-  return (
-    <>
-      <SEO
-        title='Certificate operations'
-        description='Machine executor jobs, evidence timelines, and scoped API tokens'
-        noindex
-      />
-      <Box color={text} minH='100vh' bg={pageBg}>
-        <DashboardShell {...shellProps}>
-          <Box
-            px={{ base: 4, lg: 4, '2xl': 5 }}
-            py={{ base: 5, lg: 3 }}
-            w='100%'
-            minW={0}
-            maxW='100%'
-          >
-            {!ready ? (
-              <DashboardState
-                type='loading'
-                title='Checking certificate operations availability...'
-              />
-            ) : availabilityError ? (
-              <DashboardState
-                title='Could not load certificate operations status'
-                description='The availability check failed. This does not mean the feature is disabled. Retry in a moment.'
-                action={
-                  <DashboardActionButton
-                    variant='outline'
-                    onClick={retryAvailability}
-                  >
-                    Retry
-                  </DashboardActionButton>
-                }
-              />
-            ) : enabled ? (
-              <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={3}>
-                <DashboardPanel gridColumn={{ xl: '1 / -1' }}>
-                  <WorkspaceKillSwitchPanel />
-                </DashboardPanel>
-                <ExecutorJobsPanel />
-                <DashboardPanel>
-                  <ApiTokenPanel />
-                </DashboardPanel>
-                <DashboardPanel>
-                  <DeployAgentPanel
-                    onAgentRegistered={() =>
-                      setFleetRefreshSignal(tick => tick + 1)
-                    }
-                  />
-                </DashboardPanel>
-                <DashboardPanel>
-                  <AgentFleetPanel refreshSignal={fleetRefreshSignal} />
-                </DashboardPanel>
-              </SimpleGrid>
-            ) : (
-              <DashboardState
-                title='Certificate operations is not enabled'
-                description='Certificate operations is not enabled for this workspace yet.'
-              />
-            )}
-          </Box>
-        </DashboardShell>
-      </Box>
-    </>
   );
 }
