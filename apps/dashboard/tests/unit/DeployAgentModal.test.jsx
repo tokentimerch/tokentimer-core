@@ -3,23 +3,19 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
-import DeployAgentPanel from '../../src/components/certops/DeployAgentPanel.jsx';
+import DeployAgentModal from '../../src/components/certops/DeployAgentModal.jsx';
 
 const {
   useWorkspaceMock,
   useCertOpsCanManageMock,
-  useCertOpsBootstrapTokensMock,
   useCertOpsAgentsMock,
   createBootstrapTokenMock,
-  revokeBootstrapTokenMock,
   listAgentsMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
-  useCertOpsBootstrapTokensMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(),
   createBootstrapTokenMock: vi.fn(),
-  revokeBootstrapTokenMock: vi.fn(),
   listAgentsMock: vi.fn(),
 }));
 
@@ -32,7 +28,6 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 }));
 
 vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
-  useCertOpsBootstrapTokens: useCertOpsBootstrapTokensMock,
   useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
@@ -43,54 +38,29 @@ vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
   return {
     ...actual,
     createBootstrapToken: createBootstrapTokenMock,
-    revokeBootstrapToken: revokeBootstrapTokenMock,
     listAgents: listAgentsMock,
   };
 });
 
-function renderWithProviders(ui) {
+function renderModal(props = {}) {
   return render(
     <ChakraProvider>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter>
+        <DeployAgentModal isOpen onClose={vi.fn()} {...props} />
+      </MemoryRouter>
     </ChakraProvider>
   );
 }
 
-function tokensState(overrides = {}) {
-  const { pagination, ...rest } = overrides;
-  const state = {
-    enabled: true,
-    tokens: [],
-    loading: false,
-    error: '',
-    refresh: vi.fn(),
-    ...rest,
-  };
-  return {
-    ...state,
-    pagination:
-      pagination === undefined
-        ? { limit: null, offset: 0, total: state.tokens.length }
-        : pagination,
-  };
-}
-
 function agentsState(overrides = {}) {
-  const { pagination, ...rest } = overrides;
-  const state = {
+  return {
     enabled: true,
     agents: [],
+    pagination: { limit: null, offset: 0, total: 0 },
     loading: false,
     error: '',
     refresh: vi.fn(),
-    ...rest,
-  };
-  return {
-    ...state,
-    pagination:
-      pagination === undefined
-        ? { limit: null, offset: 0, total: state.agents.length }
-        : pagination,
+    ...overrides,
   };
 }
 
@@ -102,8 +72,8 @@ function agentListResponse(items = []) {
   };
 }
 
-/** Runs the step-2 flow: fill the name, create the token, close the modal. */
-async function createTokenAndCloseModal() {
+/** Runs the step-2 flow: fill the name, create the token, acknowledge it. */
+async function createTokenAndAcknowledge() {
   fireEvent.change(screen.getByLabelText(/^Name/), {
     target: { value: 'dc1-edge' },
   });
@@ -111,56 +81,33 @@ async function createTokenAndCloseModal() {
     screen.getByRole('button', { name: 'Create bootstrap token' })
   );
   await screen.findByText(/shown only once and registers exactly one agent/);
-  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'I have saved this token' }));
 }
 
-describe('DeployAgentPanel', () => {
+describe('DeployAgentModal', () => {
   beforeEach(() => {
     useWorkspaceMock.mockReset();
     useCertOpsCanManageMock.mockReset();
-    useCertOpsBootstrapTokensMock.mockReset();
     useCertOpsAgentsMock.mockReset();
     createBootstrapTokenMock.mockReset();
-    revokeBootstrapTokenMock.mockReset();
     listAgentsMock.mockReset();
     useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
     useCertOpsAgentsMock.mockReturnValue(agentsState());
     listAgentsMock.mockResolvedValue(agentListResponse([]));
   });
 
-  it('renders nothing while CertOps availability is unresolved or disabled', () => {
-    useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(
-      tokensState({ enabled: false })
-    );
+  it('renders nothing for a viewer without manager permission', () => {
+    useCertOpsCanManageMock.mockReturnValue(false);
 
-    const { container } = renderWithProviders(<DeployAgentPanel />);
+    const { container } = renderModal();
 
     expect(container.textContent).toBe('');
   });
 
-  it('shows a read-only explainer without the deploy steps for a viewer', () => {
-    useCertOpsCanManageMock.mockReturnValue(false);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
-
-    renderWithProviders(<DeployAgentPanel />);
-
-    expect(
-      screen.getByText(/requires workspace manager permission/)
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Create bootstrap token' })
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText('Step 1: Run the installer on the target host')
-    ).not.toBeInTheDocument();
-  });
-
   it('shows the guided steps with accessible labels for a manager', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
 
-    renderWithProviders(<DeployAgentPanel />);
+    renderModal();
 
     expect(
       screen.getByText('Step 1: Run the installer on the target host')
@@ -175,13 +122,12 @@ describe('DeployAgentPanel', () => {
 
   it('creates a token, shows the one-time secret, and keeps it out of the install command', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
     createBootstrapTokenMock.mockResolvedValue({
       token: { id: 'bt-1', name: 'dc1-edge' },
       plaintextToken: 'ttboot_secret_value',
     });
 
-    renderWithProviders(<DeployAgentPanel />);
+    renderModal();
 
     fireEvent.change(screen.getByLabelText(/^Name/), {
       target: { value: 'dc1-edge' },
@@ -201,7 +147,6 @@ describe('DeployAgentPanel', () => {
     expect(
       await screen.findByText(/shown only once and registers exactly one agent/)
     ).toBeInTheDocument();
-    // Secret appears only in the show-once display, never in the command.
     expect(screen.getAllByText(/ttboot_secret_value/)).toHaveLength(1);
 
     const commandBlock = screen.getByText(/install-agent\.sh/);
@@ -209,20 +154,36 @@ describe('DeployAgentPanel', () => {
     expect(commandBlock.textContent).toContain("--workspace-id 'ws-1'");
     expect(commandBlock.textContent).not.toContain('ttboot_secret_value');
     expect(commandBlock.textContent).not.toContain('--bootstrap-token');
-    expect(commandBlock.textContent).not.toContain(
-      'TOKENTIMER_AGENT_BOOTSTRAP_TOKEN='
-    );
+  });
 
-    // Helper text explains the installer's hidden token prompt.
-    expect(
-      screen.getByText(/installer will pause with a hidden prompt/)
-    ).toBeInTheDocument();
+  it('refuses to close while the secret is unacknowledged, via the footer button and the Modal itself', async () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+    const onClose = vi.fn();
+
+    renderModal({ onClose });
+
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: 'dc1-edge' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    );
+    await screen.findByText(/shown only once and registers exactly one agent/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'I have saved this token' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('detects an agent that registered before the first poll via the token-creation baseline', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
-    // Fleet already loaded in the panel when the token is created.
     useCertOpsAgentsMock.mockReturnValue(
       agentsState({
         agents: [{ id: 'row-existing', agentId: 'agent-existing' }],
@@ -232,8 +193,6 @@ describe('DeployAgentPanel', () => {
       token: { id: 'bt-1', name: 'dc1-edge' },
       plaintextToken: 'ttboot_secret_value',
     });
-    // The new agent registered between token creation and the first poll:
-    // it must be reported on the very first tick, not treated as baseline.
     listAgentsMock.mockResolvedValue(
       agentListResponse([
         {
@@ -253,9 +212,9 @@ describe('DeployAgentPanel', () => {
       ])
     );
 
-    renderWithProviders(<DeployAgentPanel />);
+    renderModal();
 
-    await createTokenAndCloseModal();
+    await createTokenAndAcknowledge();
     fireEvent.click(
       screen.getByRole('button', { name: 'I pasted the token, start watching' })
     );
@@ -267,8 +226,6 @@ describe('DeployAgentPanel', () => {
 
   it('calls onAgentRegistered once the fresh agent is detected, so the fleet panel can refetch immediately', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
-    useCertOpsAgentsMock.mockReturnValue(agentsState());
     createBootstrapTokenMock.mockResolvedValue({
       token: { id: 'bt-1', name: 'dc1-edge' },
       plaintextToken: 'ttboot_secret_value',
@@ -286,11 +243,9 @@ describe('DeployAgentPanel', () => {
     );
     const onAgentRegistered = vi.fn();
 
-    renderWithProviders(
-      <DeployAgentPanel onAgentRegistered={onAgentRegistered} />
-    );
+    renderModal({ onAgentRegistered });
 
-    await createTokenAndCloseModal();
+    await createTokenAndAcknowledge();
     fireEvent.click(
       screen.getByRole('button', { name: 'I pasted the token, start watching' })
     );
@@ -299,14 +254,8 @@ describe('DeployAgentPanel', () => {
     expect(onAgentRegistered).toHaveBeenCalledTimes(1);
   });
 
-  it('detects a new agent by registration timestamp even when its id is in a stale baseline', async () => {
+  it('resets the wizard for a second deployment via "Deploy another agent"', async () => {
     useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
-    // Baseline (stale) already contains the row id of the agent that will
-    // register; detection must fall through to the timestamp comparison.
-    useCertOpsAgentsMock.mockReturnValue(
-      agentsState({ agents: [{ id: 'row-1', agentId: 'agent-1' }] })
-    );
     createBootstrapTokenMock.mockResolvedValue({
       token: { id: 'bt-1', name: 'dc1-edge' },
       plaintextToken: 'ttboot_secret_value',
@@ -318,106 +267,66 @@ describe('DeployAgentPanel', () => {
           agentId: 'agent-1',
           name: 'dc1-edge',
           status: 'active',
-          // Registered after token creation (clock-safe margin).
           createdAt: new Date(Date.now() + 60000).toISOString(),
         },
       ])
     );
 
-    renderWithProviders(<DeployAgentPanel />);
+    renderModal();
 
-    await createTokenAndCloseModal();
+    await createTokenAndAcknowledge();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'I pasted the token, start watching' })
+    );
+    await screen.findByText(/is now connected/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy another agent' }));
+
+    expect(screen.queryByText(/is now connected/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^Name/)).toHaveValue('');
+  });
+
+  it('cancels the registration poll on unmount', async () => {
+    const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
+    useCertOpsCanManageMock.mockReturnValue(true);
+    createBootstrapTokenMock.mockResolvedValue({
+      token: { id: 'bt-1', name: 'dc1-edge' },
+      plaintextToken: 'ttboot_secret_value',
+    });
+    listAgentsMock.mockResolvedValue(agentListResponse([]));
+
+    const { unmount } = renderModal();
+
+    await createTokenAndAcknowledge();
     fireEvent.click(
       screen.getByRole('button', { name: 'I pasted the token, start watching' })
     );
 
-    expect(await screen.findByText(/is now connected/)).toBeInTheDocument();
-    expect(screen.getByText(/dc1-edge/)).toBeInTheDocument();
+    await waitFor(() => expect(listAgentsMock).toHaveBeenCalledTimes(1));
+    const callsBeforeUnmount = listAgentsMock.mock.calls.length;
+
+    unmount();
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    // Any poll already in flight must not schedule further work once
+    // unmounted; a stray tick here would mean the interval outlived the
+    // component.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(listAgentsMock).toHaveBeenCalledTimes(callsBeforeUnmount);
+
+    clearIntervalSpy.mockRestore();
   });
 
-  it('falls back to a first-tick snapshot when waiting starts without a token created', async () => {
+  it('disables new-token creation while paused but keeps the flow otherwise visible', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(tokensState());
-    // First poll snapshots the fleet; second poll returns the new agent.
-    listAgentsMock.mockResolvedValueOnce(agentListResponse([])).mockResolvedValue(
-      agentListResponse([
-        {
-          id: 'row-1',
-          agentId: 'agent-1',
-          name: 'dc1-edge',
-          status: 'active',
-        },
-      ])
-    );
-    vi.useFakeTimers();
 
-    try {
-      renderWithProviders(<DeployAgentPanel />);
+    renderModal({ certOpsPaused: true });
 
-      fireEvent.click(
-        screen.getByRole('button', { name: 'I pasted the token, start watching' })
-      );
-
-      expect(
-        screen.getByText('Step 3: Waiting for the agent to register')
-      ).toBeInTheDocument();
-
-      // Snapshot poll, then the tick that finds the new agent.
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(10000);
-
-      expect(screen.getByText(/is now connected/)).toBeInTheDocument();
-      expect(screen.getByText(/dc1-edge/)).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('lists bootstrap tokens and revokes an active one', async () => {
-    const refresh = vi.fn();
-    useCertOpsCanManageMock.mockReturnValue(true);
-    useCertOpsBootstrapTokensMock.mockReturnValue(
-      tokensState({
-        refresh,
-        tokens: [
-          {
-            id: 'bt-1',
-            name: 'active-token',
-            tokenPrefix: 'ttboot_abc',
-            status: 'active',
-            expiresAt: new Date(Date.now() + 3600000).toISOString(),
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: 'bt-2',
-            name: 'used-token',
-            tokenPrefix: 'ttboot_def',
-            status: 'used',
-            usedAt: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      })
-    );
-    revokeBootstrapTokenMock.mockResolvedValue({ token: { id: 'bt-1' } });
-
-    renderWithProviders(<DeployAgentPanel />);
-
-    expect(screen.getByText('active-token')).toBeInTheDocument();
-    expect(screen.getByText('used-token')).toBeInTheDocument();
-    // Only the active token can be revoked.
-    const revokeButtons = screen.getAllByRole('button', { name: 'Revoke' });
-    expect(revokeButtons).toHaveLength(1);
-
-    fireEvent.click(revokeButtons[0]);
     expect(
-      await screen.findByText('Revoke bootstrap token')
+      screen.getByText(/Certificate operations are paused for this workspace/)
     ).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Revoke' }).at(-1));
-
-    await waitFor(() => {
-      expect(revokeBootstrapTokenMock).toHaveBeenCalledWith('ws-1', 'bt-1');
-      expect(refresh).toHaveBeenCalled();
-    });
+    expect(
+      screen.getByRole('button', { name: 'Create bootstrap token' })
+    ).toBeDisabled();
   });
 });

@@ -77,14 +77,25 @@ export async function retireAgent(
  * (active/used/revoked/expired), expiresAt, usedAt, usedByAgentId,
  * revokedAt, createdAt.
  *
- * Same envelope as the agent list: `pagination.total` is the unpaginated
- * count, and `pagination.limit: null` means every token is present.
+ * Same envelope and pagination convention as listAgents: omitting `limit`
+ * asks for the whole inventory and the server answers with
+ * `pagination.limit: null`; a caller rendering a page control passes one.
  * @returns {Promise<{ items: object[], pagination: { limit: number|null, offset: number, total: number } }>}
  */
-export async function listBootstrapTokens(workspaceId, { signal } = {}) {
+export async function listBootstrapTokens(
+  workspaceId,
+  { limit, offset, signal } = {}
+) {
+  const params = {};
+  if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
+    params.limit = Number(limit);
+  }
+  if (Number.isFinite(Number(offset)) && Number(offset) > 0) {
+    params.offset = Number(offset);
+  }
   const res = await apiClient.get(
     `${workspaceBase(workspaceId)}/agent-bootstrap-tokens`,
-    { signal }
+    { params, signal }
   );
   return res.data;
 }

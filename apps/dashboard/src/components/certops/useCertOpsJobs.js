@@ -214,12 +214,16 @@ export function useCertOpsJobTimeline(jobId) {
  * The list endpoint is manager-only server-side; the fetch is skipped for
  * non-managers so viewers see an empty state instead of a 403 error banner.
  *
+ * @param {{ limit?: number, offset?: number }} [page] - Page position. Same
+ *   convention as useCertOpsAgents: omitting `limit` asks for the whole
+ *   token inventory.
  * @returns {{ enabled: boolean|null, tokens: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsApiTokens() {
+export function useCertOpsApiTokens(page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
+  const { limit, offset = 0 } = page;
   const [tokens, setTokens] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -244,7 +248,7 @@ export function useCertOpsApiTokens() {
     setLoading(true);
     setError('');
 
-    listApiTokens(workspaceId, { signal: controller.signal })
+    listApiTokens(workspaceId, { limit, offset, signal: controller.signal })
       .then(data => {
         if (!cancelled) {
           setTokens(Array.isArray(data?.items) ? data.items : []);
@@ -269,7 +273,7 @@ export function useCertOpsApiTokens() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, canManage, reloadTick]);
+  }, [workspaceId, enabled, canManage, reloadTick, limit, offset]);
 
   return { enabled, tokens, pagination, loading, error, refresh };
 }

@@ -1,31 +1,57 @@
 import { useState } from 'react';
-import { SimpleGrid } from '@chakra-ui/react';
+import { Stack } from '@chakra-ui/react';
 import { useOutletContext } from 'react-router';
 import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
-import DeployAgentPanel from '../../components/certops/DeployAgentPanel.jsx';
-import { DashboardPanel } from '../../components/DashboardPrimitives';
+import BootstrapTokenList from '../../components/certops/BootstrapTokenList.jsx';
+import DeployAgentModal from '../../components/certops/DeployAgentModal.jsx';
+import { useCertOpsCanManage } from '../../components/certops/useCertOps.js';
+import {
+  DashboardActionButton,
+  DashboardPanel,
+} from '../../components/DashboardPrimitives';
 
 /**
- * Agents tab: the fleet, plus the install flow and the bootstrap tokens that
- * feed it.
+ * Agents tab: the fleet, plus bootstrap-token inventory. The install flow
+ * itself (U4) is a modal (DeployAgentModal), launched from the fleet
+ * panel's header action, since it is a one-time task rather than page
+ * furniture; the fleet table and the token list stay inline because they
+ * are ongoing state an operator scans repeatedly.
  */
 export default function CertOpsAgents() {
   const { certOpsPaused } = useOutletContext() || {};
-  // Bumped when DeployAgentPanel detects a freshly registered agent, so the
+  const canManage = useCertOpsCanManage();
+  const [deployOpen, setDeployOpen] = useState(false);
+  // Bumped when DeployAgentModal detects a freshly registered agent, so the
   // fleet panel refetches immediately instead of waiting on its own poll.
   const [fleetRefreshSignal, setFleetRefreshSignal] = useState(0);
 
   return (
-    <SimpleGrid columns={{ base: 1 }} spacing={3}>
+    <Stack spacing={3} align='stretch'>
       <DashboardPanel>
-        <AgentFleetPanel refreshSignal={fleetRefreshSignal} />
-      </DashboardPanel>
-      <DashboardPanel>
-        <DeployAgentPanel
-          certOpsPaused={Boolean(certOpsPaused)}
-          onAgentRegistered={() => setFleetRefreshSignal(tick => tick + 1)}
+        <AgentFleetPanel
+          refreshSignal={fleetRefreshSignal}
+          headerAction={
+            canManage ? (
+              <DashboardActionButton
+                colorScheme='blue'
+                onClick={() => setDeployOpen(true)}
+              >
+                Deploy an agent
+              </DashboardActionButton>
+            ) : null
+          }
         />
       </DashboardPanel>
-    </SimpleGrid>
+      <DashboardPanel>
+        <BootstrapTokenList />
+      </DashboardPanel>
+
+      <DeployAgentModal
+        isOpen={deployOpen}
+        onClose={() => setDeployOpen(false)}
+        certOpsPaused={Boolean(certOpsPaused)}
+        onAgentRegistered={() => setFleetRefreshSignal(tick => tick + 1)}
+      />
+    </Stack>
   );
 }

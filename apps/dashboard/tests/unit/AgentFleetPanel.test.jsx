@@ -137,7 +137,7 @@ describe('AgentFleetPanel', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('shows an empty state pointing to the Deploy an agent panel', () => {
+  it('shows an empty state pointing to the Deploy an agent button', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
     useCertOpsAgentsMock.mockReturnValue(agentsState());
 
@@ -145,7 +145,20 @@ describe('AgentFleetPanel', () => {
 
     expect(screen.getByText('No agents yet.')).toBeInTheDocument();
     expect(
-      screen.getByText(/Use the Deploy an agent panel on this page/)
+      screen.getByText(/Use the Deploy an agent button on this page/)
+    ).toBeInTheDocument();
+  });
+
+  it('renders the caller-supplied header action next to the panel title', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+    useCertOpsAgentsMock.mockReturnValue(agentsState());
+
+    renderWithProviders(
+      <AgentFleetPanel headerAction={<button>Deploy an agent</button>} />
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Deploy an agent' })
     ).toBeInTheDocument();
   });
 

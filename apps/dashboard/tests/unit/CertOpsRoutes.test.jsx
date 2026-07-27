@@ -29,6 +29,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
   useCertOpsIsWorkspaceAdmin: () => true,
+  useCertOpsCanManage: () => false,
   useCertOpsWorkspaceKillSwitch: useCertOpsWorkspaceKillSwitchMock,
 }));
 
@@ -44,15 +45,27 @@ vi.mock('../../src/components/certops/ExecutorJobsPanel.jsx', () => ({
 vi.mock('../../src/components/certops/AgentFleetPanel.jsx', () => ({
   default: () => <div>Agent fleet</div>,
 }));
-vi.mock('../../src/components/certops/DeployAgentPanel.jsx', () => ({
-  default: ({ certOpsPaused }) => (
-    <div data-paused={String(Boolean(certOpsPaused))}>Deploy an agent</div>
-  ),
+vi.mock('../../src/components/certops/BootstrapTokenList.jsx', () => ({
+  default: () => <div>Bootstrap tokens</div>,
 }));
-vi.mock('../../src/components/certops/ApiTokenPanel.jsx', () => ({
-  default: ({ certOpsPaused }) => (
-    <div data-paused={String(Boolean(certOpsPaused))}>Machine API tokens</div>
-  ),
+vi.mock('../../src/components/certops/DeployAgentModal.jsx', () => ({
+  default: ({ isOpen, certOpsPaused }) =>
+    isOpen ? (
+      <div data-paused={String(Boolean(certOpsPaused))}>
+        Deploy agent modal
+      </div>
+    ) : null,
+}));
+vi.mock('../../src/components/certops/ApiTokenList.jsx', () => ({
+  default: () => <div>API token list</div>,
+}));
+vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
+  default: ({ isOpen, certOpsPaused }) =>
+    isOpen ? (
+      <div data-paused={String(Boolean(certOpsPaused))}>
+        Create token modal
+      </div>
+    ) : null,
 }));
 vi.mock('../../src/components/certops/RenewalProfilesPanel.jsx', () => ({
   default: () => <div>Renewal profiles</div>,

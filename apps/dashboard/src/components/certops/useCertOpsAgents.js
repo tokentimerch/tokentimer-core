@@ -12,8 +12,8 @@ import { useCertOpsCanManage, useCertOpsEnabled } from './useCertOps.js';
  * banner). Retire is called imperatively via certopsAgentsApi from the panel.
  *
  * @param {number} [externalRefreshSignal] - Optional value from a sibling
- *   panel (e.g. DeployAgentPanel's onAgentRegistered callback); changing it
- *   triggers an immediate refetch, without waiting for the internal poll.
+ *   component (e.g. DeployAgentModal's onAgentRegistered callback); changing
+ *   it triggers an immediate refetch, without waiting for the internal poll.
  * @param {{ limit?: number, offset?: number }} [page] - Page position. Omitting
  *   `limit` asks for the whole fleet, which is what a caller using the list as
  *   a lookup source wants; a caller rendering a page control passes one.
@@ -96,12 +96,16 @@ export function useCertOpsAgents(externalRefreshSignal, page = {}) {
  *
  * Manager-gated exactly like useCertOpsAgents.
  *
+ * @param {{ limit?: number, offset?: number }} [page] - Page position. Same
+ *   convention as useCertOpsAgents: omitting `limit` asks for the whole
+ *   token inventory.
  * @returns {{ enabled: boolean|null, tokens: object[], pagination: { limit: number|null, offset: number, total: number }|null, loading: boolean, error: string, refresh: function }}
  */
-export function useCertOpsBootstrapTokens() {
+export function useCertOpsBootstrapTokens(page = {}) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
   const canManage = useCertOpsCanManage();
+  const { limit, offset = 0 } = page;
   const [tokens, setTokens] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -126,7 +130,7 @@ export function useCertOpsBootstrapTokens() {
     setLoading(true);
     setError('');
 
-    listBootstrapTokens(workspaceId, { signal: controller.signal })
+    listBootstrapTokens(workspaceId, { limit, offset, signal: controller.signal })
       .then(data => {
         if (!cancelled) {
           setTokens(Array.isArray(data?.items) ? data.items : []);
@@ -151,7 +155,7 @@ export function useCertOpsBootstrapTokens() {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, enabled, canManage, reloadTick]);
+  }, [workspaceId, enabled, canManage, reloadTick, limit, offset]);
 
   return { enabled, tokens, pagination, loading, error, refresh };
 }

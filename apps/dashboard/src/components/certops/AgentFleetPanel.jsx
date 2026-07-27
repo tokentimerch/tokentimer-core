@@ -288,13 +288,16 @@ function RetireAgentModal({ isOpen, onClose, agent, onRetire }) {
  * Agent fleet table: name/id, status, version, protocol version, clock
  * drift, NTP sync state, pinned job-signing key, last heartbeat, and a
  * manager-only Retire action. Empty state points to the Deploy an agent
- * panel on the same page.
+ * button on the same tab.
  *
- * @param {number} [refreshSignal] - Optional value from DeployAgentPanel;
+ * @param {number} [refreshSignal] - Optional value from DeployAgentModal;
  *   changing it (e.g. right after a new agent registers) triggers an
  *   immediate refetch instead of waiting on this panel's own poll.
+ * @param {import('react').ReactNode} [headerAction] - Rendered next to the
+ *   panel title (the tab's "Deploy an agent" button), so the fleet keeps
+ *   its own title/description without the caller duplicating them.
  */
-export default function AgentFleetPanel({ refreshSignal } = {}) {
+export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -331,28 +334,32 @@ export default function AgentFleetPanel({ refreshSignal } = {}) {
 
   return (
     <Stack spacing={4} align='stretch'>
-      <Box>
-        <Text fontSize='md' fontWeight='bold' color={titleColor} mb={1}>
-          Agent fleet
-        </Text>
-        <Alert
-          status='info'
-          variant='subtle'
-          borderRadius='md'
-          bg={infoBg}
-          border='1px solid'
-          borderColor={infoBorder}
-          py={2}
-          px={3}
-        >
-          <AlertIcon boxSize={4} />
-          <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
-            Agents connect outbound-only and lease jobs from this workspace. An
-            agent is marked offline when it stops sending heartbeats; retire it
-            to invalidate its credential permanently.
-          </AlertDescription>
-        </Alert>
-      </Box>
+      <HStack justify='space-between' align='start' spacing={4} flexWrap='wrap'>
+        <Box minW={0}>
+          <Text fontSize='md' fontWeight='bold' color={titleColor} mb={1}>
+            Agent fleet
+          </Text>
+          <Alert
+            status='info'
+            variant='subtle'
+            borderRadius='md'
+            bg={infoBg}
+            border='1px solid'
+            borderColor={infoBorder}
+            py={2}
+            px={3}
+          >
+            <AlertIcon boxSize={4} />
+            <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
+              Agents connect outbound-only and lease jobs from this
+              workspace. An agent is marked offline when it stops sending
+              heartbeats; retire it to invalidate its credential
+              permanently.
+            </AlertDescription>
+          </Alert>
+        </Box>
+        {headerAction ? <Box flexShrink={0}>{headerAction}</Box> : null}
+      </HStack>
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 
@@ -381,7 +388,7 @@ export default function AgentFleetPanel({ refreshSignal } = {}) {
               </Text>
               <Text fontSize='sm' color={muted} mt={1}>
                 {canManage
-                  ? 'Use the Deploy an agent panel on this page to install your first agent.'
+                  ? 'Use the Deploy an agent button on this page to install your first agent.'
                   : 'A workspace manager can deploy agents from this page.'}
               </Text>
             </>
