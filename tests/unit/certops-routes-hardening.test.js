@@ -593,6 +593,7 @@ describe("CertOps route hardening", () => {
       "certOpsCertificateNoRenewalProfileParam",
       "certOpsCertificateRenewalDisabledParam",
       "certOpsCertificateKeyNotAgentDeployableParam",
+      "certOpsCertificateExcludeRetiredParam",
     ]) {
       assert.ok(
         block.includes(`$ref: "#/components/parameters/${parameterName}"`),
@@ -619,6 +620,7 @@ describe("CertOps route hardening", () => {
       "noRenewalProfile: req.query.noRenewalProfile",
       "renewalDisabled: req.query.renewalDisabled",
       "keyNotAgentDeployable: req.query.keyNotAgentDeployable",
+      "excludeRetired: req.query.excludeRetired",
     ]) {
       assert.ok(
         routeBlockSource.includes(queryField),

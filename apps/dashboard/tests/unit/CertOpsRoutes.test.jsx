@@ -28,6 +28,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
+  useCertOpsEnabled: () => true,
   useCertOpsIsWorkspaceAdmin: () => true,
   useCertOpsCanManage: () => false,
   useCertOpsWorkspaceKillSwitch: useCertOpsWorkspaceKillSwitchMock,
@@ -35,6 +36,9 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 
 // The panels have their own unit tests. Here they are stand-ins so a tab can
 // be identified by what it mounts, which is the whole point of the split.
+vi.mock('../../src/pages/certops/CertOpsCertificates.jsx', () => ({
+  default: () => <div>Certificates tab</div>,
+}));
 vi.mock('../../src/components/certops/ExecutorJobsPanel.jsx', () => ({
   default: ({ certOpsPaused }) => (
     <div data-paused={String(Boolean(certOpsPaused))}>
@@ -108,7 +112,7 @@ function killSwitchState(overrides = {}) {
 
 const TAB_PANELS = {
   '/certops/jobs': 'Machine executor jobs',
-  '/certops/certificates': 'The certificate list is not here yet',
+  '/certops/certificates': 'Certificates tab',
   '/certops/renewals': 'Renewal profiles',
   '/certops/agents': 'Agent fleet',
   '/certops/settings': 'Machine API tokens',

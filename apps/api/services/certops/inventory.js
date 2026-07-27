@@ -389,6 +389,20 @@ function managedCertificateFilterSql(filters = {}) {
     );
   }
 
+  // Retired (revoked/decommissioned) certificates are excluded only when a
+  // caller opts in: the inventory index that backs the token-detail panel
+  // wants every row (a retired certificate's page must still resolve), so the
+  // default with no filter at all stays "everything". The Certificates tab
+  // is the one caller that passes this explicitly, defaulted to true, since
+  // an operator's daily view should not be dominated by dead certificates.
+  const excludeRetired = normalizeCertificateFlagFilter(
+    filters.excludeRetired,
+    "excludeRetired",
+  );
+  if (excludeRetired === true) {
+    conditions.push(`mc.status NOT IN (${RETIRE_STATUS_SQL_LIST})`);
+  }
+
   return { where: conditions.join("\n        AND "), params };
 }
 

@@ -2381,6 +2381,7 @@ router.get(
         noRenewalProfile: req.query.noRenewalProfile,
         renewalDisabled: req.query.renewalDisabled,
         keyNotAgentDeployable: req.query.keyNotAgentDeployable,
+        excludeRetired: req.query.excludeRetired,
       });
       return res.json({
         ...result,

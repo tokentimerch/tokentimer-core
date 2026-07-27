@@ -76,6 +76,9 @@ function matches(where, params, row, profileStatusById) {
       if (clause.startsWith("mc.key_mode IN (")) {
         return ["agent-local", "proxy-agent-local"].includes(row.key_mode);
       }
+      if (clause.startsWith("mc.status NOT IN (")) {
+        return !["revoked", "decommissioned"].includes(row.status);
+      }
       throw new Error(`Unhandled predicate in fake: ${clause}`);
     });
 }
@@ -256,6 +259,29 @@ describe("CertOps managed certificate list filters", () => {
       "external",
       "unknown",
     ]);
+  });
+
+  it("excludes retired certificates only when asked, so index-building callers still see them", async () => {
+    const rows = [
+      certificateRow({ id: "live", status: "active" }),
+      certificateRow({ id: "gone-1", status: "revoked" }),
+      certificateRow({ id: "gone-2", status: "decommissioned" }),
+    ];
+    const client = createMemoryClient(rows);
+
+    const filtered = await listManagedCertificates({
+      client,
+      workspaceId: WORKSPACE_A,
+      excludeRetired: "true",
+    });
+    assert.deepEqual(filtered.items.map((item) => item.id), ["live"]);
+    assert.equal(filtered.pagination.total, 1);
+
+    const unfiltered = await listManagedCertificates({
+      client,
+      workspaceId: WORKSPACE_A,
+    });
+    assert.equal(unfiltered.pagination.total, 3);
   });
 
   it("keeps the three renewal facts independent rather than one combined switch", () => {

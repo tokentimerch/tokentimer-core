@@ -39,6 +39,19 @@ export const CERTOPS_JOB_FILTERS = {
 };
 
 /**
+ * Filters the certificate list accepts. `showRetired` is a display toggle
+ * rather than a server field name: 'true' means the retired
+ * (revoked/decommissioned) rows are included, and the default ('', hidden)
+ * is what the server sees translated into `excludeRetired=true`, not a
+ * literal query param of its own.
+ */
+export const CERTOPS_CERTIFICATE_FILTERS = {
+  status: { label: 'Status', default: '' },
+  source: { label: 'Source', default: '' },
+  showRetired: { label: 'Show retired/decommissioned', default: '' },
+};
+
+/**
  * Prefixed param name for a scoped list, e.g. ('profile', 'offset') is
  * `profileOffset`. An unscoped list keeps the bare name.
  */

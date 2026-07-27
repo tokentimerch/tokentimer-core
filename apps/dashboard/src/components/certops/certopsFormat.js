@@ -75,9 +75,34 @@ const STATUS_LABELS = {
   decommissioned: 'Decommissioned',
 };
 
+/** Mirrors MANAGED_CERTIFICATE_STATUSES in apps/api/services/certops/inventory.js. */
+export const MANAGED_CERTIFICATE_STATUSES = Object.keys(STATUS_LABELS);
+
 export function statusLabel(status) {
   const key = String(status || '').toLowerCase();
   return STATUS_LABELS[key] || (status ? String(status) : 'Unknown');
+}
+
+// Mirrors MANAGED_CERTIFICATE_SOURCES in
+// apps/api/services/certops/inventory.js.
+const SOURCE_LABELS = {
+  manual: 'Manual',
+  api: 'API',
+  import: 'Imported',
+  domain_checker: 'Domain checker',
+  endpoint_monitor: 'Endpoint monitor',
+  integration: 'Integration',
+  auto_sync: 'Auto sync',
+  cert_manager: 'cert-manager',
+  agent_filesystem: 'Agent (filesystem)',
+  agent_issuance: 'Agent (issuance)',
+};
+
+export const MANAGED_CERTIFICATE_SOURCES = Object.keys(SOURCE_LABELS);
+
+export function sourceLabel(source) {
+  const key = String(source || '').toLowerCase();
+  return SOURCE_LABELS[key] || (source ? String(source) : 'Unknown');
 }
 
 /**
@@ -186,6 +211,71 @@ export function renewalDescriptor(renewal) {
     scheme: 'yellow',
     help: RENEWAL_STATE_FALLBACK_HELP,
     isWarning: true,
+  };
+}
+
+/**
+ * `renewalSetup` states, mirroring `RENEWAL_SETUP_STATES` in
+ * apps/api/services/certops/renewalAdoption.js: the lifecycle of an
+ * adopt-via-issuance intent ("Set up automatic renewal"), distinct from
+ * `renewal.state` above, which describes the certificate's steady-state
+ * renewal coverage once (or if) that intent resolves.
+ */
+export const RENEWAL_SETUP_STATES = {
+  none: 'none',
+  waiting: 'waiting',
+  configured: 'configured',
+  skipped: 'skipped',
+  failed: 'failed',
+};
+
+/**
+ * Presentation descriptor for `certificate.renewalSetup`. Returns `null` for
+ * `none`/missing, the ordinary case for a certificate nobody has tried to
+ * adopt yet, so callers can render nothing rather than an empty badge.
+ */
+export function renewalSetupDescriptor(renewalSetup) {
+  const state = renewalSetup?.state;
+  if (!state || state === RENEWAL_SETUP_STATES.none) return null;
+
+  if (state === RENEWAL_SETUP_STATES.waiting) {
+    return {
+      state,
+      label: 'Setting up automatic renewal',
+      scheme: 'blue',
+      message:
+        'TokenTimer is waiting on the renewal job this setup started to finish.',
+      canRetry: false,
+    };
+  }
+  if (state === RENEWAL_SETUP_STATES.configured) {
+    return {
+      state,
+      label: 'Automatic renewal configured',
+      scheme: 'green',
+      message: 'A renewal profile was created from this setup.',
+      canRetry: false,
+    };
+  }
+  if (state === RENEWAL_SETUP_STATES.skipped) {
+    return {
+      state,
+      label: 'Setup skipped',
+      scheme: 'gray',
+      message:
+        renewalSetup?.message ||
+        'Automatic renewal was not configured from this setup attempt.',
+      canRetry: false,
+    };
+  }
+  return {
+    state,
+    label: 'Setup failed',
+    scheme: 'red',
+    message:
+      renewalSetup?.message ||
+      'Automatic renewal could not be configured from this setup attempt.',
+    canRetry: Boolean(renewalSetup?.intentId),
   };
 }
 

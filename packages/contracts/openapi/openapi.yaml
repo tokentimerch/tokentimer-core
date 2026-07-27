@@ -3073,6 +3073,7 @@ paths:
         - $ref: "#/components/parameters/certOpsCertificateNoRenewalProfileParam"
         - $ref: "#/components/parameters/certOpsCertificateRenewalDisabledParam"
         - $ref: "#/components/parameters/certOpsCertificateKeyNotAgentDeployableParam"
+        - $ref: "#/components/parameters/certOpsCertificateExcludeRetiredParam"
       responses:
         "200":
           description: Managed certificate inventory
@@ -6339,6 +6340,17 @@ components:
         true selects certificates whose key custody is not agent-deployable,
         unknown custody included: no agent holds the private key, so renewal is
         impossible regardless of any profile.
+      schema:
+        type: boolean
+    certOpsCertificateExcludeRetiredParam:
+      in: query
+      name: excludeRetired
+      description: >-
+        true excludes certificates in a retired lifecycle status (revoked or
+        decommissioned) from the page and its total. Omitted or false returns
+        every status, which is what index-building callers (e.g. the token
+        detail panel) need since a retired certificate's page must still
+        resolve.
       schema:
         type: boolean
     auditSinceParam:
