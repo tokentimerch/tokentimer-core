@@ -4010,7 +4010,7 @@ describe("CertOps executor event ingestion", function () {
           workspaceA,
           `agent-${crypto.randomUUID()}`,
           `ttxa_${crypto.randomUUID().slice(0, 8)}`,
-          crypto.randomUUID(),
+          crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex"),
         ],
       );
       await TestUtils.execQuery(
