@@ -242,14 +242,21 @@ const SUPPORTED_ACME_KINDS = ["certbot", "acme.sh"];
 const EXECUTABLE_JOB_ACTIONS = Object.freeze(["noop", "renew", "deploy", "reload"]);
 
 /**
- * Named behaviours this agent build supports, declared at registration (and
- * refreshed at heartbeat) so the control plane's claim query can gate work
- * that would otherwise be dispatched and then stall. This build's "verify"
- * step already reports validation.passed evidence carrying fingerprintSha256
- * and validTo for every ACME run (see runRenewal's verify tail below), which
- * is exactly what issuance reconciliation requires to promote a provisioning
- * certificate, so it is safe to declare unconditionally here rather than
- * gating it on execution.enabled: an observe-only agent never claims work
+ * Named behaviours this agent build supports, declared **at registration only**,
+ * so the control plane's claim query can gate work that would otherwise be
+ * dispatched and then stall. Registration is the only declaration point that
+ * exists: `heartbeatBody` is `additionalProperties: false` and defines no
+ * `declaredCapabilities`, so a heartbeat carrying capabilities is schema-invalid
+ * and the control plane's heartbeat-side write is unreachable (ADR-0002
+ * addendum). The operator consequence is that upgrading this binary in place
+ * does not grant it a capability it did not register with, and the only remedy
+ * today is re-enrollment, which costs the agent's identity and key pin.
+ *
+ * This build's "verify" step already reports validation.passed evidence carrying
+ * fingerprintSha256 and validTo for every ACME run (see runRenewal's verify tail
+ * below), which is exactly what issuance reconciliation requires to promote a
+ * provisioning certificate, so it is safe to declare unconditionally here rather
+ * than gating it on execution.enabled: an observe-only agent never claims work
  * regardless (resolveClaimSupportedActions returns []), so the declaration
  * is inert until execution is actually turned on.
  */

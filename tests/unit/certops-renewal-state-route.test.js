@@ -267,6 +267,38 @@ describe("CertOps certificate renewal-state derivation", () => {
 
     assert.equal(renewal.state, "not-applicable");
   });
+
+  it("uses the shared custody predicate rather than its own key-mode list", () => {
+    // This route used to keep a hand-copied AGENT_DEPLOYABLE_KEY_MODES set with
+    // a "mirrors jobs.js" comment. A comment is not a constraint: the copy is
+    // what lets the badge promise "auto" for a certificate the scheduler and
+    // job creation both refuse. Assert agreement across every schema-permitted
+    // custody mode so a future mode added in one place fails here.
+    const { isAgentDeployableKeyMode } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    for (const keyMode of [
+      null,
+      "agent-local",
+      "proxy-agent-local",
+      "external-unknown",
+      "cert-manager-managed",
+      "appliance-managed",
+      "hsm-managed",
+      "vault-managed",
+      "os-store-managed",
+    ]) {
+      const renewal = deriveCertificateRenewalState(
+        certificateRow({ key_mode: keyMode }),
+        { env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" } },
+      );
+      assert.equal(
+        renewal.state !== "not-eligible",
+        isAgentDeployableKeyMode(keyMode),
+        `renewal state for key_mode ${String(keyMode)} disagrees with job creation`,
+      );
+    }
+  });
 });
 
 describe("CertOps certificate renewal-state projection", () => {

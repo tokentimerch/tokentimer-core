@@ -145,12 +145,21 @@ control plane; the profile records parameters, never keys.
 
 [ADR-0009](0009-certops-durable-side-effects-and-alert-policy.md) reserved a
 `profile_derivation_requested` outbox event type on the assumption that
-derivation would run asynchronously. It does not. Derivation is a pure mapping
-over data already loaded in the reconciliation transaction plus two local
-writes, so it has no external dependency to fail on and no reason to be deferred;
-doing it inline means a promoted certificate is never briefly renewable-in-theory
-but unlinked in practice. The event type remains defined and unused, as recorded
-in ADR-0009.
+derivation would run asynchronously. It does not, **on the issuance path**.
+Derivation there is a pure mapping over data already loaded in the reconciliation
+transaction plus two local writes, so it has no external dependency to fail on and
+no reason to be deferred; doing it inline means a promoted certificate is never
+briefly renewable-in-theory but unlinked in practice.
+
+**Amended 2026-07-27: the event type is no longer unused.** The adoption flow
+(`POST .../certificates/:id/renewal-setup`, for a certificate TokenTimer did not
+issue) arms a `profile_derivation_requested` intent and the CertOps worker drains
+it, because there adoption *must* wait for a real preflight job to produce the
+evidence the profile is derived from, which is genuinely asynchronous. So the two
+paths differ by necessity rather than by inconsistency: derived-at-reconciliation
+when the evidence already exists, derived-via-outbox when it has to be produced
+first. The consequences differ too, and the asynchronous path is the better
+behaved one - see the derivation-failure note below.
 
 ## Alternatives considered
 
@@ -203,8 +212,15 @@ in ADR-0009.
   condition for operators, and it is the series to watch after this change.
 - Derivation failures are visible only by the absence of a linked profile. The
   intended log line (`certops-renewal-profile-derivation-failed`) is unreachable
-  because the production caller passes no logger, so today there is no log, no
-  audit event and no per-certificate reason at all. See decision 7's known gap.
+  **on the issuance path** because that caller passes no logger, so there is no
+  log, no audit event and no per-certificate reason at all. See decision 7's known
+  gap. *(Amended 2026-07-27: this is now true of the issuance path only. The
+  adoption path passes the worker logger and converts a decline into a durable,
+  retryable outbox failure carrying the reason, so the asymmetry is between the
+  two callers rather than inherent to derivation. Note also that
+  `CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED` does not cover a derivation decline:
+  it fires only for missing or incomplete verify evidence and returns before
+  derivation is attempted.)*
 - `certificate_profiles` gains rows at issuance rate, **one per distinct common
   name per workspace, not one per certificate**. The upsert's conflict target is
   `(workspace_id, LOWER(name))` with `name = 'Derived: <commonName>'`, so two
@@ -219,6 +235,27 @@ in ADR-0009.
   `COALESCE`-preserved, so an edited lead time holds. `source_ref`
   (`certops-issuance:<certificateId>`) is in neither the conflict target nor the
   update, so a shared row keeps the first certificate's provenance pointer.
+
+  *(Amended 2026-07-27, two corrections. First, "replaced wholesale" is
+  **conditional**: the `DO UPDATE` carries
+  `WHERE public_metadata->>'operatorOwned' <> 'true'`, and the first successful
+  `PATCH` sets that marker, so an edited profile is never clobbered. Second, and
+  less obvious, the guard does not merely protect the edit - when it matches,
+  `RETURNING` yields no row and derivation declines with `profile_operator_owned`,
+  so the **second same-CN certificate is left with no profile at all** rather than
+  sharing an unwanted one. There are therefore two outcomes for a same-CN
+  collision, and which one occurs depends on whether the existing profile was ever
+  edited: a pristine profile means shared row plus clobbered metadata, an owned
+  profile means the new certificate silently does not auto-renew. The second is
+  the more surprising and is the one to watch.*
+
+  *A further consequence follows from this that Amendment 1's per-certificate
+  framing does not admit: because same-CN certificates share one row, the
+  auto-renew off switch and the lead time are **per profile, not per
+  certificate**. Switching auto-renew off for one certificate switches it off for
+  every certificate sharing that common name in the workspace. The dashboard
+  patches the profile and shows a `certificateCount`, so the sharing is visible
+  there, but a certificate's own renewal badge does not convey it.)*
   Treat the uniqueness key as the open question here; guarding the write would
   paper over it. They count against nothing today. If profile quotas are
   introduced later, derived profiles must be considered.

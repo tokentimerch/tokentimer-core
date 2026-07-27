@@ -77,6 +77,7 @@ const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   findActiveJobForSubject,
   getCertificateJobById,
+  isAgentDeployableKeyMode,
   listCertificateJobLog,
   listCertificateJobs,
   validateJobPayloadForOperation,
@@ -2117,15 +2118,6 @@ const CERTOPS_RENEWAL_STATE_NOT_CONFIGURED = "not-configured";
 const CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE = "not-eligible";
 const CERTOPS_RENEWAL_STATE_NOT_APPLICABLE = "not-applicable";
 
-// Mirrors AGENT_DEPLOYABLE_KEY_MODES in services/certops/jobs.js. Any other
-// custody mode (observed-only endpoint/domain monitor rows included) means no
-// agent can ever write a renewed keypair back, so renewal is impossible by
-// design rather than misconfigured.
-const AGENT_DEPLOYABLE_KEY_MODES = new Set([
-  "agent-local",
-  "proxy-agent-local",
-]);
-
 // Lifecycle states where renewal is moot rather than missing: the scheduler
 // refuses NON_RENEWABLE_CERTIFICATE_STATUSES outright, and a provisioning
 // certificate has no issued lifetime to renew yet.
@@ -2187,7 +2179,7 @@ function deriveCertificateRenewalState(row, { env = process.env } = {}) {
     };
   }
 
-  if (!AGENT_DEPLOYABLE_KEY_MODES.has(keyMode)) {
+  if (!isAgentDeployableKeyMode(keyMode)) {
     return {
       ...base,
       state: CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE,
