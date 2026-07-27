@@ -536,11 +536,26 @@ describe('CertOpsCertificates renewal setup and detach', () => {
       name: /Set up automatic renewal/,
     });
 
-    // The certificate's own discovered path is shown in the header (and
-    // again inside the mismatch warning below).
+    // The certificate's own discovered path is shown in the header.
     expect(
       within(dialog).getAllByText('/etc/ssl/certs/example.test.pem').length
     ).toBeGreaterThan(0);
+
+    // The switch defaults to off (matching-only), and the only profile
+    // available does not match this certificate's path, so it starts
+    // hidden behind the empty-state prompt rather than being offered.
+    expect(
+      screen.getByText(/No profile matches this certificate's own path/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Derived: other.test (cert-other)')
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Show all profiles, including ones that do not match this certificate',
+      })
+    );
 
     // The mismatched preset's own path renders in its card, and confirming
     // is still possible (the warning is advisory, not a hard block), but the
@@ -548,6 +563,71 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     await screen.findAllByText('/etc/ssl/certs/other.test.pem');
     expect(
       screen.getByText(/It looks like it belongs to a different/)
+    ).toBeInTheDocument();
+  });
+
+  it('filters the preset picker to path-matching profiles by default, with a switch to reveal the rest', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+            deployedCertPath: '/etc/ssl/certs/example.test.pem',
+          }),
+        ],
+      })
+    );
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'profile-match',
+          name: 'Derived: example.test (cert-1)',
+          renewalProfile: {
+            acme: { commandRef: 'certbot-csr' },
+            ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
+            dns: { provider: 'cloudflare', zone: 'example.com' },
+            deploymentTargets: [
+              { certPath: '/etc/ssl/certs/example.test.pem' },
+            ],
+          },
+        },
+        {
+          id: 'profile-other',
+          name: 'Derived: other.test (cert-other)',
+          renewalProfile: {
+            acme: { commandRef: 'certbot-csr' },
+            ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
+            dns: { provider: 'cloudflare', zone: 'example.com' },
+            deploymentTargets: [
+              { certPath: '/etc/ssl/certs/other.test.pem' },
+            ],
+          },
+        },
+      ],
+      total: 2,
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up renewal' }));
+    await screen.findByRole('dialog', { name: /Set up automatic renewal/ });
+    await screen.findAllByText('Derived: example.test (cert-1)');
+
+    // Only the path-matching profile is offered by default; the mismatched
+    // one is hidden rather than risking a wrong pick.
+    expect(
+      screen.queryByText('Derived: other.test (cert-other)')
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing 1 matching profile/)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Show all profiles, including ones that do not match this certificate',
+      })
+    );
+
+    expect(
+      await screen.findByText('Derived: other.test (cert-other)')
     ).toBeInTheDocument();
   });
 

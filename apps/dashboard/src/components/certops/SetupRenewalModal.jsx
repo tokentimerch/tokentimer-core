@@ -3,7 +3,6 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
-  Badge,
   Box,
   Button,
   Flex,
@@ -72,6 +71,23 @@ function presetCertPath(profile) {
 }
 
 /**
+ * Whether a preset can be shown to be bound to this exact certificate's
+ * deployment, i.e. the "matching profiles" filter's positive case.
+ *
+ * `certPath` is the one fact both sides carry today, so it is the only
+ * signal checked; a preset (or the certificate itself) with no recorded
+ * path cannot be proven to mismatch, so it counts as matching rather than
+ * being hidden by the default filter - only a demonstrable path conflict
+ * does that.
+ */
+function presetMatchesCertificate(profile, certificatePath) {
+  if (!certificatePath) return true;
+  const presetPath = presetCertPath(profile);
+  if (!presetPath) return true;
+  return presetPath === certificatePath;
+}
+
+/**
  * "Set up automatic renewal" (adopt-via-issuance, U7).
  *
  * This is not a settings save: confirming renews the certificate right now,
@@ -109,11 +125,18 @@ export default function SetupRenewalModal({
   const cardBorder = useColorModeValue('gray.200', 'gray.600');
   const cardSelectedBorder = useColorModeValue('blue.400', 'blue.300');
   const cardSelectedBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const matchedBorder = useColorModeValue('green.400', 'green.300');
+  const matchedBg = useColorModeValue('green.50', 'whiteAlpha.100');
+  const matchedText = useColorModeValue('green.600', 'green.300');
+  const mismatchedBorder = useColorModeValue('orange.400', 'orange.300');
+  const mismatchedBg = useColorModeValue('orange.50', 'whiteAlpha.100');
+  const mismatchedText = useColorModeValue('orange.600', 'orange.300');
 
   const [presets, setPresets] = useState([]);
   const [loadingPresets, setLoadingPresets] = useState(false);
   const [manualEntry, setManualEntry] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [showAllProfiles, setShowAllProfiles] = useState(false);
 
   const [commandRef, setCommandRef] = useState('');
   const [caEndpoint, setCaEndpoint] = useState('');
@@ -133,10 +156,12 @@ export default function SetupRenewalModal({
     setManualEntry(false);
     setSelectedPresetId('');
     setPresets([]);
+    setShowAllProfiles(false);
 
     if (!workspaceId) return;
     let cancelled = false;
     setLoadingPresets(true);
+    const certificatePath = certificate?.deployedCertPath || null;
     listRenewalProfiles(workspaceId, { limit: 50 })
       .then(data => {
         if (cancelled) return;
@@ -144,8 +169,18 @@ export default function SetupRenewalModal({
           isUsablePreset
         );
         setPresets(usable);
-        if (usable.length > 0) setSelectedPresetId(usable[0].id);
-        else setManualEntry(true);
+        // The switch always defaults to off (matching-only); it is never
+        // auto-flipped to "show all", even when nothing matches. A certificate
+        // with no matching profile shows the empty-state prompt instead, and
+        // the operator opts into seeing the rest themselves.
+        const matching = usable.filter(preset =>
+          presetMatchesCertificate(preset, certificatePath)
+        );
+        if (matching.length > 0) {
+          setSelectedPresetId(matching[0].id);
+        } else if (usable.length === 0) {
+          setManualEntry(true);
+        }
       })
       .catch(() => {
         // Presets are a convenience, not a requirement: if the list can't be
@@ -160,7 +195,7 @@ export default function SetupRenewalModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, workspaceId]);
+  }, [isOpen, workspaceId, certificate?.deployedCertPath]);
 
   const handleClose = () => {
     if (submitting) return;
@@ -175,8 +210,27 @@ export default function SetupRenewalModal({
     certificate?.id;
   const certificatePath = certificate?.deployedCertPath || null;
 
-  const selectedPreset = presets.find(p => p.id === selectedPresetId) || null;
+  const matchingPresets = presets.filter(preset =>
+    presetMatchesCertificate(preset, certificatePath)
+  );
+  const nonMatchingCount = presets.length - matchingPresets.length;
+  const visiblePresets = showAllProfiles ? presets : matchingPresets;
+
   const usingPreset = !manualEntry && presets.length > 0;
+
+  // If the filter toggle hides the currently selected preset (or reveals a
+  // list the previous selection was never part of), fall back to the first
+  // preset still visible rather than leaving a selection the radio group no
+  // longer renders.
+  useEffect(() => {
+    if (!usingPreset) return;
+    if (visiblePresets.some(preset => preset.id === selectedPresetId)) return;
+    setSelectedPresetId(visiblePresets[0]?.id || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usingPreset, showAllProfiles, presets, selectedPresetId]);
+
+  const selectedPreset =
+    visiblePresets.find(p => p.id === selectedPresetId) || null;
   const selectedPresetPath = selectedPreset ? presetCertPath(selectedPreset) : null;
   const pathMismatch = Boolean(
     usingPreset &&
@@ -232,6 +286,10 @@ export default function SetupRenewalModal({
     setManualEntry(prev => !prev);
   }, []);
 
+  const toggleShowAllProfiles = useCallback(() => {
+    setShowAllProfiles(prev => !prev);
+  }, []);
+
   return (
     <Modal
       isOpen={isOpen}
@@ -244,23 +302,22 @@ export default function SetupRenewalModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Set up automatic renewal</DashboardModalTitle>
           <DashboardModalDescription>
-            This renews{' '}
+            Sets up automatic renewal for{' '}
             <Text as='span' fontWeight='semibold'>
               {certName}
-            </Text>{' '}
-            right now, onto the deployment path TokenTimer already
-            discovered{certificatePath ? (
+            </Text>
+            , deploying to{certificatePath ? (
               <>
                 {' '}
-                (
                 <Text as='span' fontFamily='mono'>
                   {certificatePath}
                 </Text>
-                )
               </>
-            ) : null}
-            . Only once that succeeds does a renewal profile get created, so
-            future renewals happen automatically.
+            ) : (
+              ' the path TokenTimer already discovered'
+            )}
+            . TokenTimer renews it once now to create the profile, then
+            renews it automatically from there.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
@@ -306,83 +363,133 @@ export default function SetupRenewalModal({
                       check each one's path below against this certificate's
                       own path above before picking it.
                     </Text>
-                    <RadioGroup
-                      value={selectedPresetId}
-                      onChange={setSelectedPresetId}
-                    >
-                      <Stack spacing={2}>
-                        {presets.map(preset => {
-                          const renewal = preset.renewalProfile || {};
-                          const certPath = presetCertPath(preset);
-                          const selected = preset.id === selectedPresetId;
-                          const mismatched = Boolean(
-                            certificatePath && certPath && certPath !== certificatePath
-                          );
-                          return (
-                            <Box
-                              key={preset.id}
-                              as='label'
-                              p={3}
-                              borderWidth='1px'
-                              borderRadius='md'
-                              cursor='pointer'
-                              borderColor={
-                                selected
-                                  ? mismatched
-                                    ? 'orange.400'
-                                    : cardSelectedBorder
-                                  : cardBorder
-                              }
-                              bg={selected ? cardSelectedBg : 'transparent'}
-                            >
-                              <Radio value={preset.id} size='sm'>
-                                <Text fontSize='sm' fontWeight='medium'>
-                                  {preset.name}
-                                </Text>
-                              </Radio>
-                              <Stack
-                                pl={6}
-                                mt={1}
-                                spacing={0}
-                                fontSize='xs'
-                                color={muted}
+                    {presets.length > 0 ? (
+                      <Flex justify='space-between' align='center'>
+                        <Text fontSize='xs' color={muted}>
+                          {showAllProfiles
+                            ? `Showing all ${presets.length} profile${presets.length === 1 ? '' : 's'}`
+                            : `Showing ${matchingPresets.length} matching profile${matchingPresets.length === 1 ? '' : 's'}${nonMatchingCount > 0 ? ` (${nonMatchingCount} hidden)` : ''}`}
+                        </Text>
+                        <HStack spacing={2}>
+                          <Text fontSize='xs' color={muted}>
+                            Show all profiles
+                          </Text>
+                          <Switch
+                            size='sm'
+                            isChecked={showAllProfiles}
+                            onChange={toggleShowAllProfiles}
+                            aria-label='Show all profiles, including ones that do not match this certificate'
+                          />
+                        </HStack>
+                      </Flex>
+                    ) : null}
+                    {visiblePresets.length === 0 ? (
+                      <Alert status='info' variant='subtle' borderRadius='md'>
+                        <AlertIcon boxSize={4} />
+                        <AlertDescription fontSize='sm'>
+                          No profile matches this certificate's own path.
+                          Turn on "Show all profiles" above to pick from the
+                          {` ${presets.length} `}
+                          other profile{presets.length === 1 ? '' : 's'} in
+                          this workspace, or enter details manually.
+                        </AlertDescription>
+                      </Alert>
+                    ) : (
+                      <RadioGroup
+                        value={selectedPresetId}
+                        onChange={setSelectedPresetId}
+                      >
+                        <Stack spacing={2}>
+                          {visiblePresets.map(preset => {
+                            const renewal = preset.renewalProfile || {};
+                            const certPath = presetCertPath(preset);
+                            const selected = preset.id === selectedPresetId;
+                            const matched = Boolean(
+                              certificatePath && certPath && certPath === certificatePath
+                            );
+                            const mismatched = Boolean(
+                              certificatePath && certPath && certPath !== certificatePath
+                            );
+                            return (
+                              <Box
+                                key={preset.id}
+                                as='label'
+                                p={3}
+                                borderWidth='1px'
+                                borderRadius='md'
+                                cursor='pointer'
+                                borderColor={
+                                  selected
+                                    ? mismatched
+                                      ? mismatchedBorder
+                                      : matched
+                                        ? matchedBorder
+                                        : cardSelectedBorder
+                                    : cardBorder
+                                }
+                                bg={
+                                  selected
+                                    ? mismatched
+                                      ? mismatchedBg
+                                      : matched
+                                        ? matchedBg
+                                        : cardSelectedBg
+                                    : 'transparent'
+                                }
                               >
-                                <Text>
-                                  Command:{' '}
-                                  <Text as='span' fontFamily='mono'>
-                                    {renewal.acme?.commandRef}
+                                <Radio value={preset.id} size='sm'>
+                                  <Text fontSize='sm' fontWeight='medium'>
+                                    {preset.name}
                                   </Text>
-                                </Text>
-                                <Text noOfLines={1}>
-                                  CA: {renewal.ca?.endpoint}
-                                </Text>
-                                <Text>
-                                  DNS: {renewal.dns?.provider} &middot;{' '}
-                                  {renewal.dns?.zone}
-                                </Text>
-                                <Text noOfLines={1}>
-                                  Path:{' '}
-                                  <Text
-                                    as='span'
-                                    fontFamily='mono'
-                                    color={
-                                      !certPath
-                                        ? 'orange.500'
-                                        : mismatched
+                                </Radio>
+                                <Stack
+                                  pl={6}
+                                  mt={1}
+                                  spacing={0}
+                                  fontSize='xs'
+                                  color={muted}
+                                >
+                                  <Text>
+                                    Command:{' '}
+                                    <Text as='span' fontFamily='mono'>
+                                      {renewal.acme?.commandRef}
+                                    </Text>
+                                  </Text>
+                                  <Text noOfLines={1}>
+                                    CA: {renewal.ca?.endpoint}
+                                  </Text>
+                                  <Text>
+                                    DNS: {renewal.dns?.provider} &middot;{' '}
+                                    {renewal.dns?.zone}
+                                  </Text>
+                                  <Text noOfLines={1}>
+                                    Path:{' '}
+                                    <Text
+                                      as='span'
+                                      fontFamily='mono'
+                                      color={
+                                        !certPath
                                           ? 'orange.500'
-                                          : undefined
-                                    }
-                                    fontWeight={mismatched ? 'semibold' : undefined}
-                                  >
-                                    {certPath || 'Not recorded on this profile'}
+                                          : mismatched
+                                            ? mismatchedText
+                                            : matched
+                                              ? matchedText
+                                              : undefined
+                                      }
+                                      fontWeight={
+                                        mismatched || matched ? 'semibold' : undefined
+                                      }
+                                    >
+                                      {certPath || 'Not recorded on this profile'}
+                                    </Text>
                                   </Text>
-                                </Text>
-                              </Stack>
-                            </Box>
-                          );
-                        })}
-                      </Stack>
-                    </RadioGroup>
+                                </Stack>
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                      </RadioGroup>
+                    )}
                     {pathMismatch ? (
                       <Alert status='warning' variant='subtle' borderRadius='md'>
                         <AlertIcon boxSize={4} />
