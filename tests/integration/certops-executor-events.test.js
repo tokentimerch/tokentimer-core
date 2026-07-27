@@ -4009,7 +4009,7 @@ describe("CertOps executor event ingestion", function () {
         [
           workspaceA,
           `agent-${crypto.randomUUID()}`,
-          `ttxa_${crypto.randomUUID().slice(0, 8)}`,
+          `ttagent_${crypto.randomBytes(8).toString("hex")}`,
           crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex"),
         ],
       );
