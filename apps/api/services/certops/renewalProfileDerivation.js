@@ -41,9 +41,15 @@ const { writeAudit } = require("../audit");
 
 // A derived profile is named after the certificate it was derived from, so an
 // operator browsing profiles can tell at a glance which are machine-derived and
-// which were authored. The suffix is also what makes the per-workspace unique
-// index on LOWER(name) collide predictably on a second derivation for the same
-// certificate, which is what we want: one profile per issued certificate.
+// which were authored. The name embeds certificateId (not just the common
+// name) so the per-workspace unique index on LOWER(name) collides predictably
+// on a second derivation for the *same* certificate, and never for a different
+// certificate that happens to share a common name: one profile per issued
+// certificate, not one profile per common name. Two certificates with the same
+// CN (load-balanced pairs, blue/green, edge plus origin) are a routine
+// operational shape, and sharing a profile between them would make the
+// auto-renew switch and lead time apply to both from a single certificate's
+// control, which is not the mental model the rest of the product uses.
 const DERIVED_PROFILE_PREFIX = "Derived";
 const DERIVED_PROFILE_SOURCE = "api";
 
@@ -297,21 +303,23 @@ async function ensureDerivedRenewalProfile({
     };
   }
 
-  const name = profile.profileName;
-  // ON CONFLICT on the per-workspace unique index over LOWER(name). The name is
-  // derived from the common name, not the certificate, so this reuses a row for
-  // any certificate sharing the CN in this workspace rather than failing the
-  // whole reconciliation on a duplicate name. Two same-CN certificates therefore
-  // share one profile: status stays untouched and renew_before_days is
-  // COALESCE-preserved so operator edits to those survive, but public_metadata
-  // is replaced. See ADR-0010's consequences.
+  const name = `${profile.profileName} (${certificateId})`;
+  // ON CONFLICT on the per-workspace unique index over LOWER(name). The name
+  // embeds certificateId, so this reuses a row only on a second derivation for
+  // the *same* certificate (e.g. a promotion race, or a re-issuance that
+  // revisits the same managed_certificates row); two certificates that merely
+  // share a common name get distinct names and therefore distinct profiles.
+  // status stays untouched and renew_before_days is COALESCE-preserved so
+  // operator edits to those survive a same-certificate re-derivation, but
+  // public_metadata is replaced. See ADR-0010 Amendment 2.
   //
-  // The DO UPDATE refuses an operator-owned profile. Without that guard a second
-  // issuance for the same common name replaced public_metadata wholesale, so
-  // every field an operator had edited reverted silently and nothing recorded
-  // that it had. Losing the derivation is the better of the two failures: the
-  // stored profile still describes a run that worked, and the refusal is
-  // reported rather than swallowed.
+  // The DO UPDATE refuses an operator-owned profile. Without that guard a
+  // second derivation for the same certificate (e.g. a replayed
+  // reconciliation) would replace public_metadata wholesale, so an operator
+  // edit could revert silently and nothing would record that it had. Losing
+  // the derivation is the better of the two failures: the stored profile
+  // still describes a run that worked, and the refusal is reported rather
+  // than swallowed.
   const upserted = await client.query(
     `INSERT INTO certificate_profiles (
        workspace_id, name, description, status, source, source_ref,

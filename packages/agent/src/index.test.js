@@ -1149,6 +1149,39 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(fs.existsSync(executionContext.execution.keysDir), false);
   });
 
+  it("binds every reportEvidence call to the job's claimId (evidence-claim-binding-v1)", async () => {
+    // The agent declares the evidence-claim-binding-v1 capability at
+    // registration (see AGENT_DECLARED_CAPABILITIES), which is only honest if
+    // evidence produced during execution actually carries claimId. A noop job
+    // is the simplest deterministic path that unconditionally reports evidence.
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const policyEngine = engineWith({}, { declaredTargetSelectors: [] });
+    const job = makeSignedJob({
+      action: "noop",
+      mode: "real",
+      claimId: "claim-evidence-binding-1",
+      jobId: "job-evidence-binding-1",
+    });
+
+    const outcome = await executeJob({
+      job,
+      jobId: job.jobId,
+      claimId: job.claimId,
+      policyEngine,
+      client,
+      executionContext,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(client.calls.reportEvidence.length, 1);
+    assert.equal(
+      client.calls.reportEvidence[0].claimId,
+      "claim-evidence-binding-1",
+    );
+  });
+
   it("rejects a real renew job with a policy-disallowed dnsProvider before any mutation", async () => {
     const client = createRecordingClient();
     const executionContext = makeExecutionContext({ dryRun: false });

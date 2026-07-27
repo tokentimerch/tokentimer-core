@@ -246,6 +246,7 @@ function toInventoryRecord(row) {
     notAfter: dateToIso(row.not_after),
     keyMode: row.key_mode,
     keyReference: row.key_reference,
+    reconciliationReason: row.reconciliation_reason ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
   };
@@ -752,6 +753,11 @@ async function upsertManagedCertificateByMonitorSource(
   }
 
   const keyReference = normalizeKeyReference(options.keyReference);
+  const deployedCertPath =
+    typeof options.deployedCertPath === "string" && options.deployedCertPath.trim() !== ""
+      ? options.deployedCertPath.trim()
+      : null;
+  const deployedAgentId = options.deployedAgentId || null;
   const params = [
     options.workspaceId,
     options.tokenId || null,
@@ -776,6 +782,8 @@ async function upsertManagedCertificateByMonitorSource(
     keyReference,
     JSON.stringify(publicMetadataFor(certificate, options, chainIndex)),
     options.createdBy || null,
+    deployedCertPath,
+    deployedAgentId,
   ];
 
   const result = await client.query(
@@ -802,11 +810,14 @@ async function upsertManagedCertificateByMonitorSource(
        key_mode,
        key_reference,
        public_metadata,
-       created_by
+       created_by,
+       deployed_cert_path,
+       deployed_agent_id
      )
      VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8::text[], $9, $10, $11, $12,
-       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23
+       $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23,
+       $24, $25::uuid
      )
      ON CONFLICT (workspace_id, source, source_ref)
        WHERE source_ref IS NOT NULL
@@ -839,6 +850,12 @@ async function upsertManagedCertificateByMonitorSource(
        key_reference = COALESCE(EXCLUDED.key_reference, managed_certificates.key_reference),
        public_metadata = EXCLUDED.public_metadata,
        created_by = COALESCE(managed_certificates.created_by, EXCLUDED.created_by),
+       -- A rediscovery at a different path on the same source_ref identity is
+       -- a real redeploy; a call that carries no path (endpoint/domain
+       -- monitors, which never populate this) must not null out what an
+       -- agent-filesystem scan previously recorded.
+       deployed_cert_path = COALESCE(EXCLUDED.deployed_cert_path, managed_certificates.deployed_cert_path),
+       deployed_agent_id = COALESCE(EXCLUDED.deployed_agent_id, managed_certificates.deployed_agent_id),
        updated_at = NOW()
      RETURNING *`,
     params,

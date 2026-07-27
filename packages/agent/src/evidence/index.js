@@ -62,6 +62,11 @@ const METADATA_NAME_PATTERN =
 // Mirrored from the schema's evidenceItems[].fingerprintSha256 pattern.
 const FINGERPRINT_SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
+// Mirrored from evidenceBody.properties.claimId/attemptId in
+// packages/contracts/certops/agent-protocol.schema.json.
+const CLAIM_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+const CLAIM_ID_MAX_LENGTH = 128;
+
 const SUMMARY_MAX_LENGTH = 1024;
 const METADATA_VALUE_MAX_LENGTH = 512;
 const METADATA_MAX_ITEMS = 32;
@@ -268,16 +273,55 @@ function buildEvidenceItem({ eventType, observedAt, fingerprintSha256, summary, 
 }
 
 /**
- * Builds an `evidenceBody` (`{ jobId, evidenceItems }`) matching
- * packages/contracts/certops/agent-protocol.schema.json's evidenceBody
- * definition exactly. Enforces the schema's `minItems: 1, maxItems: 16`.
+ * Validates a claimId/attemptId value against the schema's shared pattern
+ * (evidenceBody.properties.claimId / .attemptId). Both fields use the same
+ * shape because attemptId is a compatibility alias for claimId.
+ *
+ * @param {*} value
+ * @param {string} fieldName "claimId" or "attemptId"
+ * @returns {void}
+ */
+function assertValidClaimIdLike(value, fieldName) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > CLAIM_ID_MAX_LENGTH ||
+    !CLAIM_ID_PATTERN.test(value)
+  ) {
+    throw buildError(
+      `tokentimer-agent evidence: ${fieldName} must be a non-empty string of at most ${CLAIM_ID_MAX_LENGTH} chars matching ${CLAIM_ID_PATTERN}, got: ${JSON.stringify(value)}`,
+    );
+  }
+}
+
+/**
+ * Builds an `evidenceBody` (`{ jobId, evidenceItems, claimId?, attemptId? }`)
+ * matching packages/contracts/certops/agent-protocol.schema.json's
+ * evidenceBody definition exactly. Enforces the schema's
+ * `minItems: 1, maxItems: 16`.
+ *
+ * claimId (or its attemptId alias) binds this evidence to the specific
+ * claim/attempt that produced it (evidence-claim-binding-v1 capability),
+ * which the control plane requires to trust evidence for reconciliation of
+ * an `issue` job or a still-`provisioning` certificate: it proves WHICH
+ * attempt an observation came from, not merely which agent. Evidence built
+ * without a claimId is still schema-valid (jobless discovery evidence has
+ * no claim at all) but will not be trusted for that reconciliation path.
  *
  * @param {object} input
  * @param {string|null} [input.jobId]
  * @param {Array<object>} input.evidenceItems raw or pre-built evidence items
- * @returns {{jobId: string|null, evidenceItems: Array<object>}}
+ * @param {string|null} [input.claimId]
+ * @param {string|null} [input.attemptId] compatibility alias for claimId;
+ *   when both are present they must be equal (schema contract)
+ * @returns {{jobId: string|null, evidenceItems: Array<object>, claimId?: string, attemptId?: string}}
  */
-function buildEvidenceBody({ jobId = null, evidenceItems } = {}) {
+function buildEvidenceBody({
+  jobId = null,
+  evidenceItems,
+  claimId = null,
+  attemptId = null,
+} = {}) {
   if (!Array.isArray(evidenceItems) || evidenceItems.length < EVIDENCE_ITEMS_MIN) {
     throw buildError(
       `tokentimer-agent evidence: evidenceItems must be an array with at least ${EVIDENCE_ITEMS_MIN} item`,
@@ -286,6 +330,13 @@ function buildEvidenceBody({ jobId = null, evidenceItems } = {}) {
   if (evidenceItems.length > EVIDENCE_ITEMS_MAX) {
     throw buildError(
       `tokentimer-agent evidence: evidenceItems has ${evidenceItems.length} items, max is ${EVIDENCE_ITEMS_MAX}`,
+    );
+  }
+  if (claimId !== null) assertValidClaimIdLike(claimId, "claimId");
+  if (attemptId !== null) assertValidClaimIdLike(attemptId, "attemptId");
+  if (claimId !== null && attemptId !== null && claimId !== attemptId) {
+    throw buildError(
+      "tokentimer-agent evidence: claimId and attemptId must be equal when both are present",
     );
   }
 
@@ -298,7 +349,10 @@ function buildEvidenceBody({ jobId = null, evidenceItems } = {}) {
     return buildEvidenceItem(item);
   });
 
-  return { jobId, evidenceItems: builtItems };
+  const body = { jobId, evidenceItems: builtItems };
+  if (claimId !== null) body.claimId = claimId;
+  if (attemptId !== null) body.attemptId = attemptId;
+  return body;
 }
 
 /**
@@ -313,9 +367,17 @@ function buildEvidenceBody({ jobId = null, evidenceItems } = {}) {
  * @param {string} input.rejectionReason
  * @param {string} input.detail
  * @param {string|null} [input.jobId]
- * @returns {{jobId: string|null, evidenceItems: Array<object>}}
+ * @param {string|null} [input.claimId] threaded through when the rejected
+ *   job carried a claimId, so a rejection of a claim-bound attempt is
+ *   itself claim-bound evidence (evidence-claim-binding-v1)
+ * @returns {{jobId: string|null, evidenceItems: Array<object>, claimId?: string}}
  */
-function buildPolicyRejectionEvidence({ rejectionReason, detail, jobId = null } = {}) {
+function buildPolicyRejectionEvidence({
+  rejectionReason,
+  detail,
+  jobId = null,
+  claimId = null,
+} = {}) {
   if (typeof rejectionReason !== "string" || rejectionReason.length === 0) {
     throw buildError(
       "tokentimer-agent evidence: buildPolicyRejectionEvidence requires a non-empty rejectionReason string",
@@ -329,7 +391,7 @@ function buildPolicyRejectionEvidence({ rejectionReason, detail, jobId = null } 
     metadata: [{ name: "rejectionReason", value: rejectionReason }],
   });
 
-  return buildEvidenceBody({ jobId, evidenceItems: [item] });
+  return buildEvidenceBody({ jobId, evidenceItems: [item], claimId });
 }
 
 /**

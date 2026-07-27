@@ -351,10 +351,9 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
           >
             <AlertIcon boxSize={4} />
             <AlertDescription fontSize='sm' color={infoText} lineHeight='short'>
-              Agents connect outbound-only and lease jobs from this
-              workspace. An agent is marked offline when it stops sending
-              heartbeats; retire it to invalidate its credential
-              permanently.
+              Agents connect outbound-only and lease jobs from this workspace.
+              An agent is marked offline when it stops sending heartbeats;
+              retire it to invalidate its credential permanently.
             </AlertDescription>
           </Alert>
         </Box>

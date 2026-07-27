@@ -757,7 +757,15 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     return json ?? {};
   }
 
-  async function reportEvidence({ jobId = null, evidenceItems } = {}) {
+  /**
+   * claimId (or its attemptId alias) binds this evidence to the claim/attempt
+   * that produced it, per evidenceBody in the agent-protocol schema. Both are
+   * forwarded only when non-null so jobless/unclaimed evidence (e.g.
+   * discovery observations) stays schema-minimal. This is the wire half of
+   * the evidence-claim-binding-v1 capability declared at registration; see
+   * buildEvidenceBody (packages/agent/src/evidence) for the body-builder half.
+   */
+  async function reportEvidence({ jobId = null, evidenceItems, claimId = null, attemptId = null } = {}) {
     const itemsWithIds = Array.isArray(evidenceItems)
       ? evidenceItems.map((item) =>
           item && typeof item.evidenceId === "string" && item.evidenceId.length > 0
@@ -765,9 +773,15 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
             : { ...item, evidenceId: computeEvidenceId(jobId, item) },
         )
       : evidenceItems;
+    const body = {
+      jobId,
+      evidenceItems: itemsWithIds,
+      ...(claimId !== null ? { claimId } : {}),
+      ...(attemptId !== null ? { attemptId } : {}),
+    };
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
-      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence, body: { jobId, evidenceItems: itemsWithIds } })),
+      send(ROUTES.RESULTS, token, buildEnvelope({ agentId, protocolVersion, messageType: MESSAGE_TYPES.EVIDENCE, sequence, body })),
     );
     if (!ok) throw new AgentProtocolError(`reportEvidence failed with HTTP ${status}`, AGENT_PROTOCOL_ERROR_CODES.HTTP_ERROR, { status });
     return json ?? {};

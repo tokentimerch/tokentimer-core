@@ -447,6 +447,21 @@ export default function CertOpsCertificates() {
                         >
                           {statusLabel(certificate.status)}
                         </Badge>
+                        {certificate.reconciliationReason ? (
+                          <Tooltip
+                            label={`Facts on this certificate may be stale: ${certificate.reconciliationReason}`}
+                          >
+                            <Badge
+                              ml={2}
+                              colorScheme='orange'
+                              variant='outline'
+                              textTransform='none'
+                              fontSize='xs'
+                            >
+                              Unreconciled
+                            </Badge>
+                          </Tooltip>
+                        ) : null}
                       </Td>
                       <Td>
                         <Box>

@@ -280,5 +280,18 @@ describe("persistAgentDiscoveryEvidenceBatch", () => {
       4242,
       "the minted token id should be passed as the managed_certificate's token_id",
     );
+    // Renewal adoption (renewalAdoption.js) refuses a certificate with no
+    // deployed_cert_path. Filesystem discovery is the one source that
+    // observes this path directly, so it must populate both columns.
+    assert.equal(
+      certInsert.params[23],
+      "/etc/ssl/certs/app.pem",
+      "deployed_cert_path must be populated from the discovered file path",
+    );
+    assert.equal(
+      certInsert.params[24],
+      AGENT.id,
+      "deployed_agent_id must be populated from the discovering agent",
+    );
   });
 });

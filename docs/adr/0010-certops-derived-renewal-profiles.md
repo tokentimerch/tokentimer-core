@@ -263,6 +263,11 @@ behaved one - see the derivation-failure note below.
   they re-pin core. No migration is required by this ADR: `certificate_profiles`,
   `renew_before_days`, and `profile_id` all predate it.
 
+  *(Superseded 2026-07-27 by Amendment 2: the derived profile name now embeds
+  `certificateId`, so this section's premise — that same-CN certificates share
+  a row — no longer holds. It is kept above for history; see Amendment 2 for
+  the current behaviour.)*
+
 ## Amendment 1 (2026-07-26): the control surface for a derived profile
 
 Derivation made automatic renewal live for everything TokenTimer issues. It also
@@ -395,3 +400,74 @@ saying nothing.
 Any future addition to this view inherits the constraint: a filter that can hide
 a certificate is a filter that can manufacture a false all-clear, so the default
 is to include and label rather than exclude.
+
+## Amendment 2 (2026-07-27): profile identity is per certificate, not per common name
+
+### Context
+
+The original decision named a derived profile `Derived: <common name>` and
+upserted `ON CONFLICT (workspace_id, LOWER(name))`. Two certificates issued for
+the same common name in one workspace therefore collided on that name and
+shared a single `certificate_profiles` row. The Consequences section (above,
+now superseded) described the result: a pristine shared profile had its
+`public_metadata` silently overwritten by whichever certificate derived
+second, and an operator-owned shared profile left the second certificate with
+no profile — and no auto-renewal — at all.
+
+Same-CN, different-certificate is not an edge case. Load-balanced pairs,
+blue/green deployments, and an edge certificate paired with an origin
+certificate are all ordinary shapes that produce two independent
+`managed_certificates` rows with the same common name. Amendment 1 already
+established that the profile *is* the per-certificate renewal control
+(`status` is read as "is automatic renewal on for this certificate"). Sharing
+that control's identity across unrelated certificates contradicted the mental
+model the rest of the product uses, silently: switching auto-renew off for one
+certificate could switch it off for a different certificate that happened to
+share a CN.
+
+### Decision
+
+The derived profile's `name` embeds the certificate's own id:
+`<commonName-derived profileName> (<certificateId>)`, not just the common
+name. The per-workspace unique index is unchanged
+(`(workspace_id, LOWER(name))`); embedding `certificateId` in the name is
+what changes which rows can collide on it.
+
+Consequently:
+
+- **A conflict now fires only for a second derivation of the *same*
+  certificate** (a replayed reconciliation, or a re-issuance that revisits the
+  same `managed_certificates` row), never for a different certificate that
+  merely shares a common name. Two same-CN certificates now always get two
+  distinct profile rows, each independently switchable and independently
+  timed.
+- The operator-owned guard (`WHERE public_metadata->>'operatorOwned' <> 'true'`)
+  and the `renew_before_days` `COALESCE`-preserve behaviour are unchanged; they
+  now apply exclusively to a genuine same-certificate re-derivation, which is
+  the case they were written for.
+- `source_ref` (`certops-issuance:<certificateId>`) already carried the correct
+  per-certificate identity; the name now agrees with it instead of aliasing
+  across certificates that share only a CN.
+- The `Derived: <common name>` display convention is preserved for readability
+  in the profile list; only the underlying uniqueness key changed. Operators
+  distinguish same-CN profiles by the certificate they are linked to, visible
+  via `source_ref` and the certificate's own renewal badge.
+
+### Consequences
+
+- Same-CN certificates issued **before** this amendment, whose profiles were
+  already merged under the old naming, are not split retroactively: this
+  amendment changes the name a *new* derivation writes, not existing rows. An
+  operator who suspects a pre-existing shared profile should check
+  `certificate_profiles.public_metadata.derivedFrom.certificateId` against the
+  certificate they expect it to belong to, and, if it belongs to a different
+  certificate, re-issue the affected certificate to derive an independent
+  profile.
+- `certificate_profiles` now grows one row per issued certificate rather than
+  one row per distinct common name, which is the intended and expected rate:
+  one profile per unit of renewal control, matching one profile per unit of
+  standing renewal authority.
+- The `sharing is visible ... via certificateCount` remedy described in the
+  superseded Consequences text is no longer applicable: sharing no longer
+  happens on the write path this ADR governs, so a per-profile
+  `certificateCount` is not needed as a warning signal here.

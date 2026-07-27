@@ -33,6 +33,8 @@ const CERTOPS_JOB_METADATA_INVALID = "CERTOPS_JOB_METADATA_INVALID";
 const CERTOPS_JOB_WORKSPACE_REQUIRED = "CERTOPS_JOB_WORKSPACE_REQUIRED";
 const CERTOPS_JOB_EXECUTION_FIELD_INVALID =
   "CERTOPS_JOB_EXECUTION_FIELD_INVALID";
+const CERTOPS_JOB_EXECUTION_FIELD_REQUIRED =
+  "CERTOPS_JOB_EXECUTION_FIELD_REQUIRED";
 const CERTOPS_JOB_MODE_INVALID = "CERTOPS_JOB_MODE_INVALID";
 const CERTOPS_JOB_MODE_TERMINAL_INVALID =
   "CERTOPS_JOB_MODE_TERMINAL_INVALID";
@@ -635,6 +637,21 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   noop: new Set(),
 });
 
+// Fields an operation cannot function without. Only `issue` is covered today:
+// it is the one operation with no renewalProfile to fall back on (only
+// renew jobs get one, via validateRenewalProfileOnPayload / dispatch-time
+// merge), and DNS-01 is the only challenge mechanism this agent supports
+// (docs/certops/CONTEXT.md), so every field the agent needs to actually run
+// the ACME order must be present on the payload at creation time. Without
+// this, validateExecutionFields only validated fields that were present,
+// so an issue request missing commandRef/caEndpoint/dnsZone/dnsProvider was
+// accepted, a provisioning certificate row and job were created, and the
+// gap surfaced only later on the execution plane -- potentially after a
+// real, rate-limited ACME order had already been placed.
+const REQUIRED_EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
+  issue: new Set(["commandRef", "caEndpoint", "certPath", "dnsZone", "dnsProvider"]),
+});
+
 function validateExecutionFields(payload, operation) {
   const allowedForOperation =
     EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
@@ -650,6 +667,23 @@ function validateExecutionFields(payload, operation) {
       );
     }
     EXECUTION_FIELD_VALIDATORS[fieldName](value);
+  }
+
+  const requiredForOperation =
+    REQUIRED_EXECUTION_FIELDS_BY_OPERATION[operation];
+  if (!requiredForOperation) return;
+  for (const fieldName of requiredForOperation) {
+    const present =
+      Object.prototype.hasOwnProperty.call(payload, fieldName) &&
+      payload[fieldName] !== null &&
+      payload[fieldName] !== undefined;
+    if (!present) {
+      throw serviceError(
+        `CertOps job payload field ${fieldName} is required for the ` +
+          `${operation} operation`,
+        CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
+      );
+    }
   }
 }
 
@@ -1908,6 +1942,7 @@ module.exports = {
   CERTOPS_JOB_STATUS_TRANSITION_INVALID,
   CERTOPS_JOB_WORKSPACE_REQUIRED,
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
   CERTOPS_JOB_MODE_INVALID,
   CERTOPS_JOB_MODE_TERMINAL_INVALID,
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,

@@ -121,7 +121,9 @@ export default function ApiTokenModal({
   const [monitorExpiry, setMonitorExpiry] = useState(true);
   const [createdTokenInfo, setCreatedTokenInfo] = useState(null);
 
-  const requiresClusterId = scopes.some(scope => CONTROLLER_SCOPE_SET.has(scope));
+  const requiresClusterId = scopes.some(scope =>
+    CONTROLLER_SCOPE_SET.has(scope)
+  );
 
   // Deselecting the last controller scope clears the field rather than
   // leaving a stale value the next submit would silently resurrect.
@@ -152,7 +154,8 @@ export default function ApiTokenModal({
   const expiresAtIso = toIsoExpiry(expiresLocal);
   const expiryInPast =
     Boolean(expiresAtIso) && new Date(expiresAtIso).getTime() <= Date.now();
-  const clusterIdInvalid = requiresClusterId && !isValidControllerClusterId(clusterId);
+  const clusterIdInvalid =
+    requiresClusterId && !isValidControllerClusterId(clusterId);
 
   const canSubmit =
     Boolean(name.trim()) &&
@@ -163,7 +166,8 @@ export default function ApiTokenModal({
     !certOpsPaused &&
     Boolean(workspaceId);
 
-  const hasUnacknowledgedSecret = Boolean(plaintextToken) && !secretAcknowledged;
+  const hasUnacknowledgedSecret =
+    Boolean(plaintextToken) && !secretAcknowledged;
 
   const handleCreate = async () => {
     if (!canSubmit) return;
@@ -266,8 +270,8 @@ export default function ApiTokenModal({
                   size='sm'
                 />
                 <FormHelperText>
-                  Up to {CERTOPS_TOKEN_NAME_MAX_LENGTH} characters. Do not
-                  paste key material into the name.
+                  Up to {CERTOPS_TOKEN_NAME_MAX_LENGTH} characters. Do not paste
+                  key material into the name.
                 </FormHelperText>
               </FormControl>
 
@@ -297,7 +301,10 @@ export default function ApiTokenModal({
               </FormControl>
 
               {requiresClusterId ? (
-                <FormControl isRequired isInvalid={clusterIdInvalid && Boolean(clusterId)}>
+                <FormControl
+                  isRequired
+                  isInvalid={clusterIdInvalid && Boolean(clusterId)}
+                >
                   <FormLabel fontSize='sm'>Cluster ID</FormLabel>
                   <Input
                     value={clusterId}
@@ -308,10 +315,10 @@ export default function ApiTokenModal({
                     fontFamily='mono'
                   />
                   <FormHelperText>
-                    Binds this token to one cert-manager controller cluster;
-                    the server rejects requests naming a different cluster.
-                    Lowercase letters, digits, and hyphens; cannot start or
-                    end with a hyphen.
+                    Binds this token to one cert-manager controller cluster; the
+                    server rejects requests naming a different cluster.
+                    Lowercase letters, digits, and hyphens; cannot start or end
+                    with a hyphen.
                   </FormHelperText>
                 </FormControl>
               ) : null}
@@ -345,11 +352,10 @@ export default function ApiTokenModal({
               <Alert status='warning' borderRadius='md' variant='left-accent'>
                 <AlertIcon />
                 <AlertDescription fontSize='sm'>
-                  This token is shown only once. Store it in your secret
-                  manager now. Anyone with this token can act on this
-                  workspace within its scopes. TokenTimer never stores or
-                  accepts private keys; do not paste key material into token
-                  names.
+                  This token is shown only once. Store it in your secret manager
+                  now. Anyone with this token can act on this workspace within
+                  its scopes. TokenTimer never stores or accepts private keys;
+                  do not paste key material into token names.
                 </AlertDescription>
               </Alert>
               <CopyableCodeBlock
@@ -372,8 +378,8 @@ export default function ApiTokenModal({
               ) : null}
               {createdTokenInfo?.expiresAt && monitorExpiry ? (
                 <Text fontSize='xs' color={muted}>
-                  The TokenTimer entry is removed automatically if this
-                  machine token is revoked.
+                  The TokenTimer entry is removed automatically if this machine
+                  token is revoked.
                 </Text>
               ) : null}
               {!secretAcknowledged ? (

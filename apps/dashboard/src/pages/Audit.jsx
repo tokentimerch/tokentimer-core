@@ -119,6 +119,7 @@ const ALL_ACTION_TYPES = [
   'CERTOPS_CERTIFICATE_IMPORTED',
   'CERTOPS_CERTIFICATE_ISSUED',
   'CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED',
+  'CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED',
   'CERTOPS_CERTIFICATE_RETIRED',
   'CERTOPS_KEY_MATERIAL_REJECTED',
   'CERTOPS_EVIDENCE_REJECTED',
@@ -755,7 +756,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.commonName) parts.push(`Certificate: ${md.commonName}`);
       if (md.managedCertificateId) parts.push(`ID: ${md.managedCertificateId}`);
       // The reason is the actionable part: it names the proof that was missing.
-      if (md.reconciliationReason) parts.push(`Reason: ${md.reconciliationReason}`);
+      if (md.reconciliationReason)
+        parts.push(`Reason: ${md.reconciliationReason}`);
       if (md.operation) parts.push(`Operation: ${md.operation}`);
       if (md.agentId) parts.push(`Agent: ${md.agentId}`);
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
@@ -776,7 +778,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       // among identifiers.
       if (md.needsOperatorReconciliation)
         parts.push('Needs operator reconciliation');
-      if (md.reconciliationReason) parts.push(`Reason: ${md.reconciliationReason}`);
+      if (md.reconciliationReason)
+        parts.push(`Reason: ${md.reconciliationReason}`);
       if (md.errorCode) parts.push(`Error code: ${md.errorCode}`);
       if (md.errorMessage) {
         // Agent error text is multi-line command output. Rows are single-line
@@ -788,7 +791,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
           .replace(/\|/g, '/')
           .trim();
         parts.push(
-          `Error: ${collapsed.length > 300 ? `${collapsed.slice(0, 300)}...` : collapsed}`,
+          `Error: ${collapsed.length > 300 ? `${collapsed.slice(0, 300)}...` : collapsed}`
         );
       }
       if (md.agentId) parts.push(`Agent: ${md.agentId}`);
@@ -838,17 +841,28 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       if (md.agentVersion) parts.push(`Version: ${md.agentVersion}`);
       // The scope the agent asked for. Sent only at registration, so this event
       // is the only record of it.
-      if (Array.isArray(md.declaredTargetSelectors) && md.declaredTargetSelectors.length > 0)
+      if (
+        Array.isArray(md.declaredTargetSelectors) &&
+        md.declaredTargetSelectors.length > 0
+      )
         parts.push(`Targets: ${formatArrayValue(md.declaredTargetSelectors)}`);
       if (
         Array.isArray(md.declaredCommandProfileNames) &&
         md.declaredCommandProfileNames.length > 0
       )
-        parts.push(`Commands: ${formatArrayValue(md.declaredCommandProfileNames)}`);
-      if (Array.isArray(md.declaredCapabilities) && md.declaredCapabilities.length > 0)
-        parts.push(`Capabilities: ${formatArrayValue(md.declaredCapabilities)}`);
+        parts.push(
+          `Commands: ${formatArrayValue(md.declaredCommandProfileNames)}`
+        );
+      if (
+        Array.isArray(md.declaredCapabilities) &&
+        md.declaredCapabilities.length > 0
+      )
+        parts.push(
+          `Capabilities: ${formatArrayValue(md.declaredCapabilities)}`
+        );
       if (md.credentialPrefix) parts.push(`Credential: ${md.credentialPrefix}`);
-      if (md.bootstrapTokenId) parts.push(`Bootstrap token: ${md.bootstrapTokenId}`);
+      if (md.bootstrapTokenId)
+        parts.push(`Bootstrap token: ${md.bootstrapTokenId}`);
       if (md.signingKeyId) parts.push(`Signing key: ${md.signingKeyId}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
@@ -1439,6 +1453,15 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
 
     if (action === 'CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED') {
+      const formatted = formatCertOpsUnreconciledMetadata(ev);
+      if (formatted) return formatted;
+    }
+
+    if (action === 'CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED') {
+      // Same metadata shape as the issuance variant (managedCertificateId,
+      // commonName, reconciliationReason, operation, agentId, jobId): both
+      // fire from the identical incomplete-verify-evidence gate, one for a
+      // certificate's first promotion and one for a later renewal refresh.
       const formatted = formatCertOpsUnreconciledMetadata(ev);
       if (formatted) return formatted;
     }

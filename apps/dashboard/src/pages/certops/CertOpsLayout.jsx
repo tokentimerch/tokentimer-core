@@ -173,9 +173,7 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
               />
             ) : enabled ? (
               <>
-                <WorkspaceKillSwitchPanel
-                  onPausedChange={handlePausedChange}
-                />
+                <WorkspaceKillSwitchPanel onPausedChange={handlePausedChange} />
                 <CertOpsSubNav />
                 <Outlet
                   context={{

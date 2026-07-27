@@ -288,6 +288,64 @@ describe("derived renewal profile persistence", () => {
     );
   });
 
+  it("gives two certificates sharing a common name distinct profile names", async () => {
+    // Same CN, different certificateId (e.g. a load-balanced pair, or
+    // blue/green): each must get its own row so the auto-renew switch and
+    // lead time on one never affects the other.
+    const OTHER_CERT_ID = "44444444-4444-4444-8444-444444444444";
+    const { state: stateA, client: clientA } = createClient();
+    await ensureDerivedRenewalProfile({
+      client: clientA,
+      workspaceId: WORKSPACE,
+      certificateId: CERT_ID,
+      payload: issuePayload(),
+      certificate: issuedCertificate(),
+    });
+    const { state: stateB, client: clientB } = createClient();
+    await ensureDerivedRenewalProfile({
+      client: clientB,
+      workspaceId: WORKSPACE,
+      certificateId: OTHER_CERT_ID,
+      payload: issuePayload({ certificateId: OTHER_CERT_ID }),
+      certificate: issuedCertificate(),
+    });
+
+    const insertA = stateA.queries.find((q) =>
+      q.sql.includes("INSERT INTO certificate_profiles"),
+    );
+    const insertB = stateB.queries.find((q) =>
+      q.sql.includes("INSERT INTO certificate_profiles"),
+    );
+    const nameA = insertA.params[1];
+    const nameB = insertB.params[1];
+    assert.notEqual(
+      nameA,
+      nameB,
+      "two same-CN certificates must not derive the same profile name",
+    );
+    assert.match(nameA, new RegExp(CERT_ID));
+    assert.match(nameB, new RegExp(OTHER_CERT_ID));
+  });
+
+  it("reuses the same profile name across repeated derivations of one certificate", async () => {
+    const { state, client } = createClient();
+    await ensureDerivedRenewalProfile({
+      client,
+      workspaceId: WORKSPACE,
+      certificateId: CERT_ID,
+      payload: issuePayload(),
+      certificate: issuedCertificate(),
+    });
+    const insert = state.queries.find((q) =>
+      q.sql.includes("INSERT INTO certificate_profiles"),
+    );
+    assert.match(
+      insert.params[1],
+      new RegExp(`\\(${CERT_ID}\\)$`),
+      "the DB name embeds certificateId so re-derivation of the same certificate hits the same row",
+    );
+  });
+
   it("does not fail the issuance when derivation is impossible", async () => {
     // The certificate genuinely exists on the host. Losing that record because
     // renewal config could not be inferred would be strictly worse than an

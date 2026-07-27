@@ -6782,6 +6782,19 @@ components:
           type: string
           format: date-time
           nullable: true
+        reconciliationReason:
+          type: string
+          nullable: true
+          maxLength: 256
+          description: >-
+            Machine-readable reason a reconciliation step (issuance promotion
+            or post-renewal refresh) could not update this certificate from
+            agent evidence, e.g. "no_claim_bound_verify_evidence",
+            "verify_evidence_missing_fingerprint",
+            "verify_evidence_missing_expiry". Null when the certificate's
+            facts are current. Also recorded as a
+            CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED or
+            CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED audit event when set.
         renewal:
           $ref: "#/components/schemas/CertOpsCertificateRenewalState"
         renewalSetup:
@@ -7512,7 +7525,19 @@ components:
           enum: [renew, deploy, reload, revoke, noop, issue]
         status:
           type: string
-          enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+          enum:
+            - pending_approval
+            - approved
+            - rejected
+            - pending
+            - claimed
+            - running
+            - succeeded
+            - failed
+            - blocked
+            - cancelled
+            - dry_run_complete
+            - orphaned_unknown_effect
         source:
           type: string
           enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]

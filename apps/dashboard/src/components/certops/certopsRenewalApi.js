@@ -37,7 +37,11 @@ export async function listRenewalProfiles(
  * Fetch a single renewal profile, including its full stored execution contract.
  * @returns {Promise<object>}
  */
-export async function getRenewalProfile(workspaceId, profileId, { signal } = {}) {
+export async function getRenewalProfile(
+  workspaceId,
+  profileId,
+  { signal } = {}
+) {
   const res = await apiClient.get(
     `${workspaceBase(workspaceId)}/profiles/${encodeURIComponent(profileId)}`,
     { signal }

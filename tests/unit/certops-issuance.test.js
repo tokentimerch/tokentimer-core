@@ -731,25 +731,37 @@ describe("refreshRenewedCertificateEvidence (renewal of an already-active certif
     subjectAltNames: "web-01.example.com",
   };
 
-  function activeClient({ found = true, metadata = FRESH_VERIFY_METADATA } = {}) {
-    const state = { updates: [] };
+  function activeClient({ found = true, metadata = FRESH_VERIFY_METADATA, tokenId = null } = {}) {
+    const state = { updates: [], audits: [], linkTokenCalls: [] };
     const client = {
       query: async (text, params) => {
         const sql = typeof text === "string" ? text : text?.text || "";
         if (sql.includes("FROM managed_certificates")) {
-          return { rows: found ? [{ id: ACTIVE_CERT_ID }] : [] };
+          return {
+            rows: found
+              ? [{ id: ACTIVE_CERT_ID, common_name: "web-01.example.com", token_id: tokenId }]
+              : [],
+          };
         }
         if (sql.includes("FROM certificate_evidence")) {
           return { rows: metadata ? [{ metadata }] : [] };
         }
         if (sql.includes("UPDATE managed_certificates")) {
-          state.updates.push(params);
+          state.updates.push({ sql, params });
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO audit_events")) {
+          state.audits.push(params);
           return { rows: [] };
         }
         throw new Error(`unexpected query: ${sql}`);
       },
     };
-    return { state, client };
+    const linkToken = async (args) => {
+      state.linkTokenCalls.push(args);
+      return tokenId;
+    };
+    return { state, client, linkToken };
   }
 
   it("refreshes fingerprint and not_after from fresh verify evidence", async () => {
@@ -767,7 +779,7 @@ describe("refreshRenewedCertificateEvidence (renewal of an already-active certif
       notAfter: new Date("Nov 30 10:00:00 2026 GMT").toISOString(),
     });
     assert.equal(state.updates.length, 1);
-    const params = state.updates[0];
+    const params = state.updates[0].params;
     assert.equal(params[2], "c".repeat(64));
     assert.equal(params[8], "web-01.example.com");
   });
@@ -785,7 +797,26 @@ describe("refreshRenewedCertificateEvidence (renewal of an already-active certif
       job: jobFixture,
     });
     assert.equal(
-      state.updates[0][7],
+      state.updates[0].params[7],
+      new Date("Nov 30 10:00:00 2026 GMT").toISOString(),
+    );
+  });
+
+  it("mirrors the refreshed facts to the linked token in the same transaction", async () => {
+    // Without this, managed_certificates.not_after advances but
+    // tokens.expiration (what the token-centric dashboard and token_expiry
+    // alerts actually read) stays frozen at the pre-renewal date.
+    const { state, client, linkToken } = activeClient({ tokenId: 4242 });
+    await dispatch._test.refreshRenewedCertificateEvidence({
+      client,
+      workspaceId: WORKSPACE_A,
+      job: jobFixture,
+      linkToken,
+    });
+    assert.equal(state.linkTokenCalls.length, 1);
+    assert.equal(state.linkTokenCalls[0].existingTokenId, 4242);
+    assert.equal(
+      state.linkTokenCalls[0].certificate.notAfter,
       new Date("Nov 30 10:00:00 2026 GMT").toISOString(),
     );
   });
@@ -801,7 +832,7 @@ describe("refreshRenewedCertificateEvidence (renewal of an already-active certif
     assert.equal(state.updates.length, 0);
   });
 
-  it("does not overwrite a known-good row with incomplete evidence", async () => {
+  it("does not overwrite a known-good row with incomplete evidence, and records why", async () => {
     const { state, client } = activeClient({
       metadata: { step: "verify", fingerprintSha256: "d".repeat(64) },
     });
@@ -810,8 +841,26 @@ describe("refreshRenewedCertificateEvidence (renewal of an already-active certif
       workspaceId: WORKSPACE_A,
       job: jobFixture,
     });
-    assert.equal(result, null);
-    assert.equal(state.updates.length, 0);
+    assert.equal(result.refreshed, false);
+    assert.equal(result.reason, "verify_evidence_missing_expiry");
+    assert.equal(
+      state.updates.length,
+      1,
+      "the reconciliation_reason write still happens; only the not_after refresh is skipped",
+    );
+    assert.match(
+      state.updates[0].sql || "",
+      /reconciliation_reason/,
+    );
+    assert.equal(
+      state.audits.length,
+      1,
+      "the failure must be durable and visible, not a silent no-op",
+    );
+    assert.equal(
+      state.audits[0][2],
+      "CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED",
+    );
   });
 
   it("skips jobs with no managed_certificate subject", async () => {

@@ -228,6 +228,121 @@ describe("CERTOPS_CERTIFICATE_ISSUANCE_UNRECONCILED", () => {
   });
 });
 
+// --- CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED / refreshRenewedCertificateEvidence ---
+
+function refreshClient({ metadata = VERIFY_METADATA, tokenId = 77 } = {}) {
+  const audits = [];
+  const linkTokenCalls = [];
+  const client = {
+    query: async (text, params) => {
+      const sql = typeof text === "string" ? text : text?.text || "";
+      if (sql.includes("INSERT INTO audit_events")) {
+        audits.push({
+          action: params[2],
+          metadata: params[6],
+          workspaceId: params[7],
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("FROM managed_certificates") && sql.includes("FOR UPDATE")) {
+        return {
+          rows: [
+            {
+              id: CERT_ID,
+              common_name: "web-01.example.com",
+              token_id: tokenId,
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM certificate_evidence")) {
+        return { rows: metadata ? [{ metadata }] : [] };
+      }
+      if (sql.includes("UPDATE managed_certificates")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const linkToken = async (args) => {
+    linkTokenCalls.push(args);
+    return tokenId;
+  };
+  return { audits, linkTokenCalls, client, linkToken };
+}
+
+const refreshArgs = (client, overrides = {}) => ({
+  client,
+  workspaceId: WORKSPACE,
+  job: {
+    id: 43,
+    subject_type: "managed_certificate",
+    subject_id: CERT_ID,
+    claim_id: "55555555-5555-4555-8555-555555555555",
+    operation: "renew",
+  },
+  agent: { id: "agent-row-1", agentId: "edge-01" },
+  ...overrides,
+});
+
+describe("refreshRenewedCertificateEvidence (active-renewal reconciliation)", () => {
+  it("refreshes not_after and mirrors the new facts to the linked token", async () => {
+    const { audits, linkTokenCalls, client, linkToken } = refreshClient();
+    const result = await dispatch._test.refreshRenewedCertificateEvidence(
+      refreshArgs(client, { linkToken }),
+    );
+
+    assert.equal(result.refreshed, true);
+    assert.equal(audits.length, 0, "a successful refresh is not audited");
+    assert.equal(linkTokenCalls.length, 1);
+    assert.equal(linkTokenCalls[0].existingTokenId, 77);
+    assert.equal(linkTokenCalls[0].certificate.notAfter, result.notAfter);
+  });
+
+  it("does not call linkToken when the certificate has no linked token yet", async () => {
+    const { linkTokenCalls, client, linkToken } = refreshClient({ tokenId: null });
+    await dispatch._test.refreshRenewedCertificateEvidence(
+      refreshArgs(client, { linkToken }),
+    );
+    assert.equal(linkTokenCalls.length, 0);
+  });
+
+  it("records a durable, auditable failure instead of a silent no-op on incomplete evidence", async () => {
+    // Before this fix, incomplete verify evidence here just returned null: no
+    // audit row, no reconciliation_reason, and not_after never advanced, so
+    // the scheduler's (certificateId + not_after) idempotency key kept
+    // colliding with the same already-succeeded job on every later sweep.
+    const { audits, client, linkToken } = refreshClient({ metadata: null });
+    const result = await dispatch._test.refreshRenewedCertificateEvidence(
+      refreshArgs(client, { linkToken }),
+    );
+
+    assert.equal(result.refreshed, false);
+    assert.equal(result.reason, "no_claim_bound_verify_evidence");
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, "CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED");
+    assert.equal(
+      audits[0].metadata.reconciliationReason,
+      "no_claim_bound_verify_evidence",
+    );
+    assert.equal(audits[0].metadata.managedCertificateId, CERT_ID);
+  });
+
+  it("distinguishes missing fingerprint from missing expiry, same as first reconciliation", async () => {
+    const cases = [
+      [{ step: "verify", validTo: VERIFY_METADATA.validTo },
+        "verify_evidence_missing_fingerprint"],
+      [{ step: "verify", fingerprintSha256: "b".repeat(64) },
+        "verify_evidence_missing_expiry"],
+    ];
+    for (const [metadata, expected] of cases) {
+      const { audits, client, linkToken } = refreshClient({ metadata });
+      await dispatch._test.refreshRenewedCertificateEvidence(
+        refreshArgs(client, { linkToken }),
+      );
+      assert.equal(audits[0].metadata.reconciliationReason, expected);
+    }
+  });
+});
+
 // --- CERTOPS_RENEWAL_PROFILE_DERIVED ---
 
 function issuePayload(overrides = {}) {

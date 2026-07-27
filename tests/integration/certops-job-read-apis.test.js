@@ -319,7 +319,7 @@ describe("CertOps job read APIs", function () {
     expect(ids).to.not.include(jobs.otherWorkspaceJob.id);
     expect(list.body.items[0]).to.not.have.property("payload");
     expect(list.body.items[0]).to.not.have.property("resultMetadata");
-    expect(list.body.pagination).to.deep.equal({ limit: 50, offset: 0 });
+    expect(list.body.pagination).to.deep.equal({ limit: 50, offset: 0, total: 2 });
     expectNoSensitiveValues(list.body);
 
     const nonNumericPage = await request(BASE)
@@ -331,13 +331,14 @@ describe("CertOps job read APIs", function () {
     expect(nonNumericPage.body.pagination).to.deep.equal({
       limit: 50,
       offset: 0,
+      total: 2,
     });
 
     const cappedPage = await request(BASE)
       .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?limit=500`)
       .set("Cookie", fixture.viewerSession.cookie)
       .expect(200);
-    expect(cappedPage.body.pagination).to.deep.equal({ limit: 100, offset: 0 });
+    expect(cappedPage.body.pagination).to.deep.equal({ limit: 100, offset: 0, total: 2 });
 
     const clampedOffsetPage = await request(BASE)
       .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?limit=1&offset=-5`)
@@ -346,6 +347,7 @@ describe("CertOps job read APIs", function () {
     expect(clampedOffsetPage.body.pagination).to.deep.equal({
       limit: 1,
       offset: 0,
+      total: 2,
     });
 
     const firstPage = await request(BASE)
@@ -353,7 +355,7 @@ describe("CertOps job read APIs", function () {
       .set("Cookie", fixture.viewerSession.cookie)
       .expect(200);
     expect(firstPage.body.items).to.have.length(1);
-    expect(firstPage.body.pagination).to.deep.equal({ limit: 1, offset: 0 });
+    expect(firstPage.body.pagination).to.deep.equal({ limit: 1, offset: 0, total: 2 });
 
     const statusFiltered = await request(BASE)
       .get(`/api/v1/workspaces/${fixture.workspaceId}/certops/jobs?status=pending`)

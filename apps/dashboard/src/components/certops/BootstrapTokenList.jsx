@@ -238,7 +238,12 @@ export default function BootstrapTokenList() {
             Revoke bootstrap token
           </AlertDialogHeader>
           <AlertDialogBody>
-            <Alert status='warning' borderRadius='md' variant='left-accent' mb={3}>
+            <Alert
+              status='warning'
+              borderRadius='md'
+              variant='left-accent'
+              mb={3}
+            >
               A revoked token can no longer register an agent. Agents that
               already registered are unaffected. This cannot be undone.
             </Alert>

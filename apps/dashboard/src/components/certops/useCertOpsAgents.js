@@ -130,7 +130,11 @@ export function useCertOpsBootstrapTokens(page = {}) {
     setLoading(true);
     setError('');
 
-    listBootstrapTokens(workspaceId, { limit, offset, signal: controller.signal })
+    listBootstrapTokens(workspaceId, {
+      limit,
+      offset,
+      signal: controller.signal,
+    })
       .then(data => {
         if (!cancelled) {
           setTokens(Array.isArray(data?.items) ? data.items : []);

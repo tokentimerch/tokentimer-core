@@ -248,7 +248,8 @@ export default function DeployAgentModal({
     workspaceId: workspaceId || '<workspace-id>',
   });
 
-  const hasUnacknowledgedSecret = Boolean(plaintextToken) && !secretAcknowledged;
+  const hasUnacknowledgedSecret =
+    Boolean(plaintextToken) && !secretAcknowledged;
 
   const beginWaiting = () => {
     setRegisteredAgent(null);
@@ -328,8 +329,8 @@ export default function DeployAgentModal({
               <VStack align='stretch' spacing={2}>
                 <Text fontSize='sm' color={muted}>
                   From the unpacked agent package directory (
-                  <Code fontSize='xs'>packages/agent/scripts</Code>) on a
-                  Linux host with Node 22+:
+                  <Code fontSize='xs'>packages/agent/scripts</Code>) on a Linux
+                  host with Node 22+:
                 </Text>
                 <CopyableCodeBlock
                   code={installCommand}
@@ -338,11 +339,11 @@ export default function DeployAgentModal({
                   monospace
                 />
                 <Text fontSize='xs' color={muted}>
-                  The command does not include a token. The installer will
-                  pause with a hidden prompt asking for one; create a
-                  bootstrap token in step 2 below and paste it there, or set
-                  the TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable
-                  before running.
+                  The command does not include a token. The installer will pause
+                  with a hidden prompt asking for one; create a bootstrap token
+                  in step 2 below and paste it there, or set the
+                  TOKENTIMER_AGENT_BOOTSTRAP_TOKEN environment variable before
+                  running.
                 </Text>
               </VStack>
             </Box>
@@ -403,8 +404,8 @@ export default function DeployAgentModal({
                 ) : null}
                 {certOpsPaused && !plaintextToken ? (
                   <Text fontSize='xs' color={muted}>
-                    Certificate operations are paused for this workspace, so
-                    new bootstrap tokens are refused.
+                    Certificate operations are paused for this workspace, so new
+                    bootstrap tokens are refused.
                   </Text>
                 ) : null}
 
@@ -417,10 +418,9 @@ export default function DeployAgentModal({
                     <AlertIcon />
                     <VStack align='stretch' spacing={3} flex='1'>
                       <AlertDescription fontSize='sm'>
-                        This token is shown only once and registers exactly
-                        one agent. The installer will ask for it at a hidden
-                        prompt; copy it now, or store it in your secret
-                        manager.
+                        This token is shown only once and registers exactly one
+                        agent. The installer will ask for it at a hidden prompt;
+                        copy it now, or store it in your secret manager.
                       </AlertDescription>
                       <CopyableCodeBlock
                         code={plaintextToken}
@@ -444,8 +444,8 @@ export default function DeployAgentModal({
 
                 {plaintextToken && secretAcknowledged ? (
                   <Text fontSize='xs' color={muted}>
-                    Paste the token at the installer's hidden prompt in step
-                    1, then watch for the agent to register:
+                    Paste the token at the installer's hidden prompt in step 1,
+                    then watch for the agent to register:
                   </Text>
                 ) : null}
                 {plaintextToken && secretAcknowledged ? (
@@ -471,8 +471,7 @@ export default function DeployAgentModal({
                   <Spinner size='sm' />
                   <Text fontSize='sm'>
                     Checking every {WAIT_POLL_INTERVAL_MS / 1000}s. The agent
-                    should appear within about a minute of the service
-                    starting.
+                    should appear within about a minute of the service starting.
                   </Text>
                 </HStack>
                 <Button

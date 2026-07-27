@@ -1090,6 +1090,7 @@ async function reportJobRejection({
     rejectionReason: verdict.rejectionReason,
     detail: verdict.detail,
     jobId,
+    claimId,
   });
   assertEvidencePayloadSafe(evidenceBody);
   return await persistAndTransmitOutcome({
@@ -1109,15 +1110,45 @@ async function reportJobRejection({
 }
 
 /**
+ * Wraps a protocol client so every reportEvidence call made through it for
+ * this job attempt is automatically bound to claimId (evidence-claim-binding-v1).
+ *
+ * executeJob's action branches (renew/deploy/reload/dry-run) each receive
+ * `client` as a plain parameter and pass it, unmodified, deep into their own
+ * helper functions, which is where the many per-step reportStepEvidence calls
+ * actually happen. Rather than threading claimId through every one of those
+ * intermediate signatures, this wraps `client` once, at the single point
+ * where claimId is known, so every reportStepEvidence(client, jobId, items)
+ * call anywhere in the execution tree reports claim-bound evidence for free.
+ *
+ * Only reportEvidence is overridden; every other client method (reportResult,
+ * renewLease, etc.) is passed through unchanged.
+ *
+ * @param {object} client protocol client from createProtocolClient
+ * @param {string|null} claimId
+ * @returns {object} client, or a claim-bound wrapper when claimId is set
+ */
+function bindEvidenceClientToClaim(client, claimId) {
+  if (typeof claimId !== "string" || claimId.length === 0) return client;
+  return {
+    ...client,
+    reportEvidence: (body) => client.reportEvidence({ ...body, claimId }),
+  };
+}
+
+/**
  * Builds + safety-scans + reports one evidence body of pre-built items.
  *
  * @param {object} client
  * @param {string} jobId
  * @param {object[]} items evidence items (buildEvidenceItem inputs)
+ * @param {string|null} [claimId] binds this evidence to the claim/attempt
+ *   that produced it (evidence-claim-binding-v1); omitted for jobless or
+ *   unclaimed (bootstrap/observe-only) evidence
  * @returns {Promise<void>}
  */
-async function reportStepEvidence(client, jobId, items) {
-  const body = buildEvidenceBody({ jobId, evidenceItems: items });
+async function reportStepEvidence(client, jobId, items, claimId = null) {
+  const body = buildEvidenceBody({ jobId, evidenceItems: items, claimId });
   assertEvidencePayloadSafe(body);
   await client.reportEvidence(body);
 }
@@ -1589,8 +1620,15 @@ async function executeJob({
     markSideEffectReached({ ...journalCtx, stage });
   }
 
+  // Bind every reportEvidence call made through `client` for the rest of this
+  // job attempt to claimId, so the evidence-claim-binding-v1 capability
+  // declared at registration is actually honored end to end (see
+  // bindEvidenceClientToClaim above for why this is done once, here, rather
+  // than threading claimId through every downstream execute*Job helper).
+  const claimBoundClient = bindEvidenceClientToClaim(client, claimId);
+
   if (action === "noop") {
-    await reportStepEvidence(client, jobId, [
+    await reportStepEvidence(claimBoundClient, jobId, [
       buildEvidenceItem({
         eventType: "validation.passed",
         observedAt,
@@ -1642,7 +1680,7 @@ async function executeJob({
       job,
       jobId,
       action,
-      client,
+      client: claimBoundClient,
       policyEngine,
       observedAt,
     });
@@ -1663,7 +1701,7 @@ async function executeJob({
       job,
       jobId,
       policyEngine,
-      client,
+      client: claimBoundClient,
       executionContext,
       log,
       leaseOpts,
@@ -1675,7 +1713,7 @@ async function executeJob({
       job,
       jobId,
       policyEngine,
-      client,
+      client: claimBoundClient,
       executionContext,
       log,
       leaseOpts,
@@ -1686,7 +1724,7 @@ async function executeJob({
     job,
     jobId,
     policyEngine,
-    client,
+    client: claimBoundClient,
     log,
     leaseOpts,
     onBeforeMutation: markMutation,

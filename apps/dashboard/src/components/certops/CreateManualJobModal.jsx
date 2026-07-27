@@ -232,7 +232,8 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   // SUBJECT_REQUIRED_OPERATIONS in services/certops/jobs.js). noop is the
   // only other operation that stays optional, since it exists purely to
   // exercise the pipeline without a real target.
-  const subjectRequiredForOperation = SUBJECT_REQUIRED_OPERATIONS.has(operation);
+  const subjectRequiredForOperation =
+    SUBJECT_REQUIRED_OPERATIONS.has(operation);
 
   // Only agents that can still be handed a job: a retired agent can never
   // claim anything, so pinning to one would silently strand the job.
@@ -313,11 +314,11 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     !isIssue ||
     Boolean(
       fieldTarget.trim() &&
-        fieldCommandRef.trim() &&
-        fieldCaEndpoint.trim() &&
-        fieldDnsZone.trim() &&
-        fieldDnsProvider.trim() &&
-        fieldCertPath.trim()
+      fieldCommandRef.trim() &&
+      fieldCaEndpoint.trim() &&
+      fieldDnsZone.trim() &&
+      fieldDnsProvider.trim() &&
+      fieldCertPath.trim()
     );
 
   const canSubmit =

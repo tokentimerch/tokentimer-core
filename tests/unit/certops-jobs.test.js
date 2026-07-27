@@ -10,6 +10,7 @@ const {
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
+  CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
   PRIVATE_KEY_MATERIAL_REJECTED,
   appendCertificateJobLog,
   createCertificateJob,
@@ -1521,6 +1522,55 @@ describe("CertOps jobs service", () => {
         `expected rejection for ${JSON.stringify(fields)}`,
       );
     }
+  });
+
+  it("requires commandRef/caEndpoint/certPath/dnsZone/dnsProvider for an issue job (no renewalProfile to fall back on)", async () => {
+    const client = createMemoryClient();
+    const fullIssuePayload = {
+      target: "example.com",
+      commandRef: "certbot-renew",
+      caEndpoint: "https://acme.example.com/directory",
+      certPath: "/etc/ssl/live/example.com/cert.pem",
+      dnsZone: "example.com",
+      dnsProvider: "cloudflare",
+    };
+    const requiredFields = [
+      "commandRef",
+      "caEndpoint",
+      "certPath",
+      "dnsZone",
+      "dnsProvider",
+    ];
+
+    for (const fieldName of requiredFields) {
+      const payload = { ...fullIssuePayload };
+      delete payload[fieldName];
+      await assert.rejects(
+        () =>
+          createCertificateJob({
+            client,
+            workspaceId: WORKSPACE_A,
+            operation: "issue",
+            source: "api",
+            subjectType: "managed_certificate",
+            subjectId: "cert-1",
+            payload,
+          }),
+        (error) => error?.code === CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
+        `expected ${fieldName} to be required for issue`,
+      );
+    }
+
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "issue",
+      source: "api",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: fullIssuePayload,
+    });
+    assert.equal(job.operation, "issue");
   });
 
   it("rejects execution fields on operations that never execute them", async () => {

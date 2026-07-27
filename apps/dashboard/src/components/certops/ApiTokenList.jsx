@@ -281,7 +281,12 @@ export default function ApiTokenList() {
             Revoke API token
           </AlertDialogHeader>
           <AlertDialogBody>
-            <Alert status='warning' borderRadius='md' variant='left-accent' mb={3}>
+            <Alert
+              status='warning'
+              borderRadius='md'
+              variant='left-accent'
+              mb={3}
+            >
               Revoking immediately breaks any executor using this token. This
               cannot be undone.
             </Alert>

@@ -338,6 +338,14 @@ async function upsertInventoryForObservation(client, observation) {
       name: certificate.commonName || observation.filePath,
       keyMode: "agent-local",
       keyReference: `file://${observation.filePath}`,
+      // Renewal adoption (renewalAdoption.js) refuses to arm a renewal for a
+      // certificate with no deployed_cert_path: it is the write destination a
+      // renewed cert would be deployed back to, and renewing to an unknown
+      // destination is worse than refusing. An agent-filesystem discovery is
+      // observing exactly that destination right now, so it is the one
+      // source that can populate this without guessing.
+      deployedCertPath: observation.filePath,
+      deployedAgentId: observation.agentRowId,
       tokenId,
       controllerObservationMetadata: {
         agentId: observation.agentId,

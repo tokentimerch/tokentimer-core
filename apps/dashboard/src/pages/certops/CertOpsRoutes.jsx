@@ -33,7 +33,10 @@ export default function CertOpsRoutes({ session, onLogout, onAccountClick }) {
         <Route path='agents' element={<CertOpsAgents />} />
         <Route path='settings' element={<CertOpsSettings />} />
       </Route>
-      <Route path='operations' element={<Navigate to='/certops/jobs' replace />} />
+      <Route
+        path='operations'
+        element={<Navigate to='/certops/jobs' replace />}
+      />
       <Route path='*' element={<Navigate to='/certops/jobs' replace />} />
     </Routes>
   );

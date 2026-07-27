@@ -1475,16 +1475,26 @@ async function reconcileProvisionedCertificate({
  * already-succeeded job on every later sweep -- so a certificate would only
  * ever be renewed automatically once, not on every cycle, which defeats the
  * entire point of the scheduler. This function is the missing refresh: same
- * evidence source as reconcileProvisionedCertificate, but for the
- * already-active case, and deliberately narrower (no status transition, no
- * token linking, no profile derivation -- those already happened once and
- * are not re-run on every renewal).
+ * evidence source as reconcileProvisionedCertificate, and now the same
+ * completeness contract too -- incomplete verify evidence is a durable,
+ * audited reconciliation_reason rather than a silent no-op, and a successful
+ * refresh mirrors the new facts onto the linked token in the same
+ * transaction (deliberately still narrower than first reconciliation: no
+ * status transition, no profile derivation -- those already happened once
+ * and are not re-run on every renewal).
  */
-async function refreshRenewedCertificateEvidence({ client, workspaceId, job }) {
+async function refreshRenewedCertificateEvidence({
+  client,
+  workspaceId,
+  job,
+  agent = null,
+  linkToken = linkReconciledCertificateToken,
+  auditWriter = writeAudit,
+}) {
   if (job.subject_type !== "managed_certificate" || !job.subject_id) return null;
 
   const locked = await client.query(
-    `SELECT id
+    `SELECT id, common_name, token_id
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2::uuid
@@ -1492,7 +1502,8 @@ async function refreshRenewedCertificateEvidence({ client, workspaceId, job }) {
       FOR UPDATE`,
     [workspaceId, job.subject_id],
   );
-  if (!locked.rows[0]) return null;
+  const certificate = locked.rows[0];
+  if (!certificate) return null;
 
   const evidence = await client.query(
     `SELECT metadata
@@ -1507,7 +1518,6 @@ async function refreshRenewedCertificateEvidence({ client, workspaceId, job }) {
     [workspaceId, job.id, job.claim_id],
   );
   const metadata = evidence.rows[0]?.metadata || null;
-  if (!metadata) return null;
 
   const text = (value) =>
     typeof value === "string" && value.trim() !== "" ? value.trim() : null;
@@ -1516,12 +1526,61 @@ async function refreshRenewedCertificateEvidence({ client, workspaceId, job }) {
     return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
   };
 
-  const fingerprint = text(metadata.fingerprintSha256);
-  const notAfter = timestamp(metadata.validTo);
+  const fingerprint = metadata ? text(metadata.fingerprintSha256) : null;
+  const notAfter = metadata ? timestamp(metadata.validTo) : null;
+
   // Same completeness bar as first reconciliation: a renewal that cannot
   // prove what it deployed must not silently overwrite a known-good row with
   // half of a new one.
-  if (!fingerprint || !notAfter) return null;
+  //
+  // Unlike reconcileProvisionedCertificate's identical gate, an incomplete
+  // result here used to just `return null`. That silence was more than a
+  // missing log line: not_after never advances, and the renewal scheduler's
+  // idempotency key is certificate id + not_after (renewalIdempotencyKey in
+  // renewalScheduler.js), so the *next* sweep derives the exact same key,
+  // collides with this already-'succeeded' job on the unique index, and is
+  // recorded as a replay rather than a fresh attempt. A certificate can
+  // therefore stay genuinely due for renewal indefinitely while every sweep
+  // reports nothing wrong. Setting reconciliation_reason and auditing here
+  // does not change that replay outcome by itself, but it turns an
+  // indefinite silent loop into a durable, visible, alertable failure an
+  // operator (or a future scheduler check keyed on reconciliation_reason) can
+  // act on, matching the provisioning path's own contract.
+  if (!fingerprint || !notAfter) {
+    const reason = !metadata
+      ? "no_claim_bound_verify_evidence"
+      : !fingerprint
+        ? "verify_evidence_missing_fingerprint"
+        : "verify_evidence_missing_expiry";
+    await client.query(
+      `UPDATE managed_certificates
+          SET reconciliation_reason = $3,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND id = $2::uuid
+          AND status = 'active'`,
+      [workspaceId, job.subject_id, reason],
+    );
+    await auditWriter({
+      client,
+      actorUserId: null,
+      subjectUserId: null,
+      action: "CERTOPS_CERTIFICATE_RENEWAL_UNRECONCILED",
+      targetType: "managed_certificate",
+      targetId: null,
+      workspaceId,
+      metadata: {
+        managedCertificateId: String(job.subject_id),
+        commonName: text(certificate.common_name),
+        jobId: String(job.id),
+        operation: job.operation || null,
+        claimId: job.claim_id ? String(job.claim_id) : null,
+        agentId: agent?.agentId || null,
+        reconciliationReason: reason,
+      },
+    });
+    return { certificateId: String(job.subject_id), refreshed: false, reason };
+  }
 
   const sans = text(metadata.subjectAltNames);
 
@@ -1560,6 +1619,32 @@ async function refreshRenewedCertificateEvidence({ client, workspaceId, job }) {
       sans,
     ],
   );
+
+  // Mirror the same facts to the linked token in the same transaction as the
+  // certificate row. Without this, a renewal advances managed_certificates'
+  // not_after while tokens.expiration (what the token-centric dashboard,
+  // token_expiry alerts, and every other consumer of "when does this expire"
+  // actually reads) stays frozen at the pre-renewal date, so the fleet looks
+  // like it is silently approaching an expiry that already moved.
+  if (certificate.token_id) {
+    await linkToken({
+      client,
+      workspaceId,
+      certificateId: String(job.subject_id),
+      certificate: {
+        commonName: text(certificate.common_name),
+        subject: text(metadata.subject),
+        subjectAltNames: sans
+          ? sans.split(",").map((name) => name.trim()).filter(Boolean)
+          : [],
+        issuer: text(metadata.issuer),
+        serialNumber: text(metadata.serialNumber),
+        fingerprintSha256: fingerprint,
+        notAfter,
+      },
+      existingTokenId: certificate.token_id,
+    });
+  }
 
   return {
     certificateId: String(job.subject_id),
@@ -1795,6 +1880,7 @@ async function ingestResult({
           client,
           workspaceId: agent.workspaceId,
           job,
+          agent,
         });
       }
     }
