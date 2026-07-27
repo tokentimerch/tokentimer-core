@@ -2758,8 +2758,8 @@ router.post(
   // real run, an adoption intent), so it needs the write role and the
   // workspace-active gate. A session user specifically, because arming
   // automatic renewal is an attributable human decision and the audit row
-  // names an actor: worker credentials must not reach it even though
-  // requireCertOpsWriteRole alone would let them through.
+  // names an actor: the role check alone would let internal worker
+  // credentials through.
   requireCertOpsSessionUser,
   requireCertOpsWriteRole,
   requireWorkspaceCertOpsActive,

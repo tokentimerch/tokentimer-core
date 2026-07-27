@@ -240,8 +240,157 @@ describe("CertOps route hardening", () => {
     );
   });
 
-  it("maps the renewal-profile permission to admin in shared RBAC", () => {
-    const rbacSource = fs.readFileSync(
+  it("gates detach with the same posture as the profile PATCH", () => {
+    // Detach changes what a privileged agent will run on a host just as much as
+    // an edit does, so it must not be reachable with a weaker gate than the
+    // edit it effectively reverses, nor by an internal worker credential.
+    const block = routeBlock(
+      "delete",
+      "/api/v1/workspaces/:id/certops/certificates/:certId/profile",
+    );
+    assert.match(block, /authorize\("certops\.renewal_profile\.manage"\)/);
+    assert.match(block, /requireCertOpsSessionUser/);
+    assert.ok(
+      block.indexOf("requireCertOpsEnabled") <
+        block.indexOf("requireCertOpsSessionUser"),
+      "detach must check the rollout gate before session-user denial",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsSessionUser") <
+        block.indexOf('authorize("certops.renewal_profile.manage")'),
+      "detach must require a human session before role authorization",
+    );
+    // The pause gate blocks new agent-claimed work; withdrawing standing
+    // authority is exactly what an operator may need during an incident.
+    assert.doesNotMatch(block, /requireWorkspaceCertOpsActive/);
+    assert.match(block, /detachRenewalProfile/);
+  });
+
+  it("gates adoption as a manager write behind the pause gate and a human session", () => {
+    const block = routeBlock(
+      "post",
+      "/api/v1/workspaces/:id/certops/certificates/:certId/renewal-setup",
+    );
+    assert.match(block, /requireCertOpsWriteRole/);
+    assert.match(block, /requireWorkspaceCertOpsActive/);
+    // The role check alone lets worker calls through, and arming renewal writes
+    // an audit row that has to name a human actor.
+    assert.match(block, /requireCertOpsSessionUser/);
+    assert.ok(
+      block.indexOf("rejectKeyMaterial") < block.indexOf("requireCertOpsEnabled"),
+      "adoption must reject private key material before the rollout gate",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsEnabled") <
+        block.indexOf("requireCertOpsSessionUser"),
+      "adoption must check the rollout gate before session-user denial",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsSessionUser") <
+        block.indexOf("requireCertOpsWriteRole"),
+      "adoption must require a human session before role authorization",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsWriteRole") <
+        block.indexOf("requireWorkspaceCertOpsActive"),
+      "adoption role authorization must run before the pause gate",
+    );
+    // Job creation and the adoption intent share one transaction, which is what
+    // createManualCertificateJob's jobCreator hook provides.
+    assert.match(block, /createManualCertificateJob/);
+    assert.match(block, /renewalSetupJobCreator/);
+  });
+
+  it("gates the adoption retry as a manager write with no pause gate", () => {
+    const block = routeBlock(
+      "post",
+      "/api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
+    );
+    assert.match(block, /requireCertOpsSessionUser/);
+    assert.match(block, /requireCertOpsWriteRole/);
+    assert.match(block, /retryRenewalSetupIntent/);
+    assert.ok(
+      block.indexOf("rejectKeyMaterial") <
+        block.indexOf("requireCertOpsSessionUser"),
+      "retry must reject private key material before session-user denial",
+    );
+    assert.ok(
+      block.indexOf("requireCertOpsSessionUser") <
+        block.indexOf("requireCertOpsWriteRole"),
+      "retry must require a human session before role authorization",
+    );
+    // Deciding a parked outbox row is not agent-claimed work, so it stays
+    // available while the workspace is paused, like the approval routes.
+    assert.doesNotMatch(block, /requireWorkspaceCertOpsActive/);
+  });
+
+  it("documents the adoption, detach and retry routes", () => {
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/certificates/{certId}/renewal-setup",
+      "POST",
+    );
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/certificates/{certId}/profile",
+      "DELETE",
+    );
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/renewal-setup-intents/{outboxId}/retry",
+      "POST",
+    );
+
+    for (const schemaName of [
+      "CertOpsRenewalSetupRequest",
+      "CertOpsRenewalSetupState",
+      "CertOpsRenewalPreflightState",
+      "CertOpsRenewalSetupRetryResponse",
+      "CertOpsRenewalProfileDetachResponse",
+    ]) {
+      assert.ok(
+        openApiSource.includes(`    ${schemaName}:`),
+        `${schemaName} must be defined under components.schemas`,
+      );
+    }
+  });
+
+  it("documents the renewalSetup outcome codes as a closed enum", () => {
+    // The projection authors these values; leaving outcomeCode as a free string
+    // in the spec would let a future change forward the stored reason (or the
+    // raw error) without the contract noticing.
+    const block = openApiSchemaBlock("CertOpsRenewalSetupState");
+    assert.match(block, /outcomeCode:[\s\S]*?enum:/);
+    for (const outcomeCode of [
+      "detached",
+      "dry_run",
+      "renewal_profile_incomplete",
+      "renewal_profile_invalid",
+      "derivation_failed",
+      "unknown",
+    ]) {
+      assert.ok(
+        block.includes(`            - ${outcomeCode}`),
+        `outcomeCode must document ${outcomeCode}`,
+      );
+    }
+    assert.equal(block.includes("lastError"), false);
+  });
+
+  it("gives the provision-intent conflict and rejection responses real schemas", () => {
+    const block = openApiOperationBlock(
+      "/api/v1/workspaces/{id}/certops/provision-intents",
+      "post",
+    );
+    for (const status of ['"409":', '"422":']) {
+      const statusIndex = block.indexOf(status);
+      assert.notEqual(statusIndex, -1, `${status} missing`);
+      const tail = block.slice(statusIndex, statusIndex + 900);
+      assert.ok(
+        tail.includes('$ref: "#/components/schemas/ErrorResponse"'),
+        `${status} must carry a response schema, not a bare description`,
+      );
+    }
+  });
+
+  it("maps the renewal-profile permission to admin in shared RBAC", () => {    const rbacSource = fs.readFileSync(
       path.resolve(__dirname, "../../apps/api/services/rbac.js"),
       "utf8",
     );
