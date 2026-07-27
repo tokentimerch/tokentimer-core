@@ -4,7 +4,10 @@
  * Infomaniak DNS-01 provider.
  *
  * Auth: Infomaniak API token sent as a Bearer header. Create the token in
- * the Infomaniak manager with the "domain" scope only.
+ * the Infomaniak manager with the "domain:read", "dns:read", and
+ * "dns:write" scopes. Infomaniak's v2 API (used here) documents these three
+ * scopes as required for record writes; the older single "domain" scope
+ * predates v2 and is not guaranteed sufficient.
  *
  * Credentials shape: { apiToken: string }
  *

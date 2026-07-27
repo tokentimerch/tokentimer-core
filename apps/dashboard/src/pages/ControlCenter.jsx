@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link as RouterLink, useLocation } from 'react-router';
 import {
   Alert,
@@ -42,7 +42,6 @@ import {
   useCertOpsAvailability,
   useWorkspaceCertOps,
 } from '../components/certops/useCertOps.js';
-import RenewalBadge from '../components/certops/RenewalBadge.jsx';
 import {
   RENEWAL_STATES,
   expiryDescriptor,
@@ -544,8 +543,8 @@ function InsightListRow({
         </Circle>
       ) : null}
       <Box minW={0} flex='1'>
-        <Flex justify='space-between' align='start' gap={2}>
-          <Box minW={0} flex='1'>
+        <Flex justify='space-between' align='start' gap={2} flexWrap='wrap'>
+          <Box minW='140px' flex='1'>
             {titleNode}
             {subtitle ? (
               <Text color={muted} fontSize='xs' mt={0.5} noOfLines={1}>
@@ -553,7 +552,11 @@ function InsightListRow({
               </Text>
             ) : null}
           </Box>
-          {trailing ? <Box flexShrink={0}>{trailing}</Box> : null}
+          {trailing ? (
+            <Box flexShrink={0} sx={{ '& > *': { flexWrap: 'wrap' } }}>
+              {trailing}
+            </Box>
+          ) : null}
         </Flex>
         {meta ? (
           <Text color={muted} fontSize='xs' mt={1.5} noOfLines={1}>
@@ -1073,7 +1076,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
 
   const {
     linked: linkedManagedCerts,
-    highlights: managedCertHighlights,
     linkedCount: managedCertCount,
     provisioningCount: provisioningCertCount,
     unlinkedCount: unlinkedCertCount,
@@ -1081,6 +1083,32 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     () => summarizeManagedCertificates(managedCertItems),
     [managedCertItems]
   );
+
+  // linkedManagedCerts is already fully loaded client-side (useWorkspaceCertOps
+  // fetches the whole workspace inventory in one request), so "load more" here
+  // just reveals more of what summarizeManagedCertificates already sorted by
+  // soonest expiry, rather than making another network call.
+  const [managedCertVisibleCount, setManagedCertVisibleCount] = useState(
+    INSIGHT_LIST_VISIBLE_ROWS
+  );
+  useEffect(() => {
+    setManagedCertVisibleCount(INSIGHT_LIST_VISIBLE_ROWS);
+  }, [linkedManagedCerts]);
+  const managedCertHighlights = useMemo(
+    () =>
+      summarizeManagedCertificates(managedCertItems, {
+        highlightLimit: managedCertVisibleCount,
+      }).highlights,
+    [managedCertItems, managedCertVisibleCount]
+  );
+  const managedCertHasMore =
+    managedCertVisibleCount < linkedManagedCerts.length;
+  const loadMoreManagedCerts = useCallback(() => {
+    setManagedCertVisibleCount(count =>
+      Math.min(count + INSIGHT_LIST_VISIBLE_ROWS, linkedManagedCerts.length)
+    );
+  }, [linkedManagedCerts.length]);
+
 
   const managedCertSummaryDetail = useMemo(() => {
     if (certOpsLoading) return 'Loading inventory...';
@@ -1618,6 +1646,8 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                     } not linked.`
                                   : 'No managed certificates registered in this workspace yet.'
                               }
+                              onLoadMore={loadMoreManagedCerts}
+                              hasMore={managedCertHasMore}
                             >
                               {managedCertHighlights.length > 0
                                 ? managedCertHighlights.map(cert => {
@@ -1647,7 +1677,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                           'Managed certificate'
                                         }
                                         trailing={
-                                          <HStack spacing={2}>
+                                          <HStack spacing={1}>
                                             <Badge
                                               colorScheme={statusScheme(
                                                 cert.status
@@ -1665,9 +1695,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                                             >
                                               {expiry.label}
                                             </Badge>
-                                            <RenewalBadge
-                                              renewal={cert.renewal}
-                                            />
                                           </HStack>
                                         }
                                         meta={

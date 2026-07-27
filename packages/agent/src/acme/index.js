@@ -421,6 +421,19 @@ function buildAdapterArgs(kind, {
   // (set via --home to the agent-owned state subdirectory). CERTOPS_DNS_HOOK
   // in the child env points at the Node hook; no credentials travel via
   // argv or env.
+  //
+  // --force is mandatory here, not optional: acme.sh's --signcsr internally
+  // calls the same issue() routine as a plain --renew, which persists its
+  // own Le_NextRenewTime in the domain's conf directory and silently exits
+  // 2 (RENEW_SKIP) on any invocation before that self-tracked time, even
+  // though TokenTimer's control plane, not acme.sh, is the sole authority
+  // on whether this renewal should run (per-CA cap, renewBeforeDays policy,
+  // manual/forced renewal requests). Without --force, any renew job issued
+  // ahead of acme.sh's own internal schedule (which will not agree with
+  // TokenTimer's schedule in general, e.g. a manual off-cycle renewal)
+  // fails with an unhelpful "exit code 2, no stderr" instead of running.
+  // certbot's --csr mode has no equivalent stateful skip, so this is
+  // acme.sh-specific.
   return [
     "--home",
     paths.acmeShHome,
@@ -440,6 +453,7 @@ function buildAdapterArgs(kind, {
     outputPaths.chainPath,
     "--fullchain-file",
     outputPaths.fullchainPath,
+    "--force",
     ...typedArgs,
     ...(dryRun ? ["--test"] : []),
   ];

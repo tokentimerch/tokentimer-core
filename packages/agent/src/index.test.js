@@ -2792,4 +2792,23 @@ describe("renew chain deployment", () => {
     assert.deepEqual(stagingLeftovers(), []);
     assert.equal(fs.existsSync(job.certPath), false);
   });
+
+  it("falls back to the stdout excerpt when a failed acme run has no stderr", async () => {
+    // Regression test: acme.sh routes most diagnostics (including RENEW_SKIP)
+    // through its own _info logger to stdout, not stderr. A failure message
+    // that only inspects stderrExcerpt reports the unhelpful "no stderr" for
+    // exactly the acme.sh failures an operator most needs explained.
+    seedLiveKey();
+    const job = makeJob();
+    function execFileStub(file, args, options, callback) {
+      const error = Object.assign(new Error("Command failed"), { code: 2 });
+      process.nextTick(() =>
+        callback(error, "Skipping renew, Next renewal time is: ...", ""),
+      );
+    }
+    const { outcome } = await runRenew({ job, acmeExecFileImpl: execFileStub });
+
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /Skipping renew, Next renewal time is/);
+  });
 });

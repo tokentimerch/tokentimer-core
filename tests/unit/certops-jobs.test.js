@@ -2145,4 +2145,173 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
     });
     assert.equal(job.assignedAgentId, null);
   });
+
+  function minimalValidRenewalPayload() {
+    return {
+      target: "example.com",
+      commandRef: "acme-renew-default",
+      caEndpoint: "https://acme-v02.api.letsencrypt.org/directory",
+      acmeKind: "certbot",
+      keyRotation: true,
+      certPath: "/etc/ssl/live/example.com/cert.pem",
+      reloadService: "nginx",
+      verifyHost: "example.com",
+      verifyPort: 443,
+      dnsZone: "example.com",
+      dnsProvider: "cloudflare",
+      renewalProfile: {
+        schemaVersion: 1,
+        sanPolicy: {
+          mode: "exact",
+          sans: ["example.com"],
+          allowWildcards: false,
+        },
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        keyRotationPolicy: { rotateOnRenew: true },
+        preferredChain: null,
+        ca: {
+          endpoint: "https://acme-v02.api.letsencrypt.org/directory",
+          accountRef: null,
+          eabRef: null,
+        },
+        acme: { kind: "certbot", commandRef: "acme-renew-default" },
+        dns: { provider: "cloudflare", zone: "example.com" },
+        deploymentTargets: [
+          {
+            type: "endpoint",
+            reference: "example.com",
+            certPath: "/etc/ssl/live/example.com/cert.pem",
+            reloadService: "nginx",
+          },
+        ],
+        target: {
+          type: "endpoint",
+          reference: "example.com",
+          certPath: "/etc/ssl/live/example.com/cert.pem",
+        },
+        verification: {
+          host: "example.com",
+          port: 443,
+          requireMatch: true,
+        },
+      },
+    };
+  }
+
+  it("rejects an automation-sourced renew job for a certificate whose profile is disabled", async () => {
+    const { CERTOPS_RENEWAL_AUTO_RENEW_DISABLED } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          source: "api",
+          discovery_agent_id: null,
+          profile_status: "disabled",
+        },
+      ],
+    });
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "automation",
+          subjectType: "managed_certificate",
+          subjectId: AGENT_LOCAL_CERT_ID,
+          payload: minimalValidRenewalPayload(),
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
+    );
+  });
+
+  it("rejects an automation-sourced renew job for a certificate whose profile is archived", async () => {
+    const { CERTOPS_RENEWAL_AUTO_RENEW_DISABLED } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          source: "api",
+          discovery_agent_id: null,
+          profile_status: "archived",
+        },
+      ],
+    });
+
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client,
+          workspaceId: WORKSPACE_A,
+          operation: "renew",
+          source: "automation",
+          subjectType: "managed_certificate",
+          subjectId: AGENT_LOCAL_CERT_ID,
+          payload: minimalValidRenewalPayload(),
+        }),
+      (error) => error?.code === CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
+    );
+  });
+
+  it("allows a manually-sourced renew job for a certificate whose profile is disabled (manual renew is the documented override)", async () => {
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          source: "api",
+          discovery_agent_id: null,
+          profile_status: "disabled",
+        },
+      ],
+    });
+
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "api",
+      subjectType: "managed_certificate",
+      subjectId: AGENT_LOCAL_CERT_ID,
+      payload: {},
+    });
+    assert.equal(job.status, "pending");
+  });
+
+  it("allows an automation-sourced renew job for a certificate whose profile is active", async () => {
+    const client = createOwnershipMemoryClient({
+      certificates: [
+        {
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          source: "api",
+          discovery_agent_id: null,
+          profile_status: "active",
+        },
+      ],
+    });
+
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      source: "automation",
+      subjectType: "managed_certificate",
+      subjectId: AGENT_LOCAL_CERT_ID,
+      payload: minimalValidRenewalPayload(),
+    });
+    assert.equal(job.status, "pending");
+  });
 });

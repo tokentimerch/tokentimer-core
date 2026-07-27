@@ -755,6 +755,42 @@ function boundErrorMessage(message) {
   return String(message).slice(0, EXECUTION_ERROR_MESSAGE_MAX_CHARS);
 }
 
+/** Evidence metadata values cap at 512 chars (evidence/index.js
+ * METADATA_VALUE_MAX_LENGTH); acme adapter excerpts cap at 1024, so they
+ * must be re-truncated here or buildEvidenceItem throws and the real ACME
+ * failure is lost behind a generic evidence-write error instead of reported. */
+const EVIDENCE_METADATA_VALUE_MAX_CHARS = 512;
+
+/**
+ * @param {string} value
+ * @returns {string|null}
+ */
+function boundMetadataExcerpt(value) {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return value.slice(0, EVIDENCE_METADATA_VALUE_MAX_CHARS);
+}
+
+/**
+ * Picks the most useful diagnostic text out of a failed ACME adapter run.
+ * acme.sh (unlike certbot) writes most of its diagnostic detail, including
+ * the reason a run was skipped or rejected, to stdout via its own `_info`
+ * logger; only messages routed through `_err` land on stderr. A failure
+ * message that only ever looks at stderrExcerpt therefore reports
+ * "no stderr" for the exact acme.sh failures an operator most needs
+ * explained (e.g. `RENEW_SKIP`), even though the real explanation was
+ * captured and redacted right there in stdoutExcerpt. Prefers stderr when
+ * both are present since certbot's own errors are conventionally there.
+ * @param {{ stderrExcerpt?: string, stdoutExcerpt?: string }} renewal
+ * @returns {string}
+ */
+function acmeFailureDetail(renewal) {
+  const stderr = renewal.stderrExcerpt || "";
+  const stdout = renewal.stdoutExcerpt || "";
+  if (stderr) return stderr;
+  if (stdout) return stdout;
+  return "no output captured";
+}
+
 /**
  * Resolves the deploy destination for a job. base-payload deviation
  * (documented in the module docblock): the payload has no certPath field,
@@ -2164,14 +2200,19 @@ async function executeRenewJob({
           eventType: "validation.failed",
           observedAt: new Date().toISOString(),
           summary: `ACME renewal step failed for job ${jobId} (exit code ${renewal.exitCode}).`,
-          metadata: [{ name: "step", value: "acme" }, { name: "exitCode", value: renewal.exitCode }],
+          metadata: [
+            { name: "step", value: "acme" },
+            { name: "exitCode", value: renewal.exitCode },
+            { name: "stderrExcerpt", value: boundMetadataExcerpt(renewal.stderrExcerpt) },
+            { name: "stdoutExcerpt", value: boundMetadataExcerpt(renewal.stdoutExcerpt) },
+          ],
         }),
       ]);
       return {
         status: "failed",
         keyRotated,
         errorMessage: boundErrorMessage(
-          `acme step failed with exit code ${renewal.exitCode}: ${renewal.stderrExcerpt || "no stderr"}`,
+          `acme step failed with exit code ${renewal.exitCode}: ${acmeFailureDetail(renewal)}`,
         ),
       };
     }

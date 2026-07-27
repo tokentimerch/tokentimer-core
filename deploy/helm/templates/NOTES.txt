@@ -73,3 +73,24 @@ Admin credentials:
 NOTE: SMTP is not configured. Configure it in values.yaml or via the
       System Settings UI after first login.
 {{- end }}
+
+{{- if .Values.certops.controller.enabled }}
+
+CertOps Controller:
+  Mode:        {{ .Values.certops.controller.mode }}
+  Scope:       {{ if .Values.certops.controller.clusterWide }}cluster-wide{{ else }}namespace-scoped ({{ if .Values.certops.controller.watchNamespaces }}{{ join ", " .Values.certops.controller.watchNamespaces }}{{ else }}{{ .Release.Namespace }}{{ end }}){{ end }}
+
+{{- if not .Values.certops.controller.clusterWide }}
+  NOTE: clusterWide is false. Only namespace-scoped RBAC has been deployed.
+        The controller cannot watch certificates outside the namespaces listed
+        above. Set certops.controller.clusterWide=true to deploy cluster-wide
+        ClusterRole/ClusterRoleBinding resources.
+{{- end }}
+
+{{- if eq .Values.certops.controller.mode "observe" }}
+  NOTE: The controller is running in observe mode. It will report certificate
+        status but will not create or renew certificates. To enable automated
+        provisioning, set certops.controller.mode=provision.
+{{- end }}
+
+{{- end }}

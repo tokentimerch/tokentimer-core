@@ -292,9 +292,11 @@ certops:
     mode: observe
     # Leader election is not available yet, so exactly one replica is safe.
     replicaCount: 1
-    # Cluster-wide RBAC is explicit. A non-empty watchNamespaces value is
-    # invalid when this is true; an empty list otherwise means the release namespace.
-    clusterWide: false
+    # Cluster-wide RBAC (ClusterRole/ClusterRoleBinding) is the default. A
+    # non-empty watchNamespaces value is invalid while this is true. Set this
+    # to false to scope down to Role/RoleBinding in watchNamespaces (empty
+    # list then means the release namespace).
+    clusterWide: true
     watchNamespaces: []
     secretFallbackEnabled: false
 

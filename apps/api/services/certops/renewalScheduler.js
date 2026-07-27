@@ -37,6 +37,7 @@ const { CERTOPS_DISABLED } = require("./settings");
 const {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   buildRenewalJobPayload,
 } = require("./renewalProfile");
 const {
@@ -79,10 +80,10 @@ const NON_RENEWABLE_CERTIFICATE_STATUSES = Object.freeze([
 // Filtered in SQL rather than skipped in JS: a disabled profile is not a
 // candidate at all, so it must not consume a slot in the batch LIMIT and delay
 // certificates that do renew.
-const AUTO_RENEW_DISABLED_PROFILE_STATUSES = Object.freeze([
-  "disabled",
-  "archived",
-]);
+//
+// Canonical definition lives in renewalProfile.js (re-exported here for call
+// sites in this file), since jobs.js's own defense-in-depth re-check at
+// job-creation time needs the identical list.
 
 function resolveRenewalThresholdDays(env = process.env) {
   const raw = env[RENEWAL_THRESHOLD_ENV];

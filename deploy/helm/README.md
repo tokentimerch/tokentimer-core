@@ -215,10 +215,13 @@ certops:
     apiToken:
       existingSecret: "tokentimer-controller-api-token"
       key: token
-    # Empty means the Helm release namespace. Set this only for an explicit
-    # namespaced allow-list, or use clusterWide: true (never both).
+    # clusterWide: true is the chart default (below) and takes the entire
+    # cluster; watchNamespaces is ignored while it is true. Set clusterWide:
+    # false to scope down: watchNamespaces: [] then means the Helm release
+    # namespace, and a non-empty list renders one Role/RoleBinding per
+    # namespace (never combine a non-empty list with clusterWide: true).
     watchNamespaces: []
-    clusterWide: false
+    clusterWide: true
     # Adds `get` on Secrets only; leave false unless public-certificate Secret
     # fallback is required.
     secretFallbackEnabled: false
@@ -228,9 +231,11 @@ The controller image reads the mounted token file on every request, so normal
 Kubernetes Secret-volume rotation is picked up without retaining the token.
 `api.url` must be reachable from the controller Pod; use HTTPS for external
 control planes. `workspaceId` and `clusterId` must match the immutable token
-binding. `watchNamespaces: []` resolves to the Helm release namespace, a
-non-empty list renders one Role/RoleBinding per namespace, and
-`clusterWide: true` is an explicit alternative. Invalid names, overlapping namespace and
+binding. `clusterWide: true` is the default and grants cluster-wide read (and,
+in `provision` mode, write) access via ClusterRole/ClusterRoleBinding; set
+`clusterWide: false` to scope down instead, where `watchNamespaces: []`
+resolves to the Helm release namespace and a non-empty list renders one
+Role/RoleBinding per namespace. Invalid names, overlapping namespace and
 cluster-wide settings, modes other than `observe`/`provision`, and replica
 counts other than one fail rendering.
 
@@ -252,8 +257,9 @@ closed.
 | `provision` | `get`, `list`, `watch`, `create`, `patch` | `get`, `list`, `watch` | none; optional `get` for fallback |
 
 Both modes forbid wildcard permissions, Secret writes, CertificateRequest
-writes, and delete operations. Namespace mode uses Role/RoleBinding resources;
-cluster-wide mode uses an explicit ClusterRole/ClusterRoleBinding. Provision
+writes, and delete operations. Namespace-scoped mode (`clusterWide: false`)
+uses Role/RoleBinding resources; cluster-wide mode (the default) uses a
+ClusterRole/ClusterRoleBinding. Provision
 mode uses a `Recreate` deployment strategy to prevent overlapping write-capable
 Pods until leader election exists.
 

@@ -3,20 +3,27 @@
 /**
  * Hetzner DNS DNS-01 provider (Hetzner Console / Cloud API).
  *
- * ASSUMPTIONS (verify against live Hetzner docs before release):
+ * VERIFIED against Hetzner's current published API reference
+ * (docs.hetzner.cloud/reference/cloud#tag/zones and #tag/zone-rrset-actions,
+ * cross-checked 2026-07-27 against the official acme.sh `dns_hetznercloud.sh`
+ * plugin, which drives the identical endpoints and apex convention):
  *   - Base URL: https://api.hetzner.cloud/v1
  *   - Auth: Authorization: Bearer <project API token> created in the
  *     Hetzner Console (legacy dns.hetzner.com Auth-API-Token tokens do
- *     NOT work against this API).
- *   - Zones: GET /zones?name=<zone>
+ *     NOT work against this API; that legacy API is being retired).
+ *   - Zones: GET /zones?name=<zone> -> { zones: [...], meta.pagination }
  *   - Atomic TXT append: POST
  *     /zones/{id_or_name}/rrsets/{rr_name}/TXT/actions/add_records
- *     (auto-creates the RRSet when absent; appends otherwise).
+ *     (auto-creates the RRSet when absent; appends otherwise). Body:
+ *     { ttl?, records: [{ value, comment? }] }. Only supported for zones
+ *     in "primary" mode -- a secondary/slave zone rejects this with
+ *     422 incorrect_zone_mode, surfaced as a plain httpFailure here.
  *   - Value-specific remove: POST
  *     /zones/{id_or_name}/rrsets/{rr_name}/TXT/actions/remove_records
  *   - TXT record values are double-quoted in the API (e.g. "\"token\"").
  *   - RRSet names are relative to the zone, lower case, no trailing dot;
- *     apex uses "@".
+ *     apex uses "@" (confirmed against both Hetzner's own docs and the
+ *     official acme.sh plugin's zone-splitting logic).
  *
  * Credentials shape: { apiToken: string, zoneId?: string }
  *   - zoneId is optional; when absent the zone id is looked up by name.

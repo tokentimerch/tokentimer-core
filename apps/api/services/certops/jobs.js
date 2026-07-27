@@ -11,6 +11,7 @@ const {
 const {
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   validateRenewalProfile,
 } = require("./renewalProfile");
 const {
@@ -40,6 +41,7 @@ const CERTOPS_JOB_MODE_TERMINAL_INVALID =
   "CERTOPS_JOB_MODE_TERMINAL_INVALID";
 const CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE =
   "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE";
+const CERTOPS_RENEWAL_AUTO_RENEW_DISABLED = "CERTOPS_RENEWAL_AUTO_RENEW_DISABLED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 // Job execution mode. Persisted on certificate_jobs.mode and included in the
@@ -1104,13 +1106,16 @@ async function resolveManagedCertificateJobDefaults({
   }
 
   const result = await db.query(
-    `SELECT key_mode,
-            source,
-            public_metadata->'controllerObservation'->>'agentId'
-              AS discovery_agent_id
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND id = $2::uuid
+    `SELECT mc.key_mode,
+            mc.source,
+            mc.public_metadata->'controllerObservation'->>'agentId'
+              AS discovery_agent_id,
+            cp.status AS profile_status
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.workspace_id = $1
+        AND mc.id = $2::uuid
       LIMIT 1`,
     [workspaceId, subjectId],
   );
@@ -1123,6 +1128,31 @@ async function resolveManagedCertificateJobDefaults({
         "observed, e.g. via an endpoint or domain monitor) and cannot be " +
         `assigned an agent-executed ${operation} job`,
       CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    );
+  }
+
+  // The renewal scheduler's own scan query already excludes certificates
+  // whose linked profile is 'disabled'/'archived' (renewalScheduler.js,
+  // AUTO_RENEW_DISABLED_PROFILE_STATUSES) - but that guarantee lives in the
+  // sweep's SQL, not here, so any *other* code path that creates an
+  // automation-sourced renew job directly (an alternate scheduler entry, a
+  // future batch job) would not be stopped by it. Re-checked here rather
+  // than left to the caller so the guarantee holds regardless of how job
+  // creation is reached. Scoped to source === "automation" only: a manager
+  // manually renewing (or bulk-renewing) a certificate whose profile has
+  // auto-renew switched off is the documented, intended way to still renew
+  // it yourself (see "Switching automatic renewal off" in automation.mdx) -
+  // only the *scheduler's automatic* pickup is supposed to skip it.
+  if (
+    source === "automation" &&
+    operation === "renew" &&
+    AUTO_RENEW_DISABLED_PROFILE_STATUSES.includes(row.profile_status)
+  ) {
+    throw serviceError(
+      "This certificate's renewal profile has automatic renewal switched " +
+        `off (status: ${row.profile_status}); an automation-sourced renew ` +
+        "job cannot be created for it",
+      CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
     );
   }
 
@@ -1966,6 +1996,7 @@ async function listCertificateJobLog(options) {
 module.exports = {
   CERTOPS_JOB_INVALID,
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+  CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
   CERTOPS_JOB_METADATA_INVALID,

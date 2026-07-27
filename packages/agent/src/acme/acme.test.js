@@ -306,6 +306,7 @@ test("acme.sh adapter builds the documented argv (dryRun: false)", async () => {
     OUT_CHAIN_PATH,
     "--fullchain-file",
     OUT_FULLCHAIN_PATH,
+    "--force",
   ]);
   assert.equal(ACME_SH_DNS_HOOK_NAME, "dns_certops");
   assert.deepEqual(result.argvUsed, [
@@ -365,6 +366,7 @@ test("acme.sh adapter appends --test when dryRun: true", async () => {
     OUT_CHAIN_PATH,
     "--fullchain-file",
     OUT_FULLCHAIN_PATH,
+    "--force",
     "--test",
   ]);
 });

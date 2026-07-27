@@ -243,10 +243,15 @@ describe("certops maintenance worker", () => {
         past_hard_grace: false,
       },
     ]);
+    const auditEvents = [];
+    const auditWriter = async (event) => {
+      auditEvents.push(event);
+    };
 
     const summary = await worker.reapExpiredLeases({
       client,
       log: silentLogger,
+      auditWriter,
     });
 
     assert.deepStrictEqual(summary, {
@@ -279,6 +284,21 @@ describe("certops maintenance worker", () => {
       metadata.reconciliationReason,
       "lease_expired_after_side_effect_window_agent_unresponsive",
     );
+
+    // The reconciliation runbook's Step 1 relies on this: without it, a
+    // lease-reaped job is invisible to an audit-log-based search even though
+    // the runbook claims "every terminal non-success writes one of these".
+    assert.strictEqual(auditEvents.length, 1, "expected one CERTOPS_JOB_FAILED audit event");
+    assert.strictEqual(auditEvents[0].action, "CERTOPS_JOB_FAILED");
+    assert.strictEqual(auditEvents[0].workspaceId, "ws-1");
+    assert.strictEqual(auditEvents[0].metadata.jobId, "job-renewed");
+    assert.strictEqual(auditEvents[0].metadata.jobStatus, "orphaned_unknown_effect");
+    assert.strictEqual(auditEvents[0].metadata.source, "lease-reaper");
+    assert.strictEqual(auditEvents[0].metadata.needsOperatorReconciliation, true);
+    assert.strictEqual(
+      auditEvents[0].metadata.reconciliationReason,
+      "lease_expired_after_side_effect_window_agent_unresponsive",
+    );
   });
 
   it("fails claimed jobs without retry budget as agent_offline", async () => {
@@ -295,10 +315,15 @@ describe("certops maintenance worker", () => {
         past_hard_grace: false,
       },
     ]);
+    const auditEvents = [];
+    const auditWriter = async (event) => {
+      auditEvents.push(event);
+    };
 
     const summary = await worker.reapExpiredLeases({
       client,
       log: silentLogger,
+      auditWriter,
     });
 
     assert.deepStrictEqual(summary, {
@@ -322,6 +347,12 @@ describe("certops maintenance worker", () => {
     assert.strictEqual(logInsert.params[3], "failed");
     const metadata = JSON.parse(logInsert.params[5]);
     assert.strictEqual(metadata.errorCode, "agent_offline");
+
+    assert.strictEqual(auditEvents.length, 1, "expected one CERTOPS_JOB_FAILED audit event");
+    assert.strictEqual(auditEvents[0].action, "CERTOPS_JOB_FAILED");
+    assert.strictEqual(auditEvents[0].metadata.jobStatus, "failed");
+    assert.strictEqual(auditEvents[0].metadata.errorCode, "agent_offline");
+    assert.strictEqual(auditEvents[0].metadata.needsOperatorReconciliation, false);
   });
 
   it("never requeues running jobs; marks them orphaned_unknown_effect instead", async () => {

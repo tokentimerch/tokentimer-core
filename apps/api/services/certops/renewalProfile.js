@@ -19,6 +19,19 @@ const CERTOPS_RENEWAL_PROFILE_INVALID = "CERTOPS_RENEWAL_PROFILE_INVALID";
 const CERTOPS_RENEWAL_PROFILE_INCOMPLETE =
   "CERTOPS_RENEWAL_PROFILE_INCOMPLETE";
 
+// Profile statuses that switch automatic renewal off for every certificate
+// linked to the profile. Single source of truth for both the renewal
+// scheduler's scan query (which must exclude these certificates from the
+// batch entirely, not just skip them in JS) and job creation's own
+// defense-in-depth re-check (jobs.js resolveManagedCertificateJobDefaults),
+// so an automation-sourced renew job cannot be created for a disabled
+// profile through any path other than the sweep, even one that reaches job
+// creation directly.
+const AUTO_RENEW_DISABLED_PROFILE_STATUSES = Object.freeze([
+  "disabled",
+  "archived",
+]);
+
 const RENEWAL_PROFILE_SCHEMA_VERSION = 1;
 
 const TARGET_TYPES = Object.freeze([
@@ -605,6 +618,7 @@ function buildRenewalJobPayload({ certificate, reason = "expiry-threshold" }) {
 
 module.exports = {
   ACME_KINDS,
+  AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
   CERTOPS_RENEWAL_PROFILE_INVALID,
   KEY_ALGORITHMS,

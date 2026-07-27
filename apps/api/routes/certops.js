@@ -65,6 +65,7 @@ const {
 } = require("../services/certops/agentRegistry");
 const {
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+  CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
   CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   CERTOPS_JOB_EXECUTION_FIELD_REQUIRED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
@@ -175,6 +176,28 @@ function requireCertOpsWriteRole(req, res, next) {
   }
 
   return next();
+}
+
+/**
+ * Strips `deployedCertPath` from certificate records before they reach a
+ * viewer.
+ *
+ * The certificate list and single-certificate GET routes are intentionally
+ * not manager-gated (a viewer can see the inventory), but a deployment
+ * filesystem path is host reconnaissance, the same reasoning that keeps the
+ * renewal-profile routes manager-only (see the comment above those routes
+ * below). This keeps that line even though the two projections share
+ * `toInventoryRecord`, rather than forking the projection itself.
+ */
+function redactDeploymentPathForViewers(req, certificateOrList) {
+  if (req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager")) {
+    return certificateOrList;
+  }
+  const strip = (certificate) =>
+    certificate ? { ...certificate, deployedCertPath: undefined } : certificate;
+  return Array.isArray(certificateOrList)
+    ? certificateOrList.map(strip)
+    : strip(certificateOrList);
 }
 
 function requireCertOpsTokenManager(req, res, next) {
@@ -452,6 +475,13 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: err.message,
       code: CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
+    });
+  }
+
+  if (err?.code === CERTOPS_RENEWAL_AUTO_RENEW_DISABLED) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
     });
   }
 
@@ -2406,10 +2436,13 @@ router.get(
       });
       return res.json({
         ...result,
-        items: await withRenewalState({
-          workspaceId: req.workspace.id,
-          certificates: result.items,
-        }),
+        items: redactDeploymentPathForViewers(
+          req,
+          await withRenewalState({
+            workspaceId: req.workspace.id,
+            certificates: result.items,
+          })
+        ),
       });
     } catch (err) {
       if (
@@ -2754,7 +2787,9 @@ router.get(
         certificates: [certificate],
         includePreflight: true,
       });
-      return res.json({ certificate: enriched || certificate });
+      return res.json({
+        certificate: redactDeploymentPathForViewers(req, enriched || certificate),
+      });
     } catch (err) {
       logger.error("CertOps certificate detail failed", {
         error: err.message,

@@ -734,6 +734,18 @@ export const tokenAPI = {
     }
   },
 
+  // Get a single token by id (used to open the shared token detail modal
+  // from a page that only holds a token id, e.g. a CertOps managed
+  // certificate row, without loading the full token list).
+  getToken: async id => {
+    try {
+      const response = await apiClient.get(`${API_ENDPOINTS.GET_TOKENS}/${id}`);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  },
+
   // Create new token
   createToken: async (tokenData, confirmDuplicate = false) => {
     try {

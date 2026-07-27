@@ -66,6 +66,7 @@ const { enqueueOutboxEvent } = require(
 const { ensureDerivedRenewalProfile } = require(
   "../../api/services/certops/renewalProfileDerivation.js",
 );
+const { writeAudit } = require("../../api/services/audit.js");
 // The job status vocabulary comes from the API service, never from a local copy:
 // a dry run terminates as 'dry_run_complete' rather than 'succeeded', and
 // 'orphaned_unknown_effect' is terminal without being a success, so a restated
@@ -542,6 +543,15 @@ async function insertJobLog(
  *   manual reconciliation (not an ordinary failed/policy rejection).
  * Requeue does not touch attempt_count: the claim path already counted this
  * dispatch attempt.
+ *
+ * Every non-requeue terminal write (orphaned_unknown_effect, or failed with
+ * retry budget exhausted) also writes a CERTOPS_JOB_FAILED audit event, in
+ * the same transaction as the status update. This mirrors what
+ * agentDispatch.js does for agent-reported terminal failures, so the
+ * reconciliation runbook's audit-log search (Step 1) finds a lease-reaped
+ * job exactly the way it finds one reported by an agent - the job row itself
+ * only ever keeps the latest error, so this is the only durable per-attempt
+ * trail.
  */
 export async function reapExpiredLeases({
   client,
@@ -550,6 +560,7 @@ export async function reapExpiredLeases({
   hardGraceMs = DEFAULT_LEASE_HARD_GRACE_MS,
   log = logger,
   recordOutboxEvent = enqueueOutboxEvent,
+  auditWriter = writeAudit,
 } = {}) {
   const summary = { scanned: 0, requeued: 0, failed: 0, deferred: 0 };
 
@@ -667,6 +678,33 @@ export async function reapExpiredLeases({
         });
         summary.failed += 1;
 
+        // The reconciliation runbook's Step 1 searches the audit log for
+        // CERTOPS_JOB_FAILED with needsOperatorReconciliation=true as the
+        // durable trail for this outcome (the job row itself only ever holds
+        // the latest error). Written here so a lease-reaped job is just as
+        // discoverable that way as one that failed via agent-reported result
+        // ingestion (agentDispatch.js).
+        await auditWriter({
+          client,
+          actorUserId: null,
+          subjectUserId: null,
+          action: "CERTOPS_JOB_FAILED",
+          targetType: "certificate_job",
+          targetId: null,
+          workspaceId: row.workspace_id,
+          metadata: {
+            jobId: String(row.id),
+            operation: row.operation || null,
+            jobStatus: "orphaned_unknown_effect",
+            source: "lease-reaper",
+            errorCode,
+            subjectType: row.subject_type || null,
+            subjectId: row.subject_id ? String(row.subject_id) : null,
+            needsOperatorReconciliation: true,
+            reconciliationReason,
+          },
+        });
+
         // Side effects may have landed and cannot be proven either way, so this
         // is the one reaper outcome an operator must always hear about. Recorded
         // in the outbox inside the reaper's transaction: the job's terminal
@@ -728,6 +766,27 @@ export async function reapExpiredLeases({
           },
         });
         summary.failed += 1;
+
+        await auditWriter({
+          client,
+          actorUserId: null,
+          subjectUserId: null,
+          action: "CERTOPS_JOB_FAILED",
+          targetType: "certificate_job",
+          targetId: null,
+          workspaceId: row.workspace_id,
+          metadata: {
+            jobId: String(row.id),
+            operation: row.operation || null,
+            jobStatus: "failed",
+            source: "lease-reaper",
+            errorCode,
+            subjectType: row.subject_type || null,
+            subjectId: row.subject_id ? String(row.subject_id) : null,
+            needsOperatorReconciliation: false,
+            reconciliationReason: null,
+          },
+        });
 
         const classification = classifyTerminalTransition({
           operation: row.operation,

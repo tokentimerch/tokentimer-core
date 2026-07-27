@@ -14,6 +14,7 @@ const {
   detachCertificateRenewalProfileMock,
   retryRenewalSetupIntentMock,
   listCertificatesMock,
+  listRenewalProfilesMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -22,6 +23,7 @@ const {
   detachCertificateRenewalProfileMock: vi.fn(),
   retryRenewalSetupIntentMock: vi.fn(),
   listCertificatesMock: vi.fn(),
+  listRenewalProfilesMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -47,6 +49,16 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
     detachCertificateRenewalProfile: detachCertificateRenewalProfileMock,
     retryRenewalSetupIntent: retryRenewalSetupIntentMock,
     listCertificates: listCertificatesMock,
+  };
+});
+
+vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsRenewalApi.js'
+  );
+  return {
+    ...actual,
+    listRenewalProfiles: listRenewalProfilesMock,
   };
 });
 
@@ -96,6 +108,7 @@ beforeEach(() => {
   detachCertificateRenewalProfileMock.mockReset();
   retryRenewalSetupIntentMock.mockReset();
   listCertificatesMock.mockReset();
+  listRenewalProfilesMock.mockReset();
   useCertOpsCanManageMock.mockReturnValue(true);
   useCertOpsCertificatesMock.mockReturnValue(certState());
   // Default: the retired-count probe (two limit:1 list calls) sees no
@@ -104,6 +117,10 @@ beforeEach(() => {
     items: [],
     pagination: { limit: 1, offset: 0, total: 0 },
   });
+  // Default: no existing renewal profiles, so the setup modal falls back to
+  // manual entry without an extra click in tests that don't care about the
+  // preset picker.
+  listRenewalProfilesMock.mockResolvedValue({ items: [], total: 0 });
 });
 
 describe('CertOpsCertificates list states', () => {
@@ -347,9 +364,13 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     });
     expect(dialog).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText('e.g. certbot-csr'), {
-      target: { value: 'certbot-csr' },
-    });
+    // No existing renewal profiles (see beforeEach), so the modal falls back
+    // to manual entry directly; wait for that async check to settle before
+    // looking for the manual inputs.
+    fireEvent.change(
+      await screen.findByPlaceholderText('e.g. certbot-csr'),
+      { target: { value: 'certbot-csr' } }
+    );
     fireEvent.change(screen.getByPlaceholderText('e.g. cloudflare'), {
       target: { value: 'cloudflare' },
     });
@@ -380,6 +401,154 @@ describe('CertOpsCertificates renewal setup and detach', () => {
       );
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('defaults to an existing profile as a preset and submits its values', async () => {
+    const refresh = vi.fn();
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+        ],
+        refresh,
+      })
+    );
+    setUpCertificateRenewalMock.mockResolvedValue({ job: { id: 'job-1' } });
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'profile-existing',
+          name: 'Derived: example.test (cert-1)',
+          renewalProfile: {
+            acme: { commandRef: 'certbot-csr' },
+            ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
+            dns: { provider: 'cloudflare', zone: 'example.com' },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up renewal' }));
+    await screen.findByRole('dialog', { name: /Set up automatic renewal/ });
+
+    // The preset card renders once the profile list resolves (its name
+    // appears both in the picker card and in the summary sentence above it);
+    // no manual inputs are needed or shown by default.
+    await screen.findAllByText('Derived: example.test (cert-1)');
+    expect(screen.queryByPlaceholderText('e.g. certbot-csr')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Renew and set up' }));
+
+    await vi.waitFor(() => {
+      expect(setUpCertificateRenewalMock).toHaveBeenCalledWith(
+        'ws-1',
+        certificate().id,
+        expect.objectContaining({
+          payload: {
+            commandRef: 'certbot-csr',
+            dnsProvider: 'cloudflare',
+            caEndpoint: 'https://acme-v02.api.letsencrypt.org/directory',
+            dnsZone: 'example.com',
+          },
+        })
+      );
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('switches an existing-profile default to manual entry', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+        ],
+      })
+    );
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'profile-existing',
+          name: 'Derived: example.test (cert-1)',
+          renewalProfile: {
+            acme: { commandRef: 'certbot-csr' },
+            ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
+            dns: { provider: 'cloudflare', zone: 'example.com' },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up renewal' }));
+    await screen.findByRole('dialog', { name: /Set up automatic renewal/ });
+    await screen.findAllByText('Derived: example.test (cert-1)');
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Enter renewal details manually' })
+    );
+
+    expect(
+      await screen.findByPlaceholderText('e.g. certbot-csr')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Derived: example.test (cert-1)')
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the certificate's own deployment path and warns when a preset's path does not match it", async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            renewal: { state: 'not-configured', profileId: null },
+            deployedCertPath: '/etc/ssl/certs/example.test.pem',
+          }),
+        ],
+      })
+    );
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'profile-other',
+          name: 'Derived: other.test (cert-other)',
+          renewalProfile: {
+            acme: { commandRef: 'certbot-csr' },
+            ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
+            dns: { provider: 'cloudflare', zone: 'example.com' },
+            deploymentTargets: [
+              { certPath: '/etc/ssl/certs/other.test.pem' },
+            ],
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up renewal' }));
+    const dialog = await screen.findByRole('dialog', {
+      name: /Set up automatic renewal/,
+    });
+
+    // The certificate's own discovered path is shown in the header (and
+    // again inside the mismatch warning below).
+    expect(
+      within(dialog).getAllByText('/etc/ssl/certs/example.test.pem').length
+    ).toBeGreaterThan(0);
+
+    // The mismatched preset's own path renders in its card, and confirming
+    // is still possible (the warning is advisory, not a hard block), but the
+    // mismatch warning must be visible so the operator can catch it.
+    await screen.findAllByText('/etc/ssl/certs/other.test.pem');
+    expect(
+      screen.getByText(/It looks like it belongs to a different/)
+    ).toBeInTheDocument();
   });
 
   it('detaches a profiled certificate and refreshes the list', async () => {

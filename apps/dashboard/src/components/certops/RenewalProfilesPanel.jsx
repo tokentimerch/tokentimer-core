@@ -46,6 +46,7 @@ import {
   useCertOpsRenewalProfiles,
   useUpdateRenewalProfile,
 } from './useCertOpsRenewals.js';
+import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
 
 /**
  * Renewal profiles.
@@ -227,6 +228,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     save,
   } = useUpdateRenewalProfile();
   const [disableTarget, setDisableTarget] = useState(null);
+  const [detailsTarget, setDetailsTarget] = useState(null);
 
   const titleColor = useColorModeValue('gray.700', 'gray.200');
   const muted = useColorModeValue('gray.600', 'gray.400');
@@ -341,11 +343,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                   <Th>Auto-renew</Th>
                   <Th>Lead time</Th>
                   <Th>Key</Th>
-                  {isAdmin ? (
-                    <Th textAlign='right' {...stickyActions}>
-                      Actions
-                    </Th>
-                  ) : null}
+                  <Th textAlign='right' {...stickyActions}>
+                    Actions
+                  </Th>
                 </Tr>
               </Thead>
               <Tbody>
@@ -421,40 +421,49 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             : '--'}
                         </Text>
                       </Td>
-                      {isAdmin ? (
-                        <Td textAlign='right' {...stickyActions}>
-                          {archived ? (
-                            <Text fontSize='xs' color={muted}>
-                              Archived
-                            </Text>
-                          ) : profile.autoRenewEnabled ? (
-                            <Button
-                              size='xs'
-                              variant='outline'
-                              colorScheme='red'
-                              isLoading={rowSaving}
-                              onClick={() => setDisableTarget(profile)}
-                            >
-                              Switch off
-                            </Button>
-                          ) : (
-                            <Button
-                              size='xs'
-                              colorScheme='green'
-                              isLoading={rowSaving}
-                              onClick={() =>
-                                applyChange(
-                                  profile,
-                                  { autoRenewEnabled: true },
-                                  'Automatic renewal switched on'
-                                )
-                              }
-                            >
-                              Switch on
-                            </Button>
-                          )}
-                        </Td>
-                      ) : null}
+                      <Td textAlign='right' {...stickyActions}>
+                        <HStack spacing={1} justify='flex-end'>
+                          <Button
+                            size='xs'
+                            variant='ghost'
+                            onClick={() => setDetailsTarget(profile)}
+                          >
+                            Details
+                          </Button>
+                          {isAdmin ? (
+                            archived ? (
+                              <Text fontSize='xs' color={muted}>
+                                Archived
+                              </Text>
+                            ) : profile.autoRenewEnabled ? (
+                              <Button
+                                size='xs'
+                                variant='outline'
+                                colorScheme='red'
+                                isLoading={rowSaving}
+                                onClick={() => setDisableTarget(profile)}
+                              >
+                                Switch off
+                              </Button>
+                            ) : (
+                              <Button
+                                size='xs'
+                                colorScheme='green'
+                                isLoading={rowSaving}
+                                onClick={() =>
+                                  applyChange(
+                                    profile,
+                                    { autoRenewEnabled: true },
+                                    'Automatic renewal switched on'
+                                  )
+                                }
+                              >
+                                Switch on
+                              </Button>
+                            )
+                          ) : null}
+                        </HStack>
+                      </Td>
                     </Tr>
                   );
                 })}
@@ -494,6 +503,12 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
           );
           if (updated) setDisableTarget(null);
         }}
+      />
+
+      <RenewalProfileDetailsModal
+        isOpen={Boolean(detailsTarget)}
+        onClose={() => setDetailsTarget(null)}
+        profile={detailsTarget}
       />
     </Box>
   );

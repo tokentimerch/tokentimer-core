@@ -14,7 +14,11 @@
  *     consumerKey: string,
  *     endpoint?: string,   // API base URL, default https://eu.api.ovh.com/1.0
  *                          // (other regions: https://ca.api.ovh.com/1.0,
- *                          //  https://us.api.ovhcloud.com/1.0)
+ *                          //  https://api.us.ovhcloud.com/1.0 -- verified
+ *                          //  2026-07-27 against OVH's own
+ *                          //  python-ovh/php-ovh endpoint tables; note the
+ *                          //  US region's subdomain order does NOT mirror
+ *                          //  eu/ca ("api.us." not "us.api."))
  *   }
  *
  * Request signing per the OVH spec: "$1$" + SHA1 hex of

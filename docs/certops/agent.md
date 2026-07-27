@@ -838,9 +838,9 @@ group/other-readable files on POSIX), and never leave the host:
 | `google-cloud-dns` | `client_email`, `private_key`, `project_id` (standard SA JSON fields); optional `managedZone` (else looked up by `dnsName`). The SA key is a DNS credential: it signs the OAuth JWT locally and never leaves the host |
 | `rfc2136` | `server`, `keyName`, `keySecretBase64`; optional `port` (default 53), `keyAlgorithm` (default `hmac-sha256`) |
 | `acme-dns` | `baseUrl`, `username`, `password`, `subdomain` (from `/register`). Cleanup is a documented no-op: acme-dns rotates its two TXT slots automatically. The provider declares `capabilities.cleanupVerifiable: false`, so the hook skips the generic wait-for-TXT-absence poll after cleanup and reports evidence `status: "cleanup_not_applicable"` instead of failing/timing out |
-| `ovhcloud` | `applicationKey`, `applicationSecret`, `consumerKey`; optional `endpoint` (default `https://eu.api.ovh.com/1.0`; other regions `https://ca.api.ovh.com/1.0`, `https://us.api.ovhcloud.com/1.0`). Requests are OVH-signed (`$1$` + SHA1) with the LOCAL unix time as `X-Ovh-Timestamp` (no `/auth/time` skew correction); a `POST /domain/zone/<zone>/refresh` follows every mutation so the change actually serves |
+| `ovhcloud` | `applicationKey`, `applicationSecret`, `consumerKey`; optional `endpoint` (default `https://eu.api.ovh.com/1.0`; other regions `https://ca.api.ovh.com/1.0`, `https://api.us.ovhcloud.com/1.0`). Requests are OVH-signed (`$1$` + SHA1) with the LOCAL unix time as `X-Ovh-Timestamp` (no `/auth/time` skew correction); a `POST /domain/zone/<zone>/refresh` follows every mutation so the change actually serves |
 | `hetzner` | `apiToken` — **Hetzner Console / Cloud project API token** (`Authorization: Bearer`), not a legacy DNS Console token. Optional `zoneId` (looked up by zone name when absent). Uses `https://api.hetzner.cloud/v1` rrset `add_records` / `remove_records` actions (value-specific; concurrent challenges do not clobber each other). Legacy `dns.hetzner.com` Auth-API-Token credentials are not supported |
-| `infomaniak` | `apiToken` (Bearer, "domain" scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
+| `infomaniak` | `apiToken` (Bearer; v2 API requires `domain:read`, `dns:read`, and `dns:write` scopes together, not the older single `domain` scope). Every response is wrapped in a `{ result: "success"\|"error", data }` envelope; a non-`success` result is treated as failure even on HTTP 200 |
 | `exoscale` | `apiKey`, `apiSecret`; optional `apiEndpoint` (default `https://api-ch-gva-2.exoscale.com/v2`; DNS is global, any zone endpoint works). Requests are EXO2-HMAC-SHA256 signed. Mutations are async on Exoscale's side: the accepted operation response is treated as success; the hook's propagation wait covers the apply window |
 | `powerdns` | `apiUrl` (must be `https:`, e.g. `https://pdns.example:8081`; a loopback `http://127.0.0.1:8081` endpoint requires an explicit `allowInsecureLocalHttp: true`), `apiKey` (X-API-Key header); optional `serverId` (default `localhost`). Zone and record names carry a trailing dot and TXT content is double-quoted, per PowerDNS API rules. Present merges with existing TXT values at the name and `REPLACE`s the union (parallel challenges never clobber each other); cleanup `REPLACE`s the remainder or sends `changetype: DELETE` when none remain |
 
@@ -868,8 +868,31 @@ functions it defines. The installer symlinks the shipped script into
 CERTOPS_DNS_HOOK=/path/to/certops-dns-hook.js \
 LE_CONFIG_HOME=<stateDir>/acme/acme.sh \
   acme.sh --signcsr --csr <csr.pem> --dns dns_certops \
-  --home <stateDir>/acme/acme.sh --config-home <stateDir>/acme/acme.sh ...
+  --home <stateDir>/acme/acme.sh --config-home <stateDir>/acme/acme.sh --force ...
 ```
+
+`--force` is mandatory, not optional. `--signcsr` internally calls acme.sh's
+own `issue()` routine, which persists a per-domain `Le_NextRenewTime` in its
+own state and silently exits `2` (`RENEW_SKIP`) on any invocation before that
+self-tracked time. TokenTimer's control plane, not acme.sh, is the sole
+authority on when a renewal should run (per-CA cap, `renewBeforeDays`,
+manual/forced requests), so a renew job the server has already validated and
+signed must never be second-guessed by acme.sh's own clock. Without `--force`,
+any renew dispatched ahead of acme.sh's internally-computed schedule fails
+instead of running. certbot's `--csr` mode has no equivalent stateful skip,
+so this is acme.sh-specific (discovered during full end-to-end testing of the
+acme.sh adapter against a live Cloudflare zone; see `src/acme/index.js`'s
+`buildAdapterArgs`).
+
+Relatedly: acme.sh routes most of its own diagnostics, including the
+`RENEW_SKIP` message above, through its `_info` logger to **stdout**, not
+stderr (only `_err` output lands on stderr). `index.js`'s failure path
+(`acmeFailureDetail`) therefore falls back to `stdoutExcerpt` whenever
+`stderrExcerpt` is empty, and both excerpts are attached to the
+`validation.failed` evidence item's metadata (`stderrExcerpt`/
+`stdoutExcerpt`), so an acme.sh failure is never reported as the previous,
+undiagnosable "exit code 2, no stderr" with no way to tell why from the
+control plane alone.
 
 `dns_certops.sh` strips one leading `_acme-challenge.` from the complete TXT
 name acme.sh calls it with and exports `ACME_DOMAIN` (base domain) /

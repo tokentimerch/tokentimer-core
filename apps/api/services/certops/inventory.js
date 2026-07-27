@@ -246,6 +246,13 @@ function toInventoryRecord(row) {
     notAfter: dateToIso(row.not_after),
     keyMode: row.key_mode,
     keyReference: row.key_reference,
+    // Manager-only field: the routes that serve this projection to a viewer
+    // (the list and single-certificate GET) redact it before responding,
+    // since a deployment filesystem path is host reconnaissance, the same
+    // reasoning that gates the renewal-profile routes (see routes/certops.js
+    // near requireCertOpsWriteRole). Routes already restricted to managers
+    // pass it through untouched.
+    deployedCertPath: row.deployed_cert_path || null,
     reconciliationReason: row.reconciliation_reason ?? null,
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),

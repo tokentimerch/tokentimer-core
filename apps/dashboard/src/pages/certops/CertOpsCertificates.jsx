@@ -23,6 +23,7 @@ import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
+import CertificateTokenDetailModal from '../../components/certops/CertificateTokenDetailModal.jsx';
 import {
   listCertificates,
   retireCertificate,
@@ -210,6 +211,7 @@ export default function CertOpsCertificates() {
   const [retireTarget, setRetireTarget] = useState(null);
   const [setupTarget, setSetupTarget] = useState(null);
   const [detachTarget, setDetachTarget] = useState(null);
+  const [detailsTarget, setDetailsTarget] = useState(null);
   const [retryingId, setRetryingId] = useState(null);
   const [retiredCountTick, setRetiredCountTick] = useState(0);
 
@@ -405,7 +407,7 @@ export default function CertOpsCertificates() {
                   <Th>Renewal</Th>
                   <Th>Key locality</Th>
                   <Th>Source</Th>
-                  {canManage ? <Th textAlign='right'>Actions</Th> : null}
+                  <Th textAlign='right'>Actions</Th>
                 </Tr>
               </Thead>
               <Tbody>
@@ -499,45 +501,76 @@ export default function CertOpsCertificates() {
                       </Td>
                       {canManage ? (
                         <Td textAlign='right'>
-                          {!retired ? (
-                            <HStack
-                              spacing={1}
-                              justify='flex-end'
-                              flexWrap='wrap'
+                          <HStack
+                            spacing={1}
+                            justify='flex-end'
+                            flexWrap='wrap'
+                          >
+                            <Button
+                              size='xs'
+                              variant='ghost'
+                              isDisabled={!certificate.tokenId}
+                              title={
+                                certificate.tokenId
+                                  ? undefined
+                                  : 'No linked token to show'
+                              }
+                              onClick={() => setDetailsTarget(certificate)}
                             >
-                              {certificate.renewal?.profileId ? (
+                              Details
+                            </Button>
+                            {!retired ? (
+                              <>
+                                {certificate.renewal?.profileId ? (
+                                  <Button
+                                    size='xs'
+                                    variant='outline'
+                                    onClick={() => setDetachTarget(certificate)}
+                                  >
+                                    Detach
+                                  </Button>
+                                ) : certificate.renewal?.state ===
+                                    RENEWAL_STATES.notConfigured &&
+                                  certificate.renewalSetup?.state !==
+                                    RENEWAL_SETUP_STATES.waiting ? (
+                                  <Button
+                                    size='xs'
+                                    colorScheme='blue'
+                                    variant='outline'
+                                    onClick={() => setSetupTarget(certificate)}
+                                  >
+                                    Set up renewal
+                                  </Button>
+                                ) : null}
                                 <Button
                                   size='xs'
+                                  colorScheme='red'
                                   variant='outline'
-                                  onClick={() => setDetachTarget(certificate)}
+                                  onClick={() => setRetireTarget(certificate)}
                                 >
-                                  Detach
+                                  Retire
                                 </Button>
-                              ) : certificate.renewal?.state ===
-                                  RENEWAL_STATES.notConfigured &&
-                                certificate.renewalSetup?.state !==
-                                  RENEWAL_SETUP_STATES.waiting ? (
-                                <Button
-                                  size='xs'
-                                  colorScheme='blue'
-                                  variant='outline'
-                                  onClick={() => setSetupTarget(certificate)}
-                                >
-                                  Set up renewal
-                                </Button>
-                              ) : null}
-                              <Button
-                                size='xs'
-                                colorScheme='red'
-                                variant='outline'
-                                onClick={() => setRetireTarget(certificate)}
-                              >
-                                Retire
-                              </Button>
-                            </HStack>
-                          ) : null}
+                              </>
+                            ) : null}
+                          </HStack>
                         </Td>
-                      ) : null}
+                      ) : (
+                        <Td textAlign='right'>
+                          <Button
+                            size='xs'
+                            variant='ghost'
+                            isDisabled={!certificate.tokenId}
+                            title={
+                              certificate.tokenId
+                                ? undefined
+                                : 'No linked token to show'
+                            }
+                            onClick={() => setDetailsTarget(certificate)}
+                          >
+                            Details
+                          </Button>
+                        </Td>
+                      )}
                     </Tr>
                   );
                 })}
@@ -592,6 +625,14 @@ export default function CertOpsCertificates() {
           setDetachTarget(null);
           refresh();
         }}
+      />
+
+      <CertificateTokenDetailModal
+        isOpen={Boolean(detailsTarget)}
+        onClose={() => setDetailsTarget(null)}
+        workspaceId={workspaceId}
+        tokenId={detailsTarget?.tokenId}
+        canManage={canManage}
       />
     </DashboardPanel>
   );

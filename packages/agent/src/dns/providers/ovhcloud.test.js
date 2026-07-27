@@ -140,12 +140,12 @@ test("ovhcloud: a custom endpoint override is used for every call", async () => 
   const fetchStub = makeFetchStub(() => ({ status: 200 }));
   const solver = solverWith(fetchStub, {
     ...CREDENTIALS,
-    endpoint: "https://us.api.ovhcloud.com/1.0",
+    endpoint: "https://api.us.ovhcloud.com/1.0",
   });
 
   await solver.presentChallenge(CHALLENGE);
 
-  assert.match(fetchStub.calls[0].url, /^https:\/\/us\.api\.ovhcloud\.com\/1\.0\//);
+  assert.match(fetchStub.calls[0].url, /^https:\/\/api\.us\.ovhcloud\.com\/1\.0\//);
 });
 
 test("ovhcloud: HTTP error on create maps to ok:false with statusCode", async () => {
