@@ -77,7 +77,9 @@ export function useCertOpsControllerClusters() {
         const ids = [
           ...new Set(
             items
-              .filter(token => isTokenActive(token) && isProvisioningToken(token))
+              .filter(
+                token => isTokenActive(token) && isProvisioningToken(token)
+              )
               .map(token => token.controllerClusterId)
           ),
         ];

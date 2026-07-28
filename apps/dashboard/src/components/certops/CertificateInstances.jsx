@@ -25,7 +25,9 @@ function targetLabel(instance) {
 }
 
 function instanceTimestamp(instance) {
-  return instance.observedAt || instance.updatedAt || instance.createdAt || null;
+  return (
+    instance.observedAt || instance.updatedAt || instance.createdAt || null
+  );
 }
 
 /**

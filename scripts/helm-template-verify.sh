@@ -218,11 +218,24 @@ if grep -Fq 'app.kubernetes.io/component: certops-controller' "${controller_disa
   fail "disabled CertOps controller rendered controller resources"
 fi
 
-controller_default="$(render_controller namespace-default)"
+# certops.controller.clusterWide defaults to true (values.yaml), so the
+# literal chart default (no override) must render ClusterRole/ClusterRoleBinding.
+controller_true_default="$(render_controller true-default)"
+controller_true_default_cluster_role="$(component_blocks "${controller_true_default}" ClusterRole)"
+controller_true_default_cluster_binding="$(component_blocks "${controller_true_default}" ClusterRoleBinding)"
+assert_contains "${controller_true_default_cluster_role}" 'kind: ClusterRole' "chart-default ClusterRole"
+assert_contains "${controller_true_default_cluster_binding}" 'kind: ClusterRoleBinding' "chart-default ClusterRoleBinding"
+assert_controller_rbac_hardening "${controller_true_default}" false
+if grep -Eq '^kind: Role(Binding)?$' "${controller_true_default}"; then
+  fail "chart-default controller (clusterWide=true) rendered namespaced RBAC"
+fi
+
+# Explicit opt-out (clusterWide=false) still needs full namespace-scoped coverage.
+controller_default="$(render_controller namespace-scoped --set certops.controller.clusterWide=false)"
 controller_default_roles="$(component_blocks "${controller_default}" Role)"
 controller_default_bindings="$(component_blocks "${controller_default}" RoleBinding)"
-assert_contains "${controller_default_roles}" 'namespace: "certops-system"' "default namespace Role"
-assert_contains "${controller_default_bindings}" 'namespace: "certops-system"' "default namespace RoleBinding"
+assert_contains "${controller_default_roles}" 'namespace: "certops-system"' "namespace-scoped default namespace Role"
+assert_contains "${controller_default_bindings}" 'namespace: "certops-system"' "namespace-scoped default namespace RoleBinding"
 assert_contains "${controller_default_roles}" 'cert-manager.io' "controller cert-manager group"
 assert_contains "${controller_default_roles}" $'      - certificates' "controller Certificate resource"
 assert_contains "${controller_default_roles}" $'      - certificaterequests' "controller CertificateRequest resource"
@@ -256,6 +269,7 @@ controller_internal_deployment="$(component_blocks "${controller_internal_api}" 
 assert_contains "${controller_internal_deployment}" 'value: "http://tokentimer-api:4000"' "valid internal controller API URL"
 
 controller_multiple="$(render_controller namespace-multiple \
+  --set certops.controller.clusterWide=false \
   --set certops.controller.watchNamespaces[0]=team-a \
   --set certops.controller.watchNamespaces[1]=team-b)"
 controller_multiple_roles="$(component_blocks "${controller_multiple}" Role)"
@@ -284,6 +298,7 @@ assert_controller_rbac_hardening "${controller_cluster_wide_secret_fallback}" tr
 
 controller_numeric_strings="$(render_controller numeric-strings \
   --namespace 123 \
+  --set certops.controller.clusterWide=false \
   --set-string certops.controller.watchNamespaces[0]=123 \
   --set-string certops.controller.apiToken.existingSecret=123 \
   --set-string certops.controller.apiToken.key=123)"
@@ -338,6 +353,7 @@ expect_controller_failure cluster-wide-with-namespaces 'watchNamespaces' \
   --set certops.controller.clusterWide=true \
   --set certops.controller.watchNamespaces[0]=team-a
 expect_controller_failure invalid-watch-namespace 'watchNamespaces' \
+  --set certops.controller.clusterWide=false \
   --set-string certops.controller.watchNamespaces[0]=Not_Valid
 expect_controller_failure network-policy-without-kube-api-cidrs 'kubeApiServerCidrs' --set networkPolicy.enabled=true
 expect_controller_failure api-url-userinfo 'api.url' --set-string certops.controller.api.url=https://user:password@example.com

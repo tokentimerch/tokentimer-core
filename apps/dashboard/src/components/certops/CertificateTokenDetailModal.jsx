@@ -34,8 +34,7 @@ export default function CertificateTokenDetailModal({
   tokenId,
   canManage,
 }) {
-  const { headerProps, bodyProps, closeButtonProps } =
-    useDashboardModalProps();
+  const { headerProps, bodyProps, closeButtonProps } = useDashboardModalProps();
   const [token, setToken] = useState(null);
   const [contactGroups, setContactGroups] = useState([]);
   const [workspaceContacts, setWorkspaceContacts] = useState([]);

@@ -1109,7 +1109,6 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     );
   }, [linkedManagedCerts.length]);
 
-
   const managedCertSummaryDetail = useMemo(() => {
     if (certOpsLoading) return 'Loading inventory...';
     const urgent = linkedManagedCerts.filter(cert =>

@@ -43,9 +43,9 @@ function isUsablePreset(profile) {
   const renewal = profile?.renewalProfile;
   return Boolean(
     renewal?.acme?.commandRef &&
-      renewal?.ca?.endpoint &&
-      renewal?.dns?.provider &&
-      renewal?.dns?.zone
+    renewal?.ca?.endpoint &&
+    renewal?.dns?.provider &&
+    renewal?.dns?.zone
   );
 }
 
@@ -231,12 +231,14 @@ export default function SetupRenewalModal({
 
   const selectedPreset =
     visiblePresets.find(p => p.id === selectedPresetId) || null;
-  const selectedPresetPath = selectedPreset ? presetCertPath(selectedPreset) : null;
+  const selectedPresetPath = selectedPreset
+    ? presetCertPath(selectedPreset)
+    : null;
   const pathMismatch = Boolean(
     usingPreset &&
-      certificatePath &&
-      selectedPresetPath &&
-      selectedPresetPath !== certificatePath
+    certificatePath &&
+    selectedPresetPath &&
+    selectedPresetPath !== certificatePath
   );
 
   // Keep the manual fields in sync with whichever preset is selected, so
@@ -331,9 +333,8 @@ export default function SetupRenewalModal({
               ' the path TokenTimer already discovered'
             )}
             , to prove the settings below actually work. If that renewal
-            succeeds, TokenTimer creates another renewal profile, scoped
-            to just this certificate, so future renewals happen without
-            asking again.
+            succeeds, TokenTimer creates another renewal profile, scoped to just
+            this certificate, so future renewals happen without asking again.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
@@ -370,8 +371,8 @@ export default function SetupRenewalModal({
                 {usingPreset ? (
                   <>
                     <Text fontSize='sm' color={muted}>
-                      Picking a profile copies its command, CA endpoint, and
-                      DNS settings into this setup; it does{' '}
+                      Picking a profile copies its command, CA endpoint, and DNS
+                      settings into this setup; it does{' '}
                       <Text as='span' fontWeight='medium'>
                         not
                       </Text>{' '}
@@ -407,11 +408,11 @@ export default function SetupRenewalModal({
                       <Alert status='info' variant='subtle' borderRadius='md'>
                         <AlertIcon boxSize={4} />
                         <AlertDescription fontSize='sm'>
-                          No profile matches this certificate's own path.
-                          Turn on "Show all profiles" above to pick from the
+                          No profile matches this certificate's own path. Turn
+                          on "Show all profiles" above to pick from the
                           {` ${presets.length} `}
-                          other profile{presets.length === 1 ? '' : 's'} in
-                          this workspace, or enter details manually.
+                          other profile{presets.length === 1 ? '' : 's'} in this
+                          workspace, or enter details manually.
                         </AlertDescription>
                       </Alert>
                     ) : (
@@ -425,10 +426,14 @@ export default function SetupRenewalModal({
                             const certPath = presetCertPath(preset);
                             const selected = preset.id === selectedPresetId;
                             const matched = Boolean(
-                              certificatePath && certPath && certPath === certificatePath
+                              certificatePath &&
+                              certPath &&
+                              certPath === certificatePath
                             );
                             const mismatched = Boolean(
-                              certificatePath && certPath && certPath !== certificatePath
+                              certificatePath &&
+                              certPath &&
+                              certPath !== certificatePath
                             );
                             return (
                               <Box
@@ -497,10 +502,13 @@ export default function SetupRenewalModal({
                                               : undefined
                                       }
                                       fontWeight={
-                                        mismatched || matched ? 'semibold' : undefined
+                                        mismatched || matched
+                                          ? 'semibold'
+                                          : undefined
                                       }
                                     >
-                                      {certPath || 'Not recorded on this profile'}
+                                      {certPath ||
+                                        'Not recorded on this profile'}
                                     </Text>
                                   </Text>
                                 </Stack>
@@ -511,7 +519,11 @@ export default function SetupRenewalModal({
                       </RadioGroup>
                     )}
                     {pathMismatch ? (
-                      <Alert status='warning' variant='subtle' borderRadius='md'>
+                      <Alert
+                        status='warning'
+                        variant='subtle'
+                        borderRadius='md'
+                      >
                         <AlertIcon boxSize={4} />
                         <AlertDescription fontSize='sm'>
                           <Text as='span' fontWeight='semibold'>
@@ -536,10 +548,10 @@ export default function SetupRenewalModal({
                     <Alert status='info' variant='subtle' borderRadius='md'>
                       <AlertIcon boxSize={4} />
                       <AlertDescription fontSize='sm'>
-                        This is the one time these settings need to be
-                        entered by hand: they become part of the renewal
-                        profile this creates, so every later renewal reuses
-                        them without asking again.
+                        This is the one time these settings need to be entered
+                        by hand: they become part of the renewal profile this
+                        creates, so every later renewal reuses them without
+                        asking again.
                       </AlertDescription>
                     </Alert>
                     <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
@@ -550,9 +562,7 @@ export default function SetupRenewalModal({
                         <Input
                           size='sm'
                           value={commandRef}
-                          onChange={event =>
-                            setCommandRef(event.target.value)
-                          }
+                          onChange={event => setCommandRef(event.target.value)}
                           placeholder='e.g. certbot-csr'
                           autoComplete='off'
                         />
@@ -562,9 +572,7 @@ export default function SetupRenewalModal({
                         <Input
                           size='sm'
                           value={dnsProvider}
-                          onChange={event =>
-                            setDnsProvider(event.target.value)
-                          }
+                          onChange={event => setDnsProvider(event.target.value)}
                           placeholder='e.g. cloudflare'
                           autoComplete='off'
                         />

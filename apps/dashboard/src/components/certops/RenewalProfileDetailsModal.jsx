@@ -149,7 +149,11 @@ export default function RenewalProfileDetailsModal({
       'SANs',
       <HStack spacing={2} flexWrap='wrap'>
         {sans.map(san => (
-          <Badge key={san} colorScheme={getColorFromString(san)} variant='subtle'>
+          <Badge
+            key={san}
+            colorScheme={getColorFromString(san)}
+            variant='subtle'
+          >
             {san}
           </Badge>
         ))}

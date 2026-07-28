@@ -397,12 +397,12 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     !isControllerIssue ||
     Boolean(
       controllerClusterId.trim() &&
-        controllerNamespace.trim() &&
-        controllerCertificateName.trim() &&
-        controllerSecretName.trim() &&
-        controllerIssuerKind &&
-        controllerIssuerName.trim() &&
-        controllerDnsNamesList.length > 0
+      controllerNamespace.trim() &&
+      controllerCertificateName.trim() &&
+      controllerSecretName.trim() &&
+      controllerIssuerKind &&
+      controllerIssuerName.trim() &&
+      controllerDnsNamesList.length > 0
     );
 
   const canSubmit =
@@ -486,7 +486,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
           dnsNames: controllerDnsNamesList,
         });
         showSuccess(
-          result?.duplicate ? 'Provisioning intent already existed' : 'Provisioning intent created',
+          result?.duplicate
+            ? 'Provisioning intent already existed'
+            : 'Provisioning intent created',
           result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
         );
         resetForm();
@@ -579,7 +581,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   {JOB_EXECUTORS.map(option => (
                     <Button
                       key={option.value}
-                      colorScheme={executor === option.value ? 'blue' : undefined}
+                      colorScheme={
+                        executor === option.value ? 'blue' : undefined
+                      }
                       variant={executor === option.value ? 'solid' : 'outline'}
                       onClick={() => setExecutor(option.value)}
                     >
@@ -606,7 +610,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                         : 'No controller-bound clusters found'
                     }
                     value={controllerClusterId}
-                    onChange={event => setControllerClusterId(event.target.value)}
+                    onChange={event =>
+                      setControllerClusterId(event.target.value)
+                    }
                     isDisabled={controllerClusters.length === 0}
                   >
                     {controllerClusters.map(clusterId => (
@@ -627,7 +633,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                     <Input
                       size='sm'
                       value={controllerNamespace}
-                      onChange={event => setControllerNamespace(event.target.value)}
+                      onChange={event =>
+                        setControllerNamespace(event.target.value)
+                      }
                       placeholder='e.g. default'
                       autoComplete='off'
                     />
@@ -650,14 +658,15 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   <Input
                     size='sm'
                     value={controllerSecretName}
-                    onChange={event => setControllerSecretName(event.target.value)}
+                    onChange={event =>
+                      setControllerSecretName(event.target.value)
+                    }
                     placeholder='e.g. example-web-tls'
                     autoComplete='off'
                   />
                   <FormHelperText>
                     The Kubernetes Secret the cert-manager Certificate will
-                    write to. Only its metadata is ever read back by
-                    TokenTimer.
+                    write to. Only its metadata is ever read back by TokenTimer.
                   </FormHelperText>
                 </FormControl>
                 <SimpleGrid columns={2} spacing={2}>
@@ -666,7 +675,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                     <Select
                       size='sm'
                       value={controllerIssuerKind}
-                      onChange={event => setControllerIssuerKind(event.target.value)}
+                      onChange={event =>
+                        setControllerIssuerKind(event.target.value)
+                      }
                     >
                       {CONTROLLER_ISSUER_KINDS.map(kind => (
                         <option key={kind} value={kind}>
@@ -680,7 +691,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                     <Input
                       size='sm'
                       value={controllerIssuerName}
-                      onChange={event => setControllerIssuerName(event.target.value)}
+                      onChange={event =>
+                        setControllerIssuerName(event.target.value)
+                      }
                       placeholder='e.g. letsencrypt-prod'
                       autoComplete='off'
                     />
@@ -692,7 +705,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                     size='sm'
                     rows={2}
                     value={controllerDnsNames}
-                    onChange={event => setControllerDnsNames(event.target.value)}
+                    onChange={event =>
+                      setControllerDnsNames(event.target.value)
+                    }
                     placeholder='Comma or newline separated, e.g. example.com, www.example.com'
                   />
                   <FormHelperText>
@@ -819,7 +834,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   </FormLabel>
                   <ButtonGroup size='sm' isAttached variant='outline'>
                     <Button
-                      colorScheme={payloadMode === 'fields' ? 'blue' : undefined}
+                      colorScheme={
+                        payloadMode === 'fields' ? 'blue' : undefined
+                      }
                       variant={payloadMode === 'fields' ? 'solid' : 'outline'}
                       onClick={() => setPayloadMode('fields')}
                     >
@@ -846,124 +863,130 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   </ButtonGroup>
                 </HStack>
                 {payloadMode === 'fields' ? (
-                <VStack align='stretch' spacing={2}>
-                  <FormControl isRequired={isIssue}>
-                    <FormLabel fontSize='xs' mb={0.5}>
-                      Target domain
-                    </FormLabel>
-                    <Input
-                      size='sm'
-                      value={fieldTarget}
-                      onChange={event => setFieldTarget(event.target.value)}
-                      placeholder='e.g. example.com'
-                      autoComplete='off'
-                    />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontSize='xs' mb={0.5}>
-                      SANs
-                    </FormLabel>
-                    <Input
-                      size='sm'
-                      value={fieldSans}
-                      onChange={event => setFieldSans(event.target.value)}
-                      placeholder='Comma or newline separated (defaults to target)'
-                      autoComplete='off'
-                    />
-                  </FormControl>
-                  <SimpleGrid columns={2} spacing={2}>
+                  <VStack align='stretch' spacing={2}>
                     <FormControl isRequired={isIssue}>
                       <FormLabel fontSize='xs' mb={0.5}>
-                        Command ref
+                        Target domain
                       </FormLabel>
                       <Input
                         size='sm'
-                        value={fieldCommandRef}
-                        onChange={event =>
-                          setFieldCommandRef(event.target.value)
-                        }
-                        placeholder='e.g. certbot-csr'
-                        autoComplete='off'
-                      />
-                    </FormControl>
-                    <FormControl isRequired={isIssue}>
-                      <FormLabel fontSize='xs' mb={0.5}>
-                        DNS provider
-                      </FormLabel>
-                      <Input
-                        size='sm'
-                        value={fieldDnsProvider}
-                        onChange={event =>
-                          setFieldDnsProvider(event.target.value)
-                        }
-                        placeholder='e.g. cloudflare'
-                        autoComplete='off'
-                      />
-                    </FormControl>
-                  </SimpleGrid>
-                  <FormControl isRequired={isIssue}>
-                    <FormLabel fontSize='xs' mb={0.5}>
-                      CA endpoint
-                    </FormLabel>
-                    <Input
-                      size='sm'
-                      value={fieldCaEndpoint}
-                      onChange={event => setFieldCaEndpoint(event.target.value)}
-                      placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
-                      autoComplete='off'
-                    />
-                  </FormControl>
-                  <SimpleGrid columns={2} spacing={2}>
-                    <FormControl isRequired={isIssue}>
-                      <FormLabel fontSize='xs' mb={0.5}>
-                        DNS zone
-                      </FormLabel>
-                      <Input
-                        size='sm'
-                        value={fieldDnsZone}
-                        onChange={event => setFieldDnsZone(event.target.value)}
+                        value={fieldTarget}
+                        onChange={event => setFieldTarget(event.target.value)}
                         placeholder='e.g. example.com'
                         autoComplete='off'
                       />
                     </FormControl>
-                    <FormControl isRequired={isIssue}>
+                    <FormControl>
                       <FormLabel fontSize='xs' mb={0.5}>
-                        Cert file path
+                        SANs
                       </FormLabel>
                       <Input
                         size='sm'
-                        value={fieldCertPath}
-                        onChange={event => setFieldCertPath(event.target.value)}
-                        placeholder='e.g. /etc/ssl/example.com.pem'
+                        value={fieldSans}
+                        onChange={event => setFieldSans(event.target.value)}
+                        placeholder='Comma or newline separated (defaults to target)'
                         autoComplete='off'
                       />
                     </FormControl>
-                  </SimpleGrid>
-                  <FormHelperText>
-                    {isIssue
-                      ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
-                      : 'Optional. Fills the same execution payload keys a renew/deploy job reads. Switch to JSON for anything not listed here.'}
-                  </FormHelperText>
-                </VStack>
-              ) : (
-                <>
-                  <Textarea
-                    size='sm'
-                    fontFamily='mono'
-                    fontSize='xs'
-                    rows={6}
-                    value={payloadText}
-                    onChange={handlePayloadChange}
-                    placeholder={PAYLOAD_JSON_EXAMPLE}
-                  />
-                  <FormHelperText>
-                    {payloadError ||
-                      (isIssue
-                        ? 'Required: target, commandRef, caEndpoint, dnsZone, dnsProvider, and certPath. sans defaults to [target] when omitted.'
-                        : 'Optional. Free-form JSON merged into the job payload.')}
-                  </FormHelperText>
-                </>
-              )}
+                    <SimpleGrid columns={2} spacing={2}>
+                      <FormControl isRequired={isIssue}>
+                        <FormLabel fontSize='xs' mb={0.5}>
+                          Command ref
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          value={fieldCommandRef}
+                          onChange={event =>
+                            setFieldCommandRef(event.target.value)
+                          }
+                          placeholder='e.g. certbot-csr'
+                          autoComplete='off'
+                        />
+                      </FormControl>
+                      <FormControl isRequired={isIssue}>
+                        <FormLabel fontSize='xs' mb={0.5}>
+                          DNS provider
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          value={fieldDnsProvider}
+                          onChange={event =>
+                            setFieldDnsProvider(event.target.value)
+                          }
+                          placeholder='e.g. cloudflare'
+                          autoComplete='off'
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                    <FormControl isRequired={isIssue}>
+                      <FormLabel fontSize='xs' mb={0.5}>
+                        CA endpoint
+                      </FormLabel>
+                      <Input
+                        size='sm'
+                        value={fieldCaEndpoint}
+                        onChange={event =>
+                          setFieldCaEndpoint(event.target.value)
+                        }
+                        placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
+                        autoComplete='off'
+                      />
+                    </FormControl>
+                    <SimpleGrid columns={2} spacing={2}>
+                      <FormControl isRequired={isIssue}>
+                        <FormLabel fontSize='xs' mb={0.5}>
+                          DNS zone
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          value={fieldDnsZone}
+                          onChange={event =>
+                            setFieldDnsZone(event.target.value)
+                          }
+                          placeholder='e.g. example.com'
+                          autoComplete='off'
+                        />
+                      </FormControl>
+                      <FormControl isRequired={isIssue}>
+                        <FormLabel fontSize='xs' mb={0.5}>
+                          Cert file path
+                        </FormLabel>
+                        <Input
+                          size='sm'
+                          value={fieldCertPath}
+                          onChange={event =>
+                            setFieldCertPath(event.target.value)
+                          }
+                          placeholder='e.g. /etc/ssl/example.com.pem'
+                          autoComplete='off'
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                    <FormHelperText>
+                      {isIssue
+                        ? 'Required for issue: target, command ref, CA endpoint, DNS zone, DNS provider, and cert path.'
+                        : 'Optional. Fills the same execution payload keys a renew/deploy job reads. Switch to JSON for anything not listed here.'}
+                    </FormHelperText>
+                  </VStack>
+                ) : (
+                  <>
+                    <Textarea
+                      size='sm'
+                      fontFamily='mono'
+                      fontSize='xs'
+                      rows={6}
+                      value={payloadText}
+                      onChange={handlePayloadChange}
+                      placeholder={PAYLOAD_JSON_EXAMPLE}
+                    />
+                    <FormHelperText>
+                      {payloadError ||
+                        (isIssue
+                          ? 'Required: target, commandRef, caEndpoint, dnsZone, dnsProvider, and certPath. sans defaults to [target] when omitted.'
+                          : 'Optional. Free-form JSON merged into the job payload.')}
+                    </FormHelperText>
+                  </>
+                )}
               </FormControl>
             )}
             {isControllerIssue ? null : (
