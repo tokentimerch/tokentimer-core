@@ -182,6 +182,77 @@ describe('EvidenceTimeline', () => {
     expect(screen.getAllByText('Validation failed').length).toBeGreaterThan(0);
   });
 
+  it('renders metadata.summary as the detail line for evidence without a subject', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [
+        {
+          id: 'ev-1',
+          evidenceType: 'deployment.updated',
+          observedAt: '2026-01-01T00:00:00.000Z',
+          metadata: { summary: 'Certificate my-cert created in namespace tokentimer' },
+        },
+      ],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getByText('Certificate my-cert created in namespace tokentimer')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No subject recorded')).not.toBeInTheDocument();
+  });
+
+  it('synthesizes a detail line from metadata fields when summary is absent', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [
+        {
+          id: 'ev-1',
+          evidenceType: 'deployment.updated',
+          observedAt: '2026-01-01T00:00:00.000Z',
+          metadata: {
+            certificateName: 'my-cert',
+            operation: 'created',
+            namespace: 'tokentimer',
+          },
+        },
+      ],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(
+      screen.getByText('Certificate my-cert created in namespace tokentimer')
+    ).toBeInTheDocument();
+  });
+
+  it('falls back to "No subject recorded" when evidence has neither summary nor subject', () => {
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob(),
+      logEntries: [],
+      evidence: [
+        {
+          id: 'ev-1',
+          evidenceType: 'deployment.updated',
+          observedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' />);
+
+    expect(screen.getByText('No subject recorded')).toBeInTheDocument();
+  });
+
   it('shows a visible redaction marker only on evidence flagged as redacted', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob(),

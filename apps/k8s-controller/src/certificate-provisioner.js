@@ -85,6 +85,7 @@ function createCertificateProvisioner({
   client,
   clusterId,
   clusterWide = false,
+  logger = { debug() {}, error() {}, info() {}, warn() {} },
   watchNamespaces = [],
   workspaceId,
 } = {}) {
@@ -108,9 +109,21 @@ function createCertificateProvisioner({
 
   async function reconcileExisting(existing, command, desired) {
     if (!isOwnedByCommand(existing, command)) {
+      logger.warn("certmanager-certificate-foreign-ownership-conflict", {
+        namespace: command.namespace,
+        certificateName: command.certificateName,
+        jobId: command.jobId,
+      });
       throw provisionerError("CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT");
     }
-    if (hasDesiredState(existing, command)) return { operation: "unchanged", resource: existing };
+    if (hasDesiredState(existing, command)) {
+      logger.info("certmanager-certificate-unchanged", {
+        namespace: command.namespace,
+        certificateName: command.certificateName,
+        jobId: command.jobId,
+      });
+      return { operation: "unchanged", resource: existing };
+    }
     // This remote check is deliberately adjacent to the Kubernetes side
     // effect. It transactionally rechecks the deployment rollout and current
     // workspace pause state after command delivery and on every runner retry.
@@ -120,6 +133,12 @@ function createCertificateProvisioner({
       name: command.certificateName,
       certificate: desired,
     }));
+    logger.info("certmanager-certificate-patched", {
+      namespace: command.namespace,
+      certificateName: command.certificateName,
+      jobId: command.jobId,
+      managedCertificateId: command.managedCertificateId,
+    });
     return { operation: "reconciled", resource: patched || null };
   }
 
@@ -132,6 +151,11 @@ function createCertificateProvisioner({
       throw provisionerError("PRIVATE_KEY_MATERIAL_REJECTED");
     }
     assertLocalPolicy(command);
+    logger.debug("certmanager-provisioning-command-accepted", {
+      namespace: command.namespace,
+      certificateName: command.certificateName,
+      jobId: command.jobId,
+    });
     const desired = certificateFor(command);
     let existing;
     try {
@@ -148,6 +172,12 @@ function createCertificateProvisioner({
           name: command.certificateName,
           certificate: desired,
         }));
+        logger.info("certmanager-certificate-created", {
+          namespace: command.namespace,
+          certificateName: command.certificateName,
+          jobId: command.jobId,
+          managedCertificateId: command.managedCertificateId,
+        });
         return { operation: "created", resource: created || null };
       } catch (createError) {
         if (!isAlreadyExists(createError)) throw createError;

@@ -1707,6 +1707,7 @@ async function executorEventsHandler(req, res, options = {}) {
         });
         const persistedRedaction = redactionSummary(event, evidence);
 
+        const desiredCertificate = updatedJob.payload?.desiredCertificate;
         const safeAuditMetadata = {
           apiTokenId: req.apiToken.id,
           executorEventRecordId: executorEventRecord.id,
@@ -1716,6 +1717,10 @@ async function executorEventsHandler(req, res, options = {}) {
           logId: log.id,
           status: updatedJob.status,
           evidenceIds: evidence.map((item) => item.id),
+          certificateName: desiredCertificate?.certificateName || null,
+          namespace: desiredCertificate?.namespace || null,
+          issuerRef: desiredCertificate?.issuerRef || null,
+          dnsNames: desiredCertificate?.dnsNames || null,
         };
         await writeExecutorAudit({
           client,

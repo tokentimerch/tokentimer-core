@@ -161,6 +161,7 @@ function createControllerObservationReporter({
   apiUrl,
   fetchImpl = globalThis.fetch,
   fsOptions,
+  logger = { debug() {}, error() {}, info() {}, warn() {} },
   now = () => Date.now(),
   random = Math.random,
   setTimeoutFn = setTimeout,
@@ -263,7 +264,12 @@ function createControllerObservationReporter({
         });
         if (requestState.stopping) throw stoppingError();
         if (response.status === 200 || response.status === 201) {
-          return validateResponse(await boundedJson(response));
+          const result = validateResponse(await boundedJson(response));
+          logger.debug("controller-observation-report-succeeded", {
+            managedCertificateId: result.managedCertificateId,
+            duplicate: result.duplicate,
+          });
+          return result;
         }
         if (!acceptingWork) throw stoppingError();
         if (!isTransientStatus(response.status)) {
@@ -274,6 +280,10 @@ function createControllerObservationReporter({
           ? parseRetryAfter(response.headers.get("retry-after"), now())
           : null;
         delay = retryAfter ?? retryDelay(attempt, random);
+        logger.warn("controller-observation-report-retrying", {
+          attempt,
+          status: response.status,
+        });
       } catch (error) {
         if (!acceptingWork || requestState.stopping) throw stoppingError();
         // A timeout we initiated is retriable; an arbitrary AbortError is not.

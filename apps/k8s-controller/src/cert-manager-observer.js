@@ -418,6 +418,11 @@ function createCertManagerObserver({
           workspaceId,
         });
         if (!observation) continue;
+        safeLog("debug", "cert-manager-certificate-observed", {
+          certificateName: observation.certificateName,
+          namespace: observation.namespace,
+          ready: observation.ready,
+        });
         if (typeof observationHandler !== "function") {
           safeLog("warn", "cert-manager-observation-not-delivered", {
             certificateName: observation.certificateName,
@@ -462,6 +467,10 @@ function createCertManagerObserver({
         }
         try {
           await observationHandler(enrichedObservation);
+          safeLog("debug", "cert-manager-observation-reported", {
+            certificateName: observation.certificateName,
+            namespace: observation.namespace,
+          });
         } catch (error) {
           safeLog("warn", "cert-manager-observation-delivery-failed", {
             certificateName: observation.certificateName,

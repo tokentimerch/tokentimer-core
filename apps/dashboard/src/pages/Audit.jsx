@@ -917,9 +917,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const md = ev?.metadata || {};
       const parts = [];
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.certificateName)
+        parts.push(`Certificate name: ${md.certificateName}`);
+      if (md.namespace) parts.push(`Namespace: ${md.namespace}`);
       if (md.executorEventId) parts.push(`Event: ${md.executorEventId}`);
       if (md.eventType) parts.push(`Event type: ${md.eventType}`);
       if (md.status) parts.push(`Status: ${md.status}`);
+      if (md.issuerRef?.kind && md.issuerRef?.name)
+        parts.push(`Issuer: ${md.issuerRef.kind}/${md.issuerRef.name}`);
+      if (Array.isArray(md.dnsNames) && md.dnsNames.length > 0)
+        parts.push(`DNS names: ${formatArrayValue(md.dnsNames)}`);
       if (Array.isArray(md.evidenceIds) && md.evidenceIds.length > 0) {
         parts.push(`Evidence items: ${md.evidenceIds.length}`);
       }
@@ -1022,9 +1029,16 @@ export default function Audit({ session, onLogout, onAccountClick }) {
       const parts = [];
       if (md.clusterId) parts.push(`Cluster: ${md.clusterId}`);
       if (md.jobId) parts.push(`Job: ${md.jobId}`);
+      if (md.certificateName)
+        parts.push(`Certificate name: ${md.certificateName}`);
+      if (md.namespace) parts.push(`Namespace: ${md.namespace}`);
       if (md.managedCertificateId)
         parts.push(`Certificate: ${md.managedCertificateId}`);
       if (md.targetId) parts.push(`Target: ${md.targetId}`);
+      if (md.issuerRef?.kind && md.issuerRef?.name)
+        parts.push(`Issuer: ${md.issuerRef.kind}/${md.issuerRef.name}`);
+      if (Array.isArray(md.dnsNames) && md.dnsNames.length > 0)
+        parts.push(`DNS names: ${formatArrayValue(md.dnsNames)}`);
       return parts.length > 0 ? parts.join(' | ') : '';
     } catch (_) {
       return '';

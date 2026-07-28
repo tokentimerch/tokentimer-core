@@ -82,6 +82,35 @@ function timelineIconColor(kind, type) {
 }
 
 /**
+ * Human-readable summary for evidence metadata, preferred over the generic
+ * subject line when present. Prefers the server-provided `metadata.summary`
+ * sentence; falls back to synthesizing one from individual certificate /
+ * secret / namespace / operation fields for evidence shapes that don't
+ * carry a `summary` yet.
+ */
+function evidenceMetadataSummary(metadata) {
+  if (!metadata || typeof metadata !== 'object') return '';
+  if (typeof metadata.summary === 'string' && metadata.summary.trim()) {
+    return metadata.summary.trim();
+  }
+  const { certificateName, secretName, namespace, operation } = metadata;
+  const subjectName = certificateName || secretName;
+  if (!subjectName && !operation && !namespace) return '';
+  const parts = [];
+  if (subjectName) {
+    parts.push(`${certificateName ? 'Certificate' : 'Secret'} ${subjectName}`);
+  }
+  if (operation) parts.push(String(operation));
+  let summary = parts.join(' ').trim();
+  if (namespace) {
+    summary = summary
+      ? `${summary} in namespace ${namespace}`
+      : `In namespace ${namespace}`;
+  }
+  return summary;
+}
+
+/**
  * True attempt number reported by the executor, when present. Log entries may
  * carry a numeric `metadata.attempt` counter (an allowed public metadata
  * field); it is authoritative regardless of pagination truncation.
@@ -136,8 +165,11 @@ function TimelineItem({ item, attemptLabel }) {
         .filter(Boolean)
         .join(': ')
     : '';
+  const metadataSummary = isEvidence
+    ? evidenceMetadataSummary(entry.metadata)
+    : '';
   const detail = isEvidence
-    ? subjectLabel || 'No subject recorded'
+    ? metadataSummary || subjectLabel || 'No subject recorded'
     : entry.message || entry.status || '';
 
   return (

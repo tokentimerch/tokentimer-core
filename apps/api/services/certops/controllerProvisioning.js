@@ -293,6 +293,11 @@ async function createControllerProvisionIntent({
           jobId: job.id,
           managedCertificateId: managedCertificate.id,
           targetId: target.id,
+          namespace: initial.namespace,
+          certificateName: initial.certificateName,
+          secretName: initial.secretName,
+          issuerRef: initial.issuerRef,
+          dnsNames: initial.dnsNames,
         },
       });
     } else {

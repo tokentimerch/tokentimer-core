@@ -67,6 +67,7 @@ function createControllerApplication({
     apiTokenFile: config.apiTokenFile,
     apiUrl: config.apiUrl,
     fsOptions,
+    logger,
   });
   const kubernetesClient = createKubernetesClient({
     secretFallbackEnabled: config.secretFallbackEnabled,
@@ -105,6 +106,7 @@ function createControllerApplication({
         client: kubernetesClient,
         clusterId: config.clusterId,
         clusterWide: config.clusterWide,
+        logger,
         watchNamespaces: config.watchNamespaces,
         workspaceId: config.workspaceId,
       }),

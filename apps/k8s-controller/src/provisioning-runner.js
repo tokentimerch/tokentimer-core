@@ -98,7 +98,7 @@ function createProvisioningRunner({
       eventType: "deployment.updated",
       source: "executor",
       status: "accepted",
-      summary: `cert-manager Certificate ${result.operation}`,
+      summary: `Certificate ${command.certificateName} ${result.operation} in namespace ${command.namespace}`,
       metadata: [
         { name: "clusterId", value: command.clusterId },
         { name: "namespace", value: command.namespace },
@@ -107,6 +107,7 @@ function createProvisioningRunner({
         { name: "managedCertificateId", value: command.managedCertificateId },
         { name: "operation", value: result.operation },
       ],
+      certificateId: command.managedCertificateId,
     };
   }
   async function execute(command) {
@@ -134,6 +135,13 @@ function createProvisioningRunner({
         status: "succeeded", eventType: "job.completed", message: "cert-manager Certificate reconciled",
         evidence: safeEvidence(command, result),
       });
+      logger?.info?.("controller-provisioning-completed", {
+        jobId: command.jobId,
+        namespace: command.namespace,
+        certificateName: command.certificateName,
+        managedCertificateId: command.managedCertificateId,
+        operation: result.operation,
+      });
       return result;
     } catch (error) {
       // The Kubernetes side effect succeeded. Do not convert it into a failed
@@ -149,6 +157,11 @@ function createProvisioningRunner({
     try {
       const command = await commandClient.nextCommand();
       if (command && acceptingWork) {
+        logger?.info?.("controller-provisioning-command-claimed", {
+          jobId: command.jobId,
+          namespace: command.namespace,
+          certificateName: command.certificateName,
+        });
         const work = execute(command);
         const tracked = trackWork ? trackWork(work) : work;
         activeCommand = tracked;
