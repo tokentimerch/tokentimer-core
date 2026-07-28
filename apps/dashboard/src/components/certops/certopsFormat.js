@@ -27,6 +27,28 @@ export function formatDate(value) {
   });
 }
 
+/**
+ * Like formatDate but includes time-of-day (down to the second). Two
+ * certificate_instances rows for the same target can legitimately be
+ * observed seconds or milliseconds apart (e.g. a certificate rotation
+ * mid-reconcile); formatDate's day-only precision makes such rows look
+ * identical, so anywhere that distinction matters (observation history)
+ * should use this instead.
+ */
+export function formatDateTime(value) {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 export function daysUntil(value) {
   if (!value) return null;
   const date = new Date(value);
