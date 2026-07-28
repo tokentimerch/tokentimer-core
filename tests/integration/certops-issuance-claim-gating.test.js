@@ -70,7 +70,7 @@ describe("CertOps issuance claim gating (real database)", function () {
          credential_prefix, credential_hash, status, declared_capabilities,
          last_seen_at
        )
-       VALUES ($1, $2, 'gate-agent', '0.11.0', '1.0.0', $3, $4, 'active',
+       VALUES ($1, $2, 'gate-agent', '0.11.1', '1.0.0', $3, $4, 'active',
                $5::jsonb, NOW())
        RETURNING id`,
       [
@@ -85,7 +85,7 @@ describe("CertOps issuance claim gating (real database)", function () {
       id: inserted.rows[0].id,
       agentId,
       workspaceId,
-      agentVersion: "0.11.0",
+      agentVersion: "0.11.1",
       protocolVersion: "1.0.0",
       status: "active",
     };
