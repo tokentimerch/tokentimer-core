@@ -35,6 +35,7 @@ import {
   createJob,
 } from './certopsJobsApi.js';
 import {
+  createControllerProvisionIntent,
   listCertificates,
   listCertificateTargets,
   listWorkspaceCertificateInstances,
@@ -45,6 +46,7 @@ import {
   truncateId,
 } from './certopsJobsFormat';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
+import { useCertOpsControllerClusters } from './useCertOpsControllerClusters.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -92,6 +94,21 @@ const SUBJECT_REQUIRED_OPERATIONS = new Set([
   'reload',
   'revoke',
 ]);
+
+// "Issue" via a controller hands a strict public desired state to a
+// cert-manager controller instead of an agent (see
+// apps/api/services/certops/controllerProvisioning.js); this is a distinct
+// executor from the ACME/DNS-01 agent path below, with its own fields and
+// its own API route (createControllerProvisionIntent), not the job payload.
+const JOB_EXECUTORS = [
+  { value: 'agent', label: 'Agent' },
+  { value: 'controller', label: 'Controller (cluster)' },
+];
+
+// Mirrors the CertOpsProvisionIntentRequest.issuerRef.kind enum in
+// openapi.yaml.
+const CONTROLLER_ISSUER_KINDS = ['ClusterIssuer', 'Issuer'];
+const DEFAULT_CONTROLLER_ISSUER_GROUP = 'cert-manager.io';
 
 // Shown as the JSON textarea's placeholder for both "issue" (where these
 // keys are required) and every other operation (where they're optional but
@@ -181,6 +198,15 @@ function createJobErrorMessage(err) {
   if (code === 'CERTOPS_JOB_IDEMPOTENCY_CONFLICT') {
     return 'This idempotency key was already used with different job details.';
   }
+  if (code === 'CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY') {
+    return 'This certificate/secret name was already retired in this namespace and cannot be reactivated by provisioning. Choose a different certificate or secret name.';
+  }
+  if (code === 'CERTOPS_CONTROLLER_PROVISIONING_INVALID') {
+    return 'This provisioning request is invalid. Check the cluster, namespace, certificate/secret names, issuer reference, and DNS names.';
+  }
+  if (code === 'CERTOPS_WORKSPACE_PAUSED') {
+    return 'CertOps is paused for this workspace, so no new job can be created.';
+  }
   return err?.response?.data?.error || err?.message || 'Could not create job.';
 }
 
@@ -201,7 +227,9 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   } = useDashboardModalProps();
   const { workspaceId } = useWorkspace();
   const { agents } = useCertOpsAgents();
+  const { clusters: controllerClusters } = useCertOpsControllerClusters();
   const [operation, setOperation] = useState('');
+  const [executor, setExecutor] = useState('agent');
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
@@ -219,6 +247,16 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [subjectSuggestions, setSubjectSuggestions] = useState([]);
+  const [controllerClusterId, setControllerClusterId] = useState('');
+  const [controllerNamespace, setControllerNamespace] = useState('');
+  const [controllerCertificateName, setControllerCertificateName] =
+    useState('');
+  const [controllerSecretName, setControllerSecretName] = useState('');
+  const [controllerIssuerKind, setControllerIssuerKind] = useState(
+    CONTROLLER_ISSUER_KINDS[0]
+  );
+  const [controllerIssuerName, setControllerIssuerName] = useState('');
+  const [controllerDnsNames, setControllerDnsNames] = useState('');
 
   // "issue" has no existing subject to act on (ADR-0008): the control
   // plane creates the managed_certificate row itself, so passing
@@ -226,6 +264,16 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   // mandatory on issue because the request has a side effect beyond the
   // job (the new inventory row) and must not be duplicated by a retry.
   const isIssue = operation === 'issue';
+
+  // The controller executor is only offered for "issue": renew/deploy/
+  // reload/revoke against a controller-provisioned certificate are not
+  // exposed by the provisioning API today (CertOpsProvisionIntentRequest is
+  // issue-only), so switching away from issue always falls back to agent.
+  const isControllerIssue = isIssue && executor === 'controller';
+
+  useEffect(() => {
+    if (!isIssue && executor === 'controller') setExecutor('agent');
+  }, [isIssue, executor]);
 
   // renew/deploy/reload/revoke always act on something that already
   // exists, so the API requires subjectType+subjectId for these (see
@@ -242,8 +290,12 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
   // domain/endpoint/external subjects are free-text references an agent
   // can never match against (see MANUAL_ONLY_SUBJECT_TYPES above), so the
   // pin-to-agent control would imply a capability that doesn't exist here.
+  // A controller-executed issue has no agent at all: cluster-side
+  // provisioning is picked up by whichever controller watches that
+  // clusterId, not by pinning a fleet agent.
   const hidesAgentField =
-    !isIssue && MANUAL_ONLY_SUBJECT_TYPES.includes(subjectType);
+    isControllerIssue ||
+    (!isIssue && MANUAL_ONLY_SUBJECT_TYPES.includes(subjectType));
 
   // Clears a stale pin left over from a previous subjectType selection so a
   // hidden field can never silently submit a leftover assignedAgentId.
@@ -253,6 +305,7 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
 
   const resetForm = () => {
     setOperation('');
+    setExecutor('agent');
     setSubjectType('');
     setSubjectId('');
     setIdempotencyKey('');
@@ -268,6 +321,13 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     setFieldDnsProvider('');
     setFieldCertPath('');
     setRequiresApproval(false);
+    setControllerClusterId('');
+    setControllerNamespace('');
+    setControllerCertificateName('');
+    setControllerSecretName('');
+    setControllerIssuerKind(CONTROLLER_ISSUER_KINDS[0]);
+    setControllerIssuerName('');
+    setControllerDnsNames('');
     setSubjectSuggestions([]);
   };
 
@@ -309,7 +369,12 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     (!subjectId.trim() || Boolean(subjectType)) &&
     (!subjectRequiredForOperation || Boolean(subjectType && subjectId.trim()));
 
+  // Agent-executed issue reads its shape from the payload fields (ACME
+  // command, CA, DNS-01 zone/provider, deploy path); controller-executed
+  // issue never touches the payload at all (see handleSubmit) and is
+  // validated by controllerFieldsMet instead.
   const fieldsRequiredForIssueMet =
+    isControllerIssue ||
     payloadMode !== 'fields' ||
     !isIssue ||
     Boolean(
@@ -321,14 +386,34 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
       fieldCertPath.trim()
     );
 
+  // Mirrors the required fields of CertOpsProvisionIntentRequest in
+  // openapi.yaml: clusterId, namespace, certificateName, secretName,
+  // issuerRef{group,kind,name}, and at least one DNS name.
+  const controllerDnsNamesList = controllerDnsNames
+    .split(/[\n,]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+  const controllerFieldsMet =
+    !isControllerIssue ||
+    Boolean(
+      controllerClusterId.trim() &&
+        controllerNamespace.trim() &&
+        controllerCertificateName.trim() &&
+        controllerSecretName.trim() &&
+        controllerIssuerKind &&
+        controllerIssuerName.trim() &&
+        controllerDnsNamesList.length > 0
+    );
+
   const canSubmit =
     Boolean(operation) &&
     Boolean(workspaceId) &&
     !submitting &&
     fieldsRequiredForIssueMet &&
+    controllerFieldsMet &&
     (isIssue
       ? Boolean(idempotencyKey.trim()) &&
-        (payloadMode === 'fields' || !payloadError)
+        (isControllerIssue || payloadMode === 'fields' || !payloadError)
       : subjectPairComplete && (payloadMode === 'fields' || !payloadError));
 
   const handlePayloadChange = event => {
@@ -377,6 +462,8 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
       // certificate does not exist yet, so there is nothing to point at.
       setSubjectType('');
       setSubjectId('');
+    } else {
+      setExecutor('agent');
     }
   };
 
@@ -384,6 +471,29 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
+      if (isControllerIssue) {
+        const result = await createControllerProvisionIntent(workspaceId, {
+          idempotencyKey: idempotencyKey.trim(),
+          clusterId: controllerClusterId.trim(),
+          namespace: controllerNamespace.trim(),
+          certificateName: controllerCertificateName.trim(),
+          secretName: controllerSecretName.trim(),
+          issuerRef: {
+            group: DEFAULT_CONTROLLER_ISSUER_GROUP,
+            kind: controllerIssuerKind,
+            name: controllerIssuerName.trim(),
+          },
+          dnsNames: controllerDnsNamesList,
+        });
+        showSuccess(
+          result?.duplicate ? 'Provisioning intent already existed' : 'Provisioning intent created',
+          result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
+        );
+        resetForm();
+        onClose();
+        onCreated?.();
+        return;
+      }
       const body = { operation };
       if (!isIssue && subjectType) body.subjectType = subjectType;
       if (!isIssue && subjectId.trim()) body.subjectId = subjectId.trim();
@@ -462,6 +572,136 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                 </FormHelperText>
               ) : null}
             </FormControl>
+            {isIssue ? (
+              <FormControl>
+                <FormLabel fontSize='sm'>Executor</FormLabel>
+                <ButtonGroup size='sm' isAttached variant='outline'>
+                  {JOB_EXECUTORS.map(option => (
+                    <Button
+                      key={option.value}
+                      colorScheme={executor === option.value ? 'blue' : undefined}
+                      variant={executor === option.value ? 'solid' : 'outline'}
+                      onClick={() => setExecutor(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </ButtonGroup>
+                <FormHelperText>
+                  {isControllerIssue
+                    ? 'Hands a strict public desired state (namespace, certificate/secret name, issuer, DNS names) to a controller bound to the chosen cluster. No manifest, Secret data, CSR, or private key material is ever sent.'
+                    : 'The default path: an agent runs the ACME/DNS-01 issuance below.'}
+                </FormHelperText>
+              </FormControl>
+            ) : null}
+            {isControllerIssue ? (
+              <>
+                <FormControl isRequired>
+                  <FormLabel fontSize='sm'>Cluster</FormLabel>
+                  <Select
+                    size='sm'
+                    placeholder={
+                      controllerClusters.length
+                        ? 'Select a cluster'
+                        : 'No controller-bound clusters found'
+                    }
+                    value={controllerClusterId}
+                    onChange={event => setControllerClusterId(event.target.value)}
+                    isDisabled={controllerClusters.length === 0}
+                  >
+                    {controllerClusters.map(clusterId => (
+                      <option key={clusterId} value={clusterId}>
+                        {clusterId}
+                      </option>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    {controllerClusters.length
+                      ? 'Only clusters with an active API token scoped to certops:observations:write or certops:provision:execute appear here.'
+                      : 'Create an API token scoped to a cluster on the API Tokens tab first, then come back here.'}
+                  </FormHelperText>
+                </FormControl>
+                <SimpleGrid columns={2} spacing={2}>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>Namespace</FormLabel>
+                    <Input
+                      size='sm'
+                      value={controllerNamespace}
+                      onChange={event => setControllerNamespace(event.target.value)}
+                      placeholder='e.g. default'
+                      autoComplete='off'
+                    />
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>Certificate name</FormLabel>
+                    <Input
+                      size='sm'
+                      value={controllerCertificateName}
+                      onChange={event =>
+                        setControllerCertificateName(event.target.value)
+                      }
+                      placeholder='e.g. example-web-tls'
+                      autoComplete='off'
+                    />
+                  </FormControl>
+                </SimpleGrid>
+                <FormControl isRequired>
+                  <FormLabel fontSize='sm'>Secret name</FormLabel>
+                  <Input
+                    size='sm'
+                    value={controllerSecretName}
+                    onChange={event => setControllerSecretName(event.target.value)}
+                    placeholder='e.g. example-web-tls'
+                    autoComplete='off'
+                  />
+                  <FormHelperText>
+                    The Kubernetes Secret the cert-manager Certificate will
+                    write to. Only its metadata is ever read back by
+                    TokenTimer.
+                  </FormHelperText>
+                </FormControl>
+                <SimpleGrid columns={2} spacing={2}>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>Issuer kind</FormLabel>
+                    <Select
+                      size='sm'
+                      value={controllerIssuerKind}
+                      onChange={event => setControllerIssuerKind(event.target.value)}
+                    >
+                      {CONTROLLER_ISSUER_KINDS.map(kind => (
+                        <option key={kind} value={kind}>
+                          {kind}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize='sm'>Issuer name</FormLabel>
+                    <Input
+                      size='sm'
+                      value={controllerIssuerName}
+                      onChange={event => setControllerIssuerName(event.target.value)}
+                      placeholder='e.g. letsencrypt-prod'
+                      autoComplete='off'
+                    />
+                  </FormControl>
+                </SimpleGrid>
+                <FormControl isRequired>
+                  <FormLabel fontSize='sm'>DNS names</FormLabel>
+                  <Textarea
+                    size='sm'
+                    rows={2}
+                    value={controllerDnsNames}
+                    onChange={event => setControllerDnsNames(event.target.value)}
+                    placeholder='Comma or newline separated, e.g. example.com, www.example.com'
+                  />
+                  <FormHelperText>
+                    At least one DNS name is required; wildcards (e.g.
+                    *.example.com) are accepted.
+                  </FormHelperText>
+                </FormControl>
+              </>
+            ) : null}
             {isIssue ? null : (
               <>
                 <FormControl
@@ -569,42 +809,43 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   : 'Optional. Reusing a key returns the existing job instead of creating a duplicate.'}
               </FormHelperText>
             </FormControl>
-            <FormControl
-              isInvalid={payloadMode === 'json' && Boolean(payloadError)}
-            >
-              <HStack justify='space-between' align='center' mb={1}>
-                <FormLabel fontSize='sm' mb={0}>
-                  Payload
-                </FormLabel>
-                <ButtonGroup size='sm' isAttached variant='outline'>
-                  <Button
-                    colorScheme={payloadMode === 'fields' ? 'blue' : undefined}
-                    variant={payloadMode === 'fields' ? 'solid' : 'outline'}
-                    onClick={() => setPayloadMode('fields')}
-                  >
-                    Fields
-                  </Button>
-                  <Button
-                    colorScheme={payloadMode === 'json' ? 'blue' : undefined}
-                    variant={payloadMode === 'json' ? 'solid' : 'outline'}
-                    onClick={() => {
-                      // Switching to JSON seeds the textarea from whatever
-                      // was entered in the fields tab, so nothing is lost
-                      // and an operator can start from the structured
-                      // fields and drop into raw JSON only to add what the
-                      // fields do not cover.
-                      const seeded = buildFieldsPayload();
-                      if (Object.keys(seeded).length && !payloadText.trim()) {
-                        setPayloadText(JSON.stringify(seeded, null, 2));
-                      }
-                      setPayloadMode('json');
-                    }}
-                  >
-                    JSON
-                  </Button>
-                </ButtonGroup>
-              </HStack>
-              {payloadMode === 'fields' ? (
+            {isControllerIssue ? null : (
+              <FormControl
+                isInvalid={payloadMode === 'json' && Boolean(payloadError)}
+              >
+                <HStack justify='space-between' align='center' mb={1}>
+                  <FormLabel fontSize='sm' mb={0}>
+                    Payload
+                  </FormLabel>
+                  <ButtonGroup size='sm' isAttached variant='outline'>
+                    <Button
+                      colorScheme={payloadMode === 'fields' ? 'blue' : undefined}
+                      variant={payloadMode === 'fields' ? 'solid' : 'outline'}
+                      onClick={() => setPayloadMode('fields')}
+                    >
+                      Fields
+                    </Button>
+                    <Button
+                      colorScheme={payloadMode === 'json' ? 'blue' : undefined}
+                      variant={payloadMode === 'json' ? 'solid' : 'outline'}
+                      onClick={() => {
+                        // Switching to JSON seeds the textarea from whatever
+                        // was entered in the fields tab, so nothing is lost
+                        // and an operator can start from the structured
+                        // fields and drop into raw JSON only to add what the
+                        // fields do not cover.
+                        const seeded = buildFieldsPayload();
+                        if (Object.keys(seeded).length && !payloadText.trim()) {
+                          setPayloadText(JSON.stringify(seeded, null, 2));
+                        }
+                        setPayloadMode('json');
+                      }}
+                    >
+                      JSON
+                    </Button>
+                  </ButtonGroup>
+                </HStack>
+                {payloadMode === 'fields' ? (
                 <VStack align='stretch' spacing={2}>
                   <FormControl isRequired={isIssue}>
                     <FormLabel fontSize='xs' mb={0.5}>
@@ -723,23 +964,26 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
                   </FormHelperText>
                 </>
               )}
-            </FormControl>
-            <FormControl>
-              <Checkbox
-                size='sm'
-                isChecked={requiresApproval}
-                onChange={event => setRequiresApproval(event.target.checked)}
-              >
-                <Text as='span' fontSize='sm'>
-                  Require approval before this job can run
-                </Text>
-              </Checkbox>
-              <FormHelperText>
-                The job starts at &quot;Pending approval&quot; instead of
-                claimable; an authorized workspace member other than you must
-                approve it from this page before an agent can pick it up.
-              </FormHelperText>
-            </FormControl>
+              </FormControl>
+            )}
+            {isControllerIssue ? null : (
+              <FormControl>
+                <Checkbox
+                  size='sm'
+                  isChecked={requiresApproval}
+                  onChange={event => setRequiresApproval(event.target.checked)}
+                >
+                  <Text as='span' fontSize='sm'>
+                    Require approval before this job can run
+                  </Text>
+                </Checkbox>
+                <FormHelperText>
+                  The job starts at &quot;Pending approval&quot; instead of
+                  claimable; an authorized workspace member other than you must
+                  approve it from this page before an agent can pick it up.
+                </FormHelperText>
+              </FormControl>
+            )}
           </VStack>
         </ModalBody>
         <ModalFooter {...footerProps}>
@@ -758,7 +1002,7 @@ export default function CreateManualJobModal({ isOpen, onClose, onCreated }) {
             isLoading={submitting}
             loadingText='Creating'
           >
-            Create job
+            {isControllerIssue ? 'Create provisioning intent' : 'Create job'}
           </Button>
         </ModalFooter>
       </DashboardModalFrame>

@@ -24,6 +24,7 @@ import RetireCertificateModal from '../../components/certops/RetireCertificateMo
 import SetupRenewalModal from '../../components/certops/SetupRenewalModal.jsx';
 import DetachRenewalProfileModal from '../../components/certops/DetachRenewalProfileModal.jsx';
 import CertificateTokenDetailModal from '../../components/certops/CertificateTokenDetailModal.jsx';
+import CertificateDetailModal from '../../components/certops/CertificateDetailModal.jsx';
 import {
   listCertificates,
   retireCertificate,
@@ -509,12 +510,6 @@ export default function CertOpsCertificates() {
                             <Button
                               size='xs'
                               variant='ghost'
-                              isDisabled={!certificate.tokenId}
-                              title={
-                                certificate.tokenId
-                                  ? undefined
-                                  : 'No linked token to show'
-                              }
                               onClick={() => setDetailsTarget(certificate)}
                             >
                               Details
@@ -559,12 +554,6 @@ export default function CertOpsCertificates() {
                           <Button
                             size='xs'
                             variant='ghost'
-                            isDisabled={!certificate.tokenId}
-                            title={
-                              certificate.tokenId
-                                ? undefined
-                                : 'No linked token to show'
-                            }
                             onClick={() => setDetailsTarget(certificate)}
                           >
                             Details
@@ -628,11 +617,17 @@ export default function CertOpsCertificates() {
       />
 
       <CertificateTokenDetailModal
-        isOpen={Boolean(detailsTarget)}
+        isOpen={Boolean(detailsTarget?.tokenId)}
         onClose={() => setDetailsTarget(null)}
         workspaceId={workspaceId}
         tokenId={detailsTarget?.tokenId}
         canManage={canManage}
+      />
+
+      <CertificateDetailModal
+        isOpen={Boolean(detailsTarget) && !detailsTarget?.tokenId}
+        onClose={() => setDetailsTarget(null)}
+        certificate={detailsTarget}
       />
     </DashboardPanel>
   );

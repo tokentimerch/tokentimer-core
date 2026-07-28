@@ -15,6 +15,8 @@ const {
   retryRenewalSetupIntentMock,
   listCertificatesMock,
   listRenewalProfilesMock,
+  getCertificateInstancesMock,
+  getTokenMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -24,6 +26,8 @@ const {
   retryRenewalSetupIntentMock: vi.fn(),
   listCertificatesMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
+  getCertificateInstancesMock: vi.fn(),
+  getTokenMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -32,6 +36,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
+  useCertOpsEnabled: () => true,
 }));
 
 vi.mock('../../src/components/certops/useCertOpsCertificates.js', () => ({
@@ -49,6 +54,19 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
     detachCertificateRenewalProfile: detachCertificateRenewalProfileMock,
     retryRenewalSetupIntent: retryRenewalSetupIntentMock,
     listCertificates: listCertificatesMock,
+    getCertificateInstances: getCertificateInstancesMock,
+  };
+});
+
+vi.mock('../../src/utils/apiClient', async () => {
+  const actual = await vi.importActual('../../src/utils/apiClient');
+  return {
+    ...actual,
+    tokenAPI: { ...actual.tokenAPI, getToken: getTokenMock },
+    workspaceAPI: {
+      ...actual.workspaceAPI,
+      getAlertSettings: vi.fn().mockResolvedValue({ contact_groups: [] }),
+    },
   };
 });
 
@@ -109,8 +127,12 @@ beforeEach(() => {
   retryRenewalSetupIntentMock.mockReset();
   listCertificatesMock.mockReset();
   listRenewalProfilesMock.mockReset();
+  getCertificateInstancesMock.mockReset();
+  getTokenMock.mockReset();
   useCertOpsCanManageMock.mockReturnValue(true);
   useCertOpsCertificatesMock.mockReturnValue(certState());
+  getCertificateInstancesMock.mockResolvedValue({ items: [] });
+  getTokenMock.mockResolvedValue(null);
   // Default: the retired-count probe (two limit:1 list calls) sees no
   // retired certificates, so most tests can ignore it entirely.
   listCertificatesMock.mockResolvedValue({
@@ -268,6 +290,51 @@ describe('CertOpsCertificates retire action', () => {
       );
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('CertOpsCertificates details modal routing', () => {
+  it('opens the certificate-native modal for a certificate with no linked token', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({ certificates: [certificate({ tokenId: null })] })
+    );
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Certificate details')).toBeInTheDocument();
+    });
+    expect(getCertificateInstancesMock).toHaveBeenCalled();
+  });
+
+  it('opens the token-linked modal for a certificate with a tokenId', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({ certificates: [certificate({ tokenId: 'tok-1' })] })
+    );
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+
+    // CertificateTokenDetailModal shows its own loading shell (titled
+    // "Certificate details" too) until the token fetch resolves; asserting
+    // on the token fetch itself is the unambiguous signal that this is the
+    // token-linked path rather than the certificate-native one.
+    await vi.waitFor(() => {
+      expect(getTokenMock).toHaveBeenCalledWith('tok-1');
+    });
+  });
+
+  it('is enabled for every certificate regardless of tokenId, unlike the disabled button this replaced', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({ certificates: [certificate({ tokenId: null })] })
+    );
+
+    renderPage();
+
+    expect(screen.getByRole('button', { name: 'Details' })).toBeEnabled();
   });
 });
 

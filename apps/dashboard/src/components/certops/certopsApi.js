@@ -110,6 +110,49 @@ export async function getCertificateInstances(
 }
 
 /**
+ * Create a cert-manager provisioning intent: the manager-only human surface
+ * that hands a strict public desired state (namespace, certificate/secret
+ * name, issuerRef, dnsNames) to a controller bound to `clusterId`, without
+ * ever accepting a manifest, Secret data, CSR, or private key material.
+ *
+ * Maps to POST /certops/provision-intents. `idempotencyKey` is required by
+ * the server as the `Idempotency-Key` header (not a body field); a retried
+ * request with the same key returns the existing job (`duplicate: true`)
+ * instead of provisioning a second certificate. See
+ * apps/api/services/certops/controllerProvisioning.js and the
+ * CertOpsProvisionIntentRequest schema in openapi.yaml.
+ * @returns {Promise<{ job: object, managedCertificateId: string, targetId: string, duplicate: boolean }>}
+ */
+export async function createControllerProvisionIntent(
+  workspaceId,
+  {
+    idempotencyKey,
+    clusterId,
+    namespace,
+    certificateName,
+    secretName,
+    issuerRef,
+    dnsNames,
+  } = {}
+) {
+  const body = {
+    schemaVersion: 1,
+    clusterId,
+    namespace,
+    certificateName,
+    secretName,
+    issuerRef,
+    dnsNames,
+  };
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/provision-intents`,
+    body,
+    { headers: { 'Idempotency-Key': idempotencyKey } }
+  );
+  return res.data;
+}
+
+/**
  * Import public certificate material (PEM, public material only).
  * Maps to POST /imports which returns 202 with the upserted records.
  * @returns {Promise<{ items: object[], count: number }>}
