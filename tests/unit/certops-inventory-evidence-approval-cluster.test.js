@@ -22,7 +22,7 @@ describe("agent compatibility (H8)", () => {
     const result = computeAgentCompatibility(
       {
         protocolVersion: "0.9.0",
-        agentVersion: "0.11.0",
+        agentVersion: "0.11.1",
         clockOffsetMs: 100,
       },
       {
@@ -42,7 +42,7 @@ describe("agent compatibility (H8)", () => {
     const result = computeAgentCompatibility(
       {
         protocolVersion: "1.0.0",
-        agentVersion: "0.11.0",
+        agentVersion: "0.11.1",
         clockOffsetMs: -60_000,
       },
       {
@@ -63,7 +63,7 @@ describe("agent compatibility (H8)", () => {
     const result = computeAgentCompatibility(
       {
         protocolVersion: "1.0.0",
-        agentVersion: "0.11.0",
+        agentVersion: "0.11.1",
         clockOffsetMs: 0,
         status: "active",
         lastSeenAt: new Date(Date.now() - 60_000).toISOString(),
@@ -83,7 +83,7 @@ describe("agent compatibility (H8)", () => {
     const result = computeAgentCompatibility(
       {
         protocolVersion: "1.0.0",
-        agentVersion: "0.11.0",
+        agentVersion: "0.11.1",
         clockOffsetMs: 0,
         status: "active",
         lastSeenAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
@@ -103,7 +103,7 @@ describe("agent compatibility (H8)", () => {
     const result = computeAgentCompatibility(
       {
         protocolVersion: "1.0.0",
-        agentVersion: "0.11.0",
+        agentVersion: "0.11.1",
         clockOffsetMs: 0,
         status: "active",
         lastSeenAt: null,
@@ -124,7 +124,7 @@ describe("agent compatibility (H8)", () => {
     const result = computeAgentCompatibility(
       {
         protocolVersion: "1.0.0",
-        agentVersion: "0.11.0",
+        agentVersion: "0.11.1",
         clockOffsetMs: 0,
         status: "retired",
         lastSeenAt: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
