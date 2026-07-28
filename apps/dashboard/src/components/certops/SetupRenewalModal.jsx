@@ -239,6 +239,19 @@ export default function SetupRenewalModal({
       selectedPresetPath !== certificatePath
   );
 
+  // Keep the manual fields in sync with whichever preset is selected, so
+  // switching to manual entry starts from its values instead of blank ones;
+  // an operator tweaking one field off a known-good profile should not have
+  // to retype the rest from memory.
+  useEffect(() => {
+    if (!selectedPreset) return;
+    const renewal = selectedPreset.renewalProfile || {};
+    setCommandRef(renewal.acme?.commandRef || '');
+    setCaEndpoint(renewal.ca?.endpoint || '');
+    setDnsZone(renewal.dns?.zone || '');
+    setDnsProvider(renewal.dns?.provider || '');
+  }, [selectedPreset]);
+
   const resolvedFields = usingPreset
     ? {
         commandRef: selectedPreset?.renewalProfile?.acme?.commandRef || '',
@@ -306,7 +319,8 @@ export default function SetupRenewalModal({
             <Text as='span' fontWeight='semibold'>
               {certName}
             </Text>
-            , deploying to{certificatePath ? (
+            . TokenTimer renews it once now, onto
+            {certificatePath ? (
               <>
                 {' '}
                 <Text as='span' fontFamily='mono'>
@@ -316,8 +330,10 @@ export default function SetupRenewalModal({
             ) : (
               ' the path TokenTimer already discovered'
             )}
-            . TokenTimer renews it once now to create the profile, then
-            renews it automatically from there.
+            , to prove the settings below actually work. If that renewal
+            succeeds, TokenTimer creates another renewal profile, scoped
+            to just this certificate, so future renewals happen without
+            asking again.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
@@ -354,14 +370,18 @@ export default function SetupRenewalModal({
                 {usingPreset ? (
                   <>
                     <Text fontSize='sm' color={muted}>
-                      These settings become part of the renewal profile this
-                      certificate will use, same as{' '}
+                      Picking a profile copies its command, CA endpoint, and
+                      DNS settings into this setup; it does{' '}
+                      <Text as='span' fontWeight='medium'>
+                        not
+                      </Text>{' '}
+                      attach{' '}
                       <Text as='span' fontWeight='medium'>
                         {selectedPreset?.name}
-                      </Text>
-                      . A profile is bound to the path it was issued for, so
-                      check each one's path below against this certificate's
-                      own path above before picking it.
+                      </Text>{' '}
+                      itself, since this certificate always gets its own
+                      profile. Check each option's path below against this
+                      certificate's own path above before picking it.
                     </Text>
                     {presets.length > 0 ? (
                       <Flex justify='space-between' align='center'>

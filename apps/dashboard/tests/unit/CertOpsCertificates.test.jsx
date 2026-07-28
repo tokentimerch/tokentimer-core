@@ -500,6 +500,52 @@ describe('CertOpsCertificates renewal setup and detach', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('prefills manual entry with the selected preset\'s values when switching', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({ renewal: { state: 'not-configured', profileId: null } }),
+        ],
+      })
+    );
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'profile-existing',
+          name: 'Derived: example.test (cert-1)',
+          renewalProfile: {
+            acme: { commandRef: 'certbot-csr' },
+            ca: { endpoint: 'https://acme-v02.api.letsencrypt.org/directory' },
+            dns: { provider: 'cloudflare', zone: 'example.com' },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up renewal' }));
+    await screen.findByRole('dialog', { name: /Set up automatic renewal/ });
+    await screen.findAllByText('Derived: example.test (cert-1)');
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Enter renewal details manually' })
+    );
+
+    // The manual fields are not blank: they carry the values copied from
+    // the profile that was selected before switching, so tweaking one field
+    // does not require retyping the rest.
+    expect(await screen.findByDisplayValue('certbot-csr')).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue(
+        'https://acme-v02.api.letsencrypt.org/directory'
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue('cloudflare')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('example.com')).toBeInTheDocument();
+  });
+
   it("shows the certificate's own deployment path and warns when a preset's path does not match it", async () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
